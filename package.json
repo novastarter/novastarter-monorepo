@@ -1,7 +1,6 @@
 {
 	"name": "novastarter-monorepo",
 	"private": true,
-	"license": "SEE LICENSE IN LICENSE",
 	"type": "module",
 	"scripts": {
 		"build": "turbo --recursive run build",

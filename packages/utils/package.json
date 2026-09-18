@@ -7,7 +7,6 @@
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
 		"directory": "packages/utils"
 	},
-	"license": "SEE LICENSE IN LICENSE",
 	"sideEffects": false,
 	"type": "module",
 	"exports": {
