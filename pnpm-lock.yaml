@@ -197,6 +197,37 @@ importers:
         specifier: 'catalog:'
         version: 3.2.7(@types/node@22.13.14)(jiti@2.7.0)(supports-color@7.2.0)(yaml@2.9.1)
 
+  packages/storage-driver-local:
+    dependencies:
+      '@novastarter/storage':
+        specifier: workspace:*
+        version: link:../storage
+    devDependencies:
+      '@ngneat/falso':
+        specifier: 'catalog:'
+        version: 8.0.2
+      '@novastarter/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      '@novastarter/types':
+        specifier: workspace:*
+        version: link:../types
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.13.14
+      '@vitest/coverage-v8':
+        specifier: 'catalog:'
+        version: 3.2.6(supports-color@7.2.0)(vitest@3.2.7(@types/node@22.13.14)(jiti@2.7.0)(supports-color@7.2.0)(yaml@2.9.1))
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.15.11(@emnapi/core@1.10.0)(@emnapi/runtime@1.11.3)(supports-color@7.2.0)(typescript@5.9.3)
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 3.2.7(@types/node@22.13.14)(jiti@2.7.0)(supports-color@7.2.0)(yaml@2.9.1)
+
   packages/storage-driver-s3:
     dependencies:
       '@aws-sdk/client-s3':
