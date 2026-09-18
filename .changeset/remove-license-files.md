@@ -6,4 +6,4 @@
 '@novastarter/utils': patch
 ---
 
-Packages no longer ship a `LICENSE` file or declare a `license` field in `package.json`.
+Packages no longer ship a `LICENSE` file, declare a `license` field in `package.json`, or carry a License section in their readme.
