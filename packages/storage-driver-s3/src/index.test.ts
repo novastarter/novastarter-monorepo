@@ -12,8 +12,6 @@ import {
 	ServerSideEncryption,
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
-import { normalizePath } from '@novastarter/utils';
-import { isReadableStream } from '@novastarter/utils/node';
 import {
 	rand,
 	randAlphaNumeric,
@@ -29,6 +27,8 @@ import {
 	randGitShortSha as randUnique,
 	randWord,
 } from '@ngneat/falso';
+import { normalizePath } from '@novastarter/utils';
+import { isReadableStream } from '@novastarter/utils/node';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { DriverS3Config } from './index.js';
@@ -182,6 +182,7 @@ describe('#constructor', () => {
 		expect(normalizePath).toHaveBeenCalledWith(sample.config.root, {
 			removeLeading: true,
 		});
+
 		expect(driver['root']).toBe(mockRoot);
 	});
 });
@@ -325,6 +326,28 @@ describe('#getClient', () => {
 			requestHandler: expect.any(NodeHttpHandler),
 		});
 	});
+
+	test('Sets checksum policies', () => {
+		// 1. Both policies must reach the SDK unchanged; `WHEN_REQUIRED` is what S3-compatible services without
+		//    flexible checksums (Cloudflare R2) need to accept PutObject / UploadPart
+		new DriverS3({
+			key: sample.config.key,
+			secret: sample.config.secret,
+			bucket: sample.config.bucket,
+			requestChecksumCalculation: 'WHEN_REQUIRED',
+			responseChecksumValidation: 'WHEN_REQUIRED',
+		});
+
+		expect(S3Client).toHaveBeenCalledWith({
+			requestChecksumCalculation: 'WHEN_REQUIRED',
+			responseChecksumValidation: 'WHEN_REQUIRED',
+			credentials: {
+				accessKeyId: sample.config.key,
+				secretAccessKey: sample.config.secret,
+			},
+			requestHandler: expect.any(NodeHttpHandler),
+		});
+	});
 });
 
 describe('#fullPath', () => {
@@ -359,6 +382,7 @@ describe('#read', () => {
 		vi.mocked(driver['client'].send).mockReturnValue({
 			Body: new Readable(),
 		} as unknown as void);
+
 		vi.mocked(isReadableStream).mockReturnValue(true);
 	});
 
@@ -439,6 +463,7 @@ describe('#read', () => {
 		vi.mocked(driver['client'].send).mockReturnValue({
 			Body: sample.stream,
 		} as unknown as void);
+
 		vi.mocked(GetObjectCommand).mockReturnValue(mockGetObjectCommand);
 
 		// 2. The body must come back untouched, without any wrapping

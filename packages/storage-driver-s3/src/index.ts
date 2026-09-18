@@ -41,6 +41,14 @@ import { ERRORS, StreamSplitter, TUS_RESUMABLE } from '@tus/utils';
 import ms, { type StringValue } from 'ms';
 
 /**
+ * Checksum policy understood by the SDK for both request calculation and response validation.
+ *
+ * Mirrors `RequestChecksumCalculation` / `ResponseChecksumValidation` from `@aws-sdk/checksums`, which is not a direct
+ * dependency; both resolve to the same two string literals.
+ */
+export type ChecksumMode = 'WHEN_SUPPORTED' | 'WHEN_REQUIRED';
+
+/**
  * Options accepted by {@link DriverS3}.
  *
  * `key` and `secret` are optional as a pair: leave both out to let the AWS SDK resolve credentials from the
@@ -67,6 +75,22 @@ export type DriverS3Config = {
 	region?: string;
 	/** Address the bucket as a path (`host/bucket`) instead of a subdomain, as most S3-compatible services need. */
 	forcePathStyle?: boolean;
+	/**
+	 * When the SDK attaches a checksum to request payloads.
+	 *
+	 * Since `@aws-sdk/client-s3` 3.729.0 the default is `WHEN_SUPPORTED`, which sends a CRC32 checksum with every
+	 * `PutObject` / `UploadPart`. Services that do not implement flexible checksums, Cloudflare R2 among them, reject
+	 * those requests with `Header 'x-amz-checksum-algorithm' with value 'CRC32' not implemented`; set `WHEN_REQUIRED`
+	 * for them so checksums are only sent where the S3 API demands one.
+	 */
+	requestChecksumCalculation?: ChecksumMode;
+	/**
+	 * When the SDK validates checksums on response payloads.
+	 *
+	 * Counterpart of {@link DriverS3Config.requestChecksumCalculation}; set `WHEN_REQUIRED` for services that do not
+	 * return flexible checksums.
+	 */
+	responseChecksumValidation?: ChecksumMode;
 	/** Resumable-upload tuning. */
 	tus?: {
 		/** Preferred multipart part size in bytes; grown automatically when an upload would exceed the part limit. */
@@ -245,6 +269,16 @@ export class DriverS3 implements TusDriver {
 
 		if (this.config.forcePathStyle !== undefined) {
 			s3ClientConfig.forcePathStyle = this.config.forcePathStyle;
+		}
+
+		// 6. Checksum policies are forwarded only when configured, so AWS proper keeps the SDK's integrity defaults
+		//    and only services that lack flexible checksums (Cloudflare R2, older MinIO/Ceph) opt out
+		if (this.config.requestChecksumCalculation) {
+			s3ClientConfig.requestChecksumCalculation = this.config.requestChecksumCalculation;
+		}
+
+		if (this.config.responseChecksumValidation) {
+			s3ClientConfig.responseChecksumValidation = this.config.responseChecksumValidation;
 		}
 
 		return new S3Client(s3ClientConfig);
