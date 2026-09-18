@@ -62,3 +62,6 @@ pnpm-debug.log*
 
 # Claude Code local state
 .claude/settings.local.json
+
+# Lefthook: per-developer hook overrides
+lefthook-local.yml

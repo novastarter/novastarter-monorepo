@@ -279,7 +279,8 @@ Mandatory, no exceptions.
 Mandatory, no exceptions.
 
 - Any code change in `packages/` or `apps/` comes with a changeset: the file `.changeset/<kebab-name>.md`, written by
-  hand (`pnpm changeset` is interactive). The Stop hook blocks the end of the reply until such a file exists.
+  hand (`pnpm changeset` is interactive). The Stop hook blocks the end of the reply until such a file exists, and the
+  lefthook `pre-commit` job `changeset` rejects a commit that stages such changes without one.
 - Without a changeset, code changes do not go out: not into a commit, not into a PR.
 - Frontmatter: affected packages and the version bump (patch / minor / major).
 - Body: one line of future release notes (`/release-notes` assembles them from changesets). In English, one sentence,
