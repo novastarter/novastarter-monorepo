@@ -1,0 +1,26 @@
+{
+	"$schema": "https://json.schemastore.org/tsconfig",
+	"display": "React library",
+	"extends": "../base/tsconfig.json",
+	"compilerOptions": {
+		// Components run in the browser, so the DOM typings are needed on top of the ES2022 runtime
+		"target": "ES2022",
+		"lib": ["ES2022", "DOM", "DOM.Iterable"],
+
+		// Sources are consumed by a bundler (Next.js), which resolves `exports` maps without file extensions
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"resolveJsonModule": true,
+
+		// Each file must transpile on its own, which is what SWC and esbuild do inside the consuming app
+		"isolatedModules": true,
+		"moduleDetection": "force",
+
+		// Use the automatic JSX runtime, so components never need to import `React` for JSX
+		"jsx": "react-jsx",
+
+		// Libraries are TypeScript-only; the base `checkJs` is switched off because there is no JS to check
+		"allowJs": false,
+		"checkJs": false
+	}
+}

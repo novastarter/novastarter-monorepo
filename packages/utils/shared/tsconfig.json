@@ -1,0 +1,7 @@
+{
+	"extends": "@novastarter/tsconfig/node22",
+	"compilerOptions": {
+		"types": []
+	},
+	"include": ["."]
+}

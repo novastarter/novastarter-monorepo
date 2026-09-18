@@ -1,0 +1,32 @@
+{
+	"$schema": "https://json.schemastore.org/tsconfig",
+	"display": "Next.js",
+	"extends": "../base/tsconfig.json",
+	"compilerOptions": {
+		// App code runs both in the browser and in Node.js 22, so the DOM typings are needed on top of ES2022
+		"target": "ES2022",
+		"lib": ["ES2022", "DOM", "DOM.Iterable"],
+
+		// Next.js bundles with SWC: bundler-style resolution and per-file transpilation are what it expects
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"resolveJsonModule": true,
+		"isolatedModules": true,
+		"moduleDetection": "force",
+
+		// `next.config.js` and other config files are plain JS; they are type-checked through the base `checkJs`
+		"allowJs": true,
+
+		// JSX is left untouched for SWC; `tsc` only type-checks, Next.js emits the build itself
+		"jsx": "preserve",
+		"noEmit": true,
+		"incremental": false,
+
+		// The Next.js language-service plugin validates app-router conventions (route exports, metadata, ...)
+		"plugins": [{ "name": "next" }],
+
+		// Next.js types CSS modules as an index signature, so `styles.page` is the idiomatic access; forcing
+		// `styles['page']` everywhere would only add noise without catching real mistakes
+		"noPropertyAccessFromIndexSignature": false
+	}
+}

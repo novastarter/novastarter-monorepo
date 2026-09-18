@@ -1,0 +1,11 @@
+{
+	"extends": "@novastarter/tsconfig/node22",
+	"compilerOptions": {
+		"outDir": "dist",
+		"isolatedDeclarations": false
+	},
+	"include": ["src"],
+	"typedocOptions": {
+		"entryPoints": ["./src"]
+	}
+}

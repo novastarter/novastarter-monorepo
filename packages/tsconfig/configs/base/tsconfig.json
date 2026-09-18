@@ -1,0 +1,34 @@
+{
+	"$schema": "https://json.schemastore.org/tsconfig",
+	"display": "Base",
+	"compilerOptions": {
+		// Type-check plain JS too, so an untyped helper cannot slip past the compiler
+		"checkJs": true,
+		"strict": true,
+
+		// Reject dead code and likely bugs that `strict` alone does not cover
+		"allowUnreachableCode": false,
+		"allowUnusedLabels": false,
+		"exactOptionalPropertyTypes": true,
+		"noFallthroughCasesInSwitch": true,
+		"noImplicitOverride": true,
+		"noImplicitReturns": true,
+		"noPropertyAccessFromIndexSignature": true,
+		"noUncheckedIndexedAccess": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+
+		// Every package ships `.d.ts` files next to its build output
+		"declaration": true,
+
+		// Interop with CommonJS dependencies that only have a default export
+		"allowSyntheticDefaultImports": true,
+		"esModuleInterop": true,
+
+		// Case-insensitive file systems must not hide import typos that break on Linux
+		"forceConsistentCasingInFileNames": true,
+
+		// Third-party typings are not ours to fix; checking them only slows the build down
+		"skipLibCheck": true
+	}
+}

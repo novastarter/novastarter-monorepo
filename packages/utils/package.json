@@ -1,0 +1,38 @@
+{
+	"name": "@novastarter/utils",
+	"version": "0.0.1",
+	"description": "Utilities shared between the Nova packages",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/novastarter/novastarter-monorepo.git",
+		"directory": "packages/utils"
+	},
+	"license": "SEE LICENSE IN LICENSE",
+	"sideEffects": false,
+	"type": "module",
+	"exports": {
+		".": "./dist/shared/index.js",
+		"./node": "./dist/node/index.js",
+		"./package.json": "./package.json"
+	},
+	"main": "dist/shared/index.js",
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "pnpm run '/^build:.*/'",
+		"build:node": "tsdown node/index.ts --tsconfig node/tsconfig.json --out-dir dist/node --dts",
+		"build:shared": "tsdown shared/index.ts --tsconfig shared/tsconfig.json --out-dir dist/shared --dts",
+		"dev": "pnpm run '/^build:.*/' --watch",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage"
+	},
+	"devDependencies": {
+		"@novastarter/tsconfig": "workspace:*",
+		"@types/node": "catalog:",
+		"@vitest/coverage-v8": "catalog:",
+		"tsdown": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	}
+}
