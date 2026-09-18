@@ -1,0 +1,20 @@
+# Git hooks shared by the whole monorepo. The `lefthook` package installs them into .git/hooks on `pnpm install`;
+# run `pnpm exec lefthook install` by hand if hooks are missing.
+min_version: 2.0.0
+
+pre-commit:
+  # Jobs run one after another: ESLint and Prettier rewrite the same files, so they must not run in parallel
+  jobs:
+    - name: eslint
+      run: pnpm exec eslint --cache --fix --no-warn-ignored {staged_files}
+      glob: '*.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'
+      stage_fixed: true
+
+    - name: prettier
+      run: pnpm exec prettier --cache --write --ignore-unknown {staged_files}
+      stage_fixed: true
+
+    # AGENTS.md: every change under packages/ or apps/ ships with a .changeset/<name>.md
+    - name: changeset
+      script: changeset.mjs
+      runner: node

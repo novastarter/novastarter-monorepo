@@ -22,6 +22,7 @@
 		"eslint-config-prettier": "catalog:",
 		"eslint-plugin-import-x": "catalog:",
 		"globals": "catalog:",
+		"lefthook": "catalog:",
 		"prettier": "catalog:",
 		"turbo": "^2.11.1",
 		"typescript": "catalog:",
