@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import formatTitle from './index.js';
+import { formatTitle } from './index.js';
 
 /**
  * End-to-end cases covering camelCase, PascalCase, snake_case, kebab-case, a minor word and a special-case brand.

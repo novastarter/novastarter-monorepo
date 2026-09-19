@@ -23,8 +23,3 @@ export function formatTitle(title: string, separator: RegExp = new RegExp('\\s|-
 	// 1. Decamelize before splitting, so the separator regex only has to know about explicit delimiters
 	return decamelize(title).split(separator).map(capitalize).map(handleSpecialWords).reduce(combine);
 }
-
-/**
- * Default export mirroring {@link formatTitle}, kept so both import styles work.
- */
-export default formatTitle;
