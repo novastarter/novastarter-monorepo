@@ -65,3 +65,5 @@ pnpm-debug.log*
 
 # Lefthook: per-developer hook overrides
 lefthook-local.yml
+
+release-notes.md

@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/release-notes-generator",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Release notes generator for changesets, tailored to the Nova monorepo",
 	"keywords": [
 		"changesets",

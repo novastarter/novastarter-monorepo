@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/storage-driver-s3",
-	"version": "0.0.2",
+	"version": "0.1.0",
 	"description": "S3 file storage driver for `@novastarter/storage`",
 	"repository": {
 		"type": "git",

@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/rate-limiter",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Pressure based rate limiter",
 	"repository": {
 		"type": "git",
