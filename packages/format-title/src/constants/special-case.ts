@@ -1,0 +1,53 @@
+/**
+ * Words with a fixed spelling that overrides every other casing rule.
+ *
+ * {@link handleSpecialWords} compares case-insensitively and returns the entry as written here, so this is the place
+ * for brand names and mixed-case terms (`iPhone`, `PostgreSQL`, `pH`). Entries must not repeat an acronym from the
+ * acronym list.
+ */
+export default [
+	'2FA',
+	'4K',
+	'5K',
+	'8K',
+	'AGI',
+	'BI',
+	'ChatGPT',
+	'CTA',
+	'DateTime',
+	'FMS',
+	'GitHub',
+	'GPT',
+	'HD',
+	'IBMid',
+	'IDs',
+	'iMac',
+	'IMAX',
+	'iOS',
+	'iPad',
+	'iPhone',
+	'iPod',
+	'LDAP',
+	'LinkedIn',
+	'LLM',
+	'macOS',
+	'McDonalds',
+	'MCP',
+	'ML',
+	'MySQL',
+	'NLG',
+	'NLP',
+	'NLU',
+	'OpenAI',
+	'PDFs',
+	'PIM',
+	'PEFT',
+	'pH',
+	'PostgreSQL',
+	'SEO',
+	'TTS',
+	'UHD',
+	'UUID',
+	'XSS',
+	'YouTube',
+] as string[];
