@@ -290,3 +290,19 @@ Mandatory, no exceptions.
     `` `StorageManager.registerDriver` now takes a driver class instead of an instance; pass the class ``.
   - Dependency update — name, version and what it fixes: `Electron 43.7.0 fixes a glibc use-after-free`.
   - Too little: `Init fixes`, `Fix bug`, `Refactor`.
+
+## Rule: bump the package version in the same change
+
+Mandatory, no exceptions.
+
+- After writing the changeset, run `pnpm version-packages`. It applies the bump to `package.json`, appends the release
+  note to `CHANGELOG.md` and deletes the consumed changeset file.
+- Commit the code, the bumped `package.json`, the `CHANGELOG.md` and the removed changeset together.
+- Never edit `version` in `package.json` by hand: a hand edit plus a later `changeset version` bumps twice.
+- Pick the bump by semver, from the point of view of the package consumer:
+  - `patch` — a fix or internal change; every existing call keeps working and behaves the same.
+  - `minor` — something new that existing calls do not notice: a new export, option, method, driver.
+  - `major` — an existing call breaks or behaves differently: removed or renamed export, changed signature or default,
+    new required option, changed thrown errors.
+  - In doubt between two levels, take the higher one.
+  - A change spanning several packages gets its own line per package, each with its own level.
