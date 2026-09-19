@@ -5,4 +5,5 @@
  * point that has to stay usable outside Node.
  */
 export * from './is-readable-stream.js';
+export * from './process-id.js';
 export * from './require-yaml.js';
