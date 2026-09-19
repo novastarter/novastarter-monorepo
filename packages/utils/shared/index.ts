@@ -5,3 +5,4 @@
  * point instead.
  */
 export * from './normalize-path.js';
+export * from './defaults.js';
