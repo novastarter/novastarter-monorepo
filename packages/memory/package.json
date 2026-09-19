@@ -1,0 +1,41 @@
+{
+	"name": "@novastarter/memory",
+	"version": "0.0.1",
+	"description": "Memory / Redis abstraction: key-value store, cache, pub/sub bus and rate limiter",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/novastarter/novastarter-monorepo.git",
+		"directory": "packages/memory"
+	},
+	"type": "module",
+	"exports": {
+		".": "./dist/index.js",
+		"./package.json": "./package.json"
+	},
+	"main": "dist/index.js",
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsdown src/index.ts --dts",
+		"dev": "tsdown src/index.ts --dts --watch",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage"
+	},
+	"dependencies": {
+		"@novastarter/errors": "workspace:*",
+		"@novastarter/utils": "workspace:*",
+		"@sesamecare-oss/redlock": "catalog:",
+		"ioredis": "catalog:",
+		"lru-cache": "catalog:",
+		"rate-limiter-flexible": "catalog:"
+	},
+	"devDependencies": {
+		"@novastarter/tsconfig": "workspace:*",
+		"@types/node": "catalog:",
+		"@vitest/coverage-v8": "catalog:",
+		"tsdown": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	}
+}
