@@ -9,7 +9,7 @@
 		"format": "prettier --cache --check .",
 		"check-types": "turbo run check-types",
 		"changeset": "changeset",
-		"version-packages": "changeset version",
+		"version-packages": "pnpm --filter @novastarter/release-notes-generator build && changeset version",
 		"test": "pnpm --recursive test",
 		"test:coverage": "pnpm --recursive test:coverage"
 	},
@@ -17,6 +17,7 @@
 		"@changesets/changelog-github": "catalog:",
 		"@changesets/cli": "catalog:",
 		"@eslint/js": "catalog:",
+		"@novastarter/release-notes-generator": "workspace:*",
 		"eslint": "catalog:",
 		"eslint-config-prettier": "catalog:",
 		"eslint-plugin-import-x": "catalog:",

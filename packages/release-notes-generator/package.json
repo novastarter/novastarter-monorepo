@@ -1,11 +1,19 @@
 {
-	"name": "@novastarter/storage-driver-s3",
-	"version": "0.0.2",
-	"description": "S3 file storage driver for `@novastarter/storage`",
+	"name": "@novastarter/release-notes-generator",
+	"version": "0.0.1",
+	"description": "Release notes generator for changesets, tailored to the Nova monorepo",
+	"keywords": [
+		"changesets",
+		"changelog",
+		"release",
+		"release-notes",
+		"monorepo",
+		"pnpm"
+	],
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
-		"directory": "packages/storage-driver-s3"
+		"directory": "packages/release-notes-generator"
 	},
 	"type": "module",
 	"exports": {
@@ -23,20 +31,18 @@
 		"test:coverage": "vitest run --coverage"
 	},
 	"dependencies": {
-		"@aws-sdk/client-s3": "catalog:",
-		"@aws-sdk/lib-storage": "catalog:",
-		"@novastarter/storage": "workspace:*",
-		"@novastarter/utils": "workspace:*",
-		"@shopify/semaphore": "catalog:",
-		"@smithy/node-http-handler": "catalog:",
-		"@tus/utils": "catalog:",
-		"ms": "catalog:"
+		"@pnpm/logger": "catalog:",
+		"@pnpm/types": "catalog:",
+		"@pnpm/workspace.pkgs-graph": "catalog:",
+		"js-yaml": "catalog:",
+		"semver": "catalog:"
 	},
 	"devDependencies": {
-		"@ngneat/falso": "catalog:",
+		"@changesets/types": "catalog:",
 		"@novastarter/tsconfig": "workspace:*",
-		"@novastarter/types": "workspace:*",
-		"@types/ms": "catalog:",
+		"@types/js-yaml": "catalog:",
+		"@types/node": "catalog:",
+		"@types/semver": "catalog:",
 		"@vitest/coverage-v8": "catalog:",
 		"tsdown": "catalog:",
 		"typescript": "catalog:",
