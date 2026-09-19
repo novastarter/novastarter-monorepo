@@ -26,8 +26,12 @@
 		"test": "vitest run",
 		"test:coverage": "vitest run --coverage"
 	},
+	"dependencies": {
+		"js-yaml": "catalog:"
+	},
 	"devDependencies": {
 		"@novastarter/tsconfig": "workspace:*",
+		"@types/js-yaml": "catalog:",
 		"@types/node": "catalog:",
 		"@vitest/coverage-v8": "catalog:",
 		"tsdown": "catalog:",
