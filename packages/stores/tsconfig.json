@@ -1,0 +1,7 @@
+{
+	"extends": "@novastarter/tsconfig/react-library",
+	"include": ["src"],
+	"typedocOptions": {
+		"entryPoints": ["./src/index.ts"]
+	}
+}
