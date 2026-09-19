@@ -5,3 +5,4 @@
  * package root while the source stays easy to navigate.
  */
 export * from './files.js';
+export * from './logging.js';
