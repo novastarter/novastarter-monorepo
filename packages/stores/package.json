@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/stores",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Shared zustand stores used in the Nova apps",
 	"repository": {
 		"type": "git",
