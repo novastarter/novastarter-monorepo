@@ -5,4 +5,5 @@
  * package path while the types stay grouped by the subsystem they describe.
  */
 export * from './error.js';
+export * from './events.js';
 export * from './storage.js';
