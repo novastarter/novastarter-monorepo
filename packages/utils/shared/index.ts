@@ -5,6 +5,7 @@
  * point instead.
  */
 export * from './defaults.js';
+export * from './format-title/index.js';
 export * from './is-in.js';
 export * from './normalize-path.js';
 export * from './parse-json.js';
