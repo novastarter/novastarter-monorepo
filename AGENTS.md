@@ -283,6 +283,19 @@ Mandatory, no exceptions.
 - Subsystems follow the single driver / manager / factory convention. A new subsystem repeats it rather than introducing
   its own.
 
+## Rule: no application business logic in `packages/`
+
+Mandatory, no exceptions.
+
+- `packages/` holds what any application could reuse: drivers, managers, contracts, utilities. Nothing in it knows a
+  particular application's domain, routes, jobs, templates, variables or defaults.
+- What belongs to one application — its env schema, its location configs, the drivers it ships with, its job handlers,
+  its mail templates and routes — lives in that application under `apps/<name>/`.
+- A package takes its configuration as arguments; it does not read `process.env` itself (`@novastarter/env` is the one
+  exception: reading it is its job) and registers no locations on its own.
+- The test: code that changes when one application's product requirements change belongs in `apps/`; code that changes
+  when a backend, protocol or library changes belongs in `packages/`.
+
 ## Rule: every change ships with a changeset
 
 Mandatory, no exceptions.
