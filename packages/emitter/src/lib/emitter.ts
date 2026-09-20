@@ -20,7 +20,10 @@ import ee2 from 'eventemitter2';
  * emitter.onAction('user.create', ({ key }) => audit(key));
  *
  * const payload = await emitter.emitFilter('user.create', input, { collection: 'users' });
- * emitter.emitAction('user.create', { key: created.id, payload });
+ * emitter.emitAction('user.create', {
+ * 	key: created.id,
+ * 	payload,
+ * });
  * ```
  */
 export class Emitter {

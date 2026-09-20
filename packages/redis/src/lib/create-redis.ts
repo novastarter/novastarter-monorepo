@@ -16,7 +16,14 @@ import type { RedisConfig } from '../types/config.js';
  * ```ts
  * const redis = createRedis('redis://localhost:6379');
  *
- * const queue = createRedis({ host: 'jobs.internal', port: 6379, password: '…' }, { maxRetriesPerRequest: null });
+ * const queue = createRedis(
+ * 	{
+ * 		host: 'jobs.internal',
+ * 		port: 6379,
+ * 		password: '…',
+ * 	},
+ * 	{ maxRetriesPerRequest: null },
+ * );
  * ```
  */
 export const createRedis = (config: RedisConfig, overrides: RedisOptions = {}): Redis => {

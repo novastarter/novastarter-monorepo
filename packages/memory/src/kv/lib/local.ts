@@ -12,7 +12,10 @@ import type { KvLocalOptions } from '../types/config.js';
  *
  * @example
  * ```ts
- * const kv = new KvLocal({ maxKeys: 500, ttl: 60_000 });
+ * const kv = new KvLocal({
+ * 	maxKeys: 500,
+ * 	ttl: 60_000,
+ * });
  *
  * await kv.set('my-key', { hello: 'world' });
  * ```

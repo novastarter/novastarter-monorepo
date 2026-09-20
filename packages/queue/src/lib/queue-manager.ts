@@ -39,8 +39,17 @@ export const DEFAULT_QUEUE_LOCATION = 'default';
  * ```ts
  * const queue = new QueueManager();
  *
- * queue.registerLocation('default', { driver: 'local', options: {} });
- * queue.registerLocation('mail', { driver: 'bullmq', options: { connection: 'redis://jobs:6379', prefix: 'acme' } });
+ * queue.registerLocation('default', {
+ * 	driver: 'local',
+ * 	options: {},
+ * });
+ * queue.registerLocation('mail', {
+ * 	driver: 'bullmq',
+ * 	options: {
+ * 		connection: 'redis://jobs:6379',
+ * 		prefix: 'acme',
+ * 	},
+ * });
  * ```
  */
 export class QueueManager extends DriverManager<QueueProvider, QueueDrivers> {

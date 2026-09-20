@@ -12,6 +12,15 @@ import type { AppEnv } from '../env';
  */
 export const queueConfig = (env: AppEnv): Record<string, LocationConfig<QueueDrivers>> => ({
 	default: env.REDIS
-		? { driver: 'bullmq', options: { connection: env.REDIS, prefix: env.QUEUE_PREFIX } }
-		: { driver: 'local', options: {} },
+		? {
+				driver: 'bullmq',
+				options: {
+					connection: env.REDIS,
+					prefix: env.QUEUE_PREFIX,
+				},
+			}
+		: {
+				driver: 'local',
+				options: {},
+			},
 });

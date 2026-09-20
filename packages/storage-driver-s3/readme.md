@@ -2,12 +2,6 @@
 
 Amazon S3 driver for `@novastarter/storage`.
 
-## Description
-
-Objects in an S3 bucket, or any S3-compatible service (MinIO, Cloudflare R2, DigitalOcean Spaces) through `endpoint`.
-Uploads stream in multipart, resumable (TUS) uploads are supported. Credentials come from `key` / `secret` or, when both
-are left out, from the AWS SDK's default chain (environment, instance role).
-
 ## Installation
 
 ```

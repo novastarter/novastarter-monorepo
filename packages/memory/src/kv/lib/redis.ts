@@ -59,7 +59,10 @@ const RELEASE_SCRIPT = `
  *
  * @example
  * ```ts
- * const kv = new KvRedis({ redis: new Redis(), namespace: 'app' });
+ * const kv = new KvRedis({
+ * 	redis: new Redis(),
+ * 	namespace: 'app',
+ * });
  *
  * await kv.usingLock('migration', async () => {
  * 	// only one process at a time gets here

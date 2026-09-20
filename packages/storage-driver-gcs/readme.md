@@ -2,11 +2,6 @@
 
 Google Cloud Storage driver for `@novastarter/storage`.
 
-## Description
-
-Objects in a GCS bucket, with resumable (TUS) uploads. The client authenticates the way the Google SDK does —
-`GOOGLE_APPLICATION_CREDENTIALS`, the metadata server of the instance — so no credentials are passed in the options.
-
 ## Installation
 
 ```
@@ -29,7 +24,10 @@ storage.registerDriver('gcs', DriverGCS);
 
 storage.registerLocation('uploads', {
 	driver: 'gcs',
-	options: { bucket: env.STORAGE_UPLOADS_BUCKET, root: 'uploads' },
+	options: {
+		bucket: env.STORAGE_UPLOADS_BUCKET,
+		root: 'uploads',
+	},
 });
 ```
 

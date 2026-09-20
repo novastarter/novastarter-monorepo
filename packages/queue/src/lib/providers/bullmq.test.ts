@@ -190,11 +190,21 @@ describe('createWorker', () => {
 	test('Connects with the queue location of the process when no connection is given, refusing a local one', async () => {
 		const telemetry = { tracer: {}, contextManager: {} };
 
-		useQueue().registerLocation('default', { driver: 'local', options: { logger: logger as any } });
+		useQueue().registerLocation('default', {
+			driver: 'local',
+			options: {
+				logger: logger as any,
+			},
+		});
 
 		useQueue().registerLocation('test', {
 			driver: 'bullmq',
-			options: { connection: 'redis://jobs', prefix: 'acme', telemetry: telemetry as never, logger: logger as any },
+			options: {
+				connection: 'redis://jobs',
+				prefix: 'acme',
+				telemetry: telemetry as never,
+				logger: logger as any,
+			},
 		});
 
 		await createWorker(

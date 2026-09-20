@@ -40,7 +40,10 @@ export type CacheMultiMessageClear = {
  * ```ts
  * const cache = new CacheMulti({
  * 	local: { maxKeys: 500 },
- * 	redis: { redis: new Redis(), namespace: 'app' },
+ * 	redis: {
+ * 	redis: new Redis(),
+ * 	namespace: 'app',
+ * },
  * });
  * ```
  */

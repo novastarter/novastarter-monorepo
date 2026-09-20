@@ -15,7 +15,13 @@ import type { FailedValidationErrorExtensions } from '../errors/failed-validatio
  * @throws Plain `Error` when the Joi rule is not one this package knows how to describe.
  * @example
  * ```ts
- * joiValidationErrorItemToErrorExtensions({ type: 'number.greater', path: ['age'], context: { limit: 18 } });
+ * joiValidationErrorItemToErrorExtensions({
+ * 	type: 'number.greater',
+ * 	path: ['age'],
+ * 	context: {
+ * 		limit: 18,
+ * 	},
+ * });
  * // => { field: 'age', path: [], type: 'gt', valid: 18 }
  * ```
  */

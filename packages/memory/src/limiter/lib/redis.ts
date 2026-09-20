@@ -8,7 +8,12 @@ import { consume } from '../utils/consume.js';
  *
  * @example
  * ```ts
- * const limiter = new LimiterRedis({ redis: new Redis(), namespace: 'app', points: 10, duration: 5 });
+ * const limiter = new LimiterRedis({
+ * 	redis: new Redis(),
+ * 	namespace: 'app',
+ * 	points: 10,
+ * 	duration: 5,
+ * });
  *
  * await limiter.consume(request.ip);
  * ```

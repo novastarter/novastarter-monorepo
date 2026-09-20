@@ -23,7 +23,13 @@ export const _cache: { redis: RedisManager | undefined } = { redis: undefined };
  * useRedis().registerLocation('default', env['REDIS'] as string);
  *
  * // anywhere later
- * useCache().registerLocation('default', { driver: 'redis', options: { redis: useRedis().location('default'), namespace: 'app' } });
+ * useCache().registerLocation('default', {
+ * 	driver: 'redis',
+ * 	options: {
+ * 		redis: useRedis().location('default'),
+ * 		namespace: 'app',
+ * 	},
+ * });
  * ```
  */
 export const useRedis = (): RedisManager => {

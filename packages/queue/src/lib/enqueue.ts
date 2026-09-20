@@ -35,7 +35,14 @@ export type JobInputOf<Name extends JobName> = JobRegistry[Name] extends JobCont
  *
  * @example
  * ```ts
- * await enqueue('mail.send', { to: user.email, subject: 'Welcome', template: 'welcome', data: { name } });
+ * await enqueue('mail.send', {
+ * 	to: user.email,
+ * 	subject: 'Welcome',
+ * 	template: 'welcome',
+ * 	data: {
+ * 		name,
+ * 	},
+ * });
  * await enqueue('retention.run', {}, { delay: 60_000 });
  * ```
  */

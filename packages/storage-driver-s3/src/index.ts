@@ -136,7 +136,11 @@ export const kmsKeyIdCheck = [
  *
  * @example
  * ```ts
- * const driver = new DriverS3({ bucket: 'uploads', region: 'eu-west-1', root: 'media' });
+ * const driver = new DriverS3({
+ * 	bucket: 'uploads',
+ * 	region: 'eu-west-1',
+ * 	root: 'media',
+ * });
  *
  * await driver.write('avatar.png', fs.createReadStream('./avatar.png'), 'image/png');
  * ```

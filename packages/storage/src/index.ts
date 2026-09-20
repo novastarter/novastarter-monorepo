@@ -16,7 +16,12 @@ import { DriverManager, type LocationConfig } from '@novastarter/utils';
  * const storage = new StorageManager();
  *
  * storage.registerDriver('s3', DriverS3);
- * storage.registerLocation('uploads', { driver: 's3', options: { bucket: 'uploads' } });
+ * storage.registerLocation('uploads', {
+ * 	driver: 's3',
+ * 	options: {
+ * 		bucket: 'uploads',
+ * 	},
+ * });
  *
  * await storage.location('uploads').write('avatar.png', stream, 'image/png');
  * ```
@@ -57,7 +62,12 @@ export const _cache: { storage: StorageManager | undefined } = { storage: undefi
  * const storage = useStorage();
  *
  * storage.registerDriver('s3', DriverS3);
- * storage.registerLocation('uploads', { driver: 's3', options: { bucket: env['STORAGE_UPLOADS_BUCKET'] } });
+ * storage.registerLocation('uploads', {
+ * 	driver: 's3',
+ * 	options: {
+ * 		bucket: env['STORAGE_UPLOADS_BUCKET'],
+ * 	},
+ * });
  *
  * // anywhere later
  * await useStorage().location('uploads').write('avatar.png', stream, 'image/png');

@@ -32,7 +32,10 @@ export const messageConstructor = (extensions: HitRateLimitErrorExtensions): str
  *
  * @example
  * ```ts
- * throw new HitRateLimitError({ limit: 10, reset: new Date(Date.now() + 5_000) });
+ * throw new HitRateLimitError({
+ * 	limit: 10,
+ * 	reset: new Date(Date.now() + 5_000),
+ * });
  * ```
  */
 export const HitRateLimitError: NovastarterErrorConstructor<HitRateLimitErrorExtensions> =

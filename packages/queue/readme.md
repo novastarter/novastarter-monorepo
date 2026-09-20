@@ -2,15 +2,6 @@
 
 Background jobs for Novastarter: contracts, a client to enqueue them, providers that run them.
 
-## Description
-
-A job is a contract — a name, a zod schema for its payload, retry settings — declared by the module of the app that owns
-it, and a handler that lives in the same module; the kit ships one job of its own, `system.ping`, to prove the pipeline.
-`enqueue('mail.send', payload)` checks the payload against the contract and hands it to the provider of the job's queue:
-`local` runs the handler at once (development, tests), `bullmq` puts it on Redis for a worker. Which queue runs where is
-registered by the application at start-up on the `QueueManager` of `useQueue()` — a location per queue, or one `default`
-for all — with the options it read from its own configuration; the package reads nothing from the environment.
-
 ## Installation
 
 ```
@@ -31,17 +22,26 @@ import { env } from './env';
 
 const queue = useQueue();
 
-queue.registerLocation('default', { driver: 'local', options: {} });
+queue.registerLocation('default', {
+	driver: 'local',
+	options: {},
+});
 
 queue.registerLocation('mail', {
 	driver: 'bullmq',
-	options: { connection: env.QUEUE_MAIL_REDIS, prefix: env.QUEUE_MAIL_PREFIX },
+	options: {
+		connection: env.QUEUE_MAIL_REDIS,
+		prefix: env.QUEUE_MAIL_PREFIX,
+	},
 });
 
 queue.registerLocation('reports', {
 	driver: 'bullmq',
 	options: {
-		connection: { host: env.QUEUE_REPORTS_REDIS_HOST, port: env.QUEUE_REPORTS_REDIS_PORT },
+		connection: {
+			host: env.QUEUE_REPORTS_REDIS_HOST,
+			port: env.QUEUE_REPORTS_REDIS_PORT,
+		},
 		prefix: env.QUEUE_REPORTS_PREFIX,
 	},
 });
@@ -57,8 +57,22 @@ Anywhere later, nothing knows about servers:
 ```ts
 import { enqueue } from '@novastarter/queue';
 
-await enqueue('mail.send', { to: user.email, subject: 'Welcome', template: 'welcome', data: { name } }); // → 'mail'
-await enqueue('reports.build', { customer: 'c1' }, { delay: 60_000, jobId: 'nightly' }); // → 'default'
+await enqueue('mail.send', {
+	to: user.email,
+	subject: 'Welcome',
+	template: 'welcome',
+	data: {
+		name,
+	},
+}); // → 'mail'
+await enqueue(
+	'reports.build',
+	{ customer: 'c1' },
+	{
+		delay: 60_000,
+		jobId: 'nightly',
+	},
+); // → 'default'
 ```
 
 Declaring a job:
@@ -72,7 +86,10 @@ export const reportsBuild = registerJob(
 	defineJob({
 		name: 'reports.build',
 		schema: z.object({ customer: z.string() }),
-		options: { attempts: 5, unique: true },
+		options: {
+			attempts: 5,
+			unique: true,
+		},
 	}),
 );
 
@@ -118,7 +135,14 @@ registerJobHandlers({
 });
 
 // …anyone enqueues it
-await enqueue('mail.send', { to: user.email, subject: 'Welcome', template: 'welcome', data: { name } });
+await enqueue('mail.send', {
+	to: user.email,
+	subject: 'Welcome',
+	template: 'welcome',
+	data: {
+		name,
+	},
+});
 ```
 
 `enqueue(name, payload, options)` parses the payload, derives the id (`options.jobId`, else
@@ -143,7 +167,10 @@ themselves.
 import { createWorker, getQueueNames } from '@novastarter/queue';
 
 for (const queue of getQueueNames()) {
-	const worker = await createWorker(queue, forwardToWeb, { concurrency: 5, timeout: 300_000 });
+	const worker = await createWorker(queue, forwardToWeb, {
+		concurrency: 5,
+		timeout: 300_000,
+	});
 	process.once('SIGTERM', () => worker.close());
 }
 ```
@@ -178,7 +205,12 @@ registerSchedule({
 });
 
 // in the worker process
-const running = startSchedules({ env, kv: useKv().location('default'), enqueue, logger: useLogger() });
+const running = startSchedules({
+	env,
+	kv: useKv().location('default'),
+	enqueue,
+	logger: useLogger(),
+});
 process.once('SIGTERM', () => running.stop());
 ```
 

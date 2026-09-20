@@ -2,22 +2,6 @@
 
 The process configuration, read once and handed out.
 
-## Description
-
-`useEnv()` returns one object with every configuration variable: `process.env`, then the config file over it
-(`CONFIG_PATH`, `.env` in the working directory unless set — dotenv, JSON, YAML or a JS module, by extension). A
-variable the application names in `fileVariables` may be given as `<VARIABLE>_FILE`, a path its value is read from, the
-way container platforms mount secrets. Values keep the type their source gave them — a string from the environment,
-whatever a config file holds — unless they carry an explicit cast prefix (`number:1`, `array:a,b`, `json:{"a":1}`);
-nothing is guessed from the look of a value. The object is built on the first call and cached, so every consumer sees
-the same configuration.
-
-Turning those strings into the types the application needs, with defaults and validation, is the job of a schema in the
-application — zod, in the kit — so a wrong or missing variable fails at start-up with a clear message and every read
-afterwards is typed. The package holds no list of variables and no defaults of its own beyond `CONFIG_PATH`. Packages of
-the kit never read the environment themselves: the application reads the values it needs and passes them explicitly when
-it registers drivers and locations at start-up — see the readme of each package.
-
 ## Installation
 
 ```

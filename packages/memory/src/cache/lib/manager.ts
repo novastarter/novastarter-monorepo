@@ -33,7 +33,14 @@ export interface CacheDrivers {
  * ```ts
  * const manager = new CacheManager();
  *
- * manager.registerLocation('schema', { driver: 'redis', options: { redis: useRedis().location('default'), namespace: 'schema', ttl: 60_000 } });
+ * manager.registerLocation('schema', {
+ * 	driver: 'redis',
+ * 	options: {
+ * 		redis: useRedis().location('default'),
+ * 		namespace: 'schema',
+ * 		ttl: 60_000,
+ * 	},
+ * });
  * ```
  */
 export class CacheManager extends DriverManager<Cache, CacheDrivers> {

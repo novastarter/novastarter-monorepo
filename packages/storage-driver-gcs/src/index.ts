@@ -63,7 +63,10 @@ declare module '@novastarter/storage' {
  *
  * @example
  * ```ts
- * const driver = new DriverGCS({ bucket: 'uploads', root: 'avatars' });
+ * const driver = new DriverGCS({
+ * 	bucket: 'uploads',
+ * 	root: 'avatars',
+ * });
  *
  * await driver.write('avatar.png', fs.createReadStream('./avatar.png'));
  * ```

@@ -21,7 +21,10 @@ import type { BusRedisOptions } from '../types/config.js';
  *
  * @example
  * ```ts
- * const bus = new BusRedis({ redis: new Redis(), namespace: 'app' });
+ * const bus = new BusRedis({
+ * 	redis: new Redis(),
+ * 	namespace: 'app',
+ * });
  *
  * await bus.subscribe('greetings', (payload) => console.log(payload));
  * ```

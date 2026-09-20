@@ -23,10 +23,30 @@ test('Each accessor keeps one manager per process', () => {
 });
 
 test('The built-in drivers are registered, so a location needs its options alone', async () => {
-	useKv().registerLocation('default', { driver: 'local', options: {} });
-	useCache().registerLocation('default', { driver: 'local', options: { maxKeys: 10 } });
-	useBus().registerLocation('default', { driver: 'local', options: {} });
-	useLimiter().registerLocation('api', { driver: 'local', options: { points: 5, duration: 1 } });
+	useKv().registerLocation('default', {
+		driver: 'local',
+		options: {},
+	});
+
+	useCache().registerLocation('default', {
+		driver: 'local',
+		options: {
+			maxKeys: 10,
+		},
+	});
+
+	useBus().registerLocation('default', {
+		driver: 'local',
+		options: {},
+	});
+
+	useLimiter().registerLocation('api', {
+		driver: 'local',
+		options: {
+			points: 5,
+			duration: 1,
+		},
+	});
 
 	expect(useKv().location('default')).toBeInstanceOf(KvLocal);
 	expect(useCache().location('default')).toBeInstanceOf(CacheLocal);
@@ -38,9 +58,12 @@ test('The built-in drivers are registered, so a location needs its options alone
 });
 
 test('A location of an unknown driver is refused, an unknown location too', () => {
-	expect(() => useKv().registerLocation('x', { driver: 'memcached' as 'local', options: {} })).toThrow(
-		/isn't registered/,
-	);
+	expect(() =>
+		useKv().registerLocation('x', {
+			driver: 'memcached' as 'local',
+			options: {},
+		}),
+	).toThrow(/isn't registered/);
 
 	expect(() => useKv().location('nope')).toThrow(/doesn't exist/);
 });

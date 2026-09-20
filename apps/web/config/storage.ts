@@ -9,5 +9,10 @@ import type { AppEnv } from '../env';
  * @returns The locations to register; the local disk unless the app adds a bucket.
  */
 export const storageConfig = (env: AppEnv): Record<string, LocationConfig<StorageDrivers>> => ({
-	default: { driver: 'local', options: { root: env.STORAGE_LOCAL_ROOT } },
+	default: {
+		driver: 'local',
+		options: {
+			root: env.STORAGE_LOCAL_ROOT,
+		},
+	},
 });
