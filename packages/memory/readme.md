@@ -1,78 +1,89 @@
 # `@novastarter/memory`
 
-Memory / Redis abstraction: key-value store, cache, pub/sub bus and rate limiter
+Memory / Redis abstraction: key-value store, cache, pub/sub bus and rate limiter.
 
-Several subsystems need ephemeral storage that is synced between the processes of one deployment. To streamline that
-setup, this package exports four classes that are used for everything related to ephemeral storage:
+## Description
 
-- [Kv](#kv)
-- [Cache](#cache)
-- [Bus](#bus)
-- [Limiter](#limiter)
+Several subsystems need ephemeral storage that is synced between the processes of one deployment. This package exports
+four classes for everything related to it, each with a local (in-process) and a Redis backend behind one interface:
 
-## Kv
+- [Kv](#kv) — key-value store
+- [Cache](#cache) — Kv with an LRU and a multi-process mode
+- [Bus](#bus) — pub/sub
+- [Limiter](#limiter) — points-per-duration rate limiter
 
-The Kv class is a simple key-value store
+Each has a factory (`createKv()` and so on) for a standalone instance and a manager of named locations
+(`useKv().registerLocation()` / `.location()`) the application wires once at start-up, the same way as every other
+subsystem of the kit. The package reads nothing from the environment: the Redis client comes from `@novastarter/redis`,
+the options from the application. Ported from `@directus/memory`.
 
-### Basic Usage
+## Installation
+
+```
+pnpm add @novastarter/memory
+```
+
+## Usage
+
+At start-up, once — every manager knows its built-in drivers (`local`, `redis`; `multi` for the cache), so a location
+needs its options alone:
+
+```ts
+import { useBus, useCache, useKv, useLimiter } from '@novastarter/memory';
+import { useRedis } from '@novastarter/redis';
+
+const redis = useRedis().location('default');
+
+useKv().registerLocation('default', { driver: 'redis', options: { redis, namespace: 'kv' } });
+useCache().registerLocation('default', { driver: 'redis', options: { redis, namespace: 'cache', ttl: 60_000 } });
+useBus().registerLocation('default', { driver: 'redis', options: { redis, namespace: 'novastarter' } });
+useLimiter().registerLocation('api', {
+	driver: 'redis',
+	options: { redis, namespace: 'api', points: 50, duration: 1 },
+});
+```
+
+In development, without Redis — the same lines with `driver: 'local'` and the local options. A location named `default`
+answers for any name nobody registered.
+
+Anywhere later:
+
+```ts
+import { useCache, useLimiter } from '@novastarter/memory';
+
+await useCache().location('default').set('schema', schema);
+await useLimiter().location('api').consume(ip);
+```
+
+A standalone instance, outside the managers:
 
 ```ts
 import { createKv } from '@novastarter/memory';
 
-const kv = createKv({
-	type: 'local',
-});
+const kv = createKv({ type: 'local', maxKeys: 500 });
 
 await kv.set('my-key', 'my-value');
 ```
 
+## Kv
+
+A key-value store with `get`, `set`, `delete`, `has`, `increment` and `setMax` (store only a larger number; a Lua script
+on Redis) and locks. Local options: `maxKeys`, `ttl`. Redis options: `redis`, `namespace`, `ttl`, `compression` (gzip
+values above `compressionMinSize`, on by default), `lockTimeout`.
+
 ## Cache
 
-The cache class is a Kv class extended with an LRU store
-
-### Basic Usage
-
-```ts
-import { createCache } from '@novastarter/memory';
-
-const cache = createCache({
-	type: 'local',
-	maxKeys: 500,
-});
-
-await cache.set('my-key', 'my-value');
-```
+A Kv with an LRU behind it. Local options: `maxKeys`, `ttl`. Redis options: those of the Kv. `multi` keeps a local cache
+in front of a Redis one and clears the local copies of every process through the bus when a key changes:
+`{ local: { … }, redis: { … } }`.
 
 ## Bus
 
-The bus class is a pub-sub abstraction. The local type bus just handles local handlers, which adds no benefit next to
-having a shared API for using pubsub.
-
-### Basic Usage
-
-```ts
-import { Redis } from 'ioredis';
-import { createBus } from '@novastarter/memory';
-
-const bus = createBus({
-	type: 'redis',
-	redis: new Redis(),
-	namespace: 'app',
-});
-```
+A pub/sub abstraction: `publish(channel, payload)` and `subscribe(channel, handler)`. The local backend only serves
+handlers of the same process, which adds no benefit next to having one API for both. Redis options: `redis`,
+`namespace`, `compression`.
 
 ## Limiter
 
-The limiter class is a basic shared rate limiter.
-
-### Basic Usage
-
-```ts
-import { createLimiter } from '@novastarter/memory';
-
-const limiter = createLimiter({
-	type: 'local',
-	points: 10,
-	duration: 5,
-});
-```
+A shared rate limiter: `consume(key)` takes one point of the key's budget and throws `HitRateLimitError` of
+`@novastarter/errors` once the `points` of a `duration` (seconds) are spent. Redis options add `redis` and `namespace`.

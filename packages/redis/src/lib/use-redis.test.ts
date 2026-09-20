@@ -1,57 +1,25 @@
 /**
  * Tests of `redis/lib/use-redis`.
- *
- * `./create-redis.js` is mocked, so these exercise the per-location memoization alone.
  */
-import type { Redis } from 'ioredis';
-import { afterEach, expect, test, vi } from 'vitest';
-import { createRedis } from './create-redis.js';
+import { afterEach, expect, test } from 'vitest';
+import { RedisManager } from './redis-manager.js';
 import { _cache, useRedis } from './use-redis.js';
 
-vi.mock('./create-redis.js');
-
 afterEach(() => {
-	vi.resetAllMocks();
-
-	_cache.redis.clear();
+	_cache.redis = undefined;
 });
 
-test('Returns cached client if exists', () => {
-	const cached = {} as Redis;
-	_cache.redis.set('default', cached);
+test('Returns the cached manager if it exists', () => {
+	const cached = new RedisManager();
+	_cache.redis = cached;
 
 	expect(useRedis()).toBe(cached);
-	expect(createRedis).not.toHaveBeenCalled();
 });
 
-test('Creates new cached client if not exists', () => {
-	const mockRedis = {} as Redis;
-	vi.mocked(createRedis).mockReturnValue(mockRedis);
-
-	expect(useRedis()).toBe(mockRedis);
-	expect(createRedis).toHaveBeenCalledWith('default');
-	expect(_cache.redis.get('default')).toBe(mockRedis);
-});
-
-test('Builds the client only once across calls', () => {
-	vi.mocked(createRedis).mockReturnValue({} as Redis);
-
+test('Creates one empty manager and keeps it across calls', () => {
 	const first = useRedis();
-	const second = useRedis();
 
-	expect(first).toBe(second);
-	expect(createRedis).toHaveBeenCalledTimes(1);
-});
-
-test('Keeps one client per location name', () => {
-	const defaultRedis = {} as Redis;
-	const queueRedis = {} as Redis;
-	vi.mocked(createRedis).mockReturnValueOnce(defaultRedis).mockReturnValueOnce(queueRedis);
-
-	expect(useRedis()).toBe(defaultRedis);
-	expect(useRedis('queue')).toBe(queueRedis);
-	expect(useRedis('queue')).toBe(queueRedis);
-
-	expect(createRedis).toHaveBeenCalledTimes(2);
-	expect(createRedis).toHaveBeenLastCalledWith('queue');
+	expect(first).toBeInstanceOf(RedisManager);
+	expect(first.locationNames()).toEqual([]);
+	expect(useRedis()).toBe(first);
 });

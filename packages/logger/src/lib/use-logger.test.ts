@@ -8,7 +8,7 @@ import type { Logger } from 'pino';
 import { afterEach, expect, test, vi } from 'vitest';
 import { createLogger } from './create-logger.js';
 import { LogsStream } from './logs-stream.js';
-import { _cache, getHttpLogsStream, getLogsStream, useLogger } from './use-logger.js';
+import { _cache, getHttpLogsStream, getLogsStream, registerLogger, useLogger } from './use-logger.js';
 
 vi.mock('./create-logger.js');
 vi.mock('./logs-stream.js');
@@ -30,12 +30,24 @@ test('Returns cached logger if exists', () => {
 	expect(createLogger).not.toHaveBeenCalled();
 });
 
-test('Creates new cached logger if not exists', () => {
+test('Creates a default logger if none is registered', () => {
 	const mockLogger = {} as Logger<never>;
 	vi.mocked(createLogger).mockReturnValue(mockLogger);
 
 	expect(useLogger()).toBe(mockLogger);
+	expect(createLogger).toHaveBeenCalledWith();
 	expect(_cache.logger).toBe(mockLogger);
+});
+
+test('Answers with the registered logger, replacing the default one', () => {
+	vi.mocked(createLogger).mockReturnValue({} as Logger<never>);
+	const registered = {} as Logger<never>;
+
+	useLogger();
+	registerLogger(registered);
+
+	expect(useLogger()).toBe(registered);
+	expect(createLogger).toHaveBeenCalledTimes(1);
 });
 
 test('Creates a basic logs stream once', () => {

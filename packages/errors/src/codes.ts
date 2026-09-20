@@ -5,6 +5,8 @@
  * match against in `isNovastarterError(error, code)`.
  */
 export enum ErrorCode {
+	/** A payload failed a check; see `InvalidPayloadError`. */
+	InvalidPayload = 'INVALID_PAYLOAD',
 	/** A rate limit was hit; see `HitRateLimitError`. */
 	RequestsExceeded = 'REQUESTS_EXCEEDED',
 }

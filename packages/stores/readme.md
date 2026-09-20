@@ -1,11 +1,15 @@
 # `@novastarter/stores`
 
-Shared Nova app state for use in components and the app routes. Stores are
-[zustand](https://www.npmjs.com/package/zustand)-based stores.
+Shared app state for components and app routes, as [zustand](https://www.npmjs.com/package/zustand) stores.
+
+## Description
+
+Client-side state the web app's components share: each store lives in its own module and is re-exported from the package
+root. `react` is a peer dependency, provided by the app.
 
 ## Installation
 
-```shell
+```
 pnpm add @novastarter/stores
 ```
 
@@ -17,6 +21,4 @@ import { useAppStore } from '@novastarter/stores';
 const hydrated = useAppStore((state) => state.hydrated);
 ```
 
-## Additional Resources
-
-- [GitHub Repository](https://github.com/novastarter/novastarter-monorepo)
+A store is a zustand hook: select the slice a component needs and it re-renders when that slice changes.

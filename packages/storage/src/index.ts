@@ -1,12 +1,14 @@
 import type { Readable } from 'node:stream';
 import type { ChunkedUploadContext, Range, ReadOptions, Stat } from '@novastarter/types';
+import { DriverManager, type LocationConfig } from '@novastarter/utils';
 
 /**
  * Registry that maps named storage locations to driver instances.
  *
- * Drivers are registered as classes and locations as configuration; the manager instantiates one driver per
- * location, so a single driver (for example S3) can back several buckets with different credentials. Order matters:
- * a location can only be registered once its driver is.
+ * The {@link DriverManager} of the kit for object storage: drivers are registered as classes and locations as
+ * configuration; the manager instantiates one driver per location, so a single driver (for example S3) can back
+ * several buckets with different credentials. Order matters: a location can only be registered once its driver is.
+ * The application wires it at start-up through {@link useStorage}.
  *
  * @example
  * ```ts
@@ -18,76 +20,47 @@ import type { ChunkedUploadContext, Range, ReadOptions, Stat } from '@novastarte
  * await storage.location('uploads').write('avatar.png', stream, 'image/png');
  * ```
  */
-export class StorageManager {
-	/**
-	 * Driver classes keyed by the name they were registered under.
-	 *
-	 * @internal
-	 */
-	private drivers = new Map<string, typeof Driver>();
+export class StorageManager extends DriverManager<Driver, Record<string, unknown>> {}
 
-	/**
-	 * Instantiated drivers keyed by location name.
-	 *
-	 * @internal
-	 */
-	private locations = new Map<string, Driver>();
+/**
+ * The storage manager of the process, held at module level so it is built once.
+ *
+ * Wrapped in an object rather than exported as a bare binding, so tests can reset it in place instead of reloading
+ * the module.
+ *
+ * @internal
+ */
+export const _cache: { storage: StorageManager | undefined } = { storage: undefined };
 
-	/**
-	 * Make a driver class available under a name for locations to reference.
-	 *
-	 * Registering a name twice replaces the earlier class; locations created before the replacement keep their
-	 * existing instance.
-	 *
-	 * @param name - Identifier used in {@link DriverConfig.driver}.
-	 * @param driver - Driver class implementing the {@link Driver} contract.
-	 */
-	registerDriver(name: string, driver: typeof Driver): void {
-		// 1. A plain Map write is enough: a duplicate name replaces the earlier class, as the JSDoc promises
-		this.drivers.set(name, driver);
+/**
+ * Return the process-wide {@link StorageManager}, creating an empty one on first use.
+ *
+ * The application registers its drivers and locations on it at start-up; every later caller gets the same instance,
+ * so the locations are shared across the process.
+ *
+ * @returns The same manager on every call.
+ * @example
+ * ```ts
+ * // at start-up
+ * const storage = useStorage();
+ *
+ * storage.registerDriver('s3', DriverS3);
+ * storage.registerLocation('uploads', { driver: 's3', options: { bucket: env['STORAGE_UPLOADS_BUCKET'] } });
+ *
+ * // anywhere later
+ * await useStorage().location('uploads').write('avatar.png', stream, 'image/png');
+ * ```
+ */
+export const useStorage = (): StorageManager => {
+	// 1. One manager per process: a second one would instantiate every driver, and its connections, again
+	if (_cache.storage) {
+		return _cache.storage;
 	}
 
-	/**
-	 * Create a driver instance for a named location.
-	 *
-	 * @param name - Location identifier used later with {@link StorageManager.location}.
-	 * @param config - Which driver to use and the options passed to its constructor.
-	 * @throws Error when `config.driver` names a driver that has not been registered.
-	 */
-	registerLocation(name: string, config: DriverConfig): void {
-		const driverName = config.driver;
+	_cache.storage = new StorageManager();
 
-		// 1. Resolve the driver class up front, so a typo in the config fails at registration rather than on first use
-		const Driver = this.drivers.get(driverName);
-
-		if (!Driver) {
-			throw new Error(`Driver "${driverName}" isn't registered.`);
-		}
-
-		// 2. Instantiate eagerly: drivers set up their clients in the constructor, and doing that once per location
-		//    shares connections across every call made through that location
-		this.locations.set(name, new Driver(config.options));
-	}
-
-	/**
-	 * Return the driver instance behind a registered location.
-	 *
-	 * @param name - Location identifier passed to {@link StorageManager.registerLocation}.
-	 * @returns The driver bound to that location.
-	 * @throws Error when no location with that name exists.
-	 */
-	location(name: string): Driver {
-		const driver = this.locations.get(name);
-
-		// 1. Fail loudly instead of returning `undefined`: callers chain storage calls on the result, and a missing
-		//    location is a configuration bug that deserves a clear message
-		if (!driver) {
-			throw new Error(`Location "${name}" doesn't exist.`);
-		}
-
-		return driver;
-	}
-}
+	return _cache.storage;
+};
 
 /**
  * Contract every storage driver implements.
@@ -242,12 +215,7 @@ export function supportsTus(driver: Driver): driver is TusDriver {
 /**
  * Location entry as passed to {@link StorageManager.registerLocation}.
  */
-export type DriverConfig = {
-	/** Name the driver was registered under. */
-	driver: string;
-	/** Options forwarded verbatim to the driver constructor. */
-	options: Record<string, unknown>;
-};
+export type DriverConfig = LocationConfig<Record<string, unknown>>;
 
 /**
  * Storage types re-exported for consumers that depend on this package alone.

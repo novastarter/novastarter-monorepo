@@ -1,6 +1,61 @@
 # `@novastarter/utils`
 
-Utilities shared between the Nova packages
+Utilities shared between the Novastarter packages.
+
+## Description
+
+Small helpers every package would otherwise write for itself, in two entry points: the platform-neutral one for code
+that also runs in a browser, and `@novastarter/utils/node` for helpers that need a Node built-in. It also holds
+`DriverManager`, the one registration shape every subsystem of the kit (storage, queues, memory) exposes to the
+application. Mostly ported from `@directus/utils`.
+
+## Installation
+
+```
+pnpm add @novastarter/utils
+```
+
+## Usage
+
+```ts
+import { defaults, formatTitle, getSimpleHash, isIn, parseJSON, toArray, toBoolean } from '@novastarter/utils';
+import { isReadableStream, processId, requireYaml } from '@novastarter/utils/node';
+```
+
+| Helper                         | Entry  | What it does                                                                            |
+| ------------------------------ | ------ | --------------------------------------------------------------------------------------- |
+| `defaults(obj, def)`           | shared | Fill the missing optional keys of an options object from a defaults object.             |
+| `formatTitle(str, separator?)` | shared | Turn any string into Title Case; see below.                                             |
+| `getSimpleHash(str)`           | shared | Short, stable hex digest of a string for keys and ids — not cryptographic.              |
+| `isIn(value, tuple)`           | shared | Whether a string is a member of a readonly tuple, narrowing its type.                   |
+| `normalizePath(path)`          | shared | Forward-slash form of a path, repeated separators collapsed, trailing one dropped.      |
+| `parseJSON(text)`              | shared | `JSON.parse` that drops `__proto__` keys, so untrusted input cannot pollute prototypes. |
+| `toArray(value)`               | shared | Wrap a value in an array, splitting a string on commas.                                 |
+| `toBoolean(value)`             | shared | `true` for `'true'`, `true`, `'1'`, `1`; `false` for everything else.                   |
+| `DriverManager`                | shared | Registry of driver classes and named locations; see below.                              |
+| `isReadableStream(value)`      | node   | Structural check for a Node `Readable`, across copies of the `stream` module.           |
+| `processId()`                  | node   | Id unique to the current process on the current machine.                                |
+| `requireYaml(path)`            | node   | Read and parse a YAML file synchronously.                                               |
+
+## `DriverManager`
+
+The registration shape every subsystem of the kit shares: drivers are registered as classes, locations as explicit
+options, and consumers ask for a location by name. A location named `default` answers for any name nobody registered.
+`StorageManager`, `QueueManager`, `KvManager` and the others extend it; a new subsystem does the same rather than
+inventing its own.
+
+```ts
+import { DriverManager } from '@novastarter/utils';
+
+const manager = new DriverManager<Driver, DriverOptions>();
+
+manager.registerDriver('s3', DriverS3);
+manager.registerLocation('uploads', { driver: 's3', options: { bucket: 'uploads' } });
+
+manager.location('uploads'); // the DriverS3 instance
+manager.hasLocation('uploads'); // true
+manager.locationNames(); // ['uploads']
+```
 
 ## `formatTitle`
 
@@ -24,8 +79,6 @@ By default it converts camelCase, PascalCase, underscore, and "regular" sentence
 
 ```ts
 import { formatTitle } from '@novastarter/utils';
-
-formatTitle(string, [separator]);
 
 formatTitle('snowWhiteAndTheSevenDwarfs');
 // => Snow White and the Seven Dwarfs

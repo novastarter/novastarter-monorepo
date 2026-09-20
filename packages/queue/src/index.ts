@@ -1,0 +1,30 @@
+/**
+ * Public entry point of `@novastarter/queue`.
+ *
+ * Background jobs in three parts: contracts (`defineJob`, `registerJob` and the kit's own under `contracts/`), a client
+ * that checks a payload and hands the job to the provider of its queue (`enqueue`; the `QueueManager` of
+ * `useQueue()` maps queues to `local` or `bullmq` locations the application registers at start-up), and the worker
+ * side (`createWorker`, `runJob`, `registerJobHandlers`, `startSchedules` with `registerSchedule`). The internal-jobs
+ * constants are what the worker and the web app share to deliver a job over HTTP.
+ */
+export * from './contracts/index.js';
+export * from './lib/create-worker.js';
+export * from './lib/define-job.js';
+export * from './lib/duration-to-cron.js';
+export * from './lib/enqueue.js';
+export * from './lib/get-job-id.js';
+export * from './lib/handle-system-ping.js';
+export * from './lib/handlers.js';
+export * from './lib/internal-jobs.js';
+export * from './lib/queue-manager.js';
+export * from './lib/providers/bullmq.js';
+export * from './lib/providers/local.js';
+export * from './lib/run-job.js';
+export * from './lib/schedule-synchronized-job.js';
+export * from './lib/start-schedules.js';
+export * from './lib/synchronized-clock.js';
+export * from './lib/use-queue.js';
+export * from './lib/validate-cron.js';
+export * from './schedules.js';
+export * from './types.js';
+export * from './utils/zod-error-to-error-extensions.js';

@@ -73,9 +73,12 @@ export const NOVA_VARIABLES = [
 	'REDIS_LOCK_NAMESPACE',
 	'REDIS_COUNTERS_NAMESPACE',
 	'REDIS_PERMISSIONS_NAMESPACE',
-	// additional Redis locations: `REDIS_LOCATIONS=queue` adds `REDIS_QUEUE` (URL) and `REDIS_QUEUE_*`, like storage
-	'REDIS_LOCATIONS',
+	// further Redis servers get a family of their own, `REDIS_<NAME>` (URL) and `REDIS_<NAME>_*`, like storage
 	'REDIS_.+',
+
+	// queue: one family per queue location, `QUEUE_<NAME>_REDIS` and `QUEUE_<NAME>_PREFIX`, for the application to wire
+	// `@novastarter/queue` with
+	'QUEUE_.+',
 
 	'LOGIN_STALL_TIME',
 	'REGISTER_STALL_TIME',

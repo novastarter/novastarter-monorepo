@@ -19,7 +19,27 @@ export const _cache: {
 } = { logger: undefined, logsStream: undefined, httpLogsStream: undefined };
 
 /**
- * Return the process-wide logger, building it on first use.
+ * Make a logger the process-wide one.
+ *
+ * What the application calls at start-up with the logger it built from its configuration; until then
+ * {@link useLogger} answers with a default one. Registering twice replaces the logger for every later caller.
+ *
+ * @param logger - The logger every `useLogger()` call answers with from now on.
+ * @example
+ * ```ts
+ * registerLogger(createLogger({ level: env['LOG_LEVEL'] as string, style: resolveLogStyle(env) }));
+ * ```
+ */
+export const registerLogger = (logger: Logger<never>): void => {
+	// 1. Replace rather than merge: the application's logger carries its own streams and level
+	_cache.logger = logger;
+};
+
+/**
+ * Return the process-wide logger.
+ *
+ * The one given to {@link registerLogger}; before any registration, a default logger — `info`, raw JSON lines — is
+ * built on the first call and kept, so a package can log during start-up without waiting for the application.
  *
  * @returns The same pino logger on every call, so callers may hold on to it.
  *
@@ -30,12 +50,12 @@ export const _cache: {
  * ```
  */
 export const useLogger = (): Logger<never> => {
-	// 1. Reuse the built logger — configuring pino on every call would open a new stream each time
+	// 1. Reuse the registered or built logger — configuring pino on every call would open a new stream each time
 	if (_cache.logger) {
 		return _cache.logger;
 	}
 
-	// 2. First call in this process builds it from the environment and memoizes the result
+	// 2. Nothing registered yet: a default logger, safe for a collector, until the application registers its own
 	_cache.logger = createLogger();
 
 	return _cache.logger;

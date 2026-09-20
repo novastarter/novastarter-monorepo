@@ -1,5 +1,5 @@
-import { describe, expect, test, vi } from 'vitest';
-import { StorageManager } from './index.js';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import { _cache, StorageManager, useStorage } from './index.js';
 
 describe('#registerDriver', () => {
 	test('Saves registered drivers locally', () => {
@@ -95,5 +95,28 @@ describe('#location', () => {
 		const driverInstance = manager.location('test-location');
 
 		expect(driverInstance).toBeInstanceOf(mockDriver);
+	});
+});
+
+describe('useStorage', () => {
+	afterEach(() => {
+		_cache.storage = undefined;
+	});
+
+	test('Returns the same empty manager on every call', () => {
+		const first = useStorage();
+
+		expect(first).toBeInstanceOf(StorageManager);
+		expect(useStorage()).toBe(first);
+	});
+
+	test('Answers a name with the default location when it has none of its own', () => {
+		const mockDriver = vi.fn();
+		const storage = useStorage();
+
+		storage.registerDriver('test-driver', mockDriver);
+		storage.registerLocation('default', { driver: 'test-driver', options: {} });
+
+		expect(storage.location('anything')).toBe(storage.location('default'));
 	});
 });
