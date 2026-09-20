@@ -1,7 +1,4 @@
 import type { JobContract, JobName } from '../types.js';
-import { systemPing } from './system.js';
-
-export * from './system.js';
 
 /**
  * Registered contracts by name.
@@ -60,6 +57,3 @@ export const getJobNames = (): JobName[] => [..._contracts.keys()] as JobName[];
  * @returns Distinct queue names, in first-seen order.
  */
 export const getQueueNames = (): string[] => [...new Set([..._contracts.values()].map((contract) => contract.queue))];
-
-// The kit's one contract is registered at load, so the registry is never empty; the application's jobs are its own
-registerJob(systemPing);

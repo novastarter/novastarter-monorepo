@@ -1,9 +1,9 @@
 /**
- * Tests of `payments/plans` and `lib/plan-catalog`: what `definePlans()` accepts, what it refuses, and the lookups.
+ * Tests of `billing/plans` and `billing/plan-catalog`: what `definePlans()` accepts, what it refuses, and the lookups.
  */
 import { describe, expect, test } from 'vitest';
-import { PlanCatalog } from './lib/plan-catalog.js';
-import { definePlans, type PlanDefinition } from './plans.js';
+import { PlanCatalog } from './plan-catalog';
+import { definePlans, type PlanDefinition } from './plans';
 
 const usd = (amount: number) => ({ amount, currency: 'usd' });
 

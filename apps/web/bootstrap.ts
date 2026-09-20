@@ -13,6 +13,7 @@ import { redisConfig } from './config/redis';
 import { storageConfig } from './config/storage';
 import { type AppEnv, readEnv } from './env';
 import { createMailSendHandler } from './jobs/mail-send';
+import { createSystemPingHandler } from './jobs/system-ping';
 
 /**
  * Whether {@link bootstrap} ran already in this process.
@@ -76,7 +77,10 @@ export const bootstrap = (): AppEnv => {
 	useMail().registerRoutes(mail.routes);
 
 	// 8. Jobs: the handlers of the contracts under `jobs/`, so a worker or the local queue can run them
-	registerJobHandlers({ 'mail.send': createMailSendHandler() });
+	registerJobHandlers({
+		'mail.send': createMailSendHandler(),
+		'system.ping': createSystemPingHandler(),
+	});
 
 	_state.booted = true;
 	useLogger().debug({ redis: Boolean(redis) }, 'Application bootstrapped');

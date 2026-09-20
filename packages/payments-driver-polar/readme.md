@@ -35,16 +35,16 @@ payments.registerLocation('default', {
 Anywhere later: `usePayments().location('default').createCheckoutSession(input)` and the rest of the `PaymentsDriver`
 contract.
 
-The driver runs on `@polar-sh/sdk`. Polar is a merchant of record and sells products: the plan catalog's
-`providerIds.polar` are product ids, reported as both `priceId` and `productId` of a subscription. Where Stripe has
-invoices, Polar has orders. Customers are `customers.create`; a checkout is `checkouts.create` for the product (seats, a
-trial as `trialInterval: 'day'` + `trialIntervalCount`, `cancelUrl` as Polar's `returnUrl`, the metadata copied onto the
-subscription by Polar); the portal is `customerSessions.create`, the portal URL of the session. A product change and a
-seat change are two `subscriptions.update` calls (`prorate`, `none` → `next_period`, `invoice`); cancellation is at
-period end (`cancelAtPeriodEnd`) or right away (`revoke`), the reason as the customer's cancellation comment. Invoices
-are `orders.list`, most recent first: a paid order is a paid invoice, taken as paid when created; the hosted and PDF
-links are `null` (Polar renders invoices on request in its customer portal). The sandbox (`server: 'sandbox'`) has its
-own tokens and products.
+The driver runs on `@polar-sh/sdk`. Polar is a merchant of record and sells products: the `priceId` the application's
+plans record for this driver is a product id, reported as both `priceId` and `productId` of a subscription. Where Stripe
+has invoices, Polar has orders. Customers are `customers.create`; a checkout is `checkouts.create` for the product
+(seats, a trial as `trialInterval: 'day'` + `trialIntervalCount`, `cancelUrl` as Polar's `returnUrl`, the metadata
+copied onto the subscription by Polar); the portal is `customerSessions.create`, the portal URL of the session. A
+product change and a seat change are two `subscriptions.update` calls (`prorate`, `none` → `next_period`, `invoice`);
+cancellation is at period end (`cancelAtPeriodEnd`) or right away (`revoke`), the reason as the customer's cancellation
+comment. Invoices are `orders.list`, most recent first: a paid order is a paid invoice, taken as paid when created; the
+hosted and PDF links are `null` (Polar renders invoices on request in its customer portal). The sandbox
+(`server: 'sandbox'`) has its own tokens and products.
 
 Webhooks are verified by the SDK's `validateEvent` (Standard Webhooks: `webhook-id`, `webhook-timestamp`,
 `webhook-signature`) with the endpoint's secret; the `webhook-id` is the event id. `checkout.updated` with status

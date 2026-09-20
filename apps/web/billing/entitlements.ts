@@ -1,7 +1,7 @@
-import { LimitExceededError, ResourceRestrictedError } from '@novastarter/errors';
 import type { Bus, Cache } from '@novastarter/memory';
-import type { EntitlementValue } from '../plans.js';
-import type { PlanCatalog } from './plan-catalog.js';
+import { LimitExceededError, ResourceRestrictedError } from './errors';
+import type { PlanCatalog } from './plan-catalog';
+import type { EntitlementValue } from './plans';
 
 /**
  * How many of something an organization has — members for `seats`, rows for `projects`. Registered per limit key
@@ -91,11 +91,6 @@ export interface InvalidateMessage {
 	organizationId: string;
 	keys?: string[] | undefined;
 }
-
-/**
- * Whether an organization may do what its plan says — the gate every limited feature goes through.
- *
- * The plan comes from the catalog through {@link PlanResolver}; the usage from a {@link UsageCounter} the owning
 
 /**
  * Whether an organization may do what its plan says — the gate every limited feature goes through.
@@ -193,7 +188,7 @@ export class EntitlementManager {
 	 * @param options - Catalog, plan resolver, cache and bus.
 	 */
 	constructor(options: EntitlementManagerOptions) {
-		// 1. Everything is optional but the catalog and the resolver; the channel falls back to the kit's name
+		// 1. Everything is optional but the catalog and the resolver; the channel falls back to the default
 		this.plans = options.plans;
 		this.resolvePlan = options.resolvePlan;
 		this.cache = options.cache;

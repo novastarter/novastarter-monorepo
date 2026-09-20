@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { INTERNAL_JOBS_PATH, internalJobUrl } from './internal-jobs.js';
+import { INTERNAL_JOBS_PATH, internalJobUrl } from './internal-jobs';
 
 describe('internalJobUrl', () => {
 	test('joins the base URL and the encoded job name on the internal path', () => {

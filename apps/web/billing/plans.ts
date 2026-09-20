@@ -1,6 +1,6 @@
+import type { Money } from '@novastarter/payments';
 import { z } from 'zod';
-import { PlanCatalog } from './lib/plan-catalog.js';
-import type { Money } from './types.js';
+import { PlanCatalog } from './plan-catalog';
 
 /**
  * The periods a plan can be bought for.
@@ -235,6 +235,6 @@ export const definePlans = (definitions: readonly PlanDefinition[]): PlanCatalog
 		throw new Error(`Invalid plan definitions:\n${problems.map((problem) => `- ${problem}`).join('\n')}`);
 	}
 
-	// 5. The catalog is what the rest of the package reads; the plain array stays reachable as `catalog.plans`
+	// 5. The catalog is what the rest of the app reads; the plain array stays reachable as `catalog.plans`
 	return new PlanCatalog(plans);
 };

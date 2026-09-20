@@ -34,26 +34,13 @@ try {
 The classes of the kit:
 
 ```ts
-import {
-	ErrorCode,
-	HitRateLimitError,
-	InvalidCredentialsError,
-	InvalidPayloadError,
-	LimitExceededError,
-	ResourceRestrictedError,
-} from '@novastarter/errors';
+import { ErrorCode, HitRateLimitError, InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
 
 throw new InvalidPayloadError({ reason: 'Field "email" is required' });
 // message: 'Invalid payload. Field "email" is required.', code: 'INVALID_PAYLOAD', status: 400
 
 throw new InvalidCredentialsError();
 // message: 'Invalid credentials.', code: 'INVALID_CREDENTIALS', status: 401
-
-throw new LimitExceededError({ category: 'seats' });
-// message: 'Limit exceeded for "seats".', code: 'LIMIT_EXCEEDED', status: 403
-
-throw new ResourceRestrictedError({ category: 'sso' });
-// message: 'Resource "sso" is restricted.', code: 'RESOURCE_RESTRICTED', status: 403
 
 throw new HitRateLimitError({
 	limit: 10,

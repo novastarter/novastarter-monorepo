@@ -36,11 +36,11 @@ contract.
 
 The driver runs on `stripe-node`. Customers are `customers.create`; a checkout is hosted Checkout in `subscription` mode
 — the metadata goes on the session and on `subscription_data`, so both webhooks carry the plan and organization ids, a
-trial as `trial_period_days`; the portal is `billingPortal.sessions.create`. The plan catalog's `providerIds.stripe` are
-price ids (`price_…`). Price and seat changes go on the subscription's item (`prorate` → `create_prorations`, `none`,
-`invoice` → `always_invoice`); cancellation is `cancel_at_period_end` or, right away, `cancel`, the reason as
-`cancellation_details.comment`. The billing period is read from the item and the invoice's subscription from
-`parent.subscription_details`, where API version 2025-03-31 put them.
+trial as `trial_period_days`; the portal is `billingPortal.sessions.create`. The `priceId` the application's plans
+record for this driver is a price id (`price_…`). Price and seat changes go on the subscription's item (`prorate` →
+`create_prorations`, `none`, `invoice` → `always_invoice`); cancellation is `cancel_at_period_end` or, right away,
+`cancel`, the reason as `cancellation_details.comment`. The billing period is read from the item and the invoice's
+subscription from `parent.subscription_details`, where API version 2025-03-31 put them.
 
 Webhooks are verified by `webhooks.constructEventAsync` with the endpoint's signing secret. `checkout.session.completed`
 and `checkout.session.async_payment_succeeded` (subscription mode) → `checkout.completed`;
@@ -56,3 +56,4 @@ and `checkout.session.async_payment_succeeded` (subscription mode) → `checkout
 | `secretKey`        | yes      | Secret key from the Stripe dashboard (`sk_live_…`, `sk_test_…`).                           |
 | `webhookSecret`    | yes      | Signing secret of the webhook endpoint (`whsec_…`), from the dashboard or `stripe listen`. |
 | `webhookTolerance` | no       | Seconds a webhook's timestamp may be off before it is refused. Default: Stripe's 300.      |
+| `appInfo`          | no       | `{ name, version?, url?, partner_id? }` shown in Stripe's request logs. Default: none.     |

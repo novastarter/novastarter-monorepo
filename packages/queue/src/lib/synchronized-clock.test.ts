@@ -30,7 +30,7 @@ describe('SynchronizedClock', () => {
 		expect(await first.set(2_000)).toBe(false);
 
 		// Different ids are different clocks
-		expect(await new SynchronizedClock('system.ping', kv).set(1_000)).toBe(true);
+		expect(await new SynchronizedClock('test.ping', kv).set(1_000)).toBe(true);
 
 		await first.reset();
 		expect(await second.set(1_000)).toBe(true);

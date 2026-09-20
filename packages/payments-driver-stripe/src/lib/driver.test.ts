@@ -60,6 +60,15 @@ describe('DriverStripe', () => {
 		expect(() => new DriverStripe({ secretKey: 'sk', webhookSecret: '' })).toThrow('"webhookSecret"');
 	});
 
+	test("Passes the application's appInfo to the client and nothing without one", () => {
+		// 1. The client records what it was built with; the driver neither invents a name nor drops the given one
+		const named = new DriverStripe({ secretKey: 'sk', webhookSecret: 'whsec', appInfo: { name: 'Acme' } });
+		const anonymous = new DriverStripe({ secretKey: 'sk', webhookSecret: 'whsec' });
+
+		expect(named['client']._appInfo).toMatchObject({ name: 'Acme' });
+		expect(anonymous['client']._appInfo).toBeUndefined();
+	});
+
 	test('Creates a customer with the organization in its metadata', async () => {
 		const { client, driver } = setup();
 
