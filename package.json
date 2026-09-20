@@ -3,14 +3,14 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"build": "turbo --recursive run build",
+		"build": "turbo run build",
 		"dev": "turbo run dev",
 		"lint": "eslint --cache .",
 		"format": "prettier --cache --check .",
 		"check-types": "turbo run check-types",
 		"changeset": "changeset",
 		"version-packages": "pnpm --filter @novastarter/release-notes-generator build && changeset version",
-		"test": "pnpm --recursive test",
+		"test": "turbo run test",
 		"test:coverage": "pnpm --recursive test:coverage"
 	},
 	"devDependencies": {

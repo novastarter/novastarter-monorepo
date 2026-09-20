@@ -1,9 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { getConfigPath } from '../utils/get-config-path.js';
-import { getDefaultType } from '../utils/get-default-type.js';
 import { isFileKey } from '../utils/is-file-key.js';
-import { isNovaVariable } from '../utils/is-nova-variable.js';
 import { readConfigurationFromProcess } from '../utils/read-configuration-from-process.js';
 import { removeFileSuffix } from '../utils/remove-file-suffix.js';
 import { cast } from './cast.js';
@@ -11,13 +9,11 @@ import { createEnv } from './create-env.js';
 import { readConfigurationFromFile } from './read-configuration-from-file.js';
 
 vi.mock('../utils/get-config-path.js');
-vi.mock('../utils/is-nova-variable.js');
 vi.mock('../utils/is-file-key.js');
 vi.mock('../utils/read-configuration-from-process.js');
 vi.mock('../utils/remove-file-suffix.js');
 vi.mock('./cast.js');
 vi.mock('./read-configuration-from-file.js');
-vi.mock('../utils/get-default-type.js');
 vi.mock('node:fs');
 
 vi.mock('../constants/defaults.js', () => ({
@@ -44,46 +40,20 @@ afterEach(() => {
 	vi.resetAllMocks();
 });
 
-describe('Casting of default configuration', () => {
-	test('Default config with default type gets casted', () => {
-		vi.mocked(getDefaultType).mockImplementation((key) => {
-			if (key === 'DEFAULT_ARRAY') return 'array';
-			return null;
-		});
+test('Takes the defaults as they are, casting the sources only', () => {
+	const env = createEnv();
 
-		vi.mocked(cast).mockImplementation((value, key) => {
-			if (key === 'DEFAULT_ARRAY') return String(value).split(',');
-			return value;
-		});
-
-		const env = createEnv();
-
-		expect(env).toEqual({
-			PROCESS: 'test-process',
-			FILE: 'test-file',
-			DEFAULT: 'test-default',
-			DEFAULT_ARRAY: ['one', 'two', 'three'],
-		});
-
-		expect(getDefaultType).toHaveBeenCalledTimes(2);
-		expect(cast).toHaveBeenCalledTimes(3);
+	expect(env).toEqual({
+		PROCESS: 'test-process',
+		FILE: 'test-file',
+		DEFAULT: 'test-default',
+		DEFAULT_ARRAY: 'one,two,three',
 	});
 
-	test('Default config without default type gets not casted', () => {
-		vi.mocked(getDefaultType).mockReturnValue(null);
-
-		const env = createEnv();
-
-		expect(env).toEqual({
-			PROCESS: 'test-process',
-			FILE: 'test-file',
-			DEFAULT: 'test-default',
-			DEFAULT_ARRAY: 'one,two,three',
-		});
-
-		expect(getDefaultType).toHaveBeenCalledTimes(2);
-		expect(cast).toHaveBeenCalledTimes(2);
-	});
+	// 1. The two source values go through `cast`; the two defaults do not
+	expect(cast).toHaveBeenCalledTimes(2);
+	expect(cast).toHaveBeenCalledWith('test-process');
+	expect(cast).toHaveBeenCalledWith('test-file');
 });
 
 test('Combines process/file based config with defaults', () => {
@@ -111,10 +81,6 @@ describe('File based configuration', () => {
 			return key === 'PROCESS_FILE';
 		});
 
-		vi.mocked(isNovaVariable).mockImplementation((key) => {
-			return key === 'PROCESS_FILE';
-		});
-
 		vi.mocked(removeFileSuffix).mockReturnValue('PROCESS');
 		vi.mocked(readFileSync).mockReturnValue('file-content');
 	});
@@ -126,7 +92,7 @@ describe('File based configuration', () => {
 			PROCESS_FILE: './test/path',
 		});
 
-		const env = createEnv();
+		const env = createEnv({ fileVariables: ['PROCESS'] });
 
 		expect(removeFileSuffix).toHaveBeenCalledWith('PROCESS_FILE');
 		expect(readFileSync).toHaveBeenCalledWith('./test/path', { encoding: 'utf8' });
@@ -145,24 +111,23 @@ describe('File based configuration', () => {
 			PROCESS_FILE: 'array:./test/path',
 		});
 
-		createEnv();
+		createEnv({ fileVariables: ['PROCESS'] });
 
 		expect(removeFileSuffix).toHaveBeenCalledWith('PROCESS_FILE');
 		expect(readFileSync).toHaveBeenCalledWith('./test/path', { encoding: 'utf8' });
-		expect(cast).toHaveBeenCalledWith('array:file-content', 'PROCESS');
+		expect(cast).toHaveBeenCalledWith('array:file-content');
 	});
 });
 
-test('Passthrough file variables that are not Nova configuration flags', () => {
+test('Passthrough file variables that are not among the file variables', () => {
 	vi.mocked(readConfigurationFromFile).mockReturnValue({
 		TEST_FILE: './test/path',
 	});
 
-	vi.mocked(isNovaVariable).mockImplementation(() => {
-		return false;
-	});
+	vi.mocked(isFileKey).mockReturnValue(true);
+	vi.mocked(removeFileSuffix).mockReturnValue('TEST');
 
-	const env = createEnv();
+	const env = createEnv({ fileVariables: ['OTHER'] });
 
 	expect(readFileSync).not.toHaveBeenCalled();
 
@@ -183,17 +148,13 @@ test('Throws error if file could not be read', () => {
 		return key === 'TEST_FILE';
 	});
 
-	vi.mocked(isNovaVariable).mockImplementation((key) => {
-		return key === 'TEST_FILE';
-	});
-
 	vi.mocked(removeFileSuffix).mockReturnValue('TEST');
 
 	vi.mocked(readFileSync).mockImplementation(() => {
 		throw new Error('nah');
 	});
 
-	expect(() => createEnv()).toThrowErrorMatchingInlineSnapshot(
+	expect(() => createEnv({ fileVariables: ['TEST'] })).toThrowErrorMatchingInlineSnapshot(
 		`[Error: Failed to read value from file "./test/path", defined in environment variable "TEST_FILE".]`,
 	);
 });

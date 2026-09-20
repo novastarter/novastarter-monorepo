@@ -1,8 +1,6 @@
 /**
- * Cache implementations and their factories.
+ * Cache drivers and their manager.
  */
-export * from './create.js';
-export * from './define.js';
 export * from './local.js';
 export * from './manager.js';
 export * from './multi.js';

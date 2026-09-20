@@ -40,21 +40,23 @@ import { isReadableStream, processId, requireYaml } from '@novastarter/utils/nod
 ## `DriverManager`
 
 The registration shape every subsystem of the kit shares: drivers are registered as classes, locations as explicit
-options, and consumers ask for a location by name. A location named `default` answers for any name nobody registered.
-`StorageManager`, `QueueManager`, `KvManager` and the others extend it; a new subsystem does the same rather than
-inventing its own.
+options, and consumers ask for a location by name; the driver is built on the location's first use. The second type
+parameter maps driver names to their options, so `driver` decides the type of `options` — each package declares its map
+as an augmentable interface (`StorageDrivers`, `QueueDrivers`, `KvDrivers`, …). `StorageManager`, `QueueManager`,
+`KvManager` and the others extend it; a new subsystem does the same rather than inventing its own.
 
 ```ts
 import { DriverManager } from '@novastarter/utils';
 
-const manager = new DriverManager<Driver, DriverOptions>();
+const manager = new DriverManager<Driver, { s3: DriverS3Config; local: DriverLocalConfig }>();
 
 manager.registerDriver('s3', DriverS3);
 manager.registerLocation('uploads', { driver: 's3', options: { bucket: 'uploads' } });
 
-manager.location('uploads'); // the DriverS3 instance
+manager.location('uploads'); // the DriverS3 instance, built now and reused afterwards
 manager.hasLocation('uploads'); // true
 manager.locationNames(); // ['uploads']
+manager.instantiated(); // Map { 'uploads' => DriverS3 }
 ```
 
 ## `formatTitle`

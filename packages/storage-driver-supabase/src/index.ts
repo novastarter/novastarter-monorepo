@@ -40,6 +40,16 @@ export type DriverSupabaseConfig = {
 };
 
 /**
+ * Registers the driver's options in the map of `@novastarter/storage`, so a location naming `supabase` has its
+ * options checked against {@link DriverSupabaseConfig}.
+ */
+declare module '@novastarter/storage' {
+	interface StorageDrivers {
+		supabase: DriverSupabaseConfig;
+	}
+}
+
+/**
  * Storage driver backed by Supabase Storage.
  *
  * Plain operations go through `@supabase/storage-js`, except `read`, which fetches the authenticated object URL

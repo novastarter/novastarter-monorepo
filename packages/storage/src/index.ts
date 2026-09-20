@@ -6,9 +6,10 @@ import { DriverManager, type LocationConfig } from '@novastarter/utils';
  * Registry that maps named storage locations to driver instances.
  *
  * The {@link DriverManager} of the kit for object storage: drivers are registered as classes and locations as
- * configuration; the manager instantiates one driver per location, so a single driver (for example S3) can back
- * several buckets with different credentials. Order matters: a location can only be registered once its driver is.
- * The application wires it at start-up through {@link useStorage}.
+ * configuration; the manager instantiates one driver per location on its first use, so a single driver (for example
+ * S3) can back several buckets with different credentials and an unused location never opens a client. Order
+ * matters: a location can only be registered once its driver is. The application wires it at start-up through
+ * {@link useStorage}.
  *
  * @example
  * ```ts
@@ -20,7 +21,18 @@ import { DriverManager, type LocationConfig } from '@novastarter/utils';
  * await storage.location('uploads').write('avatar.png', stream, 'image/png');
  * ```
  */
-export class StorageManager extends DriverManager<Driver, Record<string, unknown>> {}
+export class StorageManager extends DriverManager<Driver, StorageDrivers> {}
+
+/**
+ * Storage drivers by the name they are registered under, mapped to the options their constructor takes.
+ *
+ * Empty here: each driver package adds itself with a module augmentation, so a location's `options` are checked
+ * against the driver it names once the package is imported —
+ * `declare module '@novastarter/storage' { interface StorageDrivers { s3: DriverS3Config } }`. An application does
+ * the same for a driver of its own.
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- augmented by the driver packages
+export interface StorageDrivers {}
 
 /**
  * The storage manager of the process, held at module level so it is built once.
@@ -213,9 +225,10 @@ export function supportsTus(driver: Driver): driver is TusDriver {
 }
 
 /**
- * Location entry as passed to {@link StorageManager.registerLocation}.
+ * Location entry as passed to {@link StorageManager.registerLocation}: a driver of {@link StorageDrivers} and its
+ * options.
  */
-export type DriverConfig = LocationConfig<Record<string, unknown>>;
+export type DriverConfig = LocationConfig<StorageDrivers>;
 
 /**
  * Storage types re-exported for consumers that depend on this package alone.

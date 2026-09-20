@@ -1,12 +1,5 @@
 import type { z } from 'zod';
-import type { billingSync } from './contracts/billing.js';
-import type { contactSubmitted } from './contracts/contact.js';
-import type { mailSend } from './contracts/mail.js';
-import type { notificationsDeliver, notificationsDigest } from './contracts/notifications.js';
-import type { retentionRun } from './contracts/retention.js';
-import type { searchIndex, searchReindex } from './contracts/search.js';
 import type { systemPing } from './contracts/system.js';
-import type { tusCleanup } from './contracts/tus.js';
 
 /**
  * How a job is retried, prioritised and cleaned up; the subset of BullMQ's `JobsOptions` every provider honours.
@@ -97,30 +90,21 @@ export type JobHandler<Contract extends JobContract = JobContract> = (
  * Contracts of the kit and of the app, keyed by name.
  *
  * The kit lists its own here; a module of the app adds its contracts by augmenting the interface, which is what makes
- * `jobs.enqueue('billing.sync', payload)` check the payload of the app's own jobs:
+ * `enqueue('reports.build', payload)` check the payload of the app's own jobs:
  *
  * ```ts
  * declare module '@novastarter/queue' {
  * 	interface JobRegistry {
- * 		'billing.sync': typeof billingSync;
+ * 		'reports.build': typeof reportsBuild;
  * 	}
  * }
  * ```
  *
- * The runtime registry is `registerJob()`; the two have to agree. The kit's own contracts are listed here rather
- * than through augmentation, which would not survive the bundled declarations.
+ * The runtime registry is `registerJob()`; the two have to agree. The kit's own contract is listed here rather than
+ * through augmentation, which would not survive the bundled declarations.
  */
 export interface JobRegistry {
-	'mail.send': typeof mailSend;
-	'retention.run': typeof retentionRun;
 	'system.ping': typeof systemPing;
-	'billing.sync': typeof billingSync;
-	'notifications.deliver': typeof notificationsDeliver;
-	'notifications.digest': typeof notificationsDigest;
-	'tus.cleanup': typeof tusCleanup;
-	'contact.submitted': typeof contactSubmitted;
-	'search.index': typeof searchIndex;
-	'search.reindex': typeof searchReindex;
 }
 
 /**

@@ -1,6 +1,6 @@
 import { RateLimiterMemory } from 'rate-limiter-flexible';
 import type { Limiter } from '../types/class.js';
-import type { LimiterConfigLocal } from '../types/config.js';
+import type { LimiterLocalOptions } from '../types/config.js';
 import { consume } from '../utils/consume.js';
 
 /**
@@ -33,9 +33,9 @@ export class LimiterLocal implements Limiter {
 	/**
 	 * Create the limiter with its points and window.
 	 *
-	 * @param config - Local configuration without the `type` discriminant.
+	 * @param config - Local configuration.
 	 */
-	constructor(config: Omit<LimiterConfigLocal, 'type'>) {
+	constructor(config: LimiterLocalOptions) {
 		// 1. Hand the budget to the library and remember the points for error reporting
 		this.limiter = new RateLimiterMemory({
 			duration: config.duration,

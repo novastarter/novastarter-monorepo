@@ -1,7 +1,6 @@
-import type { Kv } from '../../kv/index.js';
-import { createKv } from '../../kv/index.js';
+import { type Kv, KvRedis } from '../../kv/index.js';
 import type { Lock } from '../../kv/types/lock.js';
-import type { CacheConfigRedis } from '../index.js';
+import type { CacheRedisOptions } from '../index.js';
 import type { Cache } from '../types/class.js';
 
 /**
@@ -25,11 +24,11 @@ export class CacheRedis implements Cache {
 	/**
 	 * Create the cache on top of an existing Redis connection.
 	 *
-	 * @param config - Redis configuration without the `type` discriminant.
+	 * @param config - Redis configuration.
 	 */
-	constructor(config: Omit<CacheConfigRedis, 'type'>) {
+	constructor(config: CacheRedisOptions) {
 		// 1. The cache reuses the Kv store, so serialization, compression and locking live in one place
-		this.store = createKv({ type: 'redis', ...config });
+		this.store = new KvRedis(config);
 	}
 
 	/**

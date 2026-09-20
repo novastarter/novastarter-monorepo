@@ -1,31 +1,15 @@
 import type { Redis } from 'ioredis';
 
 /**
- * Options every bus configuration shares.
+ * Options of the in-process bus, the `local` driver; it has none.
  */
-export interface BusConfigAbstract {
-	/**
-	 * Where the messages travel through.
-	 *
-	 * `local` - Local memory. Only intended for single-process instances.
-	 * `redis` - Redis instance
-	 */
-	type: 'local' | 'redis';
-}
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- the driver takes no options
+export interface BusLocalOptions {}
 
 /**
- * Configuration of the in-process bus; it has no options.
+ * Options of the Redis-backed bus, the `redis` driver.
  */
-export interface BusConfigLocal extends BusConfigAbstract {
-	type: 'local';
-}
-
-/**
- * Configuration of the Redis-backed bus.
- */
-export interface BusConfigRedis extends BusConfigAbstract {
-	type: 'redis';
-
+export interface BusRedisOptions {
 	/**
 	 * Prefix for every channel name in Redis.
 	 */
@@ -53,8 +37,3 @@ export interface BusConfigRedis extends BusConfigAbstract {
 	 */
 	redis: Redis;
 }
-
-/**
- * Union of the supported bus configurations, discriminated by `type`.
- */
-export type BusConfig = BusConfigLocal | BusConfigRedis;

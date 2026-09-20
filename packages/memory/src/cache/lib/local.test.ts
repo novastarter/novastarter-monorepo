@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { createKv, KvLocal } from '../../kv/index.js';
+import { KvLocal } from '../../kv/index.js';
 import { CacheLocal } from './local.js';
 
 vi.mock('../../kv/index.js');
@@ -10,8 +10,6 @@ const mockValue = 'test-value';
 let cache: CacheLocal;
 
 beforeEach(() => {
-	vi.mocked(createKv).mockReturnValue(new KvLocal({}));
-
 	cache = new CacheLocal({ maxKeys: 2 });
 });
 
@@ -21,10 +19,7 @@ afterEach(() => {
 
 describe('constructor', () => {
 	test('Instantiates Kv with configuration', () => {
-		expect(createKv).toHaveBeenCalledWith({
-			type: 'local',
-			maxKeys: 2,
-		});
+		expect(KvLocal).toHaveBeenCalledWith({ maxKeys: 2 });
 
 		expect(cache['store']).toBeInstanceOf(KvLocal);
 	});

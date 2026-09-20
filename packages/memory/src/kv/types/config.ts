@@ -26,24 +26,9 @@ export interface ExtendedRedis extends Redis {
 }
 
 /**
- * Options every Kv configuration shares.
+ * Options of the in-memory store, the `local` driver.
  */
-export interface KvConfigAbstract {
-	/**
-	 * Where the data is stored.
-	 *
-	 * `local` - Local memory
-	 * `redis` - Redis instance
-	 */
-	type: 'local' | 'redis';
-}
-
-/**
- * Configuration of the in-memory store.
- */
-export interface KvConfigLocal extends KvConfigAbstract {
-	type: 'local';
-
+export interface KvLocalOptions {
 	/**
 	 * Maximum number of keys in the store; the least recently used key is evicted beyond it.
 	 */
@@ -56,11 +41,9 @@ export interface KvConfigLocal extends KvConfigAbstract {
 }
 
 /**
- * Configuration of the Redis-backed store.
+ * Options of the Redis-backed store, the `redis` driver.
  */
-export interface KvConfigRedis extends KvConfigAbstract {
-	type: 'redis';
-
+export interface KvRedisOptions {
 	/**
 	 * Prefix for every key, so several stores can share one Redis instance.
 	 */
@@ -98,8 +81,3 @@ export interface KvConfigRedis extends KvConfigAbstract {
 	 */
 	ttl?: number;
 }
-
-/**
- * Union of the supported Kv configurations, discriminated by `type`.
- */
-export type KvConfig = KvConfigLocal | KvConfigRedis;

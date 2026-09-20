@@ -12,10 +12,10 @@ four classes for everything related to it, each with a local (in-process) and a 
 - [Bus](#bus) — pub/sub
 - [Limiter](#limiter) — points-per-duration rate limiter
 
-Each has a factory (`createKv()` and so on) for a standalone instance and a manager of named locations
-(`useKv().registerLocation()` / `.location()`) the application wires once at start-up, the same way as every other
-subsystem of the kit. The package reads nothing from the environment: the Redis client comes from `@novastarter/redis`,
-the options from the application. Ported from `@directus/memory`.
+Each is reached through a manager of named locations (`useKv().registerLocation()` / `.location()`) the application
+wires once at start-up, the same way as every other subsystem of the kit; a location is built on its first use. The
+package reads nothing from the environment: the Redis client comes from `@novastarter/redis`, the options from the
+application. Ported from `@directus/memory`.
 
 ## Installation
 
@@ -43,8 +43,8 @@ useLimiter().registerLocation('api', {
 });
 ```
 
-In development, without Redis — the same lines with `driver: 'local'` and the local options. A location named `default`
-answers for any name nobody registered.
+In development, without Redis — the same lines with `driver: 'local'` and the local options. `driver` decides the type
+of `options`: `{ driver: 'redis', options: { maxKeys: 5 } }` does not compile.
 
 Anywhere later:
 
@@ -55,14 +55,26 @@ await useCache().location('default').set('schema', schema);
 await useLimiter().location('api').consume(ip);
 ```
 
-A standalone instance, outside the managers:
+A standalone instance, outside the managers — the driver classes are exported:
 
 ```ts
-import { createKv } from '@novastarter/memory';
+import { KvLocal } from '@novastarter/memory';
 
-const kv = createKv({ type: 'local', maxKeys: 500 });
+const kv = new KvLocal({ maxKeys: 500 });
 
 await kv.set('my-key', 'my-value');
+```
+
+A driver of the application's own joins a manager once it is added to the driver map:
+
+```ts
+declare module '@novastarter/memory' {
+	interface KvDrivers {
+		memcached: MemcachedOptions;
+	}
+}
+
+useKv().registerDriver('memcached', KvMemcached);
 ```
 
 ## Kv

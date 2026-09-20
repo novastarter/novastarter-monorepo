@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { _cache, StorageManager, useStorage } from './index.js';
 
+// The test driver joins the driver map the way a driver package does, so its registrations type-check
+declare module './index.js' {
+	interface StorageDrivers {
+		'test-driver': Record<string, unknown>;
+	}
+}
+
 describe('#registerDriver', () => {
 	test('Saves registered drivers locally', () => {
 		// 1. A bare mock stands in for a driver class: registration only stores it and never instantiates it
@@ -21,13 +28,13 @@ describe('#registerLocation', () => {
 		// 1. No driver was registered, so the lookup by name must fail before any instantiation happens
 		expect(() =>
 			manager.registerLocation('test-driver', {
-				driver: 's3',
+				driver: 'test-driver',
 				options: {},
 			}),
-		).toThrowErrorMatchingInlineSnapshot(`[Error: Driver "s3" isn't registered.]`);
+		).toThrowErrorMatchingInlineSnapshot(`[Error: Driver "test-driver" isn't registered.]`);
 	});
 
-	test('Instantiates driver instance with passed config', () => {
+	test('Instantiates the driver with the passed options on first use', () => {
 		// 1. `vi.fn()` is constructible, so it records how the manager calls `new Driver(...)`
 		const mockDriver = vi.fn();
 
@@ -42,28 +49,14 @@ describe('#registerLocation', () => {
 			},
 		});
 
-		// 2. The manager must forward `options` alone, not the whole location config
+		// 2. Registration keeps the configuration only; the first use builds the driver from `options` alone
+		expect(mockDriver).not.toHaveBeenCalled();
+
+		manager.location('test-location');
+
 		expect(mockDriver).toHaveBeenCalledOnce();
 		expect(mockDriver).toHaveBeenCalledWith({ foo: 'bar' });
-	});
-
-	test('Sets location driver in locations map', () => {
-		const mockDriver = vi.fn();
-
-		const manager = new StorageManager();
-
-		manager.registerDriver('test-driver', mockDriver);
-
-		manager.registerLocation('test-location', {
-			driver: 'test-driver',
-			options: {
-				foo: 'bar',
-			},
-		});
-
-		// 1. Inspect the private map directly: the stored value must be an instance, not the class itself
-		expect(manager['locations'].size).toBe(1);
-		expect(manager['locations'].get('test-location')).toBeInstanceOf(mockDriver);
+		expect(manager.instantiated().get('test-location')).toBeInstanceOf(mockDriver);
 	});
 });
 
@@ -110,13 +103,12 @@ describe('useStorage', () => {
 		expect(useStorage()).toBe(first);
 	});
 
-	test('Answers a name with the default location when it has none of its own', () => {
+	test('Shares the registrations with every later caller', () => {
 		const mockDriver = vi.fn();
-		const storage = useStorage();
 
-		storage.registerDriver('test-driver', mockDriver);
-		storage.registerLocation('default', { driver: 'test-driver', options: {} });
+		useStorage().registerDriver('test-driver', mockDriver);
+		useStorage().registerLocation('uploads', { driver: 'test-driver', options: {} });
 
-		expect(storage.location('anything')).toBe(storage.location('default'));
+		expect(useStorage().location('uploads')).toBe(useStorage().location('uploads'));
 	});
 });

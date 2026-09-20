@@ -16,14 +16,13 @@ pnpm add @novastarter/storage @novastarter/storage-driver-supabase
 ## Usage
 
 Register the class once at start-up, then a location per bucket with the options read from the application's
-configuration:
+configuration — `env` is the app's typed configuration — the zod schema of the `@novastarter/env` readme.
 
 ```ts
-import { useEnv } from '@novastarter/env';
 import { useStorage } from '@novastarter/storage';
 import { DriverSupabase } from '@novastarter/storage-driver-supabase';
+import { env } from './env';
 
-const env = useEnv();
 const storage = useStorage();
 
 storage.registerDriver('supabase', DriverSupabase);
@@ -31,9 +30,9 @@ storage.registerDriver('supabase', DriverSupabase);
 storage.registerLocation('uploads', {
 	driver: 'supabase',
 	options: {
-		bucket: env['STORAGE_UPLOADS_BUCKET'] as string,
-		projectId: env['STORAGE_UPLOADS_PROJECT_ID'] as string,
-		serviceRole: env['STORAGE_UPLOADS_SERVICE_ROLE'] as string,
+		bucket: env.STORAGE_UPLOADS_BUCKET,
+		projectId: env.STORAGE_UPLOADS_PROJECT_ID,
+		serviceRole: env.STORAGE_UPLOADS_SERVICE_ROLE,
 	},
 });
 ```

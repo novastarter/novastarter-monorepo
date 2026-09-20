@@ -15,6 +15,16 @@ export type DriverLocalConfig = {
 };
 
 /**
+ * Registers the driver's options in the map of `@novastarter/storage`, so a location naming `local` has its
+ * options checked against {@link DriverLocalConfig}.
+ */
+declare module '@novastarter/storage' {
+	interface StorageDrivers {
+		local: DriverLocalConfig;
+	}
+}
+
+/**
  * Storage driver backed by the local filesystem.
  *
  * Every operation maps onto a `node:fs` call under the configured root. Caller paths are pinned inside that root, so

@@ -16,21 +16,20 @@ pnpm add @novastarter/storage @novastarter/storage-driver-gcs
 ## Usage
 
 Register the class once at start-up, then a location per bucket with the options read from the application's
-configuration:
+configuration — `env` is the app's typed configuration — the zod schema of the `@novastarter/env` readme.
 
 ```ts
-import { useEnv } from '@novastarter/env';
 import { useStorage } from '@novastarter/storage';
 import { DriverGCS } from '@novastarter/storage-driver-gcs';
+import { env } from './env';
 
-const env = useEnv();
 const storage = useStorage();
 
 storage.registerDriver('gcs', DriverGCS);
 
 storage.registerLocation('uploads', {
 	driver: 'gcs',
-	options: { bucket: env['STORAGE_UPLOADS_BUCKET'] as string, root: 'uploads' },
+	options: { bucket: env.STORAGE_UPLOADS_BUCKET, root: 'uploads' },
 });
 ```
 

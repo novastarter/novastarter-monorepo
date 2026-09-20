@@ -5,10 +5,10 @@
  * follows the backend's convention: the HTTP `Range` header S3 receives treats `end` alone as a suffix range.
  */
 export interface Range {
-	/** Zero-based offset of the first byte to read; `undefined` leaves the start to the backend's convention. */
-	start: number | undefined;
-	/** Zero-based offset of the last byte to read, or `undefined` to read until the end. */
-	end: number | undefined;
+	/** Zero-based offset of the first byte to read; omitted, the start follows the backend's convention. */
+	start?: number | undefined;
+	/** Zero-based offset of the last byte to read; omitted, the read goes until the end. */
+	end?: number | undefined;
 }
 
 /**

@@ -1,11 +1,11 @@
 {
-	"name": "@novastarter/rate-limiter",
-	"version": "0.1.1",
-	"description": "Pressure based rate limiter",
+	"name": "@novastarter/pressure",
+	"version": "0.0.1",
+	"description": "Event loop and memory pressure monitor with an Express middleware that sheds load",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
-		"directory": "packages/rate-limiter"
+		"directory": "packages/pressure"
 	},
 	"type": "module",
 	"exports": {
@@ -19,6 +19,7 @@
 	"scripts": {
 		"build": "tsdown src/index.ts --dts",
 		"dev": "tsdown src/index.ts --dts --watch",
+		"check-types": "tsc --noEmit -p tsconfig.json",
 		"test": "vitest run",
 		"test:coverage": "vitest run --coverage"
 	},

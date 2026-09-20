@@ -107,6 +107,16 @@ export type DriverS3Config = {
 };
 
 /**
+ * Registers the driver's options in the map of `@novastarter/storage`, so a location naming `s3` has its
+ * options checked against {@link DriverS3Config}.
+ */
+declare module '@novastarter/storage' {
+	interface StorageDrivers {
+		s3: DriverS3Config;
+	}
+}
+
+/**
  * Encryption modes that take a KMS key id.
  *
  * S3 rejects `SSEKMSKeyId` for any other mode, so the driver only forwards the configured key when the mode is one of

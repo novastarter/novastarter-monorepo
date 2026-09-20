@@ -3,19 +3,19 @@ import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { memoryUsage } from 'node:process';
 import { setTimeout } from 'node:timers';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { RateLimiterOptions } from './monitor.js';
-import { RateLimiter } from './monitor.js';
+import type { PressureMonitorOptions } from './monitor.js';
+import { PressureMonitor } from './monitor.js';
 
 vi.mock('node:perf_hooks');
 vi.mock('node:timers');
 vi.mock('node:process');
 
-let monitor: RateLimiter;
+let monitor: PressureMonitor;
 let mockIntervalHistogram: IntervalHistogram;
 let mockTimer: NodeJS.Timeout;
 
 let sample: {
-	config: Required<RateLimiterOptions>;
+	config: Required<PressureMonitorOptions>;
 	rss: number;
 	heapUsed: number;
 	eventLoopUtilization: number;
@@ -53,7 +53,7 @@ beforeEach(() => {
 	vi.mocked(setTimeout).mockReturnValue(mockTimer);
 	vi.mocked(monitorEventLoopDelay).mockReturnValue(mockIntervalHistogram);
 
-	monitor = new RateLimiter(sample.config);
+	monitor = new PressureMonitor(sample.config);
 });
 
 afterEach(() => {
@@ -62,7 +62,7 @@ afterEach(() => {
 
 describe('#constructor', () => {
 	test('Defaults the options', () => {
-		monitor = new RateLimiter();
+		monitor = new PressureMonitor();
 
 		expect(monitor['options']).toEqual({
 			sampleInterval: 250,
@@ -90,7 +90,7 @@ describe('#constructor', () => {
 
 describe('#overloaded', () => {
 	test('Returns false if all settings are false', () => {
-		monitor = new RateLimiter({
+		monitor = new PressureMonitor({
 			maxMemoryHeapUsed: false,
 			maxMemoryRss: false,
 			maxEventLoopDelay: false,

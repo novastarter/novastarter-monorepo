@@ -1,12 +1,11 @@
-import type { FailedValidationErrorExtensions } from '@novastarter/validation';
 import type { z } from 'zod';
+import type { FailedValidationErrorExtensions } from '../errors/failed-validation.js';
 
 /**
  * Translate the issues of a zod error into the extensions of `FailedValidationError`.
  *
- * The counterpart of `joiValidationErrorItemToErrorExtensions` of `@novastarter/validation` for schemas written in
- * zod: one entry per issue, in the same shape the API answers with, so a handler can report a rejected job payload
- * the way a rejected request is reported. Zod's codes map onto the filter operators where one fits — a bound to
+ * The counterpart of `joiValidationErrorItemToErrorExtensions` for schemas written in zod: one entry per issue,
+ * in the same shape the API answers with, so a job payload, a request body and a filter rule are all reported alike. Zod's codes map onto the filter operators where one fits — a bound to
  * `gt` / `gte` / `lt` / `lte`, an enum to `in` or `eq`, a pattern to `regex`, an address to `email` — a value of the
  * wrong type or missing altogether to `required`, like the Joi converter does, and everything else (a refinement, an
  * unknown key, a failed union) to `unsafe`, the catch-all of the shape.

@@ -1,0 +1,46 @@
+# Checks every pull request and every push to main the way the pre-commit hooks and `make check` do locally:
+# formatting, lint, types, tests and a full build. One job, since each step is quick and they share the install.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Changesets and the release-notes generator resolve commits through git log
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm format
+
+      - run: pnpm lint
+
+      - run: pnpm check-types
+
+      - run: pnpm test
+
+      - run: pnpm build
+
+      # A change under packages/ or apps/ ships with a changeset (AGENTS.md); `changeset status` fails without one
+      - if: github.event_name == 'pull_request'
+        run: pnpm changeset status --since=origin/${{ github.base_ref }}

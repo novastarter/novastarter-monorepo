@@ -36,6 +36,16 @@ export type DriverCloudinaryConfig = {
 };
 
 /**
+ * Registers the driver's options in the map of `@novastarter/storage`, so a location naming `cloudinary` has its
+ * options checked against {@link DriverCloudinaryConfig}.
+ */
+declare module '@novastarter/storage' {
+	interface StorageDrivers {
+		cloudinary: DriverCloudinaryConfig;
+	}
+}
+
+/**
  * Storage driver backed by Cloudinary.
  *
  * Cloudinary has no SDK dependency here: every call is a signed request against the upload, admin or delivery API
@@ -483,7 +493,6 @@ export class DriverCloudinary implements TusDriver {
 
 		const signature = this.getFullSignature(uploadParameters);
 
-		let currentChunkSize = 0;
 		let totalSize = 0;
 		let uploaded = 0;
 		let error: Error | null = null;
@@ -501,13 +510,12 @@ export class DriverCloudinary implements TusDriver {
 
 			if (chunks.length + chunk.length <= chunkSize) {
 				// 4. Still under the chunk size: keep buffering
-				currentChunkSize = chunks.length + chunk.length;
-				chunks = Buffer.concat([chunks, chunk], currentChunkSize);
+				chunks = Buffer.concat([chunks, chunk], chunks.length + chunk.length);
 			} else {
 				// 5. The buffer would overflow: fill it up to exactly the chunk size, queue it and start the next
 				//    buffer with the remainder, so every chunk but the last has the same size
 				const grab = chunkSize - chunks.length;
-				currentChunkSize = chunks.length + grab;
+				const currentChunkSize = chunks.length + grab;
 				chunks = Buffer.concat([chunks, chunk.slice(0, grab)], currentChunkSize);
 
 				// 6. The total is unknown while the stream is still flowing, which `-1` tells Cloudinary
@@ -529,7 +537,6 @@ export class DriverCloudinary implements TusDriver {
 					});
 
 				uploaded += currentChunkSize;
-				currentChunkSize = 0;
 				chunks = chunk.slice(grab);
 			}
 

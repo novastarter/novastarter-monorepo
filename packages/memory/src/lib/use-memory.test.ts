@@ -28,7 +28,7 @@ test('The built-in drivers are registered, so a location needs its options alone
 	useBus().registerLocation('default', { driver: 'local', options: {} });
 	useLimiter().registerLocation('api', { driver: 'local', options: { points: 5, duration: 1 } });
 
-	expect(useKv().location('anything')).toBeInstanceOf(KvLocal);
+	expect(useKv().location('default')).toBeInstanceOf(KvLocal);
 	expect(useCache().location('default')).toBeInstanceOf(CacheLocal);
 	expect(useBus().location('default')).toBeInstanceOf(BusLocal);
 	expect(useLimiter().location('api')).toBeInstanceOf(LimiterLocal);
@@ -37,6 +37,10 @@ test('The built-in drivers are registered, so a location needs its options alone
 	expect(await useKv().location('default').get('key')).toBe('value');
 });
 
-test('A location of an unknown driver is refused', () => {
-	expect(() => useKv().registerLocation('x', { driver: 'memcached', options: {} })).toThrow(/isn't registered/);
+test('A location of an unknown driver is refused, an unknown location too', () => {
+	expect(() => useKv().registerLocation('x', { driver: 'memcached' as 'local', options: {} })).toThrow(
+		/isn't registered/,
+	);
+
+	expect(() => useKv().location('nope')).toThrow(/doesn't exist/);
 });

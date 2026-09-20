@@ -2,12 +2,12 @@
  * Tests of `queue/lib/synchronized-clock` and `schedule-synchronized-job` on the local `Kv` of `@novastarter/memory`;
  * croner runs on fake timers.
  */
-import { createKv } from '@novastarter/memory';
+import { KvLocal } from '@novastarter/memory';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { scheduleSynchronizedJob } from './schedule-synchronized-job.js';
 import { SynchronizedClock } from './synchronized-clock.js';
 
-const kv = createKv({ type: 'local' });
+const kv = new KvLocal({});
 
 beforeEach(() => {
 	vi.useFakeTimers({ now: new Date('2026-09-10T12:00:00.000Z') });

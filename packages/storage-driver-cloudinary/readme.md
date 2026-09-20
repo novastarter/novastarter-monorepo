@@ -16,14 +16,13 @@ pnpm add @novastarter/storage @novastarter/storage-driver-cloudinary
 ## Usage
 
 Register the class once at start-up, then a location per account with the options read from the application's
-configuration:
+configuration — `env` is the app's typed configuration — the zod schema of the `@novastarter/env` readme.
 
 ```ts
-import { useEnv } from '@novastarter/env';
 import { useStorage } from '@novastarter/storage';
 import { DriverCloudinary } from '@novastarter/storage-driver-cloudinary';
+import { env } from './env';
 
-const env = useEnv();
 const storage = useStorage();
 
 storage.registerDriver('cloudinary', DriverCloudinary);
@@ -31,9 +30,9 @@ storage.registerDriver('cloudinary', DriverCloudinary);
 storage.registerLocation('media', {
 	driver: 'cloudinary',
 	options: {
-		cloudName: env['STORAGE_MEDIA_CLOUD_NAME'] as string,
-		apiKey: env['STORAGE_MEDIA_API_KEY'] as string,
-		apiSecret: env['STORAGE_MEDIA_API_SECRET'] as string,
+		cloudName: env.STORAGE_MEDIA_CLOUD_NAME,
+		apiKey: env.STORAGE_MEDIA_API_KEY,
+		apiSecret: env.STORAGE_MEDIA_API_SECRET,
 		accessMode: 'public',
 	},
 });

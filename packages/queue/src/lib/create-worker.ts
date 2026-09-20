@@ -71,7 +71,7 @@ export class JobTimeoutError extends Error {
 /**
  * Start a BullMQ worker on one queue, running every job through the processor.
  *
- * What `apps/worker` calls per enabled queue. The wrapper does what every worker of the kit needs: rebuilds the job
+ * What a worker process calls per queue it consumes. The wrapper does what every worker of the kit needs: rebuilds the job
  * name from the queue and the BullMQ job name, enforces the contract's `timeout` (BullMQ has none of its own — a
  * job that hangs would otherwise block a concurrency slot forever), logs `completed` and `failed`, and closes
  * gracefully. `bullmq` is imported here, so the producer side stays free of it.

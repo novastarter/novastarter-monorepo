@@ -24,21 +24,36 @@ describe('#registerLocation', () => {
 		).toThrowErrorMatchingInlineSnapshot(`[Error: Driver "s3" isn't registered.]`);
 	});
 
-	test('Instantiates the driver with the options alone', () => {
+	test('Keeps the configuration without instantiating the driver', () => {
 		const mockDriver = vi.fn();
 		const manager = new DriverManager();
 
 		manager.registerDriver('test-driver', mockDriver);
 		manager.registerLocation('test-location', { driver: 'test-driver', options: { foo: 'bar' } });
 
-		expect(mockDriver).toHaveBeenCalledOnce();
-		expect(mockDriver).toHaveBeenCalledWith({ foo: 'bar' });
-		expect(manager.location('test-location')).toBe(mockDriver.mock.instances[0]);
+		expect(mockDriver).not.toHaveBeenCalled();
+		expect(manager.hasLocation('test-location')).toBe(true);
+		expect(manager.locationNames()).toEqual(['test-location']);
+		expect(manager.instantiated().size).toBe(0);
+	});
+
+	test('Drops the instance of a location registered again', () => {
+		const mockDriver = vi.fn();
+		const manager = new DriverManager();
+
+		manager.registerDriver('test-driver', mockDriver);
+		manager.registerLocation('test-location', { driver: 'test-driver', options: { foo: 'bar' } });
+		const first = manager.location('test-location');
+
+		manager.registerLocation('test-location', { driver: 'test-driver', options: { foo: 'baz' } });
+
+		expect(manager.location('test-location')).not.toBe(first);
+		expect(mockDriver).toHaveBeenLastCalledWith({ foo: 'baz' });
 	});
 });
 
 describe('#location', () => {
-	test('Throws error when neither the location nor a default one exists', () => {
+	test('Throws error when the location does not exist', () => {
 		const manager = new DriverManager();
 
 		expect(() => manager.location('test-location')).toThrowErrorMatchingInlineSnapshot(
@@ -46,26 +61,20 @@ describe('#location', () => {
 		);
 	});
 
-	test('Falls back to the default location for a name nobody registered', () => {
+	test('Instantiates the driver with the options alone on first use, then reuses it', () => {
+		const mockDriver = vi.fn();
 		const manager = new DriverManager();
-		manager.registerDriver('test-driver', vi.fn());
-		manager.registerLocation('default', { driver: 'test-driver', options: {} });
-		manager.registerLocation('own', { driver: 'test-driver', options: {} });
 
-		expect(manager.location('anything')).toBe(manager.location('default'));
-		expect(manager.location('own')).not.toBe(manager.location('default'));
-	});
-});
+		manager.registerDriver('test-driver', mockDriver);
+		manager.registerLocation('test-location', { driver: 'test-driver', options: { foo: 'bar' } });
 
-describe('#hasLocation / #locationNames', () => {
-	test('Reports the registered names only, the default location not standing in', () => {
-		const manager = new DriverManager();
-		manager.registerDriver('test-driver', vi.fn());
-		manager.registerLocation('default', { driver: 'test-driver', options: {} });
-		manager.registerLocation('own', { driver: 'test-driver', options: {} });
+		const first = manager.location('test-location');
 
-		expect(manager.hasLocation('own')).toBe(true);
-		expect(manager.hasLocation('anything')).toBe(false);
-		expect(manager.locationNames()).toEqual(['default', 'own']);
+		expect(mockDriver).toHaveBeenCalledOnce();
+		expect(mockDriver).toHaveBeenCalledWith({ foo: 'bar' });
+		expect(first).toBe(mockDriver.mock.instances[0]);
+		expect(manager.location('test-location')).toBe(first);
+		expect(mockDriver).toHaveBeenCalledOnce();
+		expect([...manager.instantiated().keys()]).toEqual(['test-location']);
 	});
 });

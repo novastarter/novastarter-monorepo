@@ -262,7 +262,7 @@ Mandatory, no exceptions.
 - In the `package.json` of packages and apps, external dependencies are declared as `"dependency": "catalog:"`. No
   versions inline.
 - Internal monorepo packages are linked as `"@novastarter/name": "workspace:*"`.
-- Native dependencies (with a postinstall build) are allowed via `onlyBuiltDependencies` in `pnpm-workspace.yaml`.
+- Native dependencies (with a postinstall build) are allowed via `allowBuilds` in `pnpm-workspace.yaml`.
 
 ## Rule: build new packages from the existing template
 

@@ -1,8 +1,8 @@
 import { processId } from '@novastarter/utils/node';
-import { type Bus, createBus } from '../../bus/index.js';
+import { type Bus, BusRedis } from '../../bus/index.js';
 import type { Lock } from '../../kv/types/lock.js';
 import type { Cache } from '../types/class.js';
-import type { CacheConfigMulti } from '../types/config.js';
+import type { CacheMultiOptions } from '../types/config.js';
 import { CacheLocal } from './local.js';
 import { CacheRedis } from './redis.js';
 
@@ -60,13 +60,13 @@ export class CacheMulti implements Cache {
 	/**
 	 * Create both cache levels and subscribe to invalidations from other processes.
 	 *
-	 * @param config - Multi-stage configuration without the `type` discriminant.
+	 * @param config - Options of both levels.
 	 */
-	constructor(config: Omit<CacheConfigMulti, 'type'>) {
+	constructor(config: CacheMultiOptions) {
 		// 1. Build the two levels and a bus over the same Redis connection and namespace as L2
 		this.local = new CacheLocal(config.local);
 		this.redis = new CacheRedis(config.redis);
-		this.bus = createBus({ type: 'redis', redis: config.redis.redis, namespace: config.redis.namespace });
+		this.bus = new BusRedis({ redis: config.redis.redis, namespace: config.redis.namespace });
 
 		// 2. Wrap the handler in a lambda, so `this` still points at the cache when the bus calls it
 		this.bus.subscribe<CacheMultiMessageClear>(CACHE_CHANNEL_KEY, (payload) => this.onMessageClear(payload));

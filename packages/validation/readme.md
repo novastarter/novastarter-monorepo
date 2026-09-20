@@ -82,3 +82,22 @@ if (error) {
 
 `generateJoi()` and the extended `Joi` instance (with `contains`, `icontains`, `ncontains` string rules) are exported
 for composing schemas of your own.
+
+## zod
+
+Schemas written in zod report the same shape: `zodErrorToErrorExtensions(error)` turns a `ZodError` into one
+`FailedValidationErrorExtensions` per issue — bounds onto `gt` / `gte` / `lt` / `lte`, an enum onto `in`, a pattern onto
+`regex`, a missing or mistyped value onto `required` — so a job payload, a request body and a filter rule are all
+answered alike:
+
+```ts
+import { zodErrorToErrorExtensions } from '@novastarter/validation';
+import { z } from 'zod';
+
+const result = z.object({ count: z.number().min(1) }).safeParse({ count: 0 });
+
+if (!result.success) {
+	zodErrorToErrorExtensions(result.error);
+	// => [{ field: 'count', path: [], type: 'gte', valid: 1 }]
+}
+```

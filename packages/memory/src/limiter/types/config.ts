@@ -1,17 +1,9 @@
 import type { Redis } from 'ioredis';
 
 /**
- * Options every limiter configuration shares.
+ * Options every limiter shares: the budget of a key.
  */
-export interface LimiterConfigAbstract {
-	/**
-	 * Where the consumption is tracked.
-	 *
-	 * `local` - Local memory. Only intended for single-process instances.
-	 * `redis` - Redis instance
-	 */
-	type: 'local' | 'redis';
-
+export interface LimiterOptionsBase {
 	/** Length of the window in seconds, after which a key's points are restored. */
 	duration: number;
 
@@ -20,18 +12,14 @@ export interface LimiterConfigAbstract {
 }
 
 /**
- * Configuration of the in-process limiter.
+ * Options of the in-process limiter, the `local` driver; the budget alone.
  */
-export interface LimiterConfigLocal extends LimiterConfigAbstract {
-	type: 'local';
-}
+export type LimiterLocalOptions = LimiterOptionsBase;
 
 /**
- * Configuration of the Redis-backed limiter.
+ * Options of the Redis-backed limiter, the `redis` driver.
  */
-export interface LimiterConfigRedis extends LimiterConfigAbstract {
-	type: 'redis';
-
+export interface LimiterRedisOptions extends LimiterOptionsBase {
 	/**
 	 * Prefix for every key in Redis.
 	 */
@@ -42,8 +30,3 @@ export interface LimiterConfigRedis extends LimiterConfigAbstract {
 	 */
 	redis: Redis;
 }
-
-/**
- * Union of the supported limiter configurations, discriminated by `type`.
- */
-export type LimiterConfig = LimiterConfigLocal | LimiterConfigRedis;

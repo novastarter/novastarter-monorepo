@@ -1,25 +1,9 @@
 import type { Redis } from 'ioredis';
 
 /**
- * Options every cache configuration shares.
+ * Options of the in-memory cache, the `local` driver.
  */
-export interface CacheConfigAbstract {
-	/**
-	 * Where the data is stored.
-	 *
-	 * `local` - Local memory
-	 * `redis` - Redis instance
-	 * `multi` - Multi-stage cache: in-memory as L1, Redis as L2
-	 */
-	type: 'local' | 'redis' | 'multi';
-}
-
-/**
- * Configuration of the in-memory cache.
- */
-export interface CacheConfigLocal extends CacheConfigAbstract {
-	type: 'local';
-
+export interface CacheLocalOptions {
 	/**
 	 * Maximum number of keys in the cache; the least recently used key is evicted beyond it.
 	 */
@@ -32,11 +16,9 @@ export interface CacheConfigLocal extends CacheConfigAbstract {
 }
 
 /**
- * Configuration of the Redis-backed cache.
+ * Options of the Redis-backed cache, the `redis` driver.
  */
-export interface CacheConfigRedis extends CacheConfigAbstract {
-	type: 'redis';
-
+export interface CacheRedisOptions {
 	/**
 	 * Prefix for every key, so several caches can share one Redis instance.
 	 */
@@ -71,23 +53,16 @@ export interface CacheConfigRedis extends CacheConfigAbstract {
 }
 
 /**
- * Configuration of the multi-stage cache: a local L1 in front of a Redis L2.
+ * Options of the multi-stage cache, the `multi` driver: a local L1 in front of a Redis L2.
  */
-export interface CacheConfigMulti extends CacheConfigAbstract {
-	type: 'multi';
-
+export interface CacheMultiOptions {
 	/**
 	 * Configuration of the L1 (in-memory) cache.
 	 */
-	local: Omit<CacheConfigLocal, 'type'>;
+	local: CacheLocalOptions;
 
 	/**
 	 * Configuration of the L2 (Redis) cache; its connection and namespace are also used for the invalidation bus.
 	 */
-	redis: Omit<CacheConfigRedis, 'type'>;
+	redis: CacheRedisOptions;
 }
-
-/**
- * Union of the supported cache configurations, discriminated by `type`.
- */
-export type CacheConfig = CacheConfigLocal | CacheConfigRedis | CacheConfigMulti;

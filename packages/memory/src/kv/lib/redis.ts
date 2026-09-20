@@ -9,7 +9,7 @@ import {
 	uint8ArrayToBuffer,
 	withNamespace,
 } from '../../utils/index.js';
-import type { ExtendedRedis, KvConfigRedis } from '../index.js';
+import type { ExtendedRedis, KvRedisOptions } from '../index.js';
 import type { Kv } from '../types/class.js';
 
 /**
@@ -119,9 +119,9 @@ export class KvRedis implements Kv {
 	/**
 	 * Create the store on top of an existing Redis connection.
 	 *
-	 * @param config - Redis configuration without the `type` discriminant.
+	 * @param config - Redis configuration.
 	 */
-	constructor(config: Omit<KvConfigRedis, 'type'>) {
+	constructor(config: KvRedisOptions) {
 		// 1. Register the Lua commands once per client; a client shared between several stores already has them
 		if ('setMax' in config.redis === false) {
 			config.redis.defineCommand('setMax', {

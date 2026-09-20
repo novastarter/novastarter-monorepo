@@ -1,21 +1,7 @@
 import type { JobContract, JobName } from '../types.js';
-import { billingSync } from './billing.js';
-import { contactSubmitted } from './contact.js';
-import { mailSend } from './mail.js';
-import { notificationsDeliver, notificationsDigest } from './notifications.js';
-import { retentionRun } from './retention.js';
-import { searchIndex, searchReindex } from './search.js';
 import { systemPing } from './system.js';
-import { tusCleanup } from './tus.js';
 
-export * from './billing.js';
-export * from './contact.js';
-export * from './mail.js';
-export * from './notifications.js';
-export * from './retention.js';
-export * from './search.js';
 export * from './system.js';
-export * from './tus.js';
 
 /**
  * Registered contracts by name.
@@ -75,14 +61,5 @@ export const getJobNames = (): JobName[] => [..._contracts.keys()] as JobName[];
  */
 export const getQueueNames = (): string[] => [...new Set([..._contracts.values()].map((contract) => contract.queue))];
 
-// The kit's own contracts are registered at load, so the registry is never empty
-registerJob(mailSend);
-registerJob(retentionRun);
+// The kit's one contract is registered at load, so the registry is never empty; the application's jobs are its own
 registerJob(systemPing);
-registerJob(billingSync);
-registerJob(notificationsDeliver);
-registerJob(notificationsDigest);
-registerJob(tusCleanup);
-registerJob(contactSubmitted);
-registerJob(searchIndex);
-registerJob(searchReindex);

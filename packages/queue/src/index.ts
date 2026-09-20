@@ -27,4 +27,3 @@ export * from './lib/use-queue.js';
 export * from './lib/validate-cron.js';
 export * from './schedules.js';
 export * from './types.js';
-export * from './utils/zod-error-to-error-extensions.js';

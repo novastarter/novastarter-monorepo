@@ -140,7 +140,6 @@ describe('#fullPath', () => {
 		// 1. Two queued return values stand in for the inner and outer `join` calls, in that order
 		const driver = new DriverLocal({ root: sample.path.root });
 		vi.mocked(join).mockReturnValueOnce(sample.path.input).mockReturnValueOnce(sample.path.inputFull);
-		driver['root'] = sample.path.root;
 
 		const filepath = driver['fullPath'](sample.path.input);
 
