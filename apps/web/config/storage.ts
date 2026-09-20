@@ -3,16 +3,14 @@ import type { LocationConfig } from '@novastarter/utils';
 import type { AppEnv } from '../env';
 
 /**
- * Storage locations by name: where files live.
+ * The `default` storage location: where files live.
  *
  * @param env - The app's variables.
- * @returns The locations to register; the local disk unless the app adds a bucket.
+ * @returns The location to register; the local disk unless the app adds a bucket.
  */
-export const storageConfig = (env: AppEnv): Record<string, LocationConfig<StorageDrivers>> => ({
-	default: {
-		driver: 'local',
-		options: {
-			root: env.STORAGE_LOCAL_ROOT,
-		},
+export const storageConfig = (env: AppEnv): LocationConfig<StorageDrivers> => ({
+	driver: 'local',
+	options: {
+		root: env.STORAGE_LOCAL_ROOT,
 	},
 });
