@@ -1,0 +1,58 @@
+{
+	"name": "@novastarter/queue",
+	"version": "0.0.1",
+	"description": "Job contracts, queue client and providers (local, BullMQ) for Novastarter",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/novastarter/novastarter-monorepo.git",
+		"directory": "packages/queue"
+	},
+	"type": "module",
+	"exports": {
+		".": "./dist/index.js",
+		"./package.json": "./package.json"
+	},
+	"main": "dist/index.js",
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsdown src/index.ts --dts",
+		"dev": "tsdown src/index.ts --dts --watch",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage"
+	},
+	"dependencies": {
+		"@novastarter/emitter": "workspace:*",
+		"@novastarter/env": "workspace:*",
+		"@novastarter/errors": "workspace:*",
+		"@novastarter/logger": "workspace:*",
+		"@novastarter/memory": "workspace:*",
+		"@novastarter/redis": "workspace:*",
+		"@novastarter/utils": "workspace:*",
+		"@novastarter/validation": "workspace:*",
+		"croner": "catalog:",
+		"lodash-es": "catalog:",
+		"zod": "catalog:"
+	},
+	"peerDependencies": {
+		"bullmq": "catalog:"
+	},
+	"peerDependenciesMeta": {
+		"bullmq": {
+			"optional": true
+		}
+	},
+	"devDependencies": {
+		"@novastarter/tsconfig": "workspace:*",
+		"@types/lodash-es": "catalog:",
+		"@types/node": "catalog:",
+		"@vitest/coverage-v8": "catalog:",
+		"bullmq": "catalog:",
+		"ioredis": "catalog:",
+		"pino": "catalog:",
+		"tsdown": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	}
+}

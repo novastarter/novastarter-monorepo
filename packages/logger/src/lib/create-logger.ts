@@ -1,10 +1,8 @@
 import { REDACTED_TEXT } from '@novastarter/constants';
-import { getConfigFromEnv, useEnv } from '@novastarter/env';
-import { toArray } from '@novastarter/utils';
 import { merge } from 'lodash-es';
 import { type Logger, type LoggerOptions, pino } from 'pino';
 import { build as pinoPretty } from 'pino-pretty';
-import { resolveLogStyle } from '../utils/resolve-log-style.js';
+import type { LogStyle } from '../utils/resolve-log-style.js';
 import type { LogsStream } from './logs-stream.js';
 
 /**
@@ -21,11 +19,30 @@ export interface LogStreamTarget {
 }
 
 /**
- * Options of {@link createLogger}.
+ * Options of {@link createLogger}: everything the application decides, read from its own configuration.
  */
 export interface CreateLoggerOptions {
+	/**
+	 * Lowest level written: `fatal`, `error`, `warn`, `info`, `debug`, `trace`.
+	 *
+	 * @defaultValue `info`
+	 */
+	level?: string | undefined;
+	/**
+	 * Console output: `pretty` for a terminal, `raw` JSON lines for a log collector; see `resolveLogStyle()`.
+	 *
+	 * @defaultValue `raw`
+	 */
+	style?: LogStyle | undefined;
+	/**
+	 * Level names mapped to a `severity` field, for collectors (Google Cloud Logging among them) that read one
+	 * instead of pino's numeric level: `{ warn: 'WARNING' }`.
+	 */
+	levels?: Record<string, string> | undefined;
+	/** Further pino options, merged over the ones built here; `{ name: 'api' }` for example. */
+	pino?: LoggerOptions | undefined;
 	/** Extra destination for the log lines. */
-	logsStream?: LogStreamTarget;
+	logsStream?: LogStreamTarget | undefined;
 }
 
 /**
@@ -39,34 +56,25 @@ export const getLoggerLevelValue = (level: string): number => {
 };
 
 /**
- * Map the `LOGGER_LEVELS` variable (`label:severity,…`) onto a pino level formatter.
+ * Turn a label-to-severity map into a pino level formatter.
  *
- * Some log collectors (Google Cloud Logging among them) read a `severity` field instead of pino's numeric level, and
- * this is how the mapping is configured without code.
- *
- * @param loggerEnvConfig - Config collected from `LOGGER_*`, its `levels` entry is consumed and removed.
- * @returns Formatters to merge into the pino options, or `undefined` when no custom levels are set.
+ * @param levels - Level names mapped to the severity a collector expects; unknown names get `info`.
+ * @returns Formatters to merge into the pino options, or `undefined` when no map is given.
  */
-export const buildLevelFormatters = (loggerEnvConfig: Record<string, any>): LoggerOptions['formatters'] | undefined => {
-	if (!loggerEnvConfig['levels']) {
+export const buildLevelFormatters = (
+	levels: Record<string, string> | undefined,
+): LoggerOptions['formatters'] | undefined => {
+	// 1. Nothing to map: pino's own numeric level stays
+	if (!levels) {
 		return undefined;
 	}
 
-	// 1. Each entry is `label:severity`; whitespace around either side is tolerated
-	const customLogLevels: { [key: string]: string } = {};
-
-	for (const el of toArray(loggerEnvConfig['levels'])) {
-		const key_val = el.split(':');
-		customLogLevels[key_val[0].trim()] = key_val[1].trim();
-	}
-
-	// 2. The entry is removed, so the remaining config can be merged into pino as is
-	delete loggerEnvConfig['levels'];
-
+	// 2. The formatter adds `severity` next to the numeric level rather than replacing it, so collectors that read
+	//    either field keep working
 	return {
 		level(label: string, number: any) {
 			return {
-				severity: customLogLevels[label] || 'info',
+				severity: levels[label] || 'info',
 				level: number,
 			};
 		},
@@ -74,42 +82,38 @@ export const buildLevelFormatters = (loggerEnvConfig: Record<string, any>): Logg
 };
 
 /**
- * Build the application logger from the environment.
+ * Build the application logger.
  *
- * `LOG_LEVEL` sets the level, `LOG_STYLE` picks pretty console output or JSON lines (`raw` — the default in
- * production, see `resolveLogStyle()`), `LOGGER_*` is merged into the pino options verbatim and `LOGGER_LEVELS`
- * remaps level names to a `severity` field. Authorization and cookie headers are always redacted.
+ * `level` sets the level, `style` picks pretty console output or JSON lines, `pino` is merged into the pino options
+ * verbatim and `levels` remaps level names to a `severity` field. Authorization and cookie headers are always
+ * redacted. The application passes what it read from its configuration: `createLogger({ level: env['LOG_LEVEL'] })`.
  *
- * @param options - Extra destinations for the lines.
+ * @param options - Level, style, pino options and extra destinations.
  * @returns A configured pino logger.
  */
 export const createLogger = (options: CreateLoggerOptions = {}): Logger<never> => {
-	const env = useEnv();
-
 	// 1. Secrets are redacted before any stream sees the line
 	const pinoOptions: LoggerOptions = {
-		level: (env['LOG_LEVEL'] as string) || 'info',
+		level: options.level || 'info',
 		redact: {
 			paths: ['req.headers.authorization', 'req.headers.cookie'],
 			censor: REDACTED_TEXT,
 		},
 	};
 
-	// 2. `LOGGER_HTTP*` belongs to the HTTP logger and is left out here
-	const loggerEnvConfig = getConfigFromEnv('LOGGER_', { omitPrefix: 'LOGGER_HTTP' });
-
-	// 3. Custom level names are turned into a formatter, then the rest of the env config is merged in
-	const formatters = buildLevelFormatters(loggerEnvConfig);
+	// 2. Custom level names are turned into a formatter, then the caller's pino options are merged in
+	const formatters = buildLevelFormatters(options.levels);
 
 	if (formatters) {
 		pinoOptions.formatters = formatters;
 	}
 
-	const mergedOptions = merge(pinoOptions, loggerEnvConfig);
+	const mergedOptions = merge(pinoOptions, options.pino ?? {});
 	const streams = [];
 
-	// 4. Console: pretty for humans, raw JSON lines for log collectors
-	if (resolveLogStyle(env) !== 'raw') {
+	// 3. Console: pretty for humans, raw JSON lines for log collectors — raw unless asked, since a collector chokes
+	//    on a pretty line while a person merely reads JSON
+	if (options.style === 'pretty') {
 		streams.push({
 			level: mergedOptions.level!,
 			stream: pinoPretty({
@@ -121,7 +125,7 @@ export const createLogger = (options: CreateLoggerOptions = {}): Logger<never> =
 		streams.push({ level: mergedOptions.level!, stream: process.stdout });
 	}
 
-	// 5. An extra stream may ask for a lower level than the console; the logger level has to drop to satisfy it
+	// 4. An extra stream may ask for a lower level than the console; the logger level has to drop to satisfy it
 	if (options.logsStream) {
 		const streamLevel = options.logsStream.level ?? mergedOptions.level!;
 

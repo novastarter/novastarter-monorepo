@@ -1,0 +1,55 @@
+import { random } from 'lodash-es';
+
+/**
+ * Seconds in an hour.
+ *
+ * @defaultValue 3600
+ */
+const HOURS_IN_SECONDS = 3600;
+
+/**
+ * Hourly intervals a duration is honoured at; anything else falls back to daily.
+ *
+ * @defaultValue 1, 2, 3, 4, 6, 8, 12
+ */
+const ALLOWED_HOURS: Set<number> = new Set([1, 2, 3, 4, 6, 8, 12]);
+
+/**
+ * Convert a duration in seconds into a cron expression with a random phase.
+ *
+ * Ported from `api/src/schedules/utils/duration-to-cron.ts` of Directus. The random second, minute and hour offset
+ * spread the instances of many projects over the interval instead of stampeding at the top of the hour. The phase
+ * is written as a standard range (`1-23/2`) rather than the original's `1/2`, which croner does not accept.
+ *
+ * - Honoured intervals (hours): 1, 2, 3, 4, 6, 8, 12.
+ * - Random hour offset within `[0, hours)` spreads load across phase groups.
+ * - Any duration outside the intervals falls back to daily.
+ *
+ * @param duration - Seconds between runs.
+ * @returns A six-field expression (with seconds).
+ *
+ * @example
+ * ```ts
+ * durationToCron(3600); // '17 42 *\/1 * * *' — every hour at a random minute and second
+ * durationToCron(7200); // '17 42 1-23/2 * * *' — every 2h, phase offset 0 or 1
+ * durationToCron(25200); // '17 42 9 * * *' — daily fallback
+ * ```
+ */
+export function durationToCron(duration: number): string {
+	const second = random(0, 59);
+	const minute = random(0, 59);
+
+	if (duration > 0 && duration % HOURS_IN_SECONDS === 0) {
+		const hours = duration / HOURS_IN_SECONDS;
+
+		if (ALLOWED_HOURS.has(hours)) {
+			// hours=1 has no phase offset so default to `*/1`; a phase is written as the standard `offset-23/hours`
+			// range — the `offset/hours` shorthand of the original is a non-standard stepping croner rejects
+			const offset = hours === 1 ? '*' : `${random(0, hours - 1)}-23`;
+			return `${second} ${minute} ${offset}/${hours} * * *`;
+		}
+	}
+
+	const hour = random(0, 23);
+	return `${second} ${minute} ${hour} * * *`;
+}

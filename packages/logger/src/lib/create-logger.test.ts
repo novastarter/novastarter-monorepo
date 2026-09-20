@@ -1,17 +1,15 @@
 /**
  * Tests of `logger/lib/create-logger`.
  *
- * `@novastarter/env`, `pino` and `pino-pretty` are mocked, so these check which streams and options reach pino for a
- * given environment rather than any real output.
+ * `pino` and `pino-pretty` are mocked, so these check which streams and options reach pino for given options rather
+ * than any real output.
  */
-import { getConfigFromEnv, useEnv } from '@novastarter/env';
 import { pino } from 'pino';
 import { build as pinoPretty } from 'pino-pretty';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { buildLevelFormatters, createLogger, getLoggerLevelValue } from './create-logger.js';
 import type { LogsStream } from './logs-stream.js';
 
-vi.mock('@novastarter/env');
 vi.mock('pino-pretty');
 
 vi.mock('pino', async (importOriginal) => {
@@ -26,8 +24,6 @@ vi.mock('pino', async (importOriginal) => {
 const prettyStream = { pretty: true };
 
 beforeEach(() => {
-	vi.mocked(useEnv).mockReturnValue({});
-	vi.mocked(getConfigFromEnv).mockReturnValue({});
 	vi.mocked(pinoPretty).mockReturnValue(prettyStream as any);
 });
 
@@ -47,40 +43,35 @@ describe('getLoggerLevelValue', () => {
 
 describe('buildLevelFormatters', () => {
 	test('Returns undefined without custom levels', () => {
-		expect(buildLevelFormatters({})).toBeUndefined();
+		expect(buildLevelFormatters(undefined)).toBeUndefined();
 	});
 
-	test('Maps labels to severity and removes the levels entry', () => {
-		const config = { levels: ['info:INFO', ' warn : WARNING '] };
+	test('Maps labels to severity, info for the unmapped ones', () => {
+		const formatters = buildLevelFormatters({ info: 'INFO', warn: 'WARNING' });
 
-		const formatters = buildLevelFormatters(config);
-
-		expect(config).toStrictEqual({});
 		expect(formatters?.level?.('warn', 40)).toStrictEqual({ severity: 'WARNING', level: 40 });
 		expect(formatters?.level?.('error', 50)).toStrictEqual({ severity: 'info', level: 50 });
 	});
 });
 
 describe('createLogger', () => {
-	test('Uses the pretty console stream by default', () => {
-		createLogger();
-
-		expect(pinoPretty).toHaveBeenCalledWith({ ignore: 'hostname,pid', sync: true });
-
-		expect(pino).toHaveBeenCalledWith(expect.objectContaining({ level: 'info' }), [
-			{ level: 'info', stream: prettyStream },
-		]);
-	});
-
-	test('Writes raw lines to stdout when LOG_STYLE is raw', () => {
-		vi.mocked(useEnv).mockReturnValue({ LOG_STYLE: 'raw', LOG_LEVEL: 'debug' });
-
+	test('Writes raw lines to stdout at info by default', () => {
 		createLogger();
 
 		expect(pinoPretty).not.toHaveBeenCalled();
 
+		expect(pino).toHaveBeenCalledWith(expect.objectContaining({ level: 'info' }), [
+			{ level: 'info', stream: process.stdout },
+		]);
+	});
+
+	test('Uses the pretty console stream and the given level when asked', () => {
+		createLogger({ style: 'pretty', level: 'debug' });
+
+		expect(pinoPretty).toHaveBeenCalledWith({ ignore: 'hostname,pid', sync: true });
+
 		expect(pino).toHaveBeenCalledWith(expect.objectContaining({ level: 'debug' }), [
-			{ level: 'debug', stream: process.stdout },
+			{ level: 'debug', stream: prettyStream },
 		]);
 	});
 
@@ -101,17 +92,13 @@ describe('createLogger', () => {
 		createLogger({ logsStream: { stream, level: 'trace' } });
 
 		expect(pino).toHaveBeenCalledWith(expect.objectContaining({ level: 'trace' }), [
-			{ level: 'info', stream: prettyStream },
+			{ level: 'info', stream: process.stdout },
 			{ level: 'trace', stream },
 		]);
 	});
 
-	test('Merges LOGGER_* options into pino', () => {
-		vi.mocked(getConfigFromEnv).mockReturnValue({ name: 'api', levels: ['info:INFO'] });
-
-		createLogger();
-
-		expect(getConfigFromEnv).toHaveBeenCalledWith('LOGGER_', { omitPrefix: 'LOGGER_HTTP' });
+	test('Merges the pino options and the level map in', () => {
+		createLogger({ pino: { name: 'api' }, levels: { info: 'INFO' } });
 
 		expect(pino).toHaveBeenCalledWith(
 			expect.objectContaining({ name: 'api', formatters: { level: expect.any(Function) } }),

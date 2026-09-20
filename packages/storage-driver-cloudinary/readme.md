@@ -1,3 +1,54 @@
 # `@novastarter/storage-driver-cloudinary`
 
-Cloudinary file storage driver for `@novastarter/storage`
+Cloudinary driver for `@novastarter/storage`.
+
+## Description
+
+Assets in a Cloudinary account, through its upload, admin and search APIs; every request is signed with the API secret,
+which never leaves the process. Resumable (TUS) uploads are supported.
+
+## Installation
+
+```
+pnpm add @novastarter/storage @novastarter/storage-driver-cloudinary
+```
+
+## Usage
+
+Register the class once at start-up, then a location per account with the options read from the application's
+configuration:
+
+```ts
+import { useEnv } from '@novastarter/env';
+import { useStorage } from '@novastarter/storage';
+import { DriverCloudinary } from '@novastarter/storage-driver-cloudinary';
+
+const env = useEnv();
+const storage = useStorage();
+
+storage.registerDriver('cloudinary', DriverCloudinary);
+
+storage.registerLocation('media', {
+	driver: 'cloudinary',
+	options: {
+		cloudName: env['STORAGE_MEDIA_CLOUD_NAME'] as string,
+		apiKey: env['STORAGE_MEDIA_API_KEY'] as string,
+		apiSecret: env['STORAGE_MEDIA_API_SECRET'] as string,
+		accessMode: 'public',
+	},
+});
+```
+
+Anywhere later: `useStorage().location('uploads').write(path, stream, type)` and the rest of the `Driver` interface.
+
+## Options
+
+| Option          | Required | Description                                                                |
+| --------------- | -------- | -------------------------------------------------------------------------- |
+| `cloudName`     | yes      | Cloudinary cloud name; part of every API and delivery URL.                 |
+| `apiKey`        | yes      | API key of the account.                                                    |
+| `apiSecret`     | yes      | API secret; only used to sign requests and delivery URLs.                  |
+| `accessMode`    | yes      | `public` assets are served openly, `authenticated` ones need a signed URL. |
+| `root`          | —        | Path prefix every file is placed under; a root folder inside the account.  |
+| `tus.enabled`   | —        | Whether resumable uploads are enabled; only then is `chunkSize` validated. |
+| `tus.chunkSize` | —        | Bytes sent per request; at least the Cloudinary minimum.                   |

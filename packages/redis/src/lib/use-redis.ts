@@ -1,45 +1,38 @@
-import type { Redis } from 'ioredis';
-import { DEFAULT_REDIS_LOCATION } from '../constants/locations.js';
-import { createRedis } from './create-redis.js';
+import { RedisManager } from './redis-manager.js';
 
 /**
- * Holder for the clients built on first use, keyed by location name.
+ * Holder for the manager built on first use.
  *
  * Wrapped in an object rather than exported as a bare binding, so tests can reset it in place instead of reloading
  * the module; application code goes through {@link useRedis}.
  *
  * @internal
- * @defaultValue Empty until first use.
  */
-export const _cache: {
-	redis: Map<string, Redis>;
-} = { redis: new Map() };
+export const _cache: { redis: RedisManager | undefined } = { redis: undefined };
 
 /**
- * Return the process-wide ioredis client of a location, building it on the first call.
+ * Return the process-wide {@link RedisManager}, creating an empty one on first use.
  *
- * One connection per location is enough for every consumer: the `@novastarter/memory` backends share it, and the bus
- * duplicates it by itself for subscribing. Opening a client per consumer would multiply connections for nothing.
+ * The application registers its locations on it at start-up; every later caller gets the same instance, so one
+ * connection per location serves the whole process.
  *
- * @param name - Location name; the default location when omitted.
- * @returns The same client on every call with the same name, so callers may hold on to it.
+ * @returns The same manager on every call.
  * @example
  * ```ts
- * const cache = createCache({ type: 'redis', redis: useRedis(), namespace: 'app' });
- * const limiter = createLimiter({ type: 'redis', redis: useRedis('queue'), namespace: 'app', points: 10, duration: 5 });
+ * // at start-up
+ * useRedis().registerLocation('default', env['REDIS'] as string);
+ *
+ * // anywhere later
+ * const cache = createCache({ type: 'redis', redis: useRedis().location('default'), namespace: 'app' });
  * ```
  */
-export const useRedis = (name: string = DEFAULT_REDIS_LOCATION): Redis => {
-	// 1. Serve the cached client of this location as long as it exists
-	const cached = _cache.redis.get(name);
-
-	if (cached) {
-		return cached;
+export const useRedis = (): RedisManager => {
+	// 1. One manager per process: a second one would open a second connection per location
+	if (_cache.redis) {
+		return _cache.redis;
 	}
 
-	// 2. First call for this name: build from the environment and remember
-	const redis = createRedis(name);
-	_cache.redis.set(name, redis);
+	_cache.redis = new RedisManager();
 
-	return redis;
+	return _cache.redis;
 };

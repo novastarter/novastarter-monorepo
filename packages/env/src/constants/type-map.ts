@@ -57,6 +57,9 @@ export const TYPE_MAP: Record<string, EnvType> = {
 	'REDIS_.+_ENABLED': 'boolean',
 	'REDIS_.+_PASSWORD': 'string',
 
+	'QUEUE_.+_PREFIX': 'string',
+	'QUEUE_.+_REDIS': 'string',
+
 	HEALTHCHECK_ENABLED: 'boolean',
 	HEALTHCHECK_NAMESPACE: 'string',
 	HEALTHCHECK_SERVICES: 'array',

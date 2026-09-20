@@ -24,9 +24,7 @@
 	},
 	"dependencies": {
 		"@novastarter/constants": "workspace:*",
-		"@novastarter/env": "workspace:*",
 		"@novastarter/memory": "workspace:*",
-		"@novastarter/utils": "workspace:*",
 		"lodash-es": "catalog:",
 		"nanoid": "catalog:",
 		"pino": "catalog:",

@@ -1,7 +1,7 @@
 {
 	"name": "@novastarter/redis",
 	"version": "0.0.1",
-	"description": "Shared ioredis client built from the REDIS_* environment variables",
+	"description": "Named Redis locations and the shared ioredis client of each",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
@@ -23,7 +23,6 @@
 		"test:coverage": "vitest run --coverage"
 	},
 	"dependencies": {
-		"@novastarter/env": "workspace:*",
 		"@novastarter/utils": "workspace:*",
 		"ioredis": "catalog:"
 	},

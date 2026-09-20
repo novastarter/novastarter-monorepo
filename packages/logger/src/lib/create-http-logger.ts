@@ -1,43 +1,45 @@
 import type { IncomingMessage } from 'node:http';
 import { URL } from 'node:url';
 import { REDACTED_TEXT } from '@novastarter/constants';
-import { getConfigFromEnv, useEnv } from '@novastarter/env';
 import { merge } from 'lodash-es';
 import { type LoggerOptions, pino } from 'pino';
-import { type AutoLoggingOptions, type HttpLogger, pinoHttp, stdSerializers } from 'pino-http';
+import { type AutoLoggingOptions, type HttpLogger, type Options, pinoHttp, stdSerializers } from 'pino-http';
 import { httpPrintFactory } from 'pino-http-print';
 import { redactQuery } from '../utils/redact-query.js';
-import { resolveLogStyle } from '../utils/resolve-log-style.js';
 import { buildLevelFormatters, type CreateLoggerOptions, getLoggerLevelValue } from './create-logger.js';
 
 /**
- * Build the request logger from the environment.
+ * Options of {@link createHttpLogger}: those of {@link createLogger} plus the request-logging ones.
+ */
+export interface CreateHttpLoggerOptions extends CreateLoggerOptions {
+	/** Paths the request logger stays quiet about, health checks for example; matched on the pathname alone. */
+	ignorePaths?: string[] | undefined;
+	/** Further pino-http options, merged over the ones built here. */
+	http?: Options | undefined;
+}
+
+/**
+ * Build the request logger.
  *
- * Produces one line per request with method, path, status and duration. `LOGGER_HTTP_*` is merged into the pino-http
- * options, `LOG_HTTP_IGNORE_PATHS` silences noisy paths such as health checks, and tokens in the query string are
- * redacted before the line is written. The result is a plain `(req, res, next?)` handler, so it mounts on any Node
- * HTTP server or framework.
+ * Produces one line per request with method, path, status and duration. `http` is merged into the pino-http options,
+ * `ignorePaths` silences noisy paths such as health checks, and tokens in the query string are redacted before the
+ * line is written. The result is a plain `(req, res, next?)` handler, so it mounts on any Node HTTP server or
+ * framework.
  *
- * @param options - Extra destinations for the lines.
+ * @param options - Level, style, ignored paths, pino and pino-http options, extra destinations.
  * @returns A configured pino-http middleware.
  */
-export const createHttpLogger = (options: CreateLoggerOptions = {}): HttpLogger => {
-	const env = useEnv();
-
-	// 1. Two env families: `LOGGER_HTTP*` drives pino-http, `LOGGER_*` the pino instance underneath
-	const httpLoggerEnvConfig = getConfigFromEnv('LOGGER_HTTP', { omitPrefix: 'LOGGER_HTTP_LOGGER' });
-	const loggerEnvConfig = getConfigFromEnv('LOGGER_', { omitPrefix: 'LOGGER_HTTP' });
-
+export const createHttpLogger = (options: CreateHttpLoggerOptions = {}): HttpLogger => {
 	const httpLoggerOptions: LoggerOptions = {
-		level: (env['LOG_LEVEL'] as string) || 'info',
+		level: options.level || 'info',
 		redact: {
 			paths: ['req.headers.authorization', 'req.headers.cookie'],
 			censor: REDACTED_TEXT,
 		},
 	};
 
-	// 2. Raw lines and bus streams carry the full response headers, so the session cookie has to be hidden as well
-	if (resolveLogStyle(env) === 'raw' || options.logsStream) {
+	// 1. Raw lines and bus streams carry the full response headers, so the session cookie has to be hidden as well
+	if (options.style !== 'pretty' || options.logsStream) {
 		httpLoggerOptions.redact = {
 			paths: ['req.headers.authorization', 'req.headers.cookie', 'res.headers', 'req.query.access_token'],
 			censor: (value, pathParts) => {
@@ -56,18 +58,20 @@ export const createHttpLogger = (options: CreateLoggerOptions = {}): HttpLogger 
 		};
 	}
 
-	// 3. Custom level names, same mapping as the application logger
-	const formatters = buildLevelFormatters(loggerEnvConfig);
+	// 2. Custom level names, same mapping as the application logger
+	const formatters = buildLevelFormatters(options.levels);
 
 	if (formatters) {
 		httpLoggerOptions.formatters = formatters;
 	}
 
-	// 4. Ignored paths are matched on the pathname only, so a query string cannot un-silence them
-	if (env['LOG_HTTP_IGNORE_PATHS']) {
-		const ignorePathsSet = new Set(env['LOG_HTTP_IGNORE_PATHS'] as string);
+	// 3. Ignored paths are matched on the pathname only, so a query string cannot un-silence them
+	const httpOptions: Options = { ...options.http };
 
-		httpLoggerEnvConfig['autoLogging'] = {
+	if (options.ignorePaths?.length) {
+		const ignorePathsSet = new Set(options.ignorePaths);
+
+		httpOptions.autoLogging = {
 			ignore: (req) => {
 				if (!req.url) return false;
 				const { pathname } = new URL(req.url, 'http://example.com/');
@@ -76,11 +80,11 @@ export const createHttpLogger = (options: CreateLoggerOptions = {}): HttpLogger 
 		} as AutoLoggingOptions;
 	}
 
-	const mergedHttpOptions = merge(httpLoggerOptions, loggerEnvConfig);
+	const mergedHttpOptions = merge(httpLoggerOptions, options.pino ?? {});
 	const streams = [];
 
-	// 5. Console: a one-line request printer for humans, raw JSON lines for log collectors
-	if (resolveLogStyle(env) !== 'raw') {
+	// 4. Console: a one-line request printer for humans, raw JSON lines for log collectors
+	if (options.style === 'pretty') {
 		const pinoHttpPretty = httpPrintFactory(
 			{
 				all: true,
@@ -98,7 +102,7 @@ export const createHttpLogger = (options: CreateLoggerOptions = {}): HttpLogger 
 		streams.push({ level: mergedHttpOptions.level!, stream: process.stdout });
 	}
 
-	// 6. An extra stream may ask for a lower level than the console; the logger level has to drop to satisfy it
+	// 5. An extra stream may ask for a lower level than the console; the logger level has to drop to satisfy it
 	if (options.logsStream) {
 		const streamLevel = options.logsStream.level ?? mergedHttpOptions.level!;
 
@@ -112,10 +116,10 @@ export const createHttpLogger = (options: CreateLoggerOptions = {}): HttpLogger 
 		});
 	}
 
-	// 7. The request serializer runs last, so the token is gone from the URL before any stream sees it
+	// 6. The request serializer runs last, so the token is gone from the URL before any stream sees it
 	return pinoHttp({
 		logger: pino(mergedHttpOptions, pino.multistream(streams)),
-		...httpLoggerEnvConfig,
+		...httpOptions,
 		serializers: {
 			req(request: IncomingMessage) {
 				const output = stdSerializers.req(request);
