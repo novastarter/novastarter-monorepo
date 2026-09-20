@@ -33,6 +33,8 @@ export const envSchema = z.object({
 	QUEUE_PREFIX: z.string().default('novastarter'),
 	/** Directory of the local storage location. */
 	STORAGE_LOCAL_ROOT: z.string().default('./uploads'),
+	/** Sender of every message without a `from` of its own. */
+	MAIL_FROM: z.string().default('noreply@localhost'),
 });
 
 /**
