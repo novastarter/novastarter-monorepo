@@ -1,0 +1,123 @@
+{
+	"id": "evt_1S5invFailed000005",
+	"object": "event",
+	"api_version": "2026-08-26.dahlia",
+	"created": 1791676810,
+	"data": {
+		"object": {
+			"id": "in_1S5abcDEF12346",
+			"object": "invoice",
+			"account_country": "US",
+			"account_name": "Novastarter",
+			"account_tax_ids": null,
+			"amount_due": 5700,
+			"amount_overpaid": 0,
+			"amount_paid": 0,
+			"amount_remaining": 5700,
+			"amount_shipping": 0,
+			"application": null,
+			"attempt_count": 1,
+			"attempted": true,
+			"auto_advance": false,
+			"automatic_tax": {
+				"disabled_reason": null,
+				"enabled": false,
+				"liability": null,
+				"provider": null,
+				"status": null
+			},
+			"automatically_finalizes_at": null,
+			"billing_reason": "subscription_cycle",
+			"collection_method": "charge_automatically",
+			"created": 1791676800,
+			"currency": "usd",
+			"custom_fields": null,
+			"customer": "cus_T1abcDEF12345",
+			"customer_address": null,
+			"customer_email": "ada@example.com",
+			"customer_name": "Ada Lovelace",
+			"customer_phone": null,
+			"customer_shipping": null,
+			"customer_tax_exempt": "none",
+			"customer_tax_ids": [],
+			"default_payment_method": null,
+			"default_source": null,
+			"default_tax_rates": [],
+			"description": null,
+			"discounts": [],
+			"due_date": null,
+			"effective_at": 1791676800,
+			"ending_balance": 0,
+			"footer": null,
+			"from_invoice": null,
+			"hosted_invoice_url": "https://invoice.stripe.com/i/acct_1/test_YWNjdF8x",
+			"invoice_pdf": "https://pay.stripe.com/invoice/acct_1/test_YWNjdF8x/pdf",
+			"issuer": {
+				"type": "self"
+			},
+			"last_finalization_error": null,
+			"latest_revision": null,
+			"lines": {
+				"object": "list",
+				"data": [],
+				"has_more": false,
+				"total_count": 1,
+				"url": "/v1/invoices/in_1S5abcDEF12345/lines"
+			},
+			"livemode": false,
+			"metadata": {},
+			"next_payment_attempt": 1791936000,
+			"number": "A1B2C3D4-0002",
+			"on_behalf_of": null,
+			"parent": {
+				"quote_details": null,
+				"subscription_details": {
+					"metadata": {
+						"organizationId": "org_42",
+						"planId": "pro"
+					},
+					"subscription": "sub_1S5abcDEF123456789"
+				},
+				"type": "subscription_details"
+			},
+			"payment_settings": {
+				"default_mandate": null,
+				"payment_method_options": null,
+				"payment_method_types": null
+			},
+			"period_end": 1791676800,
+			"period_start": 1789084800,
+			"post_payment_credit_notes_amount": 0,
+			"pre_payment_credit_notes_amount": 0,
+			"receipt_number": null,
+			"rendering": null,
+			"shipping_cost": null,
+			"shipping_details": null,
+			"starting_balance": 0,
+			"statement_descriptor": null,
+			"status": "open",
+			"status_transitions": {
+				"finalized_at": 1791676800,
+				"marked_uncollectible_at": null,
+				"paid_at": null,
+				"voided_at": null
+			},
+			"subtotal": 5700,
+			"subtotal_excluding_tax": 5700,
+			"test_clock": null,
+			"total": 5700,
+			"total_discount_amounts": [],
+			"total_excluding_tax": 5700,
+			"total_pretax_credit_amounts": [],
+			"total_taxes": [],
+			"webhooks_delivered_at": null
+		}
+	},
+	"livemode": false,
+	"pending_webhooks": 1,
+	"request": {
+		"id": "req_abc123",
+		"idempotency_key": null
+	},
+	"type": "invoice.payment_failed"
+}

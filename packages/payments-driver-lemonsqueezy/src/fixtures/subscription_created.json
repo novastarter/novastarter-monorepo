@@ -1,0 +1,59 @@
+{
+	"meta": {
+		"event_name": "subscription_created",
+		"custom_data": {
+			"organizationId": "org_123",
+			"planId": "pro",
+			"period": "monthly"
+		},
+		"test_mode": true,
+		"webhook_id": "wh_2"
+	},
+	"data": {
+		"type": "subscriptions",
+		"id": "3001",
+		"attributes": {
+			"store_id": 12345,
+			"customer_id": 987,
+			"order_id": 5001,
+			"order_item_id": 6001,
+			"product_id": 111,
+			"variant_id": 222,
+			"product_name": "Pro",
+			"variant_name": "Monthly",
+			"user_name": "Ada Lovelace",
+			"user_email": "ada@example.com",
+			"status": "active",
+			"status_formatted": "Active",
+			"card_brand": "visa",
+			"card_last_four": "4242",
+			"pause": null,
+			"cancelled": false,
+			"trial_ends_at": null,
+			"billing_anchor": 1,
+			"first_subscription_item": {
+				"id": 7001,
+				"subscription_id": 3001,
+				"price_id": 8001,
+				"quantity": 3,
+				"is_usage_based": false,
+				"created_at": "2026-09-01T10:00:00.000000Z",
+				"updated_at": "2026-09-01T10:00:00.000000Z"
+			},
+			"urls": {
+				"update_payment_method": "https://acme.lemonsqueezy.com/subscription/3001/payment-details?expires=1&signature=x",
+				"customer_portal": "https://acme.lemonsqueezy.com/billing?expires=1&signature=y",
+				"customer_portal_update_subscription": "https://acme.lemonsqueezy.com/billing/3001/update?expires=1&signature=z"
+			},
+			"renews_at": "2026-10-01T10:00:00.000000Z",
+			"ends_at": null,
+			"created_at": "2026-09-01T10:00:00.000000Z",
+			"updated_at": "2026-09-01T10:00:05.000000Z",
+			"test_mode": true
+		},
+		"relationships": {},
+		"links": {
+			"self": "https://api.lemonsqueezy.com/v1/subscriptions/3001"
+		}
+	}
+}
