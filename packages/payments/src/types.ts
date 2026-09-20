@@ -53,7 +53,7 @@ export interface CreateCustomerInput {
 export interface CreateCheckoutSessionInput {
 	/** The customer the subscription belongs to — created first with `createCustomer()`. */
 	customerId: string;
-	/** The provider's id of the price (a Stripe price, a Polar product) from the plan catalog. */
+	/** The provider's id of the price (a Stripe price, a Polar product), as the application's plans record it. */
 	priceId: string;
 	/** Seats, for prices charged per unit. */
 	quantity?: number | undefined;
@@ -106,7 +106,7 @@ export interface Subscription {
 	id: string;
 	customerId: string;
 	status: SubscriptionStatus;
-	/** The provider's id of the price being paid — the catalog maps it back to a plan and a period. */
+	/** The provider's id of the price being paid — what the application maps back to one of its plans. */
 	priceId: string;
 	/** The provider's id of the product the price belongs to; `null` when the provider has no such notion. */
 	productId: string | null;

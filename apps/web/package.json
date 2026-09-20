@@ -16,6 +16,7 @@
 		"@novastarter/logger": "workspace:*",
 		"@novastarter/mail": "workspace:*",
 		"@novastarter/memory": "workspace:*",
+		"@novastarter/payments": "workspace:*",
 		"@novastarter/queue": "workspace:*",
 		"@novastarter/redis": "workspace:*",
 		"@novastarter/storage": "workspace:*",

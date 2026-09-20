@@ -1,14 +1,11 @@
 /**
  * Public entry point of `@novastarter/payments`.
  *
- * Billing in three parts: the {@link PaymentsDriver} contract a provider package implements, the
- * {@link PaymentsManager} of {@link usePayments} mapping named locations to those drivers, and the plan catalog of
- * {@link definePlans} with the {@link EntitlementManager} that gates features by it.
+ * Billing in two parts: the {@link PaymentsDriver} contract a provider package implements, and the
+ * {@link PaymentsManager} of {@link usePayments} mapping named locations to those drivers. What the application
+ * sells — its plans and what they grant — is the application's own.
  */
 export * from './driver.js';
-export * from './lib/entitlements.js';
 export * from './lib/payments-manager.js';
-export * from './lib/plan-catalog.js';
 export * from './lib/use-payments.js';
-export * from './plans.js';
 export * from './types.js';

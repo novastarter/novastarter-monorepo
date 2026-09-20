@@ -87,9 +87,6 @@ catalogs:
     '@types/nodemailer':
       specifier: 8.0.1
       version: 8.0.1
-    '@types/react':
-      specifier: 19.2.18
-      version: 19.2.18
     '@types/semver':
       specifier: 7.7.1
       version: 7.7.1
@@ -177,9 +174,6 @@ catalogs:
     rate-limiter-flexible:
       specifier: 7.2.0
       version: 7.2.0
-    react:
-      specifier: 19.2.8
-      version: 19.2.8
     resend:
       specifier: 6.27.0
       version: 6.27.0
@@ -210,9 +204,6 @@ catalogs:
     zod:
       specifier: 4.1.12
       version: 4.1.12
-    zustand:
-      specifier: 5.0.15
-      version: 5.0.15
 
 importers:
 
@@ -303,6 +294,9 @@ importers:
       '@novastarter/memory':
         specifier: workspace:*
         version: link:../../packages/memory
+      '@novastarter/payments':
+        specifier: workspace:*
+        version: link:../../packages/payments
       '@novastarter/queue':
         specifier: workspace:*
         version: link:../../packages/queue
@@ -800,18 +794,9 @@ importers:
 
   packages/payments:
     dependencies:
-      '@novastarter/errors':
-        specifier: workspace:*
-        version: link:../errors
-      '@novastarter/memory':
-        specifier: workspace:*
-        version: link:../memory
       '@novastarter/utils':
         specifier: workspace:*
         version: link:../utils
-      zod:
-        specifier: 'catalog:'
-        version: 4.1.12
     devDependencies:
       '@novastarter/tsconfig':
         specifier: workspace:*
@@ -1377,28 +1362,6 @@ importers:
       vitest:
         specifier: 'catalog:'
         version: 3.2.7(@types/node@26.4.1)(jiti@2.7.0)(supports-color@7.2.0)(yaml@2.9.1)
-
-  packages/stores:
-    dependencies:
-      zustand:
-        specifier: 'catalog:'
-        version: 5.0.15(@types/react@19.2.18)(react@19.2.8)
-    devDependencies:
-      '@novastarter/tsconfig':
-        specifier: workspace:*
-        version: link:../tsconfig
-      '@types/react':
-        specifier: 'catalog:'
-        version: 19.2.18
-      react:
-        specifier: 'catalog:'
-        version: 19.2.8
-      tsdown:
-        specifier: 'catalog:'
-        version: 0.15.11(@emnapi/core@1.10.0)(@emnapi/runtime@1.11.3)(supports-color@7.2.0)(typescript@5.9.3)
-      typescript:
-        specifier: 'catalog:'
-        version: 5.9.3
 
   packages/tsconfig: {}
 
@@ -5188,24 +5151,6 @@ packages:
 
   zod@4.1.12:
     resolution: {integrity: sha512-JInaHOamG8pt5+Ey8kGmdcAcg3OL9reK8ltczgHTAwNhMys/6ThXHityHxVV2p3fkw/c+MAvBHFVYHFZDmjMCQ==}
-
-  zustand@5.0.15:
-    resolution: {integrity: sha512-MpSEjRiBkA9crSYeOUH32rJC7SVqAbm0Fqcqge/bUi2PPoLcBWKOsG+C8mevmpr8TwXHBVkChbbJiyvkE+i/3A==}
-    engines: {node: '>=12.20.0'}
-    peerDependencies:
-      '@types/react': '>=18.0.0'
-      immer: '>=9.0.6'
-      react: '>=18.0.0'
-      use-sync-external-store: '>=1.2.0'
-    peerDependenciesMeta:
-      '@types/react':
-        optional: true
-      immer:
-        optional: true
-      react:
-        optional: true
-      use-sync-external-store:
-        optional: true
 
 snapshots:
 
@@ -9020,8 +8965,3 @@ snapshots:
   yocto-queue@0.1.0: {}
 
   zod@4.1.12: {}
-
-  zustand@5.0.15(@types/react@19.2.18)(react@19.2.8):
-    optionalDependencies:
-      '@types/react': 19.2.18
-      react: 19.2.8

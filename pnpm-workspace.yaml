@@ -78,7 +78,6 @@ catalog:
   undici: 7.29.0
   vitest: 3.2.7
   zod: 4.1.12
-  zustand: 5.0.15
 allowBuilds:
   esbuild: true
   lefthook: true

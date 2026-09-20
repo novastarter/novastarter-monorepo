@@ -15,7 +15,6 @@
 '@novastarter/storage-driver-local': patch
 '@novastarter/storage-driver-s3': patch
 '@novastarter/storage-driver-supabase': patch
-'@novastarter/stores': patch
 '@novastarter/types': patch
 '@novastarter/utils': patch
 '@novastarter/validation': patch

@@ -124,6 +124,8 @@ application's schema's — see `@novastarter/env`.
 3. Enqueue it from anywhere with `enqueue()`; a worker consumes the queue automatically, since `getQueueNames()` reads
    the registry.
 
+`getJobContract(name)`, `getJobNames()` and `getQueueNames()` read the registry — the last is what a worker consumes.
+
 ## Enqueuing
 
 ```ts
@@ -184,14 +186,6 @@ logger, `close(force?)` drains gracefully. `telemetry` takes BullMQ's OpenTeleme
 worker and on the `bullmq` location alike: every run becomes a span, and a producer enqueuing with the add-on hands its
 trace context over in the job's metadata, so the worker's span continues the request's trace.
 
-### Delivering a job to the web app
-
-A worker may run no domain code at all and post every job to the web app instead; the two sides share the contract from
-this package — `INTERNAL_JOBS_PATH` (`/api/internal/jobs/`), `internalJobUrl(baseUrl, name)`, the body type
-`InternalJobRequest` (`{ id, payload, attempt, enqueuedAt }`), and the `TIMESTAMP_HEADER` / `SIGNATURE_HEADER` names
-(`x-ns-timestamp`, `x-ns-signature`) an HMAC of timestamp and body travels in. Signing and verifying are the
-application's.
-
 ## Schedules
 
 ```ts
@@ -215,22 +209,14 @@ process.once('SIGTERM', () => running.stop());
 ```
 
 A schedule is data: a job, a cron rule (or a function reading it from the environment the application passes in), a
-payload and a switch. The kit ships one, `system.ping` every five minutes in development. `startSchedules()` runs every
-enabled one through `scheduleSynchronizedJob()`: each instance of the cluster keeps its own croner timer, and on a tick
-tries to advance a `SynchronizedClock` in the shared `Kv` (`setMax`, a Lua script on Redis) to the next fire time — the
-first writer enqueues, the others stand down. Rules may carry seconds (six fields); `validateCron()` checks one;
-`durationToCron(seconds)` turns an interval into a rule with a random phase, so many deployments do not fire together.
+payload and a switch. `startSchedules()` runs every enabled one through `scheduleSynchronizedJob()`: each instance of
+the cluster keeps its own croner timer, and on a tick tries to advance a `SynchronizedClock` in the shared `Kv`
+(`setMax`, a Lua script on Redis) to the next fire time — the first writer enqueues, the others stand down. Rules may
+carry seconds (six fields); `validateCron()` checks one; `durationToCron(seconds)` turns an interval into a rule with a
+random phase, so many deployments do not fire together.
 
 ### Adding a schedule
 
 `registerSchedule({ job, cron, payload, enabled })` — in the app's module at startup. `cron` may be a function of the
 environment (`(env) => String(env['REPORTS_BUILD_SCHEDULE'])`) and `enabled` a switch; the job should be `unique` if a
 tick could overlap a run still in progress. Nothing else: `startSchedules()` picks it up.
-
-## Contracts of the kit
-
-- `system.ping` — logs a message; the development schedule and the smoke test of the pipeline. Its handler is the kit's
-  `createSystemPingHandler({ logger? })` — one line with the id, the wait since the enqueue and the attempt — which the
-  app registers with `registerJobHandlers()`.
-
-`getJobContract(name)`, `getJobNames()` and `getQueueNames()` read the registry — the last is what a worker consumes.

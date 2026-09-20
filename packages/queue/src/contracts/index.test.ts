@@ -1,11 +1,10 @@
 /**
- * Tests of the contract registry and of the kit's own contracts.
+ * Tests of the contract registry, which starts empty: every contract is the application's.
  */
 import { afterEach, describe, expect, test } from 'vitest';
 import { z } from 'zod';
 import { defineJob } from '../lib/define-job.js';
-import type { JobHandlers, JobInput, JobPayload } from '../types.js';
-import { systemPing } from './system.js';
+import type { JobHandler, JobInput, JobPayload } from '../types.js';
 import { _contracts, getJobContract, getJobNames, getQueueNames, registerJob } from './index.js';
 
 afterEach(() => {
@@ -13,10 +12,9 @@ afterEach(() => {
 });
 
 describe('registry', () => {
-	test('Holds the contract of the kit at load', () => {
-		expect(getJobNames()).toStrictEqual(['system.ping']);
-		expect(getQueueNames()).toStrictEqual(['system']);
-		expect(getJobContract('system.ping')).toBe(systemPing);
+	test('Starts empty', () => {
+		expect(getJobNames()).toStrictEqual([]);
+		expect(getQueueNames()).toStrictEqual([]);
 	});
 
 	test('Registers a contract once and refuses a second one of the same name', () => {
@@ -27,7 +25,7 @@ describe('registry', () => {
 		expect(getQueueNames()).toContain('reports');
 
 		expect(() => registerJob(reportsBuild)).toThrow('Job "reports.build" is already registered');
-		expect(() => registerJob(defineJob({ name: 'system.ping', schema: z.object({}) }))).toThrow('already registered');
+		expect(() => registerJob(defineJob({ name: 'reports.build', schema: z.object({}) }))).toThrow('already registered');
 	});
 
 	test('Refuses to look up a name nobody registered', () => {
@@ -36,20 +34,19 @@ describe('registry', () => {
 });
 
 describe('contracts', () => {
-	test('Types the payloads of the registry end to end', () => {
-		// Compile-time check: the handler map knows the kit's jobs and their parsed payloads
-		const handlers: JobHandlers = {
-			'system.ping': async (payload) => {
-				const message: string = payload.message;
-				expect(message).toBeDefined();
-			},
+	test('Types the payloads of a contract end to end', () => {
+		// Compile-time check: the handler of a contract sees its parsed payload, the caller its input
+		const testEcho = defineJob({ name: 'test.echo', schema: z.object({ message: z.string().default('ping') }) });
+
+		const handler: JobHandler<typeof testEcho> = async (payload) => {
+			const message: string = payload.message;
+			expect(message).toBeDefined();
 		};
 
-		const input: JobInput<typeof systemPing> = {};
-		const parsed: JobPayload<typeof systemPing> = { message: 'ping' };
+		const input: JobInput<typeof testEcho> = {};
+		const parsed: JobPayload<typeof testEcho> = { message: 'ping' };
 
-		expect(Object.keys(handlers)).toHaveLength(1);
-		expect(input).toStrictEqual({});
-		expect(parsed.message).toBe('ping');
+		expect(handler).toBeTypeOf('function');
+		expect(testEcho.parse(input)).toStrictEqual(parsed);
 	});
 });

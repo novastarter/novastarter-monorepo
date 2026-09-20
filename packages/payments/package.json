@@ -1,7 +1,7 @@
 {
 	"name": "@novastarter/payments",
 	"version": "0.0.1",
-	"description": "Payments for Novastarter: driver contract, manager of named provider locations, plan catalog and entitlements",
+	"description": "Payments for Novastarter: driver contract and manager of named provider locations",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
@@ -24,10 +24,7 @@
 		"test:coverage": "vitest run --coverage"
 	},
 	"dependencies": {
-		"@novastarter/errors": "workspace:*",
-		"@novastarter/memory": "workspace:*",
-		"@novastarter/utils": "workspace:*",
-		"zod": "catalog:"
+		"@novastarter/utils": "workspace:*"
 	},
 	"devDependencies": {
 		"@novastarter/tsconfig": "workspace:*",

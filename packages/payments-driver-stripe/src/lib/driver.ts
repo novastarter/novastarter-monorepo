@@ -31,6 +31,8 @@ export type DriverStripeConfig = {
 	webhookSecret: string;
 	/** Seconds a webhook's timestamp may be off before it is refused; Stripe's default of 300 unless given. */
 	webhookTolerance?: number | undefined;
+	/** What Stripe's request logs show for this integration (name, version, url); nothing unless given. */
+	appInfo?: Stripe.AppInfo | undefined;
 	/**
 	 * A client to use instead of one built from the key — tests hand in one with stubbed resources.
 	 *
@@ -124,8 +126,11 @@ export class DriverStripe implements PaymentsDriver {
 			throw new Error('The stripe payments driver needs a "webhookSecret"');
 		}
 
-		// 2. The SDK pins the API version it was built for; `appInfo` shows up in Stripe's request logs
-		this.client = config.client ?? new Stripe(config.secretKey, { appInfo: { name: 'Novastarter' } });
+		// 2. The SDK pins the API version it was built for; the application's `appInfo`, when given, shows up in
+		//    Stripe's request logs
+		this.client =
+			config.client ??
+			new Stripe(config.secretKey, { ...(config.appInfo !== undefined ? { appInfo: config.appInfo } : {}) });
 
 		this.webhookSecret = config.webhookSecret;
 		this.webhookTolerance = config.webhookTolerance;

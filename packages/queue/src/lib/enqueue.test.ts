@@ -27,9 +27,19 @@ vi.mock('@novastarter/redis', () => ({
 
 const emitter = { emitAction: vi.fn() };
 
+/**
+ * A contract standing in for the application's jobs: the package registers none of its own.
+ */
+const testPing = defineJob({
+	name: 'test.ping',
+	schema: z.object({ message: z.string().default('ping'), at: z.iso.datetime().optional() }),
+	options: { attempts: 1, removeOnComplete: true },
+});
+
 beforeEach(() => {
 	vi.mocked(useLogger).mockReturnValue({ error: vi.fn() } as any);
 	vi.mocked(useEmitter).mockReturnValue(emitter as any);
+	registerJob(testPing);
 
 	// Every test enqueues on a local default location, as an application without Redis would register it
 	useQueue().registerLocation('default', {
@@ -41,6 +51,7 @@ beforeEach(() => {
 afterEach(() => {
 	_cache.queue = undefined;
 	_handlers.clear();
+	_contracts.delete('test.ping');
 	vi.clearAllMocks();
 });
 
@@ -91,11 +102,11 @@ describe('useQueue / QueueManager', () => {
 describe('enqueue', () => {
 	test('Parses the payload, runs the handler and emits job.enqueued', async () => {
 		const handler = vi.fn(async () => {});
-		registerJobHandlers({ 'system.ping': handler });
+		registerJobHandlers({ 'test.ping': handler } as never);
 
-		const job = await enqueue('system.ping', {});
+		const job = await enqueue('test.ping' as never, {} as never);
 
-		expect(job).toStrictEqual({ id: expect.any(String), name: 'system.ping', queue: 'system' });
+		expect(job).toStrictEqual({ id: expect.any(String), name: 'test.ping', queue: 'test' });
 		expect(handler).toHaveBeenCalledWith({ message: 'ping' }, expect.objectContaining({ id: job.id, attempt: 1 }));
 
 		expect(emitter.emitAction).toHaveBeenCalledWith(JOB_ENQUEUED_EVENT, { ...job, payload: { message: 'ping' } });
@@ -104,9 +115,11 @@ describe('enqueue', () => {
 
 	test('Refuses an invalid payload before anything is queued', async () => {
 		const handler = vi.fn(async () => {});
-		registerJobHandlers({ 'system.ping': handler });
+		registerJobHandlers({ 'test.ping': handler } as never);
 
-		await expect(enqueue('system.ping', { at: 'yesterday' })).rejects.toMatchObject({ code: 'INVALID_PAYLOAD' });
+		await expect(enqueue('test.ping' as never, { at: 'yesterday' } as never)).rejects.toMatchObject({
+			code: 'INVALID_PAYLOAD',
+		});
 
 		expect(handler).not.toHaveBeenCalled();
 		expect(emitter.emitAction).not.toHaveBeenCalled();
@@ -114,9 +127,9 @@ describe('enqueue', () => {
 
 	test('Applies the contract options and the call overrides, deriving the id', async () => {
 		const handler = vi.fn(async () => {});
-		registerJobHandlers({ 'system.ping': handler });
+		registerJobHandlers({ 'test.ping': handler } as never);
 
-		const job = await enqueue('system.ping', {}, { jobId: 'nightly' });
+		const job = await enqueue('test.ping' as never, {} as never, { jobId: 'nightly' });
 
 		expect(job.id).toBe('nightly');
 

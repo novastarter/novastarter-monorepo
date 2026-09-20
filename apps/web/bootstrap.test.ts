@@ -40,6 +40,10 @@ test('Registers every subsystem in-process without a Redis and runs a job end to
 	expect(sent.queue).toBe('mail');
 	expect(useMail().instantiated().has('default')).toBe(true);
 
+	// The bootstrap registered the app's ping handler; a spy takes its place to see the payload arrive
+	expect(_handlers.has('system.ping')).toBe(true);
+	_handlers.delete('system.ping');
+
 	const handler = vi.fn(async () => {});
 	registerJobHandlers({ 'system.ping': handler });
 

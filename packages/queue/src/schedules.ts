@@ -29,28 +29,13 @@ export interface ResolvedSchedule {
 }
 
 /**
- * How often the development ping fires.
- *
- * @defaultValue every five minutes
- */
-export const DEV_PING_SCHEDULE = '*/5 * * * *';
-
-/**
- * The schedules of the kit — the development ping; the app adds its own with {@link registerSchedule}.
+ * The registered schedules — empty until the application adds its own with {@link registerSchedule}.
  *
  * Exported as a bare array so tests can reset it in place.
  *
  * @internal
  */
-export const _schedules: Schedule[] = [
-	{
-		job: 'system.ping',
-		cron: DEV_PING_SCHEDULE,
-		payload: { message: 'scheduled ping' },
-		// A heartbeat through the whole pipeline is worth having while developing, noise in production
-		enabled: (env) => env['NODE_ENV'] === 'development',
-	},
-];
+export const _schedules: Schedule[] = [];
 
 /**
  * Add a schedule.

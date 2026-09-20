@@ -1,11 +1,11 @@
 /**
- * Tests of `payments/lib/entitlements`: limits, switches, the cache and its invalidation over the bus, and forks.
+ * Tests of `billing/entitlements`: limits, switches, the cache and its invalidation over the bus, and forks.
  */
-import { LimitExceededError, ResourceRestrictedError } from '@novastarter/errors';
 import { BusLocal, CacheLocal } from '@novastarter/memory';
 import { describe, expect, test, vi } from 'vitest';
-import { definePlans } from '../plans.js';
-import { EntitlementManager, ENTITLEMENTS_CHANNEL, planCacheKey, usageCacheKey } from './entitlements.js';
+import { EntitlementManager, ENTITLEMENTS_CHANNEL, planCacheKey, usageCacheKey } from './entitlements';
+import { LimitExceededError, ResourceRestrictedError } from './errors';
+import { definePlans } from './plans';
 
 const plans = definePlans([
 	{ id: 'free', name: 'Free', prices: {}, entitlements: { seats: 1, projects: 1, sso: false } },

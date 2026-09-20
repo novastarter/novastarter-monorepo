@@ -1,4 +1,4 @@
-import type { BillingPeriod, EntitlementValue, Plan } from '../plans.js';
+import type { BillingPeriod, EntitlementValue, Plan } from './plans';
 
 /**
  * Where a provider's price id points in the catalog.

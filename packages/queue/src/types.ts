@@ -1,5 +1,4 @@
 import type { z } from 'zod';
-import type { systemPing } from './contracts/system.js';
 
 /**
  * How a job is retried, prioritised and cleaned up; the subset of BullMQ's `JobsOptions` every provider honours.
@@ -87,10 +86,10 @@ export type JobHandler<Contract extends JobContract = JobContract> = (
 ) => Promise<void>;
 
 /**
- * Contracts of the kit and of the app, keyed by name.
+ * Contracts of the application, keyed by name.
  *
- * The kit lists its own here; a module of the app adds its contracts by augmenting the interface, which is what makes
- * `enqueue('reports.build', payload)` check the payload of the app's own jobs:
+ * Empty here: a module of the application adds its contracts by augmenting the interface, which is what makes
+ * `enqueue('reports.build', payload)` check the payload of the application's own jobs:
  *
  * ```ts
  * declare module '@novastarter/queue' {
@@ -100,12 +99,10 @@ export type JobHandler<Contract extends JobContract = JobContract> = (
  * }
  * ```
  *
- * The runtime registry is `registerJob()`; the two have to agree. The kit's own contract is listed here rather than
- * through augmentation, which would not survive the bundled declarations.
+ * The runtime registry is `registerJob()`; the two have to agree.
  */
-export interface JobRegistry {
-	'system.ping': typeof systemPing;
-}
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- augmented by the application
+export interface JobRegistry {}
 
 /**
  * Name of a known job.
