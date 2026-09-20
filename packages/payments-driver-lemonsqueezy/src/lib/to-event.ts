@@ -1,0 +1,132 @@
+import type { BillingInterval, PaymentsEvent } from '@novastarter/payments';
+import type {
+	LsOrderAttributes,
+	LsSubscriptionAttributes,
+	LsSubscriptionInvoiceAttributes,
+	LsWebhookPayload,
+} from '../types.js';
+import { toInvoice } from './to-invoice.js';
+import { toMetadata } from './to-metadata.js';
+import { toSubscription } from './to-subscription.js';
+
+/**
+ * The driver's name, as events carry it.
+ *
+ * @defaultValue `lemonsqueezy`
+ */
+export const PROVIDER = 'lemonsqueezy';
+
+/**
+ * The subscription events that are a change of an existing subscription.
+ *
+ * @defaultValue `subscription_updated`, `_cancelled`, `_resumed`, `_paused`, `_unpaused`, `_plan_changed`
+ */
+export const SUBSCRIPTION_UPDATE_EVENTS: ReadonlySet<string> = new Set([
+	'subscription_updated',
+	'subscription_cancelled',
+	'subscription_resumed',
+	'subscription_paused',
+	'subscription_unpaused',
+	'subscription_plan_changed',
+]);
+
+/**
+ * Where the billing interval of a variant comes from: the subscription payload does not carry it.
+ */
+export type IntervalResolver = (variantId: string) => Promise<BillingInterval>;
+
+/**
+ * The id of a delivery: the `webhook_id` Lemon Squeezy puts under `meta`, stable across retries of one event;
+ * without one, the event, the resource and its update time — the same for a retry, different for a later change.
+ *
+ * @param payload - The delivery.
+ * @returns The id.
+ */
+export const deliveryIdOf = (payload: LsWebhookPayload<{ updated_at?: string }>): string =>
+	payload.meta.webhook_id ??
+	`${payload.meta.event_name}:${payload.data.id}:${payload.data.attributes.updated_at ?? ''}`;
+
+/**
+ * A verified Lemon Squeezy delivery as the kit's event, or `null` for one the kit does not act on.
+ *
+ * - `order_created` → `checkout.completed`: the purchase, with the checkout's custom data; the subscription it
+ *   created follows in its own event.
+ * - `subscription_created` → `subscription.created`; `subscription_updated`, `_cancelled`, `_resumed`, `_paused`,
+ *   `_unpaused` and `_plan_changed` → `subscription.updated` (a cancelled subscription is on its grace period, the
+ *   kit's `cancelAtPeriodEnd`); `subscription_expired` → `subscription.deleted`, since an expired one is over.
+ * - `subscription_payment_success` and `_recovered` → `invoice.paid`; `subscription_payment_failed` →
+ *   `invoice.failed`. A refund (`_payment_refunded`) is not an unpaid invoice and is dropped.
+ *
+ * Everything else — license keys, affiliates, order refunds — is verified and dropped.
+ *
+ * @param payload - The delivery, parsed.
+ * @param intervalOf - Reads a variant's billing interval, for the subscription events.
+ * @returns The normalised event, or `null`.
+ */
+export const toEvent = async (
+	payload: LsWebhookPayload,
+	intervalOf: IntervalResolver,
+): Promise<PaymentsEvent | null> => {
+	// 1. What every event shares: the delivery id, the driver name, when the resource last changed, the raw payload
+	const name = payload.meta.event_name;
+	const attributes = payload.data.attributes as { updated_at?: string; created_at?: string };
+	const occurredAt = new Date(attributes.updated_at ?? attributes.created_at ?? Date.now());
+
+	const base = {
+		id: deliveryIdOf(payload as LsWebhookPayload<{ updated_at?: string }>),
+		provider: PROVIDER,
+		occurredAt,
+		raw: payload,
+	};
+
+	// 2. The checkout's custom data rides under `meta` on every event of the order and the subscription
+	const metadata = toMetadata(payload.meta.custom_data);
+
+	// 3. The subscription events share one shape and one mapping, the type of the kit's event apart
+	const subscriptionEvent = async (
+		type: 'subscription.created' | 'subscription.updated' | 'subscription.deleted',
+	): Promise<PaymentsEvent> => {
+		// 1. The interval is read from the variant, since the subscription payload does not carry it
+		const data = payload.data as LsWebhookPayload<LsSubscriptionAttributes>['data'];
+		const interval = await intervalOf(String(data.attributes.variant_id));
+
+		return { ...base, type, subscription: toSubscription(data, { interval, metadata }) };
+	};
+
+	// 4. One branch per Lemon Squeezy event name; the update family is matched by set, everything else is dropped
+	switch (name) {
+		case 'order_created': {
+			const order = payload.data as LsWebhookPayload<LsOrderAttributes>['data'];
+
+			return {
+				...base,
+				type: 'checkout.completed',
+				checkout: { id: order.id, customerId: String(order.attributes.customer_id), subscriptionId: null, metadata },
+			};
+		}
+
+		case 'subscription_created':
+			return subscriptionEvent('subscription.created');
+
+		case 'subscription_expired':
+			return subscriptionEvent('subscription.deleted');
+
+		case 'subscription_payment_success':
+		case 'subscription_payment_recovered':
+			return {
+				...base,
+				type: 'invoice.paid',
+				invoice: toInvoice(payload.data as LsWebhookPayload<LsSubscriptionInvoiceAttributes>['data']),
+			};
+
+		case 'subscription_payment_failed':
+			return {
+				...base,
+				type: 'invoice.failed',
+				invoice: toInvoice(payload.data as LsWebhookPayload<LsSubscriptionInvoiceAttributes>['data']),
+			};
+
+		default:
+			return SUBSCRIPTION_UPDATE_EVENTS.has(name) ? subscriptionEvent('subscription.updated') : null;
+	}
+};

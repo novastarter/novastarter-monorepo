@@ -1,0 +1,106 @@
+{
+	"id": "evt_1S5checkout000006",
+	"object": "event",
+	"api_version": "2026-08-26.dahlia",
+	"created": 1789084800,
+	"data": {
+		"object": {
+			"id": "cs_test_a1B2c3D4e5F6g7H8i9J0",
+			"object": "checkout.session",
+			"adaptive_pricing": null,
+			"after_expiration": null,
+			"allow_promotion_codes": true,
+			"amount_subtotal": 5700,
+			"amount_total": 5700,
+			"automatic_tax": {
+				"enabled": false,
+				"liability": null,
+				"provider": null,
+				"status": null
+			},
+			"billing_address_collection": null,
+			"cancel_url": "http://localhost:3000/dashboard/billing/plans",
+			"client_reference_id": null,
+			"client_secret": null,
+			"collected_information": null,
+			"consent": null,
+			"consent_collection": null,
+			"created": 1789084700,
+			"currency": "usd",
+			"currency_conversion": null,
+			"custom_fields": [],
+			"custom_text": {
+				"after_submit": null,
+				"shipping_address": null,
+				"submit": null,
+				"terms_of_service_acceptance": null
+			},
+			"customer": "cus_T1abcDEF12345",
+			"customer_creation": null,
+			"customer_details": {
+				"address": null,
+				"email": "ada@example.com",
+				"name": "Ada Lovelace",
+				"phone": null,
+				"tax_exempt": "none",
+				"tax_ids": []
+			},
+			"customer_email": null,
+			"discounts": [],
+			"expires_at": 1789171100,
+			"invoice": "in_1S5abcDEF12345",
+			"invoice_creation": null,
+			"livemode": false,
+			"locale": null,
+			"metadata": {
+				"organizationId": "org_42",
+				"planId": "pro"
+			},
+			"mode": "subscription",
+			"payment_intent": null,
+			"payment_link": null,
+			"payment_method_collection": "always",
+			"payment_method_configuration_details": null,
+			"payment_method_options": {
+				"card": {
+					"request_three_d_secure": "automatic"
+				}
+			},
+			"payment_method_types": ["card"],
+			"payment_status": "paid",
+			"permissions": null,
+			"phone_number_collection": {
+				"enabled": false
+			},
+			"recovered_from": null,
+			"saved_payment_method_options": {
+				"allow_redisplay_filters": ["always"],
+				"payment_method_remove": "disabled",
+				"payment_method_save": null
+			},
+			"setup_intent": null,
+			"shipping_address_collection": null,
+			"shipping_cost": null,
+			"shipping_options": [],
+			"status": "complete",
+			"submit_type": null,
+			"subscription": "sub_1S5abcDEF123456789",
+			"success_url": "http://localhost:3000/dashboard/billing?checkout=success",
+			"total_details": {
+				"amount_discount": 0,
+				"amount_shipping": 0,
+				"amount_tax": 0
+			},
+			"ui_mode": "hosted",
+			"url": null,
+			"wallet_options": null
+		}
+	},
+	"livemode": false,
+	"pending_webhooks": 1,
+	"request": {
+		"id": "req_abc123",
+		"idempotency_key": null
+	},
+	"type": "checkout.session.completed"
+}

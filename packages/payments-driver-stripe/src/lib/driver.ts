@@ -1,0 +1,336 @@
+import { InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
+import type {
+	CancelSubscriptionInput,
+	CheckoutSession,
+	CreateCheckoutSessionInput,
+	CreateCustomerInput,
+	CreatePortalSessionInput,
+	Invoice,
+	ListInvoicesInput,
+	PaymentsCustomer,
+	PaymentsDriver,
+	PaymentsEvent,
+	PortalSession,
+	Subscription,
+	UpdateSubscriptionInput,
+	WebhookHeaders,
+} from '@novastarter/payments';
+import Stripe from 'stripe';
+import { fromUnix } from './from-unix.js';
+import { toEvent } from './to-event.js';
+import { toInvoice } from './to-invoice.js';
+import { toSubscription } from './to-subscription.js';
+
+/**
+ * Options of {@link DriverStripe}, as given in the location's `options`.
+ */
+export type DriverStripeConfig = {
+	/** Secret key from the Stripe dashboard (`sk_live_…`, `sk_test_…`). */
+	secretKey: string;
+	/** Signing secret of the webhook endpoint (`whsec_…`), from the dashboard or `stripe listen`. */
+	webhookSecret: string;
+	/** Seconds a webhook's timestamp may be off before it is refused; Stripe's default of 300 unless given. */
+	webhookTolerance?: number | undefined;
+	/**
+	 * A client to use instead of one built from the key — tests hand in one with stubbed resources.
+	 *
+	 * @internal
+	 */
+	client?: Stripe | undefined;
+};
+
+/**
+ * Registers the driver's options in the map of `@novastarter/payments`, so a location naming `stripe` has its
+ * options checked against {@link DriverStripeConfig}.
+ */
+declare module '@novastarter/payments' {
+	interface PaymentsDrivers {
+		stripe: DriverStripeConfig;
+	}
+}
+
+/**
+ * The header Stripe signs its webhooks with.
+ *
+ * @defaultValue `stripe-signature`
+ */
+export const SIGNATURE_HEADER = 'stripe-signature';
+
+/**
+ * How the kit's proration choice maps onto Stripe's `proration_behavior`.
+ *
+ * @defaultValue `prorate` → `create_prorations`, `none` → `none`, `invoice` → `always_invoice`
+ */
+export const PRORATION: Record<
+	NonNullable<UpdateSubscriptionInput['proration']>,
+	Stripe.SubscriptionUpdateParams.ProrationBehavior
+> = {
+	prorate: 'create_prorations',
+	none: 'none',
+	invoice: 'always_invoice',
+};
+
+/**
+ * Driver for [Stripe Billing](https://docs.stripe.com/billing): hosted Checkout, the customer portal, subscriptions
+ * and invoices over `stripe-node`, webhooks verified with the endpoint's signing secret.
+ *
+ * @example
+ * ```ts
+ * usePayments().registerDriver('stripe', DriverStripe);
+ * usePayments().registerLocation('default', {
+ * 	driver: 'stripe',
+ * 	options: {
+ * 		secretKey: env['PAYMENTS_STRIPE_SECRET_KEY'],
+ * 		webhookSecret: env['PAYMENTS_STRIPE_WEBHOOK_SECRET'],
+ * 	},
+ * });
+ * ```
+ */
+export class DriverStripe implements PaymentsDriver {
+	/**
+	 * The `stripe-node` client every request goes through.
+	 *
+	 * @internal
+	 */
+	private readonly client: Stripe;
+
+	/**
+	 * The signing secret of the webhook endpoint, checked on every delivery.
+	 *
+	 * @internal
+	 */
+	private readonly webhookSecret: string;
+
+	/**
+	 * Seconds a webhook's timestamp may be off; the SDK's default when unset.
+	 *
+	 * @internal
+	 */
+	private readonly webhookTolerance: number | undefined;
+
+	/**
+	 * Create a driver from its location options.
+	 *
+	 * @param config - Secret key and webhook secret.
+	 * @throws Error without either — a deployment that cannot verify webhooks would drift from Stripe silently.
+	 */
+	constructor(config: DriverStripeConfig) {
+		// 1. Fail at registration for the two values nothing works without, rather than on the first request
+		if (!config.secretKey) {
+			throw new Error('The stripe payments driver needs a "secretKey"');
+		}
+
+		if (!config.webhookSecret) {
+			throw new Error('The stripe payments driver needs a "webhookSecret"');
+		}
+
+		// 2. The SDK pins the API version it was built for; `appInfo` shows up in Stripe's request logs
+		this.client = config.client ?? new Stripe(config.secretKey, { appInfo: { name: 'Novastarter' } });
+
+		this.webhookSecret = config.webhookSecret;
+		this.webhookTolerance = config.webhookTolerance;
+	}
+
+	/**
+	 * Create the Stripe customer for an organization.
+	 *
+	 * @param input - Email, name, metadata.
+	 * @returns The customer.
+	 */
+	async createCustomer(input: CreateCustomerInput): Promise<PaymentsCustomer> {
+		// 1. Optional fields are only sent when given, so Stripe keeps its defaults otherwise
+		const customer = await this.client.customers.create({
+			email: input.email,
+			...(input.name !== undefined ? { name: input.name } : {}),
+			...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
+		});
+
+		// 2. Stripe may answer without an email for a customer made by another channel; the input's stands in
+		return {
+			id: customer.id,
+			email: customer.email ?? input.email,
+			name: customer.name ?? null,
+			metadata: customer.metadata ?? {},
+		};
+	}
+
+	/**
+	 * Start a hosted Checkout session in subscription mode.
+	 *
+	 * The metadata goes both on the session and on the subscription it creates (`subscription_data.metadata`), so
+	 * `checkout.session.completed` and `customer.subscription.created` alike carry the plan and organization ids.
+	 *
+	 * @param input - Customer, price, seats, redirects, trial, metadata.
+	 * @returns The session and its page.
+	 * @throws Error when Stripe answers a session without a URL — a session made for an embedded UI, not a redirect.
+	 */
+	async createCheckoutSession(input: CreateCheckoutSessionInput): Promise<CheckoutSession> {
+		// 1. Subscription mode with one line item: the plan's price, times its seats
+		const session = await this.client.checkout.sessions.create({
+			mode: 'subscription',
+			customer: input.customerId,
+			line_items: [{ price: input.priceId, quantity: input.quantity ?? 1 }],
+			success_url: input.successUrl,
+			cancel_url: input.cancelUrl,
+			...(input.allowPromotionCodes !== undefined ? { allow_promotion_codes: input.allowPromotionCodes } : {}),
+			...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
+			subscription_data: {
+				...(input.trialDays !== undefined && input.trialDays > 0 ? { trial_period_days: input.trialDays } : {}),
+				...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
+			},
+		});
+
+		// 2. A session without a URL cannot be redirected to; the kit only does hosted checkouts
+		if (!session.url) {
+			throw new Error(`Stripe checkout session "${session.id}" has no URL to redirect to`);
+		}
+
+		return { id: session.id, url: session.url, expiresAt: fromUnix(session.expires_at) };
+	}
+
+	/**
+	 * Open the customer portal.
+	 *
+	 * @param input - Customer and return URL.
+	 * @returns The portal page.
+	 */
+	async createPortalSession(input: CreatePortalSessionInput): Promise<PortalSession> {
+		// 1. A portal session is short-lived; the URL is all the caller needs
+		const session = await this.client.billingPortal.sessions.create({
+			customer: input.customerId,
+			return_url: input.returnUrl,
+		});
+
+		return { url: session.url };
+	}
+
+	/**
+	 * Read a subscription.
+	 *
+	 * @param subscriptionId - Stripe's id.
+	 * @returns The subscription, normalised.
+	 */
+	async getSubscription(subscriptionId: string): Promise<Subscription> {
+		// 1. The default expansion carries the items with their prices, which is all the mapping reads
+		return toSubscription(await this.client.subscriptions.retrieve(subscriptionId));
+	}
+
+	/**
+	 * Change the price or the seat count of the subscription's item.
+	 *
+	 * Stripe changes are made on the item, so the subscription is read first for its item id; the same call carries
+	 * the new price and quantity, and Stripe prorates as told.
+	 *
+	 * @param input - Subscription, new price and/or seats, proration.
+	 * @returns The subscription after the change.
+	 * @throws Error for a subscription without items.
+	 */
+	async updateSubscription(input: UpdateSubscriptionInput): Promise<Subscription> {
+		// 1. The item is what carries price and quantity; there is one per subscription in the kit's model
+		const current = await this.client.subscriptions.retrieve(input.subscriptionId);
+		const item = current.items.data[0];
+
+		if (!item) {
+			throw new Error(`Stripe subscription "${input.subscriptionId}" has no items`);
+		}
+
+		// 2. One update carries both changes; Stripe prorates the way the caller chose, `prorate` unless told
+		const updated = await this.client.subscriptions.update(input.subscriptionId, {
+			items: [
+				{
+					id: item.id,
+					...(input.priceId !== undefined ? { price: input.priceId } : {}),
+					...(input.quantity !== undefined ? { quantity: input.quantity } : {}),
+				},
+			],
+			proration_behavior: PRORATION[input.proration ?? 'prorate'],
+		});
+
+		return toSubscription(updated);
+	}
+
+	/**
+	 * Cancel a subscription: at the end of the period (`cancel_at_period_end`), or right away (`cancel`).
+	 *
+	 * @param input - Subscription, when, why.
+	 * @returns The subscription after the request.
+	 */
+	async cancelSubscription(input: CancelSubscriptionInput): Promise<Subscription> {
+		// 1. The reason is recorded on Stripe's side either way, as the cancellation's comment
+		const details = input.reason !== undefined ? { cancellation_details: { comment: input.reason } } : {};
+
+		// 2. Right away is a `cancel`; at period end is an update that flags the subscription
+		const subscription = input.immediately
+			? await this.client.subscriptions.cancel(input.subscriptionId, details)
+			: await this.client.subscriptions.update(input.subscriptionId, { cancel_at_period_end: true, ...details });
+
+		return toSubscription(subscription);
+	}
+
+	/**
+	 * The customer's invoices, most recent first — Stripe's own order.
+	 *
+	 * @param input - Customer and how many.
+	 * @returns The invoices, normalised.
+	 */
+	async listInvoices(input: ListInvoicesInput): Promise<Invoice[]> {
+		// 1. Stripe lists most recent first already; the limit is passed through when given
+		const invoices = await this.client.invoices.list({
+			customer: input.customerId,
+			...(input.limit !== undefined ? { limit: input.limit } : {}),
+		});
+
+		return invoices.data.map(toInvoice);
+	}
+
+	/**
+	 * Verify a webhook against the signing secret and normalise its event.
+	 *
+	 * @param rawBody - The body byte for byte.
+	 * @param headers - The request headers, lower-cased.
+	 * @returns The event, or `null` for one the kit does not act on.
+	 * @throws InvalidPayloadError without the `stripe-signature` header, or for a body Stripe cannot read.
+	 * @throws InvalidCredentialsError when the signature does not verify, or the timestamp is outside the tolerance.
+	 */
+	async parseWebhook(rawBody: string, headers: WebhookHeaders): Promise<PaymentsEvent | null> {
+		// 1. Without a signature header there is nothing to verify against; the delivery is malformed, not forged
+		const signature = headers[SIGNATURE_HEADER];
+
+		if (!signature) {
+			throw new InvalidPayloadError({ reason: `The delivery carries no ${SIGNATURE_HEADER} header` });
+		}
+
+		// 2. The SDK verifies the signature and the timestamp, then parses the body — in that order
+		let event: Stripe.Event;
+
+		try {
+			event = await this.client.webhooks.constructEventAsync(
+				rawBody,
+				signature,
+				this.webhookSecret,
+				this.webhookTolerance,
+			);
+		} catch (error) {
+			// 3. A signature that does not match, or a stale timestamp, is a credentials problem; anything else is
+			//    Stripe failing to read the body
+			if (error instanceof Stripe.errors.StripeSignatureVerificationError) {
+				throw new InvalidCredentialsError();
+			}
+
+			throw new InvalidPayloadError({ reason: error instanceof Error ? error.message : 'Unreadable Stripe event' });
+		}
+
+		// 4. The mapping decides which Stripe events the kit acts on
+		return toEvent(event);
+	}
+
+	/**
+	 * Prove the secret key works with the cheapest read there is.
+	 *
+	 * @throws Stripe's authentication error when it does not.
+	 */
+	async verify(): Promise<void> {
+		// 1. One customer is the smallest authenticated read; an invalid key fails here with Stripe's own error
+		await this.client.customers.list({ limit: 1 });
+	}
+}

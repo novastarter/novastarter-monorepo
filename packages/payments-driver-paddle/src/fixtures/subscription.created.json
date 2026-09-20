@@ -1,0 +1,92 @@
+{
+	"event_id": "evt_01h7zcgmdc8n1v3ypn6pkqtb5a",
+	"event_type": "subscription.created",
+	"occurred_at": "2026-09-01T10:00:05.100Z",
+	"notification_id": "ntf_01h7zcgmdc8n1v3ypn6pkqtb4a",
+	"data": {
+		"id": "sub_01h7zcgmdc8n1v3ypn6pkqtb3s",
+		"status": "active",
+		"customer_id": "ctm_01h7zcgmdc8n1v3ypn6pkqtb3r",
+		"address_id": "add_01h7zcgmdc8n1v3ypn6pkqtb3q",
+		"business_id": null,
+		"currency_code": "USD",
+		"created_at": "2026-09-01T10:00:00.000Z",
+		"updated_at": "2026-09-01T10:00:05.000Z",
+		"started_at": "2026-09-01T10:00:00.000Z",
+		"first_billed_at": "2026-09-01T10:00:00.000Z",
+		"next_billed_at": "2026-10-01T10:00:00.000Z",
+		"paused_at": null,
+		"canceled_at": null,
+		"discount": null,
+		"collection_mode": "automatic",
+		"billing_details": null,
+		"current_billing_period": {
+			"starts_at": "2026-09-01T10:00:00.000Z",
+			"ends_at": "2026-10-01T10:00:00.000Z"
+		},
+		"billing_cycle": {
+			"interval": "month",
+			"frequency": 1
+		},
+		"scheduled_change": null,
+		"items": [
+			{
+				"status": "active",
+				"quantity": 3,
+				"recurring": true,
+				"created_at": "2026-09-01T10:00:00.000Z",
+				"updated_at": "2026-09-01T10:00:00.000Z",
+				"previously_billed_at": "2026-09-01T10:00:00.000Z",
+				"next_billed_at": "2026-10-01T10:00:00.000Z",
+				"trial_dates": null,
+				"price": {
+					"id": "pri_01gsz8x8sawmvhz1pv30nge1ke",
+					"product_id": "pro_01gsz4t5hdjse780zja8vvr7jg",
+					"description": "Pro, monthly",
+					"name": "Pro monthly",
+					"type": "standard",
+					"billing_cycle": {
+						"interval": "month",
+						"frequency": 1
+					},
+					"trial_period": null,
+					"tax_mode": "account_setting",
+					"unit_price": {
+						"amount": "2900",
+						"currency_code": "USD"
+					},
+					"unit_price_overrides": [],
+					"quantity": {
+						"minimum": 1,
+						"maximum": 100
+					},
+					"status": "active",
+					"custom_data": null,
+					"import_meta": null,
+					"created_at": "2026-08-01T10:00:00.000Z",
+					"updated_at": "2026-08-01T10:00:00.000Z"
+				},
+				"product": {
+					"id": "pro_01gsz4t5hdjse780zja8vvr7jg",
+					"name": "Pro",
+					"description": "The Pro plan",
+					"type": "standard",
+					"tax_category": "saas",
+					"image_url": null,
+					"custom_data": null,
+					"status": "active",
+					"import_meta": null,
+					"created_at": "2026-08-01T10:00:00.000Z",
+					"updated_at": "2026-08-01T10:00:00.000Z"
+				}
+			}
+		],
+		"custom_data": {
+			"organizationId": "org_123",
+			"planId": "pro",
+			"period": "monthly"
+		},
+		"import_meta": null,
+		"transaction_id": "txn_01h7zcgmdc8n1v3ypn6pkqtb3t"
+	}
+}

@@ -1,0 +1,40 @@
+{
+	"name": "@novastarter/payments",
+	"version": "0.0.1",
+	"description": "Payments for Novastarter: driver contract, manager of named provider locations, plan catalog and entitlements",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/novastarter/novastarter-monorepo.git",
+		"directory": "packages/payments"
+	},
+	"type": "module",
+	"exports": {
+		".": "./dist/index.js",
+		"./package.json": "./package.json"
+	},
+	"main": "dist/index.js",
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsdown src/index.ts --dts",
+		"dev": "tsdown src/index.ts --dts --watch",
+		"check-types": "tsc --noEmit -p tsconfig.json",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage"
+	},
+	"dependencies": {
+		"@novastarter/errors": "workspace:*",
+		"@novastarter/memory": "workspace:*",
+		"@novastarter/utils": "workspace:*",
+		"zod": "catalog:"
+	},
+	"devDependencies": {
+		"@novastarter/tsconfig": "workspace:*",
+		"@types/node": "catalog:",
+		"@vitest/coverage-v8": "catalog:",
+		"tsdown": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	}
+}

@@ -1,0 +1,18 @@
+{
+	"event_id": "evt_01h7zcgmdc8n1v3ypn6pkqtb5g",
+	"event_type": "customer.updated",
+	"occurred_at": "2026-09-02T10:00:00.100Z",
+	"notification_id": "ntf_01h7zcgmdc8n1v3ypn6pkqtb4a",
+	"data": {
+		"id": "ctm_01h7zcgmdc8n1v3ypn6pkqtb3r",
+		"name": "Ada Lovelace",
+		"email": "ada@example.com",
+		"marketing_consent": false,
+		"status": "active",
+		"custom_data": null,
+		"locale": "en",
+		"created_at": "2026-09-01T09:59:00.000Z",
+		"updated_at": "2026-09-02T10:00:00.000Z",
+		"import_meta": null
+	}
+}

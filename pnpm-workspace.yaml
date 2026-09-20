@@ -20,9 +20,11 @@ catalog:
   '@eslint/js': 10.0.1
   '@google-cloud/storage': 8.0.0
   '@ngneat/falso': 8.0.2
+  '@paddle/paddle-node-sdk': 3.10.0
   '@pnpm/logger': 1001.0.1
   '@pnpm/types': 1000.7.0
   '@pnpm/workspace.pkgs-graph': 1000.0.25
+  '@polar-sh/sdk': 0.49.0
   '@sendgrid/mail': 8.1.6
   '@sesamecare-oss/redlock': 1.4.0
   '@shopify/semaphore': 3.1.0
@@ -68,6 +70,7 @@ catalog:
   react: 19.2.8
   resend: 6.27.0
   semver: 7.7.3
+  stripe: 22.6.2
   tsdown: 0.15.11
   tus-js-client: 4.3.1
   typescript: 5.9.3
