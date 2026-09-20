@@ -1,0 +1,39 @@
+{
+	"name": "@novastarter/storage-driver-azure",
+	"version": "0.0.1",
+	"description": "Azure file storage driver for `@novastarter/storage`",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/novastarter/novastarter-monorepo.git",
+		"directory": "packages/storage-driver-azure"
+	},
+	"type": "module",
+	"exports": {
+		".": "./dist/index.js",
+		"./package.json": "./package.json"
+	},
+	"main": "dist/index.js",
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsdown src/index.ts --dts",
+		"dev": "tsdown src/index.ts --dts --watch",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage"
+	},
+	"dependencies": {
+		"@azure/storage-blob": "catalog:",
+		"@novastarter/storage": "workspace:*",
+		"@novastarter/utils": "workspace:*"
+	},
+	"devDependencies": {
+		"@ngneat/falso": "catalog:",
+		"@novastarter/tsconfig": "workspace:*",
+		"@novastarter/types": "workspace:*",
+		"@vitest/coverage-v8": "catalog:",
+		"tsdown": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	}
+}
