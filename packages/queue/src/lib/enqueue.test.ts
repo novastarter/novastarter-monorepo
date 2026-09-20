@@ -1,20 +1,16 @@
 /**
- * Tests of `queue/lib/enqueue`, `use-queue` and `queue-manager` on the local provider.
+ * Tests of `queue/lib/enqueue` on the local driver.
  *
  * `@novastarter/logger`, `@novastarter/emitter` and the Redis client of `@novastarter/redis` are mocked.
  */
 import { useEmitter } from '@novastarter/emitter';
 import { useLogger } from '@novastarter/logger';
-import { createRedis } from '@novastarter/redis';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { z } from 'zod';
 import { _contracts, registerJob } from '../contracts/index.js';
 import { defineJob } from './define-job.js';
 import { enqueue, JOB_ENQUEUED_EVENT, jobs } from './enqueue.js';
 import { _handlers, registerJobHandlers } from './handlers.js';
-import { QueueBullmq } from './providers/bullmq.js';
-import { QueueLocal } from './providers/local.js';
-import { QueueManager } from './queue-manager.js';
 import { _cache, useQueue } from './use-queue.js';
 
 vi.mock('@novastarter/logger');
@@ -53,50 +49,6 @@ afterEach(() => {
 	_handlers.clear();
 	_contracts.delete('test.ping');
 	vi.clearAllMocks();
-});
-
-describe('useQueue / QueueManager', () => {
-	test('Keeps one manager per process with the built-in drivers registered', () => {
-		const first = useQueue();
-
-		expect(first).toBeInstanceOf(QueueManager);
-		expect(useQueue()).toBe(first);
-		expect(first.location('anything')).toBeInstanceOf(QueueLocal);
-	});
-
-	test('Builds a bullmq location on its own Redis client and closes every location', async () => {
-		useQueue().registerLocation('mail', {
-			driver: 'bullmq',
-			options: {
-				connection: 'redis://jobs',
-				prefix: 'acme',
-			},
-		});
-
-		const mail = useQueue().location('mail');
-
-		expect(mail).toBeInstanceOf(QueueBullmq);
-		expect(createRedis).toHaveBeenCalledWith('redis://jobs', { maxRetriesPerRequest: null });
-		expect(useQueue().location('reports')).toBeInstanceOf(QueueLocal);
-
-		await useQueue().close();
-		expect((mail as QueueBullmq).connection.quit).toHaveBeenCalled();
-	});
-
-	test('Names the queue when neither its location nor the default one exists', () => {
-		_cache.queue = undefined;
-
-		expect(() => useQueue().location('mail')).toThrow('Queue "mail" has no location of its own and no "default" one.');
-	});
-
-	test('Refuses a location of a driver nobody registered', () => {
-		expect(() =>
-			useQueue().registerLocation('x', {
-				driver: 'sqs' as 'local',
-				options: {},
-			}),
-		).toThrow(/isn't registered/);
-	});
 });
 
 describe('enqueue', () => {

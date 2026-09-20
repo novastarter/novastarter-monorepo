@@ -3,24 +3,30 @@ import { access, copyFile, mkdir, open, opendir, rename, stat, unlink, writeFile
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import stream, { type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import type { TusDriver } from '@novastarter/storage';
-import type { ChunkedUploadContext, ReadOptions, Stat } from '@novastarter/types';
+import { useLogger } from '@novastarter/logger';
+import {
+	type ChunkedUploadContext,
+	type ReadOptions,
+	type Stat,
+	StorageFileNotFoundError,
+	type TusDriver,
+} from '@novastarter/storage';
 
 /**
- * Options accepted by {@link DriverLocal}.
+ * Options accepted by {@link StorageDriverLocal}.
  */
-export type DriverLocalConfig = {
+export type StorageDriverLocalConfig = {
 	/** Directory every path is placed under; relative values resolve against the process working directory. */
 	root: string;
 };
 
 /**
  * Registers the driver's options in the map of `@novastarter/storage`, so a location naming `local` has its
- * options checked against {@link DriverLocalConfig}.
+ * options checked against {@link StorageDriverLocalConfig}.
  */
 declare module '@novastarter/storage' {
 	interface StorageDrivers {
-		local: DriverLocalConfig;
+		local: StorageDriverLocalConfig;
 	}
 }
 
@@ -33,12 +39,12 @@ declare module '@novastarter/storage' {
  *
  * @example
  * ```ts
- * const driver = new DriverLocal({ root: './uploads' });
+ * const driver = new StorageDriverLocal({ root: './uploads' });
  *
  * await driver.write('avatar.png', fs.createReadStream('./avatar.png'));
  * ```
  */
-export class DriverLocal implements TusDriver {
+export class StorageDriverLocal implements TusDriver {
 	/**
 	 * Absolute root directory every path is resolved against.
 	 *
@@ -50,9 +56,15 @@ export class DriverLocal implements TusDriver {
 	 * Create a driver rooted at the given directory.
 	 *
 	 * @param config - Root directory; the directory itself is created lazily on the first write.
+	 * @throws Error when `root` is missing.
 	 */
-	constructor(config: DriverLocalConfig) {
-		// 1. Resolve once, so a relative root keeps pointing at the same directory even if the process later changes
+	constructor(config: StorageDriverLocalConfig) {
+		// 1. Refuse a missing root up front: `resolve(undefined)` would silently pick the working directory
+		if (!config.root) {
+			throw new Error('The local storage driver needs a "root"');
+		}
+
+		// 2. Resolve once, so a relative root keeps pointing at the same directory even if the process later changes
 		//    its working directory
 		this.root = resolve(config.root);
 	}
@@ -111,18 +123,33 @@ export class DriverLocal implements TusDriver {
 	 *
 	 * @param filepath - File path relative to the root.
 	 * @returns Size in bytes and modification date.
-	 * @throws The `node:fs` error when the file cannot be read, or an Error when no stats came back.
+	 * @throws StorageFileNotFoundError when there is no file at the path.
+	 * @throws The `node:fs` error for any other failure, such as a permission error.
 	 */
 	async stat(filepath: string): Promise<Stat> {
-		const statRes = await stat(this.fullPath(filepath));
+		let statRes: Awaited<ReturnType<typeof stat>>;
 
-		// 1. `stat` rejects rather than resolving empty, so this guard only covers a misbehaving filesystem; it is kept
-		//    so callers always get either real numbers or an error
-		if (!statRes) {
-			throw new Error(`File "${filepath}" doesn't exist.`);
+		// 1. Only the errors that prove the path cannot exist become the kit's "not found": ENOENT is the plain case,
+		//    ENOTDIR means a parent of the path is a file. Anything else says nothing about the file and is rethrown
+		try {
+			statRes = await stat(this.fullPath(filepath));
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException)?.code;
+
+			if (code === 'ENOENT' || code === 'ENOTDIR') {
+				throw new StorageFileNotFoundError({ filepath }, { cause: error });
+			}
+
+			throw error;
 		}
 
-		// 2. `mtime` is the closest match to "modified": `ctime` also moves on permission changes
+		// 2. `stat` rejects rather than resolving empty, so this guard only covers a misbehaving filesystem; it is kept
+		//    so callers always get either real numbers or an error
+		if (!statRes) {
+			throw new StorageFileNotFoundError({ filepath });
+		}
+
+		// 3. `mtime` is the closest match to "modified": `ctime` also moves on permission changes
 		return {
 			size: statRes.size,
 			modified: statRes.mtime,
@@ -321,7 +348,7 @@ export class DriverLocal implements TusDriver {
 	 * @param _context - Unused; the offset is all this driver needs.
 	 * @returns The new upload offset: `offset` plus the bytes written.
 	 * @throws `undefined` when the pipeline fails; the rejection carries no error, so the TUS server answers with a
-	 * generic failure.
+	 * generic failure. The error itself is logged as a warning.
 	 */
 	async writeChunk(
 		filepath: string,
@@ -354,9 +381,11 @@ export class DriverLocal implements TusDriver {
 		// 3. The callback form of `pipeline` is used so the byte count can be read once every stream has finished
 		return new Promise<number>((resolve, reject) => {
 			stream.pipeline(content, transform, writeable, (err) => {
-				// 1. The error is dropped on purpose (upstream behaviour): the TUS server maps any rejection to a
-				//    generic failure and the client resumes from the offset it last had confirmed
+				// 1. The rejection carries no error on purpose (upstream behaviour): the TUS server maps any rejection to
+				//    a generic failure and the client resumes from the offset it last had confirmed. The cause is logged,
+				//    so a failing disk does not go unnoticed
 				if (err) {
+					useLogger().warn(err, `Local storage failed to write a chunk of "${filepath}" at offset ${offset}`);
 					return reject();
 				}
 
@@ -368,8 +397,3 @@ export class DriverLocal implements TusDriver {
 		});
 	}
 }
-
-/**
- * Default export for consumers that import the driver without a named binding.
- */
-export default DriverLocal;

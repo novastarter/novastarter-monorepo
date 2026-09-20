@@ -1,7 +1,7 @@
 /**
  * Tests of `billing/entitlements`: limits, switches, the cache and its invalidation over the bus, and forks.
  */
-import { BusLocal, CacheLocal } from '@novastarter/memory';
+import { BusDriverLocal, CacheDriverLocal } from '@novastarter/memory';
 import { describe, expect, test, vi } from 'vitest';
 import { EntitlementManager, ENTITLEMENTS_CHANNEL, planCacheKey, usageCacheKey } from './entitlements';
 import { LimitExceededError, ResourceRestrictedError } from './errors';
@@ -38,8 +38,8 @@ const setup = (options: { planOf?: Record<string, string | null>; cache?: boolea
 	const manager = new EntitlementManager({
 		plans,
 		resolvePlan,
-		cache: options.cache ? new CacheLocal({}) : undefined,
-		bus: options.bus ? new BusLocal() : undefined,
+		cache: options.cache ? new CacheDriverLocal({}) : undefined,
+		bus: options.bus ? new BusDriverLocal() : undefined,
 	});
 
 	manager.registerCounter('seats', countSeats);
@@ -157,8 +157,8 @@ describe('EntitlementManager', () => {
 	});
 
 	test('Drops a cached entry when another process publishes an invalidation', async () => {
-		const bus = new BusLocal();
-		const cache = new CacheLocal({});
+		const bus = new BusDriverLocal();
+		const cache = new CacheDriverLocal({});
 		const countSeats = vi.fn(async () => 2);
 
 		const manager = new EntitlementManager({ plans, resolvePlan: () => 'pro', cache, bus });

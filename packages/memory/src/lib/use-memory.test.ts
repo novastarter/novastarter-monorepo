@@ -2,10 +2,10 @@
  * Tests of `memory/lib/use-memory` and the four managers.
  */
 import { afterEach, expect, test } from 'vitest';
-import { BusLocal } from '../bus/lib/local.js';
-import { CacheLocal } from '../cache/lib/local.js';
-import { KvLocal } from '../kv/lib/local.js';
-import { LimiterLocal } from '../limiter/lib/local.js';
+import { BusDriverLocal } from '../bus/lib/local.js';
+import { CacheDriverLocal } from '../cache/lib/local.js';
+import { KvDriverLocal } from '../kv/lib/local.js';
+import { LimiterDriverLocal } from '../limiter/lib/local.js';
 import { _cache, useBus, useCache, useKv, useLimiter } from './use-memory.js';
 
 afterEach(() => {
@@ -48,10 +48,10 @@ test('The built-in drivers are registered, so a location needs its options alone
 		},
 	});
 
-	expect(useKv().location('default')).toBeInstanceOf(KvLocal);
-	expect(useCache().location('default')).toBeInstanceOf(CacheLocal);
-	expect(useBus().location('default')).toBeInstanceOf(BusLocal);
-	expect(useLimiter().location('api')).toBeInstanceOf(LimiterLocal);
+	expect(useKv().location('default')).toBeInstanceOf(KvDriverLocal);
+	expect(useCache().location('default')).toBeInstanceOf(CacheDriverLocal);
+	expect(useBus().location('default')).toBeInstanceOf(BusDriverLocal);
+	expect(useLimiter().location('api')).toBeInstanceOf(LimiterDriverLocal);
 
 	await useKv().location('default').set('key', 'value');
 	expect(await useKv().location('default').get('key')).toBe('value');

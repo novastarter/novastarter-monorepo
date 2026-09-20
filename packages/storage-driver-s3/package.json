@@ -7,6 +7,7 @@
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
 		"directory": "packages/storage-driver-s3"
 	},
+	"sideEffects": false,
 	"type": "module",
 	"exports": {
 		".": "./dist/index.js",
@@ -26,6 +27,7 @@
 	"dependencies": {
 		"@aws-sdk/client-s3": "catalog:",
 		"@aws-sdk/lib-storage": "catalog:",
+		"@novastarter/logger": "workspace:*",
 		"@novastarter/storage": "workspace:*",
 		"@novastarter/utils": "workspace:*",
 		"@shopify/semaphore": "catalog:",
@@ -36,8 +38,8 @@
 	"devDependencies": {
 		"@ngneat/falso": "catalog:",
 		"@novastarter/tsconfig": "workspace:*",
-		"@novastarter/types": "workspace:*",
 		"@types/ms": "catalog:",
+		"@types/node": "catalog:",
 		"@vitest/coverage-v8": "catalog:",
 		"tsdown": "catalog:",
 		"typescript": "catalog:",

@@ -1,39 +1,38 @@
 import { randomUUID } from 'node:crypto';
-import { useLogger } from '@novastarter/logger';
-import type { Logger } from 'pino';
-import type { EnqueuedJob, EnqueueOptions, JobContract, JobOptions, QueueProvider } from '../../types.js';
+import { type Logger, useLogger } from '@novastarter/logger';
+import type { QueueDriver } from '../../driver.js';
+import type { EnqueuedJob, EnqueueOptions, JobContract, JobOptions } from '../../types.js';
 import { getJobHandler } from '../handlers.js';
 import { runContract } from '../run-job.js';
 
 /**
- * What the local provider needs: the options of a `local` location.
+ * Options accepted by {@link QueueDriverLocal}: the options of a `local` location.
  */
-export interface LocalQueueOptions {
-	/** Where failures are reported; the process logger unless given. The provider never throws for a failing handler. */
+export type QueueDriverLocalConfig = {
+	/** Where failures are reported; the process logger unless given. The driver never throws for a failing handler. */
 	logger?: Logger | undefined;
-}
+};
 
 /**
- * Provider that runs every job in the enqueuing process.
+ * Queue driver that runs every job in the enqueuing process.
  *
  * The zero-config mode: no Redis, no worker. A job without a delay runs before `enqueue()` resolves, so a test can
  * assert on its effect right away; a delayed one waits on a timer that does not keep the process alive. Failures are
  * logged and not retried — retries are what BullMQ is for — and never reach the caller, exactly as with a real queue.
  */
-export class QueueLocal implements QueueProvider {
-	readonly type = 'local' as const;
-
+export class QueueDriverLocal implements QueueDriver {
+	/** Where a failing handler is reported. */
 	private readonly logger: Logger;
 
 	/** Pending delayed jobs, cleared on close. */
 	private readonly timers: Set<NodeJS.Timeout> = new Set();
 
 	/**
-	 * Create the provider.
+	 * Create the driver.
 	 *
 	 * @param options - Logger for failures.
 	 */
-	constructor(options: LocalQueueOptions = {}) {
+	constructor(options: QueueDriverLocalConfig = {}) {
 		this.logger = options.logger ?? useLogger();
 	}
 

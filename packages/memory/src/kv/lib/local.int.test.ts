@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { KvLocal } from './local.js';
+import { KvDriverLocal } from './local.js';
 
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -8,7 +8,7 @@ afterEach(() => {
 
 describe.each([{}, { maxKeys: 100 }, { ttl: 5000 }])('Local KV updates with %j', (config) => {
 	test('Retains every concurrent increment and returns distinct counts', async () => {
-		const kv = new KvLocal(config);
+		const kv = new KvDriverLocal(config);
 		const results = await Promise.all(Array.from({ length: 100 }, () => kv.increment('count')));
 
 		expect(results).toEqual(Array.from({ length: 100 }, (_, index) => index + 1));
@@ -16,7 +16,7 @@ describe.each([{}, { maxKeys: 100 }, { ttl: 5000 }])('Local KV updates with %j',
 	});
 
 	test('Retains concurrent increments with positive, negative, and zero amounts', async () => {
-		const kv = new KvLocal(config);
+		const kv = new KvDriverLocal(config);
 		await kv.set('count', 10);
 
 		const results = await Promise.all([-3, 5, 0, 2].map((amount) => kv.increment('count', amount)));
@@ -26,7 +26,7 @@ describe.each([{}, { maxKeys: 100 }, { ttl: 5000 }])('Local KV updates with %j',
 	});
 
 	test('Rejects smaller and equal concurrent maxima without lowering the stored value', async () => {
-		const kv = new KvLocal(config);
+		const kv = new KvDriverLocal(config);
 		await kv.set('maximum', 1);
 
 		const results = await Promise.all([100, 100, 50].map((value) => kv.setMax('maximum', value)));
@@ -36,7 +36,7 @@ describe.each([{}, { maxKeys: 100 }, { ttl: 5000 }])('Local KV updates with %j',
 	});
 
 	test('Accepts successively larger concurrent maxima', async () => {
-		const kv = new KvLocal(config);
+		const kv = new KvDriverLocal(config);
 		const results = await Promise.all([50, 100].map((value) => kv.setMax('maximum', value)));
 
 		expect(results).toEqual([true, true]);
@@ -44,7 +44,7 @@ describe.each([{}, { maxKeys: 100 }, { ttl: 5000 }])('Local KV updates with %j',
 	});
 
 	test('Shares the latest value between concurrent setMax and increment calls', async () => {
-		const kv = new KvLocal(config);
+		const kv = new KvDriverLocal(config);
 		await kv.set('count', 1);
 
 		expect(await Promise.all([kv.setMax('count', 100), kv.increment('count')])).toEqual([true, 101]);
@@ -55,7 +55,7 @@ describe.each([{}, { maxKeys: 100 }, { ttl: 5000 }])('Local KV updates with %j',
 	});
 
 	test('Preserves sequential increments and equal-value rejection', async () => {
-		const kv = new KvLocal(config);
+		const kv = new KvDriverLocal(config);
 
 		expect(await kv.increment('count')).toBe(1);
 		expect(await kv.increment('count')).toBe(2);
@@ -64,7 +64,7 @@ describe.each([{}, { maxKeys: 100 }, { ttl: 5000 }])('Local KV updates with %j',
 	});
 
 	test('Rejects non-number values without overwriting them', async () => {
-		const kv = new KvLocal(config);
+		const kv = new KvDriverLocal(config);
 		await kv.set('count', 'not-a-number');
 
 		expect(() => kv.increment('count')).toThrow('The value for key "count" is not a number.');
@@ -76,7 +76,7 @@ describe.each([{}, { maxKeys: 100 }, { ttl: 5000 }])('Local KV updates with %j',
 test.each(['increment', 'setMax'] as const)('%s preserves TTL renewal and expiration', async (operation) => {
 	vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
 	const now = vi.spyOn(performance, 'now').mockReturnValue(1000);
-	const kv = new KvLocal({ ttl: 1000 });
+	const kv = new KvDriverLocal({ ttl: 1000 });
 	await kv.set('count', 1);
 
 	now.mockReturnValue(1500);

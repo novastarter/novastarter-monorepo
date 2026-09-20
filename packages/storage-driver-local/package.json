@@ -7,6 +7,7 @@
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
 		"directory": "packages/storage-driver-local"
 	},
+	"sideEffects": false,
 	"type": "module",
 	"exports": {
 		".": "./dist/index.js",
@@ -24,12 +25,12 @@
 		"test:coverage": "vitest run --coverage"
 	},
 	"dependencies": {
+		"@novastarter/logger": "workspace:*",
 		"@novastarter/storage": "workspace:*"
 	},
 	"devDependencies": {
 		"@ngneat/falso": "catalog:",
 		"@novastarter/tsconfig": "workspace:*",
-		"@novastarter/types": "workspace:*",
 		"@types/node": "catalog:",
 		"@vitest/coverage-v8": "catalog:",
 		"tsdown": "catalog:",

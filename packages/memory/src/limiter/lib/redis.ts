@@ -1,6 +1,6 @@
 import { RateLimiterRedis } from 'rate-limiter-flexible';
 import type { Limiter } from '../types/class.js';
-import type { LimiterRedisOptions } from '../types/config.js';
+import type { LimiterDriverRedisConfig } from '../types/config.js';
 import { consume } from '../utils/consume.js';
 
 /**
@@ -8,7 +8,7 @@ import { consume } from '../utils/consume.js';
  *
  * @example
  * ```ts
- * const limiter = new LimiterRedis({
+ * const limiter = new LimiterDriverRedis({
  * 	redis: new Redis(),
  * 	namespace: 'app',
  * 	points: 10,
@@ -18,7 +18,7 @@ import { consume } from '../utils/consume.js';
  * await limiter.consume(request.ip);
  * ```
  */
-export class LimiterRedis implements Limiter {
+export class LimiterDriverRedis implements Limiter {
 	/**
 	 * Underlying limiter doing the bookkeeping in Redis.
 	 *
@@ -38,7 +38,7 @@ export class LimiterRedis implements Limiter {
 	 *
 	 * @param config - Redis configuration.
 	 */
-	constructor(config: LimiterRedisOptions) {
+	constructor(config: LimiterDriverRedisConfig) {
 		// 1. The namespace becomes the library's key prefix, keeping limiter keys apart from other data in Redis
 		this.limiter = new RateLimiterRedis({
 			storeClient: config.redis,

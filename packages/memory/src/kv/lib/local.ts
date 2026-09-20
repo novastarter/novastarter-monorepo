@@ -1,7 +1,7 @@
 import { LRUCache } from 'lru-cache';
 import { deserialize, serialize } from '../../utils/index.js';
 import type { Kv } from '../types/class.js';
-import type { KvLocalOptions } from '../types/config.js';
+import type { KvDriverLocalConfig } from '../types/config.js';
 
 /**
  * In-memory key-value store for a single process.
@@ -12,7 +12,7 @@ import type { KvLocalOptions } from '../types/config.js';
  *
  * @example
  * ```ts
- * const kv = new KvLocal({
+ * const kv = new KvDriverLocal({
  * 	maxKeys: 500,
  * 	ttl: 60_000,
  * });
@@ -20,7 +20,7 @@ import type { KvLocalOptions } from '../types/config.js';
  * await kv.set('my-key', { hello: 'world' });
  * ```
  */
-export class KvLocal implements Kv {
+export class KvDriverLocal implements Kv {
 	/**
 	 * Backing store: an LRU when a size or time limit is configured, a plain `Map` otherwise.
 	 *
@@ -33,7 +33,7 @@ export class KvLocal implements Kv {
 	 *
 	 * @param config - Local configuration.
 	 */
-	constructor(config: KvLocalOptions) {
+	constructor(config: KvDriverLocalConfig) {
 		// 1. `LRUCache` refuses to be constructed without `max` or `ttl`, so fall back to a plain `Map` when neither
 		//    limit is configured
 		if (config.maxKeys || config.ttl) {

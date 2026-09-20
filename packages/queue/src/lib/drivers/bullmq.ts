@@ -1,18 +1,18 @@
-import { useLogger } from '@novastarter/logger';
+import { type Logger, useLogger } from '@novastarter/logger';
 import { createRedis, type RedisConfig } from '@novastarter/redis';
 import type { JobsOptions, Queue, QueueOptions } from 'bullmq';
 import type { Redis } from 'ioredis';
-import type { Logger } from 'pino';
 import { getQueueNames } from '../../contracts/index.js';
-import type { EnqueuedJob, EnqueueOptions, JobContract, JobOptions, QueueProvider, QueueStats } from '../../types.js';
+import type { QueueDriver } from '../../driver.js';
+import type { EnqueuedJob, EnqueueOptions, JobContract, JobOptions, QueueStats } from '../../types.js';
 
 /**
- * What the BullMQ provider needs: the options of a `bullmq` location.
+ * Options accepted by {@link QueueDriverBullmq}: the options of a `bullmq` location.
  */
-export interface BullmqQueueOptions {
+export type QueueDriverBullmqConfig = {
 	/**
 	 * Redis for BullMQ: a connection URL, ioredis options, or a ready ioredis client. A URL or options open a client
-	 * of the provider's own with `maxRetriesPerRequest: null`, what BullMQ requires; a given client is used as is and
+	 * of the driver's own with `maxRetriesPerRequest: null`, what BullMQ requires; a given client is used as is and
 	 * must have been created with that option.
 	 */
 	connection: RedisConfig | Redis;
@@ -22,7 +22,7 @@ export interface BullmqQueueOptions {
 	telemetry?: QueueOptions['telemetry'] | undefined;
 	/** Where lifecycle events are reported; the process logger unless given. */
 	logger?: Logger | undefined;
-}
+};
 
 /**
  * Whether a connection option is a ready ioredis client rather than a URL or options.
@@ -75,16 +75,14 @@ export const toJobsOptions = (options: JobOptions & EnqueueOptions, id?: string)
 };
 
 /**
- * Provider that puts jobs on Redis through BullMQ, for a worker to pick up; the driver of a `bullmq` location.
+ * Driver that puts jobs on Redis through BullMQ, for a worker to pick up; the driver of a `bullmq` location.
  *
  * One BullMQ `Queue` per queue name (the part of the job name before the dot), opened on first use and sharing the
- * provider's connection. `bullmq` is imported when the first job is enqueued, so the package stays optional for
- * deployments on the `local` provider.
+ * driver's connection. `bullmq` is imported when the first job is enqueued, so the package stays optional for
+ * deployments on the `local` driver.
  */
-export class QueueBullmq implements QueueProvider {
-	readonly type = 'bullmq' as const;
-
-	/** The ioredis client every queue of the provider shares; what a worker of the same location connects with. */
+export class QueueDriverBullmq implements QueueDriver {
+	/** The ioredis client every queue of the driver shares; what a worker of the same location connects with. */
 	readonly connection: Redis;
 
 	/** Prefix of the Redis keys, for a worker of the same location. */
@@ -93,23 +91,25 @@ export class QueueBullmq implements QueueProvider {
 	/** BullMQ's telemetry add-on, for a worker of the same location. */
 	readonly telemetry: QueueOptions['telemetry'] | undefined;
 
+	/** Where lifecycle events and failures are reported. */
 	private readonly logger: Logger;
 
 	/** Whether the client was opened here and is therefore closed here. */
 	private readonly ownsConnection: boolean;
 
+	/** One BullMQ `Queue` per queue name, opened on the first job for that name. */
 	private readonly queues: Map<string, Queue> = new Map();
 
 	/** The module, loaded once on first use. */
 	private bullmq: Promise<typeof import('bullmq')> | undefined;
 
 	/**
-	 * Open the provider on its Redis.
+	 * Open the driver on its Redis.
 	 *
 	 * @param options - Connection, prefix, telemetry and logger.
 	 */
-	constructor(options: BullmqQueueOptions) {
-		// 1. A given client belongs to whoever created it; a URL or options become a client of the provider's own,
+	constructor(options: QueueDriverBullmqConfig) {
+		// 1. A given client belongs to whoever created it; a URL or options become a client of the driver's own,
 		//    pinned to what BullMQ requires
 		this.ownsConnection = !isRedisClient(options.connection);
 
@@ -146,7 +146,7 @@ export class QueueBullmq implements QueueProvider {
 	}
 
 	/**
-	 * Close every queue opened so far, and the connection when the provider opened it.
+	 * Close every queue opened so far, and the connection when the driver opened it.
 	 */
 	async close(): Promise<void> {
 		await Promise.all([...this.queues.values()].map((queue) => queue.close()));
@@ -222,7 +222,7 @@ export class QueueBullmq implements QueueProvider {
 	 */
 	private load(): Promise<typeof import('bullmq')> {
 		this.bullmq ??= import('bullmq').catch((error: unknown) => {
-			throw new Error('Queue provider "bullmq" needs the "bullmq" package: pnpm add bullmq', { cause: error });
+			throw new Error('Queue driver "bullmq" needs the "bullmq" package: pnpm add bullmq', { cause: error });
 		});
 
 		return this.bullmq;

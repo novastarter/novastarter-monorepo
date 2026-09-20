@@ -22,9 +22,9 @@ import { toInvoice } from './to-invoice.js';
 import { toSubscription } from './to-subscription.js';
 
 /**
- * Options of {@link DriverStripe}, as given in the location's `options`.
+ * Options of {@link PaymentsDriverStripe}, as given in the location's `options`.
  */
-export type DriverStripeConfig = {
+export type PaymentsDriverStripeConfig = {
 	/** Secret key from the Stripe dashboard (`sk_live_…`, `sk_test_…`). */
 	secretKey: string;
 	/** Signing secret of the webhook endpoint (`whsec_…`), from the dashboard or `stripe listen`. */
@@ -43,11 +43,11 @@ export type DriverStripeConfig = {
 
 /**
  * Registers the driver's options in the map of `@novastarter/payments`, so a location naming `stripe` has its
- * options checked against {@link DriverStripeConfig}.
+ * options checked against {@link PaymentsDriverStripeConfig}.
  */
 declare module '@novastarter/payments' {
 	interface PaymentsDrivers {
-		stripe: DriverStripeConfig;
+		stripe: PaymentsDriverStripeConfig;
 	}
 }
 
@@ -78,7 +78,7 @@ export const PRORATION: Record<
  *
  * @example
  * ```ts
- * usePayments().registerDriver('stripe', DriverStripe);
+ * usePayments().registerDriver('stripe', PaymentsDriverStripe);
  * usePayments().registerLocation('default', {
  * 	driver: 'stripe',
  * 	options: {
@@ -88,7 +88,7 @@ export const PRORATION: Record<
  * });
  * ```
  */
-export class DriverStripe implements PaymentsDriver {
+export class PaymentsDriverStripe implements PaymentsDriver {
 	/**
 	 * The `stripe-node` client every request goes through.
 	 *
@@ -116,7 +116,7 @@ export class DriverStripe implements PaymentsDriver {
 	 * @param config - Secret key and webhook secret.
 	 * @throws Error without either — a deployment that cannot verify webhooks would drift from Stripe silently.
 	 */
-	constructor(config: DriverStripeConfig) {
+	constructor(config: PaymentsDriverStripeConfig) {
 		// 1. Fail at registration for the two values nothing works without, rather than on the first request
 		if (!config.secretKey) {
 			throw new Error('The stripe payments driver needs a "secretKey"');

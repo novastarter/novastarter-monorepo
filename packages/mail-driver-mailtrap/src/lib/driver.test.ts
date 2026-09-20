@@ -2,7 +2,9 @@
  * Tests of the Mailtrap driver with the SDK mocked.
  */
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import defaultExport, { MailDriverMailtrap, toMailtrapAddress, toMailtrapAttachment, toMailtrapMail } from './index.js';
+import defaultExport from '../index.js';
+import { MailDriverMailtrap } from './driver.js';
+import { toMailtrapAddress, toMailtrapAttachment, toMailtrapMail } from './to-mailtrap-mail.js';
 
 const send = vi.fn();
 const getAllAccounts = vi.fn();

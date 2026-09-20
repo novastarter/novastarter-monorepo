@@ -5,14 +5,12 @@ import { generateKeyPairSync } from 'node:crypto';
 import { PushTargetGoneError } from '@novastarter/push';
 import { ApnsClient, ApnsError, Host, Notification, Priority } from 'apns2';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import defaultExport, {
-	assertSigningKey,
-	COLLAPSE_ID_MAX_LENGTH,
-	describeError,
-	PushDriverApns,
-	toApnsNotification,
-	toApnsPriority,
-} from './index.js';
+import defaultExport from '../index.js';
+import { assertSigningKey } from './assert-signing-key.js';
+import { COLLAPSE_ID_MAX_LENGTH } from './constants.js';
+import { describeError } from './describe-error.js';
+import { PushDriverApns } from './driver.js';
+import { toApnsNotification, toApnsPriority } from './to-apns-notification.js';
 
 /**
  * A fresh P-256 key in PEM, the shape of an APNs auth key.

@@ -14,11 +14,12 @@ import {
 	randText,
 	randGitShortSha as randUnique,
 } from '@ngneat/falso';
+import { StorageFileNotFoundError } from '@novastarter/storage';
 import { StorageClient } from '@supabase/storage-js';
 import { fetch, Response } from 'undici';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { DriverSupabaseConfig } from './index.js';
-import { DriverSupabase } from './index.js';
+import type { StorageDriverSupabaseConfig } from './driver.js';
+import { StorageDriverSupabase } from './driver.js';
 
 vi.mock('@supabase/storage-js');
 vi.mock('undici');
@@ -27,7 +28,7 @@ vi.mock('undici');
  * Random fixture regenerated before every test, so no test can depend on values another one left behind.
  */
 let sample: {
-	config: Required<DriverSupabaseConfig>;
+	config: { [Key in keyof StorageDriverSupabaseConfig]-?: NonNullable<StorageDriverSupabaseConfig[Key]> };
 	path: {
 		input: string;
 		src: string;
@@ -49,7 +50,7 @@ let sample: {
 /**
  * Driver under test, created with the minimal config so each `describe` block can opt into extra options.
  */
-let driver: DriverSupabase;
+let driver: StorageDriverSupabase;
 
 beforeEach(() => {
 	// 1. Fresh random values per test; falso keeps them realistic enough to catch accidental string handling
@@ -82,7 +83,7 @@ beforeEach(() => {
 
 	// 2. `@supabase/storage-js` and `undici` are mocked above, so constructing the driver only records calls and never
 	//    opens a socket; no root is set, so paths pass through `fullPath` unchanged
-	driver = new DriverSupabase({
+	driver = new StorageDriverSupabase({
 		serviceRole: sample.config.serviceRole,
 		bucket: sample.config.bucket,
 		projectId: sample.config.projectId,
@@ -95,39 +96,39 @@ afterEach(() => {
 });
 
 describe('#constructor', () => {
-	let getClientBackup: (typeof DriverSupabase.prototype)['getClient'];
-	let getBucketBackup: (typeof DriverSupabase.prototype)['getBucket'];
+	let getClientBackup: (typeof StorageDriverSupabase.prototype)['getClient'];
+	let getBucketBackup: (typeof StorageDriverSupabase.prototype)['getBucket'];
 	let sampleClient: StorageClient;
 	let sampleBucket: ReturnType<StorageClient['from']>;
 
 	beforeEach(() => {
 		// 1. Swap `getClient` and `getBucket` on the prototype before construction, so the constructor's own calls are
 		//    observable; the originals are restored afterwards because the other describe blocks rely on them
-		getClientBackup = DriverSupabase.prototype['getClient'];
+		getClientBackup = StorageDriverSupabase.prototype['getClient'];
 		sampleClient = {} as StorageClient;
-		DriverSupabase.prototype['getClient'] = vi.fn().mockReturnValue(sampleClient);
+		StorageDriverSupabase.prototype['getClient'] = vi.fn().mockReturnValue(sampleClient);
 
-		getBucketBackup = DriverSupabase.prototype['getBucket'];
+		getBucketBackup = StorageDriverSupabase.prototype['getBucket'];
 		sampleBucket = {} as ReturnType<StorageClient['from']>;
-		DriverSupabase.prototype['getBucket'] = vi.fn().mockReturnValue(sampleBucket);
+		StorageDriverSupabase.prototype['getBucket'] = vi.fn().mockReturnValue(sampleBucket);
 	});
 
 	afterEach(() => {
-		DriverSupabase.prototype['getClient'] = getClientBackup;
-		DriverSupabase.prototype['getBucket'] = getBucketBackup;
+		StorageDriverSupabase.prototype['getClient'] = getClientBackup;
+		StorageDriverSupabase.prototype['getBucket'] = getBucketBackup;
 	});
 
 	test('Saves passed config to local property', () => {
 		// 1. The config is copied with a normalised root; `normalizePath` leaves this sample root untouched, so the
 		//    copy must equal the input field by field
-		const driver = new DriverSupabase(sample.config);
+		const driver = new StorageDriverSupabase(sample.config);
 
 		expect(driver['config']).toStrictEqual(sample.config);
 	});
 
 	test('Creates shared client', () => {
 		// 1. The client is built inside the constructor, so a bad config fails early; the stub only records that call
-		const driver = new DriverSupabase(sample.config);
+		const driver = new StorageDriverSupabase(sample.config);
 		expect(driver['getClient']).toHaveBeenCalledOnce();
 		expect(driver['client']).toBe(sampleClient);
 	});
@@ -143,45 +144,59 @@ describe('#getClient', () => {
 	test('Throws error if serviceRole is missing', () => {
 		// 1. The project/endpoint check runs first, so a config with neither reports that error before the missing key
 		try {
-			new DriverSupabase({ bucket: 'bucket' } as any);
+			new StorageDriverSupabase({ bucket: 'bucket' } as any);
 		} catch (err: any) {
 			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe('`project_id` or `endpoint` is required');
+			expect(err.message).toBe('The supabase storage driver needs a "projectId" or an "endpoint"');
 		}
 	});
 
 	test('Throws error if bucket missing', () => {
 		// 1. Same ordering: without a project or endpoint the client check fails before the bucket check is reached
 		try {
-			new DriverSupabase({ serviceRole: 'key' } as any);
+			new StorageDriverSupabase({ serviceRole: 'key' } as any);
 		} catch (err: any) {
 			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe('`project_id` or `endpoint` is required');
+			expect(err.message).toBe('The supabase storage driver needs a "projectId" or an "endpoint"');
 		}
 	});
 
 	test('Throws error if projectId and endpoint are both missing', () => {
 		try {
-			new DriverSupabase({ serviceRole: 'secret', bucket: 'bucket' });
+			new StorageDriverSupabase({ serviceRole: 'secret', bucket: 'bucket' });
 		} catch (err: any) {
 			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe('`project_id` or `endpoint` is required');
+			expect(err.message).toBe('The supabase storage driver needs a "projectId" or an "endpoint"');
 		}
+	});
+
+	test('Throws error if serviceRole is missing with a project', () => {
+		// 1. With a project the endpoint check passes, so the missing key is what gets reported
+		expect(() => new StorageDriverSupabase({ bucket: 'bucket', projectId: 'project', serviceRole: '' })).toThrowError(
+			'The supabase storage driver needs a "serviceRole"',
+		);
+	});
+
+	test('Throws error if bucket is missing with a project and a key', () => {
+		// 1. The client builds fine; the bucket check is the last guard and names the option
+		expect(() => new StorageDriverSupabase({ bucket: '', projectId: 'project', serviceRole: 'secret' })).toThrowError(
+			'The supabase storage driver needs a "bucket"',
+		);
 	});
 
 	test('Is valid if projectId is given', () => {
 		// 1. A project id alone must expand to the hosted Storage API URL
 		const projectId = 'project';
-		const driver = new DriverSupabase({ serviceRole: 'secret', bucket: 'bucket', projectId });
-		expect(driver).toBeInstanceOf(DriverSupabase);
+		const driver = new StorageDriverSupabase({ serviceRole: 'secret', bucket: 'bucket', projectId });
+		expect(driver).toBeInstanceOf(StorageDriverSupabase);
 		expect(driver['endpoint']).toEqual(`https://${projectId}.supabase.co/storage/v1`);
 	});
 
 	test('Is valid if endpoint is given', () => {
 		// 1. A custom endpoint is used verbatim, which is what self-hosted setups rely on
 		const endpoint = 'https://example.com';
-		const driver = new DriverSupabase({ serviceRole: 'secret', bucket: 'bucket', endpoint });
-		expect(driver).toBeInstanceOf(DriverSupabase);
+		const driver = new StorageDriverSupabase({ serviceRole: 'secret', bucket: 'bucket', endpoint });
+		expect(driver).toBeInstanceOf(StorageDriverSupabase);
 		expect(driver['endpoint']).toEqual(endpoint);
 	});
 
@@ -198,7 +213,7 @@ describe('#getClient', () => {
 
 describe('#fullPath', () => {
 	test('Returns the input value if no root is given', () => {
-		const driver = new DriverSupabase({
+		const driver = new StorageDriverSupabase({
 			serviceRole: sample.config.serviceRole,
 			bucket: sample.config.bucket,
 			endpoint: sample.config.endpoint,
@@ -209,7 +224,7 @@ describe('#fullPath', () => {
 	});
 
 	test('Returns normalized joined path', () => {
-		const driver = new DriverSupabase({
+		const driver = new StorageDriverSupabase({
 			serviceRole: sample.config.serviceRole,
 			bucket: sample.config.bucket,
 			endpoint: sample.config.endpoint,
@@ -223,7 +238,7 @@ describe('#fullPath', () => {
 
 describe('#getAuthenticatedUrl', () => {
 	test('Returns the url for an object with no root that requires authentication', () => {
-		const driver = new DriverSupabase({
+		const driver = new StorageDriverSupabase({
 			serviceRole: 'serviceRole',
 			bucket: 'bucket',
 			projectId: 'projectId',
@@ -235,7 +250,7 @@ describe('#getAuthenticatedUrl', () => {
 	});
 
 	test('Returns the url for an object that requires authentication', () => {
-		const driver = new DriverSupabase({
+		const driver = new StorageDriverSupabase({
 			serviceRole: 'serviceRole',
 			bucket: 'bucket',
 			projectId: 'projectId',
@@ -442,7 +457,8 @@ describe('#stat', () => {
 		});
 	});
 
-	test('Throws an error no file is returned by list', async () => {
+	test('Throws the kit error when no file is returned by list', async () => {
+		// 1. An empty listing is how Supabase says "missing"; it becomes the error every backend shares
 		driver['bucket'] = {
 			list: vi.fn().mockReturnValue({
 				data: [],
@@ -450,7 +466,10 @@ describe('#stat', () => {
 			}),
 		} as any;
 
-		expect(driver.stat(sample.path.input)).rejects.toThrowError(new Error(`File not found`));
+		const error: unknown = await driver.stat(sample.path.input).catch((error: unknown) => error);
+
+		expect(error).toBeInstanceOf(StorageFileNotFoundError);
+		expect(error).toMatchObject({ extensions: { filepath: sample.path.input } });
 	});
 
 	/**

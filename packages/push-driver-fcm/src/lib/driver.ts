@@ -1,25 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import {
-	type PushDriver,
-	type PushMessage,
-	type PushPlatform,
-	type PushResult,
-	PushTargetGoneError,
-} from '@novastarter/push';
+import type { PushDriver, PushMessage, PushPlatform, PushResult } from '@novastarter/push';
 import { type App, cert, type Credential, deleteApp, initializeApp } from 'firebase-admin/app';
-import { getMessaging, type Messaging, type TokenMessage } from 'firebase-admin/messaging';
-
-/**
- * A service account as the Firebase console downloads it, or with the same fields camel-cased.
- */
-export type ServiceAccountJson = {
-	project_id?: string | undefined;
-	client_email?: string | undefined;
-	private_key?: string | undefined;
-	projectId?: string | undefined;
-	clientEmail?: string | undefined;
-	privateKey?: string | undefined;
-};
+import { getMessaging, type Messaging } from 'firebase-admin/messaging';
+import { describeError } from './describe-error.js';
+import { readServiceAccount, type ServiceAccountJson } from './read-service-account.js';
+import { toFcmMessage } from './to-fcm-message.js';
 
 /**
  * Options accepted by {@link PushDriverFcm}.
@@ -55,121 +40,6 @@ declare module '@novastarter/push' {
 		fcm: PushDriverFcmConfig;
 	}
 }
-
-/**
- * FCM error codes that mean the token is dead — what Firebase says to delete the token on.
- *
- * @defaultValue `messaging/registration-token-not-registered`, `messaging/invalid-registration-token`
- */
-export const GONE_CODES: ReadonlySet<string> = new Set([
-	'messaging/registration-token-not-registered',
-	'messaging/invalid-registration-token',
-]);
-
-/**
- * Longest `apns-collapse-id` APNs takes, in bytes.
- *
- * @defaultValue 64
- */
-export const APNS_COLLAPSE_ID_MAX_LENGTH = 64;
-
-/**
- * The service account fields out of the configuration, whichever way they were given.
- *
- * @param config - The location's configuration.
- * @returns `projectId`, `clientEmail` and `privateKey` with its newlines restored.
- * @throws Error for `serviceAccount` text that is not JSON.
- */
-export const readServiceAccount = (
-	config: Pick<PushDriverFcmConfig, 'serviceAccount' | 'projectId' | 'clientEmail' | 'privateKey'>,
-): { projectId: string | undefined; clientEmail: string | undefined; privateKey: string | undefined } => {
-	let json: ServiceAccountJson = {};
-
-	// 1. The JSON wins as a whole; the separate fields fill what it does not carry
-	if (typeof config.serviceAccount === 'string') {
-		try {
-			json = JSON.parse(config.serviceAccount) as ServiceAccountJson;
-		} catch (error) {
-			throw new Error('The fcm push driver got a "serviceAccount" that is not JSON', { cause: error });
-		}
-	} else if (config.serviceAccount) {
-		json = config.serviceAccount;
-	}
-
-	const privateKey = json.private_key ?? json.privateKey ?? config.privateKey;
-
-	// 2. A PEM in a `.env` line has its newlines as the two characters `\n`; the SDK needs real ones
-	return {
-		projectId: json.project_id ?? json.projectId ?? config.projectId,
-		clientEmail: json.client_email ?? json.clientEmail ?? config.clientEmail,
-		privateKey: privateKey?.replace(/\\n/g, '\n'),
-	};
-};
-
-/**
- * Translate a message into FCM's `Message` for a token, with the platform blocks that carry what the common
- * `notification` cannot.
- *
- * `data` goes out as given, with the click target under `url` for native clients; the web block gets the icon,
- * badge, image and tag and — for an `https:` target only, since FCM refuses anything else — the link.
- *
- * @param message - The message, with its `token`.
- * @param config - The location's TTL and analytics label.
- * @param now - The current time, for the APNs expiration header.
- * @returns FCM's message.
- */
-export const toFcmMessage = (
-	message: PushMessage,
-	config: Pick<PushDriverFcmConfig, 'ttl' | 'analyticsLabel'> = {},
-	now: Date = new Date(),
-): TokenMessage => {
-	// 1. The message's own ttl wins over the location's; `high` is the one urgency FCM tells apart
-	const ttl = message.ttl ?? config.ttl;
-	const high = message.urgency === 'high';
-	const data = { ...(message.data ?? {}), ...(message.url !== undefined ? { url: message.url } : {}) };
-	const collapseId = message.tag?.slice(0, APNS_COLLAPSE_ID_MAX_LENGTH);
-
-	// 2. The common block carries the text; each platform block what only it understands
-	return {
-		token: message.token as string,
-		notification: {
-			title: message.title,
-			...(message.body !== undefined ? { body: message.body } : {}),
-			...(message.image !== undefined ? { imageUrl: message.image } : {}),
-		},
-		...(Object.keys(data).length > 0 ? { data } : {}),
-		android: {
-			priority: high ? 'high' : 'normal',
-			...(ttl !== undefined ? { ttl: ttl * 1000 } : {}),
-			...(message.tag !== undefined ? { collapseKey: message.tag, notification: { tag: message.tag } } : {}),
-		},
-		apns: {
-			headers: {
-				'apns-priority': high ? '10' : '5',
-				...(ttl !== undefined ? { 'apns-expiration': String(Math.floor(now.getTime() / 1000) + ttl) } : {}),
-				...(collapseId ? { 'apns-collapse-id': collapseId } : {}),
-			},
-			// 3. An image needs the app's notification service extension to run: `mutable-content`
-			payload: { aps: { sound: 'default', ...(message.image !== undefined ? { 'mutable-content': 1 } : {}) } },
-			...(message.image !== undefined ? { fcmOptions: { imageUrl: message.image } } : {}),
-		},
-		webpush: {
-			headers: {
-				Urgency: message.urgency ?? 'normal',
-				...(ttl !== undefined ? { TTL: String(ttl) } : {}),
-			},
-			notification: {
-				...(message.icon !== undefined ? { icon: message.icon } : {}),
-				...(message.badge !== undefined ? { badge: message.badge } : {}),
-				...(message.image !== undefined ? { image: message.image } : {}),
-				...(message.tag !== undefined ? { tag: message.tag } : {}),
-				data,
-			},
-			...(message.url?.startsWith('https://') ? { fcmOptions: { link: message.url } } : {}),
-		},
-		...(config.analyticsLabel !== undefined ? { fcmOptions: { analyticsLabel: config.analyticsLabel } } : {}),
-	};
-};
 
 /**
  * Driver for [Firebase Cloud Messaging](https://firebase.google.com/docs/cloud-messaging) — native Android and iOS
@@ -311,35 +181,3 @@ export class PushDriverFcm implements PushDriver {
 		}
 	}
 }
-
-/**
- * Turn what the SDK throws into the error `sendPush()` expects.
- *
- * @param error - What was thrown: a `FirebaseError` with a `messaging/…` code for a refusal, a plain error for the
- * network.
- * @returns A {@link PushTargetGoneError} for a dead token, else an error naming the code with the original as its
- * cause.
- */
-export const describeError = (error: unknown): Error => {
-	// 1. A refusal by FCM: the code says whether the token is gone. `invalid-argument` covers a malformed token too,
-	//    which the message names
-	if (error instanceof Error && 'code' in error && typeof error.code === 'string') {
-		const gone =
-			GONE_CODES.has(error.code) ||
-			(error.code === 'messaging/invalid-argument' && /registration token/i.test(error.message));
-
-		if (gone) {
-			return new PushTargetGoneError({ platform: 'fcm', reason: error.code });
-		}
-
-		return new Error(`FCM ${error.code}: ${error.message}`, { cause: error });
-	}
-
-	// 2. Anything else — the network, a bug — as is, prefixed
-	return new Error(`FCM: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-};
-
-/**
- * Default export for consumers that import the driver without a named binding.
- */
-export default PushDriverFcm;

@@ -21,14 +21,14 @@ type of `options`; `env` is the app's typed configuration — the zod schema of 
 
 ```ts
 import { usePayments } from '@novastarter/payments';
-import { DriverLemonSqueezy } from '@novastarter/payments-driver-lemonsqueezy';
-import { DriverStripe } from '@novastarter/payments-driver-stripe';
+import { PaymentsDriverLemonSqueezy } from '@novastarter/payments-driver-lemonsqueezy';
+import { PaymentsDriverStripe } from '@novastarter/payments-driver-stripe';
 import { env } from './env';
 
 const payments = usePayments();
 
-payments.registerDriver('stripe', DriverStripe);
-payments.registerDriver('lemonsqueezy', DriverLemonSqueezy);
+payments.registerDriver('stripe', PaymentsDriverStripe);
+payments.registerDriver('lemonsqueezy', PaymentsDriverLemonSqueezy);
 
 payments.registerLocation('default', {
 	driver: 'stripe',
@@ -77,7 +77,42 @@ const checkout = await provider.createCheckoutSession({
 `registerLocation()` checks that the driver exists and keeps the options; the first `location(name)` builds the driver,
 so an unused location never opens a client. `location(name)` throws for a name nobody registered; `hasLocation(name)`
 and `locationNames()` inspect the registry, `instantiated()` lists what was built so far. `DEFAULT_PAYMENTS_LOCATION` is
-`default`, the location a deployment with one provider registers.
+`default`, the location a deployment with one provider registers and the one `handleWebhook()` verifies against.
+
+## Webhooks
+
+A route hands the raw request to `handleWebhook()`, which verifies it through the location and answers the normalised
+`PaymentsEvent` — or `null` for a delivery the application does not act on:
+
+1. The location: the one in `options.location`, else `default`.
+2. The driver verifies the signature and normalises the payload. A missing signature or an unreadable body is an
+   `InvalidPayloadError` (400), a wrong signature an `InvalidCredentialsError` (401) — both of `@novastarter/errors`,
+   rethrown as is after a `payments.failed` event with `reason: error.code`; any other failure is wrapped in an `Error`
+   with the driver's error as `cause` and reported with `reason: 'error'`.
+3. A verified event the kit does not track answers `null`, with no event.
+4. The event passes the `payments.webhook` filter of `@novastarter/emitter` with `{ location, provider, type }`; a
+   handler may rewrite it or return `null` to drop it.
+5. `payments.received` is emitted with `{ location, id, type, provider, occurredAt, payload }` and the event returned.
+
+```ts
+import { isNovastarterError } from '@novastarter/errors';
+import { handleWebhook } from '@novastarter/payments';
+
+export async function POST(request: Request) {
+	try {
+		const event = await handleWebhook(await request.text(), Object.fromEntries(request.headers));
+
+		if (event) await applyPaymentsEvent(event);
+
+		return new Response(null, { status: 200 });
+	} catch (error) {
+		if (isNovastarterError(error)) return new Response(error.message, { status: error.status });
+		throw error;
+	}
+}
+```
+
+Acting on the event — applying it once by `event.id`, updating the organization — is the application's job.
 
 ## The contract
 
@@ -112,7 +147,7 @@ driver map, so a location naming it is type-checked:
 ```ts
 declare module '@novastarter/payments' {
 	interface PaymentsDrivers {
-		paddle: DriverPaddleConfig;
+		paddle: PaymentsDriverPaddleConfig;
 	}
 }
 ```

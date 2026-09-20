@@ -1,5 +1,4 @@
-import { useLogger } from '@novastarter/logger';
-import type { Logger } from 'pino';
+import { type Logger, useLogger } from '@novastarter/logger';
 import type { PushDriver } from '../../driver.js';
 import { PUSH_PLATFORMS, type PushMessage, type PushPlatform, type PushResult } from '../../types.js';
 import { platformOf } from '../platform-of.js';

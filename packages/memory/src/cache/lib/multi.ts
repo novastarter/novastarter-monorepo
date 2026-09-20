@@ -1,10 +1,10 @@
 import { processId } from '@novastarter/utils/node';
-import { type Bus, BusRedis } from '../../bus/index.js';
+import { type Bus, BusDriverRedis } from '../../bus/index.js';
 import type { Lock } from '../../kv/types/lock.js';
 import type { Cache } from '../types/class.js';
-import type { CacheMultiOptions } from '../types/config.js';
-import { CacheLocal } from './local.js';
-import { CacheRedis } from './redis.js';
+import type { CacheDriverMultiConfig } from '../types/config.js';
+import { CacheDriverLocal } from './local.js';
+import { CacheDriverRedis } from './redis.js';
 
 /**
  * Bus channel on which multi-stage caches tell each other to drop local entries.
@@ -12,7 +12,7 @@ import { CacheRedis } from './redis.js';
 export const CACHE_CHANNEL_KEY = 'multi-cache';
 
 /**
- * Invalidation message a {@link CacheMulti} publishes after every write.
+ * Invalidation message a {@link CacheDriverMulti} publishes after every write.
  */
 export type CacheMultiMessageClear = {
 	/** Only one message type exists so far. */
@@ -38,7 +38,7 @@ export type CacheMultiMessageClear = {
  *
  * @example
  * ```ts
- * const cache = new CacheMulti({
+ * const cache = new CacheDriverMulti({
  * 	local: { maxKeys: 500 },
  * 	redis: {
  * 	redis: new Redis(),
@@ -47,15 +47,15 @@ export type CacheMultiMessageClear = {
  * });
  * ```
  */
-export class CacheMulti implements Cache {
+export class CacheDriverMulti implements Cache {
 	/** Id of this process, stamped on outgoing invalidations. */
 	processId: string = processId();
 
 	/** L1: per-process memory. */
-	local: CacheLocal;
+	local: CacheDriverLocal;
 
 	/** L2: shared Redis. */
-	redis: CacheRedis;
+	redis: CacheDriverRedis;
 
 	/** Pub/sub used to invalidate the L1 of other processes. */
 	bus: Bus;
@@ -65,11 +65,11 @@ export class CacheMulti implements Cache {
 	 *
 	 * @param config - Options of both levels.
 	 */
-	constructor(config: CacheMultiOptions) {
+	constructor(config: CacheDriverMultiConfig) {
 		// 1. Build the two levels and a bus over the same Redis connection and namespace as L2
-		this.local = new CacheLocal(config.local);
-		this.redis = new CacheRedis(config.redis);
-		this.bus = new BusRedis({ redis: config.redis.redis, namespace: config.redis.namespace });
+		this.local = new CacheDriverLocal(config.local);
+		this.redis = new CacheDriverRedis(config.redis);
+		this.bus = new BusDriverRedis({ redis: config.redis.redis, namespace: config.redis.namespace });
 
 		// 2. Wrap the handler in a lambda, so `this` still points at the cache when the bus calls it
 		this.bus.subscribe<CacheMultiMessageClear>(CACHE_CHANNEL_KEY, (payload) => this.onMessageClear(payload));
@@ -185,7 +185,7 @@ export class CacheMulti implements Cache {
 	/**
 	 * Apply an invalidation received over the bus to L1.
 	 *
-	 * @param payload - Message published by a {@link CacheMulti} in some process.
+	 * @param payload - Message published by a {@link CacheDriverMulti} in some process.
 	 * @internal
 	 */
 	private async onMessageClear(payload: CacheMultiMessageClear) {

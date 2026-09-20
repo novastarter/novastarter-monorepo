@@ -1,6 +1,5 @@
-import type { Env } from '@novastarter/env';
 import type { JobInputOf } from './lib/enqueue.js';
-import type { JobName } from './types.js';
+import type { JobName, ScheduleEnv } from './types.js';
 
 /**
  * A job that runs on a cron rule.
@@ -11,11 +10,11 @@ export interface Schedule<Name extends JobName = JobName> {
 	/** Which job to enqueue. */
 	job: Name;
 	/** Cron expression, or a function reading it from the environment. */
-	cron: string | ((env: Env) => string);
+	cron: string | ((env: ScheduleEnv) => string);
 	/** Payload enqueued on every tick; the job's defaults apply. */
 	payload?: JobInputOf<Name>;
 	/** Whether the schedule runs at all; on unless given. */
-	enabled?: (env: Env) => boolean;
+	enabled?: (env: ScheduleEnv) => boolean;
 }
 
 /**
@@ -62,7 +61,7 @@ export const registerSchedule = <Name extends JobName>(schedule: Schedule<Name>)
  * @param env - Environment to read.
  * @returns Every schedule, enabled or not, in registration order.
  */
-export const getSchedules = (env: Env): ResolvedSchedule[] => {
+export const getSchedules = (env: ScheduleEnv): ResolvedSchedule[] => {
 	return _schedules.map((schedule) => ({
 		job: schedule.job,
 		cron: typeof schedule.cron === 'function' ? schedule.cron(env) : schedule.cron,

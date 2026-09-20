@@ -15,12 +15,12 @@ configuration — `env` is the app's typed configuration — the zod schema of t
 
 ```ts
 import { usePayments } from '@novastarter/payments';
-import { DriverLemonSqueezy } from '@novastarter/payments-driver-lemonsqueezy';
+import { PaymentsDriverLemonSqueezy } from '@novastarter/payments-driver-lemonsqueezy';
 import { env } from './env';
 
 const payments = usePayments();
 
-payments.registerDriver('lemonsqueezy', DriverLemonSqueezy);
+payments.registerDriver('lemonsqueezy', PaymentsDriverLemonSqueezy);
 
 payments.registerLocation('default', {
 	driver: 'lemonsqueezy',

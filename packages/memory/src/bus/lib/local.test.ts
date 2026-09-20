@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { BusLocal } from './local.js';
+import { BusDriverLocal } from './local.js';
 
-let bus: BusLocal;
+let bus: BusDriverLocal;
 
 beforeEach(() => {
-	bus = new BusLocal({});
+	bus = new BusDriverLocal({});
 });
 
 afterEach(() => {

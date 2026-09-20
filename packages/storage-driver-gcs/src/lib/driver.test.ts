@@ -13,11 +13,12 @@ import {
 	randGitShortSha as randUnique,
 	randUrl,
 } from '@ngneat/falso';
+import { StorageFileNotFoundError } from '@novastarter/storage';
 import { normalizePath } from '@novastarter/utils';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { DriverGCSConfig } from './index.js';
-import { DriverGCS } from './index.js';
+import type { StorageDriverGcsConfig } from './driver.js';
+import { StorageDriverGcs } from './driver.js';
 
 vi.mock('@novastarter/utils');
 vi.mock('@google-cloud/storage');
@@ -28,7 +29,7 @@ vi.mock('node:stream/promises');
  * Random fixture regenerated before every test, so no test can depend on values another one left behind.
  */
 let sample: {
-	config: Required<DriverGCSConfig>;
+	config: { [Key in keyof StorageDriverGcsConfig]-?: NonNullable<StorageDriverGcsConfig[Key]> };
 	path: {
 		input: string;
 		inputFull: string;
@@ -53,7 +54,7 @@ let sample: {
 /**
  * Driver under test, created with the minimal config so each `describe` block can opt into extra options.
  */
-let driver: DriverGCS;
+let driver: StorageDriverGcs;
 
 beforeEach(() => {
 	// 1. Fresh random values per test; falso keeps them realistic enough to catch accidental string handling
@@ -86,7 +87,7 @@ beforeEach(() => {
 	};
 
 	// 2. `@google-cloud/storage` is mocked above, so constructing the driver only records calls and never opens a socket
-	driver = new DriverGCS({
+	driver = new StorageDriverGcs({
 		bucket: sample.config.bucket,
 	});
 
@@ -107,12 +108,28 @@ afterEach(() => {
 });
 
 describe('#constructor', () => {
+	test('Refuses a missing bucket', () => {
+		// 1. Every operation targets the bucket, so its absence is refused at construction rather than on the first request
+		expect(() => new StorageDriverGcs({ bucket: '' })).toThrowErrorMatchingInlineSnapshot(
+			`[Error: The gcs storage driver needs a "bucket"]`,
+		);
+	});
+
+	test('Refuses a chunk size GCS would reject when resumable uploads are on', () => {
+		// 1. GCS wants multiples of 256 KiB; a chunk below that or off a power of two would fail on the first PATCH
+		expect(
+			() => new StorageDriverGcs({ bucket: sample.config.bucket, tus: { enabled: true, chunkSize: 1000 } }),
+		).toThrowErrorMatchingInlineSnapshot(
+			`[Error: The gcs storage driver got a "tus.chunkSize" that is not a power of two of at least 256 KiB]`,
+		);
+	});
+
 	test('Defaults root path to empty string', () => {
 		expect(driver['root']).toBe('');
 	});
 
 	test('Normalizes config path when root is given', () => {
-		new DriverGCS({
+		new StorageDriverGcs({
 			bucket: sample.config.bucket,
 			root: sample.config.root,
 		});
@@ -122,7 +139,7 @@ describe('#constructor', () => {
 	});
 
 	test('Instantiates Storage object with config options', () => {
-		new DriverGCS({
+		new StorageDriverGcs({
 			bucket: sample.config.bucket,
 			apiEndpoint: sample.config.apiEndpoint,
 		});
@@ -140,7 +157,7 @@ describe('#constructor', () => {
 
 		vi.mocked(Storage).mockReturnValue(mockStorage);
 
-		const driver = new DriverGCS({
+		const driver = new StorageDriverGcs({
 			bucket: sample.config.bucket,
 		});
 
@@ -152,7 +169,7 @@ describe('#constructor', () => {
 describe('#fullPath', () => {
 	beforeEach(() => {
 		// 1. A fresh driver with the real `fullPath`, since the shared one is stubbed in the outer `beforeEach`
-		driver = new DriverGCS({ bucket: sample.config.bucket });
+		driver = new StorageDriverGcs({ bucket: sample.config.bucket });
 		driver['root'] = sample.config.root;
 
 		vi.mocked(join).mockReturnValue(sample.path.src);
@@ -323,6 +340,25 @@ describe('#stat', () => {
 			size: sample.file.size,
 			modified: sample.file.modified,
 		});
+	});
+
+	test('Maps a 404 to the kit error', async () => {
+		// 1. The SDK's `ApiError` carries the HTTP status as `code`; 404 becomes the error every backend shares
+		const cause = Object.assign(new Error('No such object'), { code: 404 });
+		mockFile.getMetadata.mockRejectedValue(cause);
+
+		const error: unknown = await driver.stat(sample.path.input).catch((error: unknown) => error);
+
+		expect(error).toBeInstanceOf(StorageFileNotFoundError);
+		expect(error).toMatchObject({ extensions: { filepath: sample.path.input }, cause });
+	});
+
+	test('Rethrows any other SDK error', async () => {
+		// 1. A 403 says nothing about whether the object exists, so it must not be reported as "not found"
+		const error = Object.assign(new Error('Forbidden'), { code: 403 });
+		mockFile.getMetadata.mockRejectedValue(error);
+
+		await expect(driver.stat(sample.path.input)).rejects.toBe(error);
 	});
 });
 

@@ -14,10 +14,12 @@ import {
 	randGitShortSha as randUnique,
 	randWord,
 } from '@ngneat/falso';
+import { StorageFileNotFoundError } from '@novastarter/storage';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { DriverLocalConfig } from './index.js';
-import { DriverLocal } from './index.js';
+import type { StorageDriverLocalConfig } from './driver.js';
+import { StorageDriverLocal } from './driver.js';
 
+vi.mock('@novastarter/logger');
 vi.mock('node:path');
 vi.mock('node:fs');
 vi.mock('node:fs/promises');
@@ -29,7 +31,7 @@ vi.mock('node:stream/promises');
  * The `path.*Full` values are what the stubbed `fullPath` returns for the matching `path.*` input.
  */
 let sample: {
-	config: Required<DriverLocalConfig>;
+	config: Required<StorageDriverLocalConfig>;
 	path: {
 		root: string;
 		input: string;
@@ -55,7 +57,7 @@ let sample: {
 /**
  * Driver under test, rebuilt before every test on top of the fresh fixture.
  */
-let driver: DriverLocal;
+let driver: StorageDriverLocal;
 
 beforeEach(() => {
 	// 1. Fresh random values per test; falso keeps them realistic enough to catch accidental string handling
@@ -86,7 +88,7 @@ beforeEach(() => {
 	};
 
 	// 2. `node:fs`, `node:fs/promises` and `node:path` are auto-mocked above, so the driver never touches the disk
-	driver = new DriverLocal({ root: sample.config.root });
+	driver = new StorageDriverLocal({ root: sample.config.root });
 
 	// 3. Stub the private path resolver with a lookup table, so assertions can match exact paths without depending on
 	//    the mocked `join`
@@ -105,6 +107,13 @@ afterEach(() => {
 });
 
 describe('#constructor', () => {
+	test('Refuses a missing root', () => {
+		// 1. Without a root every path would resolve against the working directory, which is never what was meant
+		expect(() => new StorageDriverLocal({ root: '' })).toThrowErrorMatchingInlineSnapshot(
+			`[Error: The local storage driver needs a "root"]`,
+		);
+	});
+
 	test('Resolves root based on input', () => {
 		// 1. The shared driver from `beforeEach` already ran the constructor, so its `resolve` call is recorded
 		expect(resolve).toHaveBeenCalledWith(sample.config.root);
@@ -114,7 +123,7 @@ describe('#constructor', () => {
 		// 1. `resolve` is auto-mocked; a fixed return value shows the driver stores the resolved result, not the raw root
 		const mockResolved = randDirectoryPath();
 		vi.mocked(resolve).mockReturnValueOnce(mockResolved);
-		const driver = new DriverLocal({ root: sample.config.root });
+		const driver = new StorageDriverLocal({ root: sample.config.root });
 		expect(driver['root']).toBe(mockResolved);
 	});
 });
@@ -128,7 +137,7 @@ describe('#fullPath', () => {
 	test('Joins passed filepath with system separator', () => {
 		// 1. A fresh driver is needed: the shared one had its `fullPath` replaced on the instance, and `mockRestore`
 		//    cannot bring the prototype method back
-		const driver = new DriverLocal({ root: sample.config.root });
+		const driver = new StorageDriverLocal({ root: sample.config.root });
 
 		driver['fullPath'](sample.path.input);
 
@@ -138,7 +147,7 @@ describe('#fullPath', () => {
 
 	test('Joins config root with sep prefixed filepath', () => {
 		// 1. Two queued return values stand in for the inner and outer `join` calls, in that order
-		const driver = new DriverLocal({ root: sample.path.root });
+		const driver = new StorageDriverLocal({ root: sample.path.root });
 		vi.mocked(join).mockReturnValueOnce(sample.path.input).mockReturnValueOnce(sample.path.inputFull);
 
 		const filepath = driver['fullPath'](sample.path.input);
@@ -198,14 +207,29 @@ describe('#stat', () => {
 		expect(stat).toHaveBeenCalledWith(sample.path.inputFull);
 	});
 
-	test(`Throws error if stat does not return info`, async () => {
+	test('Throws the kit error if stat does not return info', async () => {
 		// 1. The auto-mocked `stat` resolves `undefined`, which is the misbehaving-filesystem case the guard covers
-		try {
-			await driver.stat(sample.path.input);
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe(`File "${sample.path.input}" doesn't exist.`);
-		}
+		await expect(driver.stat(sample.path.input)).rejects.toBeInstanceOf(StorageFileNotFoundError);
+	});
+
+	test('Maps a missing file to the kit error', async () => {
+		// 1. ENOENT is what the filesystem answers for a missing file; the driver turns it into the error every backend
+		//    shares, keeping the original as cause
+		const cause = Object.assign(new Error(), { code: 'ENOENT' });
+		vi.mocked(stat).mockRejectedValueOnce(cause);
+
+		const error: unknown = await driver.stat(sample.path.input).catch((error: unknown) => error);
+
+		expect(error).toBeInstanceOf(StorageFileNotFoundError);
+		expect(error).toMatchObject({ extensions: { filepath: sample.path.input }, cause });
+	});
+
+	test('Rethrows any other filesystem error', async () => {
+		// 1. A permission error says nothing about whether the file exists, so it must not be reported as "not found"
+		const error = Object.assign(new Error(), { code: 'EACCES' });
+		vi.mocked(stat).mockRejectedValueOnce(error);
+
+		await expect(driver.stat(sample.path.input)).rejects.toBe(error);
 	});
 });
 

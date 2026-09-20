@@ -2,22 +2,27 @@ import { Blob, Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { extname, join, parse } from 'node:path';
 import { Readable } from 'node:stream';
-import type { TusDriver } from '@novastarter/storage';
-import type { ChunkedUploadContext, ReadOptions } from '@novastarter/types';
+import {
+	type ChunkedUploadContext,
+	type ReadOptions,
+	type Stat,
+	StorageFileNotFoundError,
+	type TusDriver,
+} from '@novastarter/storage';
 import { normalizePath } from '@novastarter/utils';
 import PQueue from 'p-queue';
 import type { RequestInit } from 'undici';
 import { fetch, FormData } from 'undici';
 import { IMAGE_EXTENSIONS, MINIMUM_CHUNK_SIZE, VIDEO_EXTENSIONS } from './constants.js';
-import { toFormUrlEncoded } from './utils/to-form-url-encoded.js';
-import { toSignatureString } from './utils/to-signature-string.js';
+import { toFormUrlEncoded } from './to-form-url-encoded.js';
+import { toSignatureString } from './to-signature-string.js';
 
 /**
- * Options accepted by {@link DriverCloudinary}.
+ * Options accepted by {@link StorageDriverCloudinary}.
  */
-export type DriverCloudinaryConfig = {
+export type StorageDriverCloudinaryConfig = {
 	/** Path prefix every file is placed under; behaves like a root folder inside the Cloudinary account. */
-	root?: string;
+	root?: string | undefined;
 	/** Cloudinary cloud name; part of every API and delivery URL. */
 	cloudName: string;
 	/** API key of the account; sent with every signed request and used for basic auth on the search API. */
@@ -27,21 +32,23 @@ export type DriverCloudinaryConfig = {
 	/** Access mode stored on uploaded assets: `public` assets are served openly, `authenticated` ones need a signed URL. */
 	accessMode: 'public' | 'authenticated';
 	/** Resumable-upload tuning. */
-	tus?: {
-		/** Whether resumable uploads are enabled; only then is `chunkSize` validated. */
-		enabled: boolean;
-		/** Chunk size in bytes the TUS server sends per request; must be at least {@link MINIMUM_CHUNK_SIZE}. */
-		chunkSize?: number;
-	};
+	tus?:
+		| {
+				/** Whether resumable uploads are enabled; only then is `chunkSize` validated. */
+				enabled: boolean;
+				/** Chunk size in bytes the TUS server sends per request; must be at least {@link MINIMUM_CHUNK_SIZE}. */
+				chunkSize?: number | undefined;
+		  }
+		| undefined;
 };
 
 /**
  * Registers the driver's options in the map of `@novastarter/storage`, so a location naming `cloudinary` has its
- * options checked against {@link DriverCloudinaryConfig}.
+ * options checked against {@link StorageDriverCloudinaryConfig}.
  */
 declare module '@novastarter/storage' {
 	interface StorageDrivers {
-		cloudinary: DriverCloudinaryConfig;
+		cloudinary: StorageDriverCloudinaryConfig;
 	}
 }
 
@@ -56,7 +63,7 @@ declare module '@novastarter/storage' {
  *
  * @example
  * ```ts
- * const driver = new DriverCloudinary({
+ * const driver = new StorageDriverCloudinary({
  *   cloudName: 'demo',
  *   apiKey: process.env.CLOUDINARY_KEY,
  *   apiSecret: process.env.CLOUDINARY_SECRET,
@@ -66,7 +73,7 @@ declare module '@novastarter/storage' {
  * await driver.write('avatar.png', fs.createReadStream('./avatar.png'));
  * ```
  */
-export class DriverCloudinary implements TusDriver {
+export class StorageDriverCloudinary implements TusDriver {
 	/**
 	 * Normalised root prefix without a leading slash; an empty string when none was configured.
 	 *
@@ -106,10 +113,19 @@ export class DriverCloudinary implements TusDriver {
 	 * Create a driver from its options.
 	 *
 	 * @param config - Credentials and behaviour options.
-	 * @throws Error when resumable uploads are enabled with a chunk size below {@link MINIMUM_CHUNK_SIZE}.
+	 * @throws Error when `cloudName`, `apiKey` or `apiSecret` is missing, or when resumable uploads are enabled with a
+	 * chunk size below {@link MINIMUM_CHUNK_SIZE}.
 	 */
-	constructor(config: DriverCloudinaryConfig) {
-		// 1. Normalise the root once without a leading slash: Cloudinary public ids are not paths, and a leading `/`
+	constructor(config: StorageDriverCloudinaryConfig) {
+		// 1. Refuse a missing credential here: every request is signed with it, and Cloudinary would only answer 401
+		//    on the first call, without naming the option
+		for (const option of ['cloudName', 'apiKey', 'apiSecret'] as const) {
+			if (!config[option]) {
+				throw new Error(`The cloudinary storage driver needs ${option.startsWith('a') ? 'an' : 'a'} "${option}"`);
+			}
+		}
+
+		// 2. Normalise the root once without a leading slash: Cloudinary public ids are not paths, and a leading `/`
 		//    would become part of the id and produce assets nobody can find by the expected key
 		this.root = config.root ? normalizePath(config.root, { removeLeading: true }) : '';
 		this.apiKey = config.apiKey;
@@ -117,10 +133,10 @@ export class DriverCloudinary implements TusDriver {
 		this.cloudName = config.cloudName;
 		this.accessMode = config.accessMode;
 
-		// 2. Cloudinary rejects chunks smaller than 5 MB, so a TUS chunk size below that would fail on every upload;
+		// 3. Cloudinary rejects chunks smaller than 5 MB, so a TUS chunk size below that would fail on every upload;
 		//    refuse it at construction instead
 		if (config.tus?.enabled && config.tus.chunkSize && config.tus?.chunkSize < MINIMUM_CHUNK_SIZE) {
-			throw new Error('Invalid chunkSize provided');
+			throw new Error('The cloudinary storage driver got a "tus.chunkSize" below 5 MB');
 		}
 	}
 
@@ -355,19 +371,23 @@ export class DriverCloudinary implements TusDriver {
 	 *
 	 * @param filepath - Asset path relative to the root.
 	 * @returns Size in bytes and the moment Cloudinary created the asset.
-	 * @throws Error when the lookup returns an error status.
+	 * @throws StorageFileNotFoundError when Cloudinary answers 404.
+	 * @throws Error when the lookup returns any other error status.
 	 */
-	async stat(filepath: string): Promise<{
-		size: number;
-		modified: Date;
-	}> {
+	async stat(filepath: string): Promise<Stat> {
 		const response = await this.requestResource(filepath);
 
-		// 1. An error status means no record; cancel the body first because an unread body holds its connection open
+		// 1. An error status means no record; cancel the body first because an unread body holds its connection open.
+		//    Only a 404 is a definite "missing" and becomes the error every backend shares; other statuses say nothing
+		//    about the asset
 		if (response.status >= 400) {
 			await response.body?.cancel();
 
-			throw new Error(`No stat returned for file "${filepath}"`);
+			if (response.status === 404) {
+				throw new StorageFileNotFoundError({ filepath });
+			}
+
+			throw new Error(`No stat returned for file "${filepath}" (${response.status})`);
 		}
 
 		// 2. Cloudinary reports no modification time, so `created_at` stands in for it
@@ -742,7 +762,7 @@ export class DriverCloudinary implements TusDriver {
 	 * @param content - Chunk data as sent by the client.
 	 * @param offset - Byte offset within the whole upload where this chunk starts.
 	 * @param context - Context carrying the total `size` and the `timestamp` recorded by
-	 * {@link DriverCloudinary.createChunkedUpload}.
+	 * {@link StorageDriverCloudinary.createChunkedUpload}.
 	 * @returns The new upload offset: `offset` plus the bytes of this chunk.
 	 * @throws Error carrying Cloudinary's message when the chunk is rejected.
 	 */
@@ -821,8 +841,3 @@ export class DriverCloudinary implements TusDriver {
 		await this.delete(filepath);
 	}
 }
-
-/**
- * Default export for consumers that import the driver without a named binding.
- */
-export default DriverCloudinary;

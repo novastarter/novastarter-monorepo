@@ -1,5 +1,5 @@
 import { Redis, type RedisOptions } from 'ioredis';
-import type { RedisConfig } from '../types/config.js';
+import type { RedisConfig } from '../types.js';
 
 /**
  * Open a new ioredis client.

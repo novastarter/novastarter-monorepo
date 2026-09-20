@@ -5,7 +5,7 @@
  * Redis) and the same serialization helpers: `Kv` (key-value store), `Cache` (Kv with an LRU and a multi-process
  * mode), `Bus` (pub/sub) and `Limiter` (points-per-duration rate limiter). Each is reached through a manager of
  * named locations (`useKv().registerLocation` / `.location`) the application wires at start-up; the driver classes
- * (`KvLocal`, `KvRedis`, …) are exported for code that needs a standalone instance.
+ * (`KvDriverLocal`, `KvDriverRedis`, …) are exported for code that needs a standalone instance.
  */
 export * from './bus/index.js';
 export * from './cache/index.js';

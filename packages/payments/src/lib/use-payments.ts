@@ -22,7 +22,7 @@ export const _cache: { payments: PaymentsManager | undefined } = { payments: und
  * // at start-up
  * const payments = usePayments();
  *
- * payments.registerDriver('lemonsqueezy', DriverLemonSqueezy);
+ * payments.registerDriver('lemonsqueezy', PaymentsDriverLemonSqueezy);
  * payments.registerLocation('default', {
  * 	driver: 'lemonsqueezy',
  * 	options: {

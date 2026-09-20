@@ -9,8 +9,8 @@ import {
 	uint8ArrayToBuffer,
 	withNamespace,
 } from '../../utils/index.js';
-import type { ExtendedRedis, KvRedisOptions } from '../index.js';
 import type { Kv } from '../types/class.js';
+import type { ExtendedRedis, KvDriverRedisConfig } from '../types/config.js';
 
 /**
  * Lua script behind `setMax`: store the value only when it beats the current one.
@@ -59,7 +59,7 @@ const RELEASE_SCRIPT = `
  *
  * @example
  * ```ts
- * const kv = new KvRedis({
+ * const kv = new KvDriverRedis({
  * 	redis: new Redis(),
  * 	namespace: 'app',
  * });
@@ -69,7 +69,7 @@ const RELEASE_SCRIPT = `
  * });
  * ```
  */
-export class KvRedis implements Kv {
+export class KvDriverRedis implements Kv {
 	/**
 	 * Client with the custom `setMax` and `release` commands attached.
 	 *
@@ -85,7 +85,7 @@ export class KvRedis implements Kv {
 	private namespace: string;
 
 	/**
-	 * Whether values above {@link KvRedis.compressionMinSize} are gzipped.
+	 * Whether values above {@link KvDriverRedis.compressionMinSize} are gzipped.
 	 *
 	 * @internal
 	 */
@@ -124,7 +124,7 @@ export class KvRedis implements Kv {
 	 *
 	 * @param config - Redis configuration.
 	 */
-	constructor(config: KvRedisOptions) {
+	constructor(config: KvDriverRedisConfig) {
 		// 1. Register the Lua commands once per client; a client shared between several stores already has them
 		if ('setMax' in config.redis === false) {
 			config.redis.defineCommand('setMax', {

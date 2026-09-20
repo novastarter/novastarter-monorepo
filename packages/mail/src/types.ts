@@ -57,35 +57,3 @@ export interface MailResult {
 	/** Provider's raw response line, for the log. */
 	response?: string | undefined;
 }
-
-/**
- * Contract every mail driver implements — the `Driver` of `@novastarter/storage`, for mail.
- *
- * A declaration only: the built-in drivers live in `lib/drivers/`, vendor SDKs in `@novastarter/mail-driver-*`
- * packages. The constructor takes the `options` of the location that names the driver; the `MailManager` calls it
- * on the location's first use.
- */
-export declare class MailDriver {
-	/**
-	 * Create a driver from a location's options.
-	 *
-	 * @param options - The driver's own options, as the location was registered with.
-	 */
-	constructor(options: Record<string, unknown>);
-
-	/**
-	 * Deliver a message.
-	 *
-	 * @param message - Rendered message.
-	 * @returns What the provider answered.
-	 * @throws When the provider refuses the message or cannot be reached; `sendMail()` moves on to the next location.
-	 */
-	send(message: MailMessage): Promise<MailResult>;
-
-	/**
-	 * Check the transport can be used — credentials, connectivity — without sending.
-	 *
-	 * @throws When it cannot.
-	 */
-	verify?(): Promise<void>;
-}

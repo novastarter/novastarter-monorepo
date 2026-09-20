@@ -1,12 +1,12 @@
 import { RateLimiterMemory } from 'rate-limiter-flexible';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { consume } from '../utils/consume.js';
-import { LimiterLocal } from './local.js';
+import { LimiterDriverLocal } from './local.js';
 
 vi.mock('rate-limiter-flexible');
 vi.mock('../utils/consume.js');
 
-let limiter: LimiterLocal;
+let limiter: LimiterDriverLocal;
 let points: number;
 let duration: number;
 let key: string;
@@ -15,7 +15,7 @@ beforeEach(() => {
 	points = 5;
 	duration = 10;
 	key = 'rate-limiter-key';
-	limiter = new LimiterLocal({ points, duration });
+	limiter = new LimiterDriverLocal({ points, duration });
 });
 
 afterEach(() => {

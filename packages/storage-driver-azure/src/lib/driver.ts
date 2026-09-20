@@ -1,9 +1,19 @@
 import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 import { finished } from 'node:stream/promises';
-import { BlobServiceClient, ContainerClient, StorageSharedKeyCredential } from '@azure/storage-blob';
-import type { TusDriver } from '@novastarter/storage';
-import type { ChunkedUploadContext, ReadOptions } from '@novastarter/types';
+import {
+	type BlobGetPropertiesResponse,
+	BlobServiceClient,
+	ContainerClient,
+	StorageSharedKeyCredential,
+} from '@azure/storage-blob';
+import {
+	type ChunkedUploadContext,
+	type ReadOptions,
+	type Stat,
+	StorageFileNotFoundError,
+	type TusDriver,
+} from '@novastarter/storage';
 import { normalizePath } from '@novastarter/utils';
 
 /**
@@ -18,12 +28,12 @@ import { normalizePath } from '@novastarter/utils';
 const MAXIMUM_CHUNK_SIZE = 104_857_600;
 
 /**
- * Options accepted by {@link DriverAzure}.
+ * Options accepted by {@link StorageDriverAzure}.
  *
  * Authentication is by shared key only: `accountName` and `accountKey` are turned into a
  * `StorageSharedKeyCredential`, so every request is signed with the account key.
  */
-export type DriverAzureConfig = {
+export type StorageDriverAzureConfig = {
 	/** Blob container every operation targets. */
 	containerName: string;
 	/** Storage account name; also used to derive the default endpoint. */
@@ -31,29 +41,31 @@ export type DriverAzureConfig = {
 	/** Shared account key requests are signed with. */
 	accountKey: string;
 	/** Path prefix every blob is placed under; behaves like a root directory inside the container. */
-	root?: string;
+	root?: string | undefined;
 	/**
 	 * Custom blob service endpoint, e.g. for Azurite or sovereign clouds.
 	 *
 	 * @defaultValue `https://<accountName>.blob.core.windows.net`
 	 */
-	endpoint?: string;
+	endpoint?: string | undefined;
 	/** Resumable-upload tuning. */
-	tus?: {
-		/** Whether resumable uploads are switched on; only then is `chunkSize` validated. */
-		enabled: boolean;
-		/** Chunk size in bytes appended per TUS PATCH request; must not exceed {@link MAXIMUM_CHUNK_SIZE}. */
-		chunkSize?: number;
-	};
+	tus?:
+		| {
+				/** Whether resumable uploads are switched on; only then is `chunkSize` validated. */
+				enabled: boolean;
+				/** Chunk size in bytes appended per TUS PATCH request; must not exceed {@link MAXIMUM_CHUNK_SIZE}. */
+				chunkSize?: number | undefined;
+		  }
+		| undefined;
 };
 
 /**
  * Registers the driver's options in the map of `@novastarter/storage`, so a location naming `azure` has its
- * options checked against {@link DriverAzureConfig}.
+ * options checked against {@link StorageDriverAzureConfig}.
  */
 declare module '@novastarter/storage' {
 	interface StorageDrivers {
-		azure: DriverAzureConfig;
+		azure: StorageDriverAzureConfig;
 	}
 }
 
@@ -66,7 +78,7 @@ declare module '@novastarter/storage' {
  *
  * @example
  * ```ts
- * const driver = new DriverAzure({
+ * const driver = new StorageDriverAzure({
  *     containerName: 'uploads',
  *     accountName: 'myaccount',
  *     accountKey: process.env.AZURE_KEY,
@@ -75,7 +87,7 @@ declare module '@novastarter/storage' {
  * await driver.write('avatar.png', fs.createReadStream('./avatar.png'), 'image/png');
  * ```
  */
-export class DriverAzure implements TusDriver {
+export class StorageDriverAzure implements TusDriver {
 	/**
 	 * Container handle every blob operation goes through.
 	 *
@@ -101,13 +113,22 @@ export class DriverAzure implements TusDriver {
 	 * Create a driver together with its credential and container handle.
 	 *
 	 * @param config - Connection and behaviour options.
-	 * @throws Error when resumable uploads are enabled with a `chunkSize` above {@link MAXIMUM_CHUNK_SIZE}.
+	 * @throws Error when `accountName`, `accountKey` or `containerName` is missing, or when resumable uploads are
+	 * enabled with a `chunkSize` above {@link MAXIMUM_CHUNK_SIZE}.
 	 */
-	constructor(config: DriverAzureConfig) {
-		// 1. Build the credential once; the SDK signs every request with it, so there is no per-call auth step
+	constructor(config: StorageDriverAzureConfig) {
+		// 1. Refuse a missing credential or container here: the SDK would only fail on the first request, with an error
+		//    that does not name the option
+		for (const option of ['accountName', 'accountKey', 'containerName'] as const) {
+			if (!config[option]) {
+				throw new Error(`The azure storage driver needs ${option.startsWith('a') ? 'an' : 'a'} "${option}"`);
+			}
+		}
+
+		// 2. Build the credential once; the SDK signs every request with it, so there is no per-call auth step
 		this.signedCredentials = new StorageSharedKeyCredential(config.accountName, config.accountKey);
 
-		// 2. A custom endpoint wins over the derived one, so emulators and non-public clouds are never routed to
+		// 3. A custom endpoint wins over the derived one, so emulators and non-public clouds are never routed to
 		//    `blob.core.windows.net`
 		const client = new BlobServiceClient(
 			config.endpoint ?? `https://${config.accountName}.blob.core.windows.net`,
@@ -116,15 +137,15 @@ export class DriverAzure implements TusDriver {
 
 		this.containerClient = client.getContainerClient(config.containerName);
 
-		// 3. Strip the leading slash from the root: blob names are not paths, and a leading `/` would become part of
+		// 4. Strip the leading slash from the root: blob names are not paths, and a leading `/` would become part of
 		//    the name and produce blobs nobody can find by the expected key
 		this.root = config.root ? normalizePath(config.root, { removeLeading: true }) : '';
 
-		// 4. Fail at construction rather than on the first chunk: the service rejects appended blocks above the limit,
+		// 5. Fail at construction rather than on the first chunk: the service rejects appended blocks above the limit,
 		//    and a misconfigured size would otherwise only surface mid-upload
 		//    https://learn.microsoft.com/en-us/rest/api/storageservices/append-block?tabs=microsoft-entra-id#remarks
 		if (config.tus?.enabled && config.tus.chunkSize && config.tus.chunkSize > MAXIMUM_CHUNK_SIZE) {
-			throw new Error('Invalid chunkSize provided');
+			throw new Error('The azure storage driver got a "tus.chunkSize" above 100 MiB');
 		}
 	}
 
@@ -198,14 +219,24 @@ export class DriverAzure implements TusDriver {
 	 *
 	 * @param filepath - Blob path relative to the root.
 	 * @returns Size in bytes and modification date.
-	 * @throws The SDK error when the blob is missing.
+	 * @throws StorageFileNotFoundError when the service answers 404.
+	 * @throws The SDK error for any other failure.
 	 */
-	async stat(filepath: string): Promise<{
-		size: number;
-		modified: Date;
-	}> {
-		// 1. `getProperties` is a HEAD request, so the metadata comes back without downloading the body
-		const props = await this.containerClient.getBlobClient(this.fullPath(filepath)).getProperties();
+	async stat(filepath: string): Promise<Stat> {
+		let props: BlobGetPropertiesResponse;
+
+		// 1. `getProperties` is a HEAD request, so the metadata comes back without downloading the body. A 404 is the
+		//    one answer that confirms the blob is missing; it becomes the error every backend shares, anything else says
+		//    nothing about the blob and is rethrown
+		try {
+			props = await this.containerClient.getBlobClient(this.fullPath(filepath)).getProperties();
+		} catch (error) {
+			if ((error as { statusCode?: number })?.statusCode === 404) {
+				throw new StorageFileNotFoundError({ filepath }, { cause: error });
+			}
+
+			throw error;
+		}
 
 		return {
 			size: props.contentLength as number,
@@ -356,8 +387,3 @@ export class DriverAzure implements TusDriver {
 		await this.delete(filepath);
 	}
 }
-
-/**
- * Default export for consumers that import the driver without a named binding.
- */
-export default DriverAzure;

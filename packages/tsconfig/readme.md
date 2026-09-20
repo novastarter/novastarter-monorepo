@@ -1,4 +1,4 @@
-# Nova TSConfig
+# `@novastarter/tsconfig`
 
 Shared TSConfig files used by packages and apps in this monorepo.
 

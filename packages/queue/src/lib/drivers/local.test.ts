@@ -1,18 +1,18 @@
 /**
- * Tests of `queue/lib/providers/local` with handlers registered in the process registry.
+ * Tests of `queue/lib/drivers/local` with handlers registered in the process registry.
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { z } from 'zod';
 import { defineJob } from '../define-job.js';
 import { _handlers, registerJobHandlers } from '../handlers.js';
-import { QueueLocal } from './local.js';
+import { QueueDriverLocal } from './local.js';
 
 const logger = { error: vi.fn() };
 const contract = defineJob({ name: 'test.echo', schema: z.object({ value: z.string() }) });
-let queue: QueueLocal;
+let queue: QueueDriverLocal;
 
 beforeEach(() => {
-	queue = new QueueLocal({ logger: logger as any });
+	queue = new QueueDriverLocal({ logger: logger as any });
 });
 
 afterEach(async () => {
@@ -22,7 +22,7 @@ afterEach(async () => {
 	vi.useRealTimers();
 });
 
-describe('QueueLocal', () => {
+describe('QueueDriverLocal', () => {
 	test('Runs the handler before enqueue resolves and answers the job identity', async () => {
 		const handler = vi.fn(async () => {});
 		registerJobHandlers({ 'test.echo': handler } as any);

@@ -1,7 +1,7 @@
 import { Redis } from 'ioredis';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { KvRedis } from '../../kv/index.js';
-import { CacheRedis } from './redis.js';
+import { KvDriverRedis } from '../../kv/index.js';
+import { CacheDriverRedis } from './redis.js';
 
 vi.mock('ioredis');
 vi.mock('../../kv/index.js');
@@ -12,11 +12,11 @@ const mockValue = 'test-value';
 const mockNamespace = 'test-namespace';
 
 let mockRedis: Redis;
-let cache: CacheRedis;
+let cache: CacheDriverRedis;
 
 beforeEach(() => {
 	mockRedis = new Redis();
-	cache = new CacheRedis({ namespace: mockNamespace, redis: mockRedis });
+	cache = new CacheDriverRedis({ namespace: mockNamespace, redis: mockRedis });
 });
 
 afterEach(() => {
@@ -25,9 +25,9 @@ afterEach(() => {
 
 describe('constructor', () => {
 	test('Instantiates Kv with configuration', () => {
-		expect(KvRedis).toHaveBeenCalledWith({ redis: mockRedis, namespace: mockNamespace });
+		expect(KvDriverRedis).toHaveBeenCalledWith({ redis: mockRedis, namespace: mockNamespace });
 
-		expect(cache['store']).toBeInstanceOf(KvRedis);
+		expect(cache['store']).toBeInstanceOf(KvDriverRedis);
 	});
 });
 

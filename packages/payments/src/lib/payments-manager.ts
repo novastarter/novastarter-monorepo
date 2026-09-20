@@ -6,14 +6,15 @@ import type { PaymentsDriver } from '../driver.js';
  *
  * Empty here: each driver package adds itself with a module augmentation, so a location's `options` are checked
  * against the driver it names once the package is imported —
- * `declare module '@novastarter/payments' { interface PaymentsDrivers { lemonsqueezy: DriverLemonSqueezyConfig } }`.
+ * `declare module '@novastarter/payments' { interface PaymentsDrivers { lemonsqueezy: PaymentsDriverLemonSqueezyConfig } }`.
  * An application does the same for a driver of its own.
  */
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- augmented by the driver packages
 export interface PaymentsDrivers {}
 
 /**
- * Name of the location the billing module uses unless told otherwise — the one provider most deployments have.
+ * Name of the location `handleWebhook()` verifies against unless told otherwise — the one provider most deployments
+ * have.
  *
  * @defaultValue `default`
  */
@@ -32,7 +33,7 @@ export const DEFAULT_PAYMENTS_LOCATION = 'default';
  * ```ts
  * const payments = new PaymentsManager();
  *
- * payments.registerDriver('lemonsqueezy', DriverLemonSqueezy);
+ * payments.registerDriver('lemonsqueezy', PaymentsDriverLemonSqueezy);
  * payments.registerLocation('default', {
  * 	driver: 'lemonsqueezy',
  * 	options: {

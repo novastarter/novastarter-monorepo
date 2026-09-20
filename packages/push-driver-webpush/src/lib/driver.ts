@@ -4,16 +4,12 @@ import {
 	type PushMessage,
 	type PushPlatform,
 	type PushResult,
-	PushTargetGoneError,
 	toWebPushPayload,
 } from '@novastarter/push';
-import webpush, {
-	type ContentEncoding,
-	type PushSubscription,
-	type RequestOptions,
-	type SendResult,
-	WebPushError,
-} from 'web-push';
+import webpush, { type ContentEncoding, type PushSubscription, type RequestOptions, type SendResult } from 'web-push';
+import { VERIFY_AUDIENCE } from './constants.js';
+import { describeError } from './describe-error.js';
+import { toRequestOptions } from './to-request-options.js';
 
 /**
  * The function that posts to the push service — `sendNotification` of `web-push`, or a test double.
@@ -55,98 +51,6 @@ declare module '@novastarter/push' {
 		webpush: PushDriverWebPushConfig;
 	}
 }
-
-/**
- * HTTP statuses a push service answers for a subscription that no longer exists.
- *
- * @defaultValue 404 (Firefox, Safari), 410 (Chrome, Edge)
- */
-export const GONE_STATUSES: ReadonlySet<number> = new Set([404, 410]);
-
-/**
- * Longest topic a push service takes (RFC 8030 §5.4).
- *
- * @defaultValue 32
- */
-export const TOPIC_MAX_LENGTH = 32;
-
-/**
- * The origin every push service answers — used to sign a test token in {@link PushDriverWebPush.verify}.
- *
- * @defaultValue `https://fcm.googleapis.com`
- */
-export const VERIFY_AUDIENCE = 'https://fcm.googleapis.com';
-
-/**
- * A collapse tag as the Web Push `Topic` header takes it: at most 32 URL-safe base64 characters.
- *
- * @param tag - Free text.
- * @returns The tag with anything else replaced by `_`, cut to the limit; `undefined` for an empty one.
- */
-export const toTopic = (tag: string | undefined): string | undefined => {
-	// 1. No tag, no header
-	if (!tag) return undefined;
-
-	// 2. The push services refuse anything outside the URL-safe alphabet, and anything longer than the limit
-	const topic = tag.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, TOPIC_MAX_LENGTH);
-
-	return topic || undefined;
-};
-
-/**
- * Translate a message into the request options of `sendNotification()`.
- *
- * @param message - The message.
- * @param config - The location's keys, subject and defaults.
- * @returns The options: VAPID details, TTL, urgency, topic, encoding, timeout and proxy.
- */
-export const toRequestOptions = (
-	message: PushMessage,
-	config: Pick<
-		PushDriverWebPushConfig,
-		'publicKey' | 'privateKey' | 'subject' | 'ttl' | 'contentEncoding' | 'timeout' | 'proxy'
-	>,
-): RequestOptions => {
-	// 1. The message's own TTL wins over the location's default; the tag becomes the collapse topic
-	const ttl = message.ttl ?? config.ttl;
-	const topic = toTopic(message.tag);
-
-	// 2. Optional fields are only set when present, so the library sees no `undefined` keys
-	return {
-		vapidDetails: { subject: config.subject, publicKey: config.publicKey, privateKey: config.privateKey },
-		contentEncoding: config.contentEncoding ?? 'aes128gcm',
-		urgency: message.urgency ?? 'normal',
-		...(ttl !== undefined ? { TTL: ttl } : {}),
-		...(topic !== undefined ? { topic } : {}),
-		...(config.timeout !== undefined ? { timeout: config.timeout } : {}),
-		...(config.proxy !== undefined ? { proxy: config.proxy } : {}),
-	};
-};
-
-/**
- * Turn what `web-push` throws into the error `sendPush()` expects.
- *
- * @param error - What was thrown: a `WebPushError` for a non-2xx answer, a plain error for the network.
- * @returns A {@link PushTargetGoneError} for a dead subscription, else an error naming the status and body with the
- * original as its cause.
- */
-export const describeError = (error: unknown): Error => {
-	// 1. The push service answered: 404 / 410 mean the subscription is gone for good
-	if (error instanceof WebPushError) {
-		if (GONE_STATUSES.has(error.statusCode)) {
-			return new PushTargetGoneError({ platform: 'webpush', reason: `${error.statusCode} from ${error.endpoint}` });
-		}
-
-		const body = error.body?.trim();
-
-		return new Error(`Web push: ${error.statusCode} from ${error.endpoint}${body ? `: ${body}` : ''}`, {
-			cause: error,
-		});
-	}
-
-	// 2. Anything else — the network, a bad key — as is, prefixed
-	return new Error(`Web push: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-};
 
 /**
  * Driver for the [Web Push protocol](https://datatracker.ietf.org/doc/html/rfc8030) with VAPID — browsers' own push

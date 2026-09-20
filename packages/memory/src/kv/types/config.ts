@@ -1,7 +1,7 @@
 import type { Redis } from 'ioredis';
 
 /**
- * ioredis client extended with the Lua commands `KvRedis` defines on it.
+ * ioredis client extended with the Lua commands `KvDriverRedis` defines on it.
  *
  * `defineCommand` adds the methods at runtime; this interface makes them visible to the type-checker.
  */
@@ -28,22 +28,22 @@ export interface ExtendedRedis extends Redis {
 /**
  * Options of the in-memory store, the `local` driver.
  */
-export interface KvLocalOptions {
+export type KvDriverLocalConfig = {
 	/**
 	 * Maximum number of keys in the store; the least recently used key is evicted beyond it.
 	 */
-	maxKeys?: number;
+	maxKeys?: number | undefined;
 
 	/**
 	 * Time-to-live: keys expire after this many milliseconds.
 	 */
-	ttl?: number;
-}
+	ttl?: number | undefined;
+};
 
 /**
  * Options of the Redis-backed store, the `redis` driver.
  */
-export interface KvRedisOptions {
+export type KvDriverRedisConfig = {
 	/**
 	 * Prefix for every key, so several stores can share one Redis instance.
 	 */
@@ -54,7 +54,7 @@ export interface KvRedisOptions {
 	 *
 	 * @default true
 	 */
-	compression?: boolean;
+	compression?: boolean | undefined;
 
 	/**
 	 * Minimum byte size of a value before it is compressed.
@@ -64,12 +64,12 @@ export interface KvRedisOptions {
 	 *
 	 * @default 1000
 	 */
-	compressionMinSize?: number;
+	compressionMinSize?: number | undefined;
 
 	/**
 	 * How long an acquired lock is held, in milliseconds.
 	 */
-	lockTimeout?: number;
+	lockTimeout?: number | undefined;
 
 	/**
 	 * Existing or new Redis connection to use with this store.
@@ -79,5 +79,5 @@ export interface KvRedisOptions {
 	/**
 	 * Time-to-live: keys expire after this many milliseconds.
 	 */
-	ttl?: number;
-}
+	ttl?: number | undefined;
+};

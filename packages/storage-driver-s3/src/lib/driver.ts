@@ -9,6 +9,7 @@ import type {
 	CopyObjectCommandInput,
 	CreateMultipartUploadCommandInput,
 	GetObjectCommandInput,
+	HeadObjectCommandOutput,
 	ListObjectsV2CommandInput,
 	ObjectCannedACL,
 	Part,
@@ -31,50 +32,50 @@ import {
 	UploadPartCommand,
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
-import type { TusDriver } from '@novastarter/storage';
-import type { ChunkedUploadContext, ReadOptions } from '@novastarter/types';
+import { useLogger } from '@novastarter/logger';
+import {
+	type ChunkedUploadContext,
+	type ReadOptions,
+	type Stat,
+	StorageFileNotFoundError,
+	type TusDriver,
+} from '@novastarter/storage';
 import { normalizePath } from '@novastarter/utils';
 import { isReadableStream } from '@novastarter/utils/node';
 import { Permit, Semaphore } from '@shopify/semaphore';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { ERRORS, StreamSplitter, TUS_RESUMABLE } from '@tus/utils';
 import ms, { type StringValue } from 'ms';
+import type { ChecksumMode } from '../types.js';
+import { kmsKeyIdCheck } from './constants.js';
 
 /**
- * Checksum policy understood by the SDK for both request calculation and response validation.
- *
- * Mirrors `RequestChecksumCalculation` / `ResponseChecksumValidation` from `@aws-sdk/checksums`, which is not a direct
- * dependency; both resolve to the same two string literals.
- */
-export type ChecksumMode = 'WHEN_SUPPORTED' | 'WHEN_REQUIRED';
-
-/**
- * Options accepted by {@link DriverS3}.
+ * Options accepted by {@link StorageDriverS3}.
  *
  * `key` and `secret` are optional as a pair: leave both out to let the AWS SDK resolve credentials from the
  * environment, shared config or instance metadata. Timeouts are in milliseconds.
  */
-export type DriverS3Config = {
+export type StorageDriverS3Config = {
 	/** Key prefix every path is placed under; behaves like a root directory inside the bucket. */
-	root?: string;
+	root?: string | undefined;
 	/** Access key id. Must be set together with `secret`. */
-	key?: string;
+	key?: string | undefined;
 	/** Secret access key. Must be set together with `key`. */
-	secret?: string;
+	secret?: string | undefined;
 	/** Bucket every operation targets. */
 	bucket: string;
 	/** Canned ACL applied to written and copied objects. */
-	acl?: ObjectCannedACL;
+	acl?: ObjectCannedACL | undefined;
 	/** Server-side encryption requested for written and copied objects. */
-	serverSideEncryption?: ServerSideEncryption;
+	serverSideEncryption?: ServerSideEncryption | undefined;
 	/** KMS key to encrypt with; only sent for the KMS-based encryption modes listed in {@link kmsKeyIdCheck}. */
-	serverSideEncryptionKmsKeyId?: string;
+	serverSideEncryptionKmsKeyId?: string | undefined;
 	/** Custom endpoint for S3-compatible services; `https` is assumed unless the value starts with `http://`. */
-	endpoint?: string;
+	endpoint?: string | undefined;
 	/** AWS region of the bucket. */
-	region?: string;
+	region?: string | undefined;
 	/** Address the bucket as a path (`host/bucket`) instead of a subdomain, as most S3-compatible services need. */
-	forcePathStyle?: boolean;
+	forcePathStyle?: boolean | undefined;
 	/**
 	 * When the SDK attaches a checksum to request payloads.
 	 *
@@ -83,49 +84,40 @@ export type DriverS3Config = {
 	 * those requests with `Header 'x-amz-checksum-algorithm' with value 'CRC32' not implemented`; set `WHEN_REQUIRED`
 	 * for them so checksums are only sent where the S3 API demands one.
 	 */
-	requestChecksumCalculation?: ChecksumMode;
+	requestChecksumCalculation?: ChecksumMode | undefined;
 	/**
 	 * When the SDK validates checksums on response payloads.
 	 *
-	 * Counterpart of {@link DriverS3Config.requestChecksumCalculation}; set `WHEN_REQUIRED` for services that do not
+	 * Counterpart of {@link StorageDriverS3Config.requestChecksumCalculation}; set `WHEN_REQUIRED` for services that do not
 	 * return flexible checksums.
 	 */
-	responseChecksumValidation?: ChecksumMode;
+	responseChecksumValidation?: ChecksumMode | undefined;
 	/** Resumable-upload tuning. */
-	tus?: {
-		/** Preferred multipart part size in bytes; grown automatically when an upload would exceed the part limit. */
-		chunkSize?: number;
-	};
+	tus?:
+		| {
+				/** Preferred multipart part size in bytes; grown automatically when an upload would exceed the part limit. */
+				chunkSize?: number | undefined;
+		  }
+		| undefined;
 	/** Time allowed to establish a TCP connection. @defaultValue 5000 */
-	connectionTimeout?: number;
+	connectionTimeout?: number | undefined;
 	/** Time a socket may sit idle before the request is aborted. @defaultValue 120000 */
-	socketTimeout?: number;
+	socketTimeout?: number | undefined;
 	/** Maximum concurrent sockets per host. @defaultValue 500 */
-	maxSockets?: number;
+	maxSockets?: number | undefined;
 	/** Reuse TCP connections between requests. @defaultValue true */
-	keepAlive?: boolean;
+	keepAlive?: boolean | undefined;
 };
 
 /**
  * Registers the driver's options in the map of `@novastarter/storage`, so a location naming `s3` has its
- * options checked against {@link DriverS3Config}.
+ * options checked against {@link StorageDriverS3Config}.
  */
 declare module '@novastarter/storage' {
 	interface StorageDrivers {
-		s3: DriverS3Config;
+		s3: StorageDriverS3Config;
 	}
 }
-
-/**
- * Encryption modes that take a KMS key id.
- *
- * S3 rejects `SSEKMSKeyId` for any other mode, so the driver only forwards the configured key when the mode is one of
- * these.
- */
-export const kmsKeyIdCheck = [
-	ServerSideEncryption.aws_kms,
-	ServerSideEncryption.aws_kms_dsse,
-] as ServerSideEncryption[];
 
 /**
  * Storage driver backed by Amazon S3 or an S3-compatible service.
@@ -136,7 +128,7 @@ export const kmsKeyIdCheck = [
  *
  * @example
  * ```ts
- * const driver = new DriverS3({
+ * const driver = new StorageDriverS3({
  * 	bucket: 'uploads',
  * 	region: 'eu-west-1',
  * 	root: 'media',
@@ -145,13 +137,13 @@ export const kmsKeyIdCheck = [
  * await driver.write('avatar.png', fs.createReadStream('./avatar.png'), 'image/png');
  * ```
  */
-export class DriverS3 implements TusDriver {
+export class StorageDriverS3 implements TusDriver {
 	/**
 	 * Options this instance was created with.
 	 *
 	 * @internal
 	 */
-	private config: DriverS3Config;
+	private config: StorageDriverS3Config;
 
 	/**
 	 * Shared SDK client; one per driver so the connection pool is reused across calls.
@@ -206,18 +198,24 @@ export class DriverS3 implements TusDriver {
 	 * Create a driver and its SDK client.
 	 *
 	 * @param config - Connection and behaviour options.
-	 * @throws Error when only one of `key` and `secret` is given.
+	 * @throws Error when `bucket` is missing, or when only one of `key` and `secret` is given.
 	 */
-	constructor(config: DriverS3Config) {
-		// 1. Build the client up front, so credential mistakes fail at construction instead of on the first request
+	constructor(config: StorageDriverS3Config) {
+		// 1. Every command targets the bucket, so a missing one would only fail on the first request, with an SDK
+		//    error that does not name the option
+		if (!config.bucket) {
+			throw new Error('The s3 storage driver needs a "bucket"');
+		}
+
+		// 2. Build the client up front, so credential mistakes fail at construction instead of on the first request
 		this.config = config;
 		this.client = this.getClient();
 
-		// 2. Store the root without a leading slash: S3 keys are not paths, and a leading `/` would become part of
+		// 3. Store the root without a leading slash: S3 keys are not paths, and a leading `/` would become part of
 		//    the key and produce objects nobody can find by the expected name
 		this.root = this.config.root ? normalizePath(this.config.root, { removeLeading: true }) : '';
 
-		// 3. Sixty concurrent part uploads is the tus-node-server default, a balance between throughput and the
+		// 4. Sixty concurrent part uploads is the tus-node-server default, a balance between throughput and the
 		//    number of open sockets and temp files
 		this.preferredPartSize = config.tus?.chunkSize ?? this.minPartSize;
 		this.partUploadSemaphore = new Semaphore(60);
@@ -250,7 +248,7 @@ export class DriverS3 implements TusDriver {
 
 		// 2. Half a credential pair is a configuration error, never an intent to fall back to the SDK provider chain
 		if ((this.config.key && !this.config.secret) || (this.config.secret && !this.config.key)) {
-			throw new Error('Both `key` and `secret` are required when defined');
+			throw new Error('The s3 storage driver needs "key" and "secret" together');
 		}
 
 		// 3. Pass explicit credentials only when both halves exist; otherwise the SDK resolves them from the
@@ -349,24 +347,34 @@ export class DriverS3 implements TusDriver {
 	 *
 	 * @param filepath - Object path relative to the root.
 	 * @returns Size in bytes and modification date.
-	 * @throws The SDK error when the object is missing or the request fails.
+	 * @throws StorageFileNotFoundError when S3 answers 404.
+	 * @throws The SDK error for any other failure, such as denied credentials or a timeout.
 	 */
-	async stat(filepath: string): Promise<{
-		size: number;
-		modified: Date;
-	}> {
-		// 1. HEAD returns the metadata without transferring the body, which is all this call needs
-		const { ContentLength, LastModified } = await this.client.send(
-			new HeadObjectCommand({
-				Key: this.fullPath(filepath),
-				Bucket: this.config.bucket,
-			}),
-		);
+	async stat(filepath: string): Promise<Stat> {
+		let head: HeadObjectCommandOutput;
+
+		// 1. HEAD returns the metadata without transferring the body, which is all this call needs. A HEAD response has
+		//    no body, so 404 is the only answer that confirms the object is missing; it becomes the error every backend
+		//    shares, anything else says nothing about the object and is rethrown
+		try {
+			head = await this.client.send(
+				new HeadObjectCommand({
+					Key: this.fullPath(filepath),
+					Bucket: this.config.bucket,
+				}),
+			);
+		} catch (error) {
+			if ((error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode === 404) {
+				throw new StorageFileNotFoundError({ filepath }, { cause: error });
+			}
+
+			throw error;
+		}
 
 		// 2. Both fields are typed optional by the SDK but always present on a successful HEAD, hence the casts
 		return {
-			size: ContentLength as number,
-			modified: LastModified as Date,
+			size: head.ContentLength as number,
+			modified: head.LastModified as Date,
 		};
 	}
 
@@ -383,9 +391,9 @@ export class DriverS3 implements TusDriver {
 			await this.stat(filepath);
 			return true;
 		} catch (error) {
-			// 2. A HEAD response has no body, so 404 is the only answer that confirms the object is missing. Treating
-			//    any other failure as "not found" would make callers act on a wrong answer
-			if ((error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode === 404) return false;
+			// 2. `stat` already reduced a 404 to the kit's "not found"; treating any other failure as missing would make
+			//    callers act on a wrong answer
+			if (error instanceof StorageFileNotFoundError) return false;
 
 			throw error;
 		}
@@ -849,8 +857,9 @@ export class DriverS3 implements TusDriver {
 			if (pendingChunkFilepath !== null) {
 				try {
 					await fsProm.rm(pendingChunkFilepath);
-				} catch {
-					// this.logger.error(`[${metadata.file.id}] failed to remove chunk ${pendingChunkFilepath}`);
+				} catch (cleanupError) {
+					// 1. The pipeline error is the one worth throwing; a temp file left behind is only worth a warning
+					useLogger().warn(cleanupError, `Failed to remove chunk "${pendingChunkFilepath}" after an upload error`);
 				}
 			}
 
@@ -904,7 +913,7 @@ export class DriverS3 implements TusDriver {
 	 *
 	 * @param key - Object key of the upload.
 	 * @param uploadId - Multipart upload id.
-	 * @param parts - Parts in ascending order, as returned by {@link DriverS3.retrieveParts}.
+	 * @param parts - Parts in ascending order, as returned by {@link StorageDriverS3.retrieveParts}.
 	 * @returns The URL S3 reports for the assembled object.
 	 * @internal
 	 */
@@ -961,8 +970,3 @@ export class DriverS3 implements TusDriver {
 		return optimalPartSize;
 	}
 }
-
-/**
- * Default export for consumers that import the driver without a named binding.
- */
-export default DriverS3;

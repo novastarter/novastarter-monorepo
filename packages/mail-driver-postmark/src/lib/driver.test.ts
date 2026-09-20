@@ -2,7 +2,9 @@
  * Tests of the Postmark driver with the SDK mocked.
  */
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import defaultExport, { MailDriverPostmark, toPostmarkAttachment, toPostmarkMessage } from './index.js';
+import defaultExport from '../index.js';
+import { MailDriverPostmark } from './driver.js';
+import { toPostmarkAttachment, toPostmarkMessage } from './to-postmark-message.js';
 
 const sendEmail = vi.fn();
 const getServer = vi.fn();

@@ -1,5 +1,4 @@
 import { Writable } from 'node:stream';
-import type { Bus } from '@novastarter/memory';
 import { nanoid } from 'nanoid';
 
 /**
@@ -13,6 +12,23 @@ export type PrettyType = 'basic' | 'http' | false;
  * nodes apart.
  */
 const nodeId = nanoid(8);
+
+/**
+ * The part of a message bus {@link LogsStream} needs: publishing a line on a channel.
+ *
+ * Structural on purpose, so the `Bus` of `@novastarter/memory` fits without this package depending on it, and a test
+ * can pass a plain object.
+ */
+export interface LogsBus {
+	/**
+	 * Publish a message on a channel.
+	 *
+	 * @param channel - Channel name; always `logs` here.
+	 * @param payload - The serialised log line.
+	 * @returns Resolves once the message is handed to the backend.
+	 */
+	publish(channel: string, payload: string): Promise<void>;
+}
 
 /**
  * Writable stream that publishes every log line on the message bus.
@@ -29,7 +45,7 @@ const nodeId = nanoid(8);
  */
 export class LogsStream extends Writable {
 	/** Bus the lines are published on. */
-	messenger: Bus;
+	messenger: LogsBus;
 
 	/** Shape applied to every line, see {@link PrettyType}. */
 	pretty: PrettyType;
@@ -40,8 +56,8 @@ export class LogsStream extends Writable {
 	 * @param pretty - Shape applied to every line.
 	 * @param messenger - Bus the lines are published on.
 	 */
-	constructor(pretty: PrettyType, messenger: Bus) {
-		// Object mode, so pino hands over whole lines rather than arbitrary byte chunks
+	constructor(pretty: PrettyType, messenger: LogsBus) {
+		// 1. Object mode, so pino hands over whole lines rather than arbitrary byte chunks
 		super({ objectMode: true });
 		this.messenger = messenger;
 		this.pretty = pretty;

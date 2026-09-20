@@ -3,7 +3,9 @@
  */
 import nodemailer from 'nodemailer';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import defaultExport, { MailDriverSes, toSesClientConfig } from './index.js';
+import defaultExport from '../index.js';
+import { MailDriverSes } from './driver.js';
+import { toSesClientConfig } from './to-ses-client-config.js';
 
 const sendMail = vi.fn();
 

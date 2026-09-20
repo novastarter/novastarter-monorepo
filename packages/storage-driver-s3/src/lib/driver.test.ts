@@ -27,13 +27,15 @@ import {
 	randGitShortSha as randUnique,
 	randWord,
 } from '@ngneat/falso';
+import { StorageFileNotFoundError } from '@novastarter/storage';
 import { normalizePath } from '@novastarter/utils';
 import { isReadableStream } from '@novastarter/utils/node';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { DriverS3Config } from './index.js';
-import { DriverS3 } from './index.js';
+import type { StorageDriverS3Config } from './driver.js';
+import { StorageDriverS3 } from './driver.js';
 
+vi.mock('@novastarter/logger');
 vi.mock('@novastarter/utils/node');
 vi.mock('@novastarter/utils');
 vi.mock('@aws-sdk/client-s3');
@@ -46,7 +48,8 @@ vi.mock('node:path');
  * The `path.*Full` values are what the stubbed `fullPath` returns for the matching `path.*` input.
  */
 let sample: {
-	config: DriverS3Config & Required<Pick<DriverS3Config, 'key' | 'secret' | 'root' | 'region' | 'forcePathStyle'>>;
+	config: StorageDriverS3Config &
+		Required<Pick<StorageDriverS3Config, 'key' | 'secret' | 'root' | 'region' | 'forcePathStyle'>>;
 	path: {
 		input: string;
 		inputFull: string;
@@ -71,7 +74,7 @@ let sample: {
 /**
  * Driver under test, created with the minimal config so each `describe` block can opt into extra options.
  */
-let driver: DriverS3;
+let driver: StorageDriverS3;
 
 beforeEach(() => {
 	// 1. Fresh random values per test; falso keeps them realistic enough to catch accidental string handling
@@ -110,7 +113,7 @@ beforeEach(() => {
 	};
 
 	// 2. Every SDK module is mocked above, so constructing the driver only records calls and never opens a socket
-	driver = new DriverS3({
+	driver = new StorageDriverS3({
 		key: sample.config.key,
 		secret: sample.config.secret,
 		bucket: sample.config.bucket,
@@ -133,30 +136,30 @@ afterEach(() => {
 });
 
 describe('#constructor', () => {
-	let getClientBackup: (typeof DriverS3.prototype)['getClient'];
+	let getClientBackup: (typeof StorageDriverS3.prototype)['getClient'];
 	let sampleClient: S3Client;
 
 	beforeEach(() => {
 		// 1. Swap `getClient` on the prototype before construction, so the constructor's own call is observable; the
 		//    original is restored afterwards because the other describe blocks rely on it
-		getClientBackup = DriverS3.prototype['getClient'];
+		getClientBackup = StorageDriverS3.prototype['getClient'];
 		sampleClient = {} as S3Client;
-		DriverS3.prototype['getClient'] = vi.fn().mockReturnValue(sampleClient);
+		StorageDriverS3.prototype['getClient'] = vi.fn().mockReturnValue(sampleClient);
 	});
 
 	afterEach(() => {
-		DriverS3.prototype['getClient'] = getClientBackup;
+		StorageDriverS3.prototype['getClient'] = getClientBackup;
 	});
 
 	test('Saves passed config to local property', () => {
 		// 1. The config must be kept by reference: the other describe blocks tweak it on the instance after construction
-		const driver = new DriverS3(sample.config);
+		const driver = new StorageDriverS3(sample.config);
 		expect(driver['config']).toBe(sample.config);
 	});
 
 	test('Creates shared client', () => {
 		// 1. The client is built inside the constructor, so a bad config fails early; the stub only records that call
-		const driver = new DriverS3(sample.config);
+		const driver = new StorageDriverS3(sample.config);
 		expect(driver['getClient']).toHaveBeenCalledOnce();
 		expect(driver['client']).toBe(sampleClient);
 	});
@@ -171,7 +174,7 @@ describe('#constructor', () => {
 
 		vi.mocked(normalizePath).mockReturnValue(mockRoot);
 
-		const driver = new DriverS3({
+		const driver = new StorageDriverS3({
 			key: sample.config.key,
 			secret: sample.config.secret,
 			bucket: sample.config.bucket,
@@ -190,29 +193,36 @@ describe('#constructor', () => {
 describe('#getClient', () => {
 	// The constructor calls getClient(), so we don't have to call it separately
 
+	test('Throws error if bucket missing', () => {
+		// 1. Every command targets the bucket, so its absence is refused at construction rather than on the first request
+		expect(() => new StorageDriverS3({ bucket: '' })).toThrowErrorMatchingInlineSnapshot(
+			`[Error: The s3 storage driver needs a "bucket"]`,
+		);
+	});
+
 	test('Throws error if key defined but secret missing', () => {
 		// 1. The constructor builds the client, so half a credential pair must throw before any client exists
 		try {
-			new DriverS3({ key: 'key', bucket: 'bucket' });
+			new StorageDriverS3({ key: 'key', bucket: 'bucket' });
 		} catch (err: any) {
 			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe('Both `key` and `secret` are required when defined');
+			expect(err.message).toBe('The s3 storage driver needs "key" and "secret" together');
 		}
 	});
 
 	test('Throws error if secret defined but key missing', () => {
 		// 1. The constructor builds the client, so half a credential pair must throw before any client exists
 		try {
-			new DriverS3({ secret: 'secret', bucket: 'bucket' });
+			new StorageDriverS3({ secret: 'secret', bucket: 'bucket' });
 		} catch (err: any) {
 			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe('Both `key` and `secret` are required when defined');
+			expect(err.message).toBe('The s3 storage driver needs "key" and "secret" together');
 		}
 	});
 
 	test('Creates S3Client without key / secret (based on machine config)', () => {
 		// 1. Without a key pair no `credentials` entry may appear, so the SDK falls back to its own provider chain
-		const driver = new DriverS3({ bucket: 'bucket' });
+		const driver = new StorageDriverS3({ bucket: 'bucket' });
 
 		expect(S3Client).toHaveBeenCalledWith({
 			requestHandler: expect.any(NodeHttpHandler),
@@ -239,7 +249,7 @@ describe('#getClient', () => {
 		const sampleDomain = randDomainName();
 		const sampleHttpEndpoint = `http://${sampleDomain}`;
 
-		new DriverS3({
+		new StorageDriverS3({
 			key: sample.config.key,
 			secret: sample.config.secret,
 			bucket: sample.config.bucket,
@@ -266,7 +276,7 @@ describe('#getClient', () => {
 		const sampleDomain = randDomainName();
 		const sampleHttpEndpoint = `https://${sampleDomain}`;
 
-		new DriverS3({
+		new StorageDriverS3({
 			key: sample.config.key,
 			secret: sample.config.secret,
 			bucket: sample.config.bucket,
@@ -290,7 +300,7 @@ describe('#getClient', () => {
 
 	test('Sets region', () => {
 		// 1. Region is optional; when given it must reach the SDK unchanged, next to the credentials
-		new DriverS3({
+		new StorageDriverS3({
 			key: sample.config.key,
 			secret: sample.config.secret,
 			bucket: sample.config.bucket,
@@ -310,7 +320,7 @@ describe('#getClient', () => {
 	test('Sets force path style', () => {
 		// 1. `false` is a meaningful value here, so the flag must be forwarded whenever it is defined; the random
 		//    boolean covers both cases over time
-		new DriverS3({
+		new StorageDriverS3({
 			key: sample.config.key,
 			secret: sample.config.secret,
 			bucket: sample.config.bucket,
@@ -330,7 +340,7 @@ describe('#getClient', () => {
 	test('Sets checksum policies', () => {
 		// 1. Both policies must reach the SDK unchanged; `WHEN_REQUIRED` is what S3-compatible services without
 		//    flexible checksums (Cloudflare R2) need to accept PutObject / UploadPart
-		new DriverS3({
+		new StorageDriverS3({
 			key: sample.config.key,
 			secret: sample.config.secret,
 			bucket: sample.config.bucket,
@@ -353,7 +363,7 @@ describe('#getClient', () => {
 describe('#fullPath', () => {
 	test('Returns normalized joined path', () => {
 		// 1. Use a fresh driver: the shared one has `fullPath` stubbed out in the top-level `beforeEach`
-		const driver = new DriverS3({
+		const driver = new StorageDriverS3({
 			key: sample.config.key,
 			secret: sample.config.secret,
 			bucket: sample.config.bucket,
@@ -516,6 +526,26 @@ describe('#stat', () => {
 			modified: sample.file.modified,
 		});
 	});
+
+	test('Maps a 404 to the kit error', async () => {
+		// 1. Only a 404 in `$metadata` means "missing"; the driver turns it into the error every backend shares and
+		//    keeps the SDK error as cause
+		const cause = Object.assign(new Error(), { $metadata: { httpStatusCode: 404 } });
+		vi.mocked(driver['client'].send).mockRejectedValue(cause as unknown as void);
+
+		const error: unknown = await driver.stat(sample.path.input).catch((error: unknown) => error);
+
+		expect(error).toBeInstanceOf(StorageFileNotFoundError);
+		expect(error).toMatchObject({ extensions: { filepath: sample.path.input }, cause });
+	});
+
+	test('Rethrows any other SDK error', async () => {
+		// 1. A 403 covers rejected credentials as much as a missing object, so it must not be reported as "not found"
+		const error = Object.assign(new Error(), { $metadata: { httpStatusCode: 403 } });
+		vi.mocked(driver['client'].send).mockRejectedValue(error as unknown as void);
+
+		await expect(driver.stat(sample.path.input)).rejects.toBe(error);
+	});
 });
 
 describe('#exists', () => {
@@ -537,8 +567,8 @@ describe('#exists', () => {
 	});
 
 	test('Returns false if the object is not found', async () => {
-		// 1. Only a 404 in `$metadata` may be read as "missing"; the error shape matches what the SDK produces
-		vi.mocked(driver.stat).mockRejectedValue(Object.assign(new Error(), { $metadata: { httpStatusCode: 404 } }));
+		// 1. `stat` reduces a 404 to the kit's "not found", which is the one error `exists` may read as `false`
+		vi.mocked(driver.stat).mockRejectedValue(new StorageFileNotFoundError({ filepath: sample.path.input }));
 
 		const exists = await driver.exists(sample.path.input);
 

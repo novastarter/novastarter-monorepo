@@ -15,10 +15,11 @@ import {
 	randUrl,
 	randWord,
 } from '@ngneat/falso';
+import { StorageFileNotFoundError } from '@novastarter/storage';
 import { normalizePath } from '@novastarter/utils';
 import { isReadableStream } from '@novastarter/utils/node';
 import { afterEach, beforeEach, describe, expect, type Mock, test, vi } from 'vitest';
-import { DriverAzure, type DriverAzureConfig } from './index.js';
+import { StorageDriverAzure, type StorageDriverAzureConfig } from './driver.js';
 
 vi.mock('@novastarter/utils/node');
 vi.mock('@novastarter/utils');
@@ -31,7 +32,7 @@ vi.mock('node:path');
  * The `path.*Full` values are what the stubbed `fullPath` returns for the matching `path.*` input.
  */
 let sample: {
-	config: Required<DriverAzureConfig>;
+	config: { [Key in keyof StorageDriverAzureConfig]-?: NonNullable<StorageDriverAzureConfig[Key]> };
 	path: {
 		input: string;
 		inputFull: string;
@@ -56,7 +57,7 @@ let sample: {
 /**
  * Driver under test, created with the minimal config so each `describe` block can opt into extra options.
  */
-let driver: DriverAzure;
+let driver: StorageDriverAzure;
 
 beforeEach(() => {
 	// 1. Fresh random values per test; falso keeps them realistic enough to catch accidental string handling
@@ -91,7 +92,7 @@ beforeEach(() => {
 	};
 
 	// 2. The SDK module is mocked above, so constructing the driver only records calls and never opens a socket
-	driver = new DriverAzure({
+	driver = new StorageDriverAzure({
 		containerName: sample.config.containerName,
 		accountKey: sample.config.accountKey,
 		accountName: sample.config.accountName,
@@ -113,6 +114,36 @@ afterEach(() => {
 });
 
 describe('#constructor', () => {
+	test.each([
+		['accountName', 'an "accountName"'],
+		['accountKey', 'an "accountKey"'],
+		['containerName', 'a "containerName"'],
+	] as const)('Refuses a missing %s', (option, expected) => {
+		// 1. The SDK would only fail on the first request; the driver names the missing option at construction instead
+		expect(
+			() =>
+				new StorageDriverAzure({
+					containerName: sample.config.containerName,
+					accountKey: sample.config.accountKey,
+					accountName: sample.config.accountName,
+					[option]: '',
+				}),
+		).toThrowError(`The azure storage driver needs ${expected}`);
+	});
+
+	test('Refuses a chunk size above the append-block limit when resumable uploads are on', () => {
+		// 1. Azure rejects appended blocks above 100 MiB, so a larger chunk would only fail mid-upload
+		expect(
+			() =>
+				new StorageDriverAzure({
+					containerName: sample.config.containerName,
+					accountKey: sample.config.accountKey,
+					accountName: sample.config.accountName,
+					tus: { enabled: true, chunkSize: 104_857_601 },
+				}),
+		).toThrowErrorMatchingInlineSnapshot(`[Error: The azure storage driver got a "tus.chunkSize" above 100 MiB]`);
+	});
+
 	test('Creates signed credentials', () => {
 		expect(StorageSharedKeyCredential).toHaveBeenCalledWith(sample.config.accountName, sample.config.accountKey);
 		expect(driver['signedCredentials']).toBeInstanceOf(StorageSharedKeyCredential);
@@ -130,7 +161,7 @@ describe('#constructor', () => {
 
 		vi.mocked(BlobServiceClient).mockReturnValue(mockBlobServiceClient);
 
-		const driver = new DriverAzure({
+		const driver = new StorageDriverAzure({
 			containerName: sample.config.containerName,
 			accountName: sample.config.accountName,
 			accountKey: sample.config.accountKey,
@@ -158,7 +189,7 @@ describe('#constructor', () => {
 
 			vi.mocked(BlobServiceClient).mockReturnValue(mockBlobServiceClient);
 
-			const driver = new DriverAzure({
+			const driver = new StorageDriverAzure({
 				containerName: sample.config.containerName,
 				accountName: sample.config.accountName,
 				accountKey: sample.config.accountKey,
@@ -179,7 +210,7 @@ describe('#constructor', () => {
 	test('Normalizes config path when root is given', () => {
 		vi.mocked(normalizePath).mockReturnValue(sample.path.inputFull);
 
-		new DriverAzure({
+		new StorageDriverAzure({
 			containerName: sample.config.containerName,
 			accountName: sample.config.accountName,
 			accountKey: sample.config.accountKey,
@@ -195,7 +226,7 @@ describe('#fullPath', () => {
 		vi.mocked(join).mockReturnValue(sample.path.inputFull);
 		vi.mocked(normalizePath).mockReturnValue(sample.path.inputFull);
 
-		const driver = new DriverAzure({
+		const driver = new StorageDriverAzure({
 			containerName: sample.config.containerName,
 			accountName: sample.config.accountName,
 			accountKey: sample.config.accountKey,
@@ -369,6 +400,31 @@ describe('#stat', () => {
 			size: sample.file.size,
 			modified: sample.file.modified,
 		});
+	});
+
+	test('Maps a 404 to the kit error', async () => {
+		// 1. The SDK's `RestError` carries the HTTP status as `statusCode`; 404 becomes the error every backend shares
+		const cause = Object.assign(new Error('BlobNotFound'), { statusCode: 404 });
+
+		driver['containerClient'] = {
+			getBlobClient: vi.fn().mockReturnValue({ getProperties: vi.fn().mockRejectedValue(cause) }),
+		} as unknown as ContainerClient;
+
+		const error: unknown = await driver.stat(sample.path.input).catch((error: unknown) => error);
+
+		expect(error).toBeInstanceOf(StorageFileNotFoundError);
+		expect(error).toMatchObject({ extensions: { filepath: sample.path.input }, cause });
+	});
+
+	test('Rethrows any other SDK error', async () => {
+		// 1. A 403 says nothing about whether the blob exists, so it must not be reported as "not found"
+		const error = Object.assign(new Error('AuthorizationFailure'), { statusCode: 403 });
+
+		driver['containerClient'] = {
+			getBlobClient: vi.fn().mockReturnValue({ getProperties: vi.fn().mockRejectedValue(error) }),
+		} as unknown as ContainerClient;
+
+		await expect(driver.stat(sample.path.input)).rejects.toBe(error);
 	});
 });
 

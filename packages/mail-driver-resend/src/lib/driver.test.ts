@@ -2,7 +2,9 @@
  * Tests of the Resend driver with the SDK mocked.
  */
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import defaultExport, { MailDriverResend, toResendEmail, toResendTag } from './index.js';
+import defaultExport from '../index.js';
+import { MailDriverResend } from './driver.js';
+import { toResendEmail, toResendTag } from './to-resend-email.js';
 
 const send = vi.fn();
 

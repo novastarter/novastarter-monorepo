@@ -2,7 +2,7 @@
  * Tests of `mail/lib/router`.
  */
 import { describe, expect, test } from 'vitest';
-import type { MailDriver } from '../types.js';
+import type { MailDriver } from '../driver.js';
 import { MailManager, type MailRoutes } from './mail-manager.js';
 import { addressDomain, resolveMailChain } from './router.js';
 

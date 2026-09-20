@@ -1,4 +1,4 @@
-import { SendEmailCommand, SESv2Client, type SESv2ClientConfig } from '@aws-sdk/client-sesv2';
+import { SendEmailCommand, SESv2Client } from '@aws-sdk/client-sesv2';
 import {
 	type MailDriver,
 	type MailMessage,
@@ -7,6 +7,7 @@ import {
 	toNodemailerMessage,
 } from '@novastarter/mail';
 import nodemailer, { type Transporter } from 'nodemailer';
+import { toSesClientConfig } from './to-ses-client-config.js';
 
 /**
  * Options accepted by {@link MailDriverSes}.
@@ -34,28 +35,6 @@ declare module '@novastarter/mail' {
 		ses: MailDriverSesConfig;
 	}
 }
-
-/**
- * Build the SESv2 client options from the location options.
- *
- * @param config - Location options.
- * @returns What `SESv2Client` takes; credentials only when both keys are given.
- */
-export const toSesClientConfig = (config: MailDriverSesConfig): SESv2ClientConfig => ({
-	// 1. Region and endpoint are only set when given, so the SDK's default chain covers the rest
-	...(config.region ? { region: config.region } : {}),
-	...(config.endpoint ? { endpoint: config.endpoint } : {}),
-	// 2. Half a key pair is no credential: the SDK would fail every request with it, the chain may still succeed
-	...(config.accessKeyId && config.secretAccessKey
-		? {
-				credentials: {
-					accessKeyId: config.accessKeyId,
-					secretAccessKey: config.secretAccessKey,
-					...(config.sessionToken ? { sessionToken: config.sessionToken } : {}),
-				},
-			}
-		: {}),
-});
 
 /**
  * Driver for [Amazon SES](https://aws.amazon.com/ses/), through nodemailer's SES transport on the SESv2 SDK.

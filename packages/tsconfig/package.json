@@ -1,13 +1,13 @@
 {
 	"name": "@novastarter/tsconfig",
 	"version": "0.0.1",
-	"description": "Shared TSConfig files used by Nova packages",
-	"private": true,
+	"description": "Shared TSConfig files used by Novastarter packages",
 	"exports": {
 		"./base": "./configs/base/tsconfig.json",
 		"./node22": "./configs/node22/tsconfig.json",
 		"./react-library": "./configs/react-library/tsconfig.json",
 		"./nextjs": "./configs/nextjs/tsconfig.json",
 		"./package.json": "./package.json"
-	}
+	},
+	"private": true
 }

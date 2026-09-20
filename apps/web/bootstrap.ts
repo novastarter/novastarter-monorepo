@@ -4,7 +4,7 @@ import { useBus, useCache, useKv, useLimiter } from '@novastarter/memory';
 import { registerJobHandlers, useQueue } from '@novastarter/queue';
 import { useRedis } from '@novastarter/redis';
 import { useStorage } from '@novastarter/storage';
-import { DriverLocal } from '@novastarter/storage-driver-local';
+import { StorageDriverLocal } from '@novastarter/storage-driver-local';
 import { loggerConfig } from './config/logger';
 import { mailConfig } from './config/mail';
 import { memoryConfig } from './config/memory';
@@ -67,7 +67,7 @@ export const bootstrap = (): AppEnv => {
 	useQueue().registerLocation('default', queueConfig(env));
 
 	// 6. Storage: the driver classes the app ships with, then the `default` location
-	useStorage().registerDriver('local', DriverLocal);
+	useStorage().registerDriver('local', StorageDriverLocal);
 	useStorage().registerLocation('default', storageConfig(env));
 
 	// 7. Mail: the built-in drivers come with the manager; the `default` location and the routes are the app's
@@ -94,7 +94,7 @@ export const bootstrap = (): AppEnv => {
  * @returns Once every connection has closed.
  */
 export const shutdown = async (): Promise<void> => {
-	// 1. Queues first, since their providers may hold clients of their own; the shared Redis clients last
+	// 1. Queues first, since their drivers may hold clients of their own; the shared Redis clients last
 	await useQueue().close();
 	await useRedis().close();
 };

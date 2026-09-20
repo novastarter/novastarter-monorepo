@@ -1,6 +1,6 @@
 # `@novastarter/queue`
 
-Background jobs for Novastarter: contracts, a client to enqueue them, providers that run them.
+Background jobs for Novastarter: contracts, a client to enqueue them, drivers that run them.
 
 ## Installation
 
@@ -47,7 +47,7 @@ queue.registerLocation('reports', {
 });
 ```
 
-The `bullmq` options: `connection` — a Redis URL, ioredis options (a client of the provider's own is opened, with the
+The `bullmq` options: `connection` — a Redis URL, ioredis options (a client of the driver's own is opened, with the
 `maxRetriesPerRequest: null` BullMQ requires) or a ready ioredis client (used as is; `useRedis().location(…)` of
 `@novastarter/redis` is one); `prefix` of the Redis keys, so several projects share one server; `telemetry`, BullMQ's
 OpenTelemetry add-on. The `local` options: none. Both take a `logger`; the process logger unless given.
@@ -103,7 +103,7 @@ declare module '@novastarter/queue' {
 
 A job name is `<queue>.<action>`; the queue is everything before the dot and is what a location and a worker are named
 after. Options: `attempts`, `backoff`, `priority`, `removeOnComplete`, `timeout`, `unique` — the subset of BullMQ's
-`JobsOptions` every provider honours (`local` ignores retries).
+`JobsOptions` every driver honours (`local` ignores retries).
 
 `contract.parse(payload)` is what `enqueue()` runs: an invalid payload throws `InvalidPayloadError` of
 `@novastarter/errors` naming every issue, with the `FailedValidationError` extensions of `@novastarter/validation` as
@@ -152,7 +152,7 @@ await enqueue('mail.send', {
 which BullMQ reserves), hands the job to `useQueue().location(queue)` and emits the `job.enqueued` action with the
 parsed payload. Per-call `options` override the contract's: `delay`, `priority`, `attempts`, `jobId`.
 
-## Providers
+## Drivers
 
 - `local` — runs the handler in the enqueuing process: without a delay before `enqueue()` resolves, with one on a timer
   that does not keep the process alive. A failing handler is logged and not retried; a job without a handler is refused.
@@ -160,7 +160,7 @@ parsed payload. Per-call `options` override the contract's: `delay`, `priority`,
 - `bullmq` — one BullMQ `Queue` per queue name on Redis, consumed by a worker. `bullmq` is imported on the first job.
   `location(name).stats()` reports the counts per state for an admin's read-only view.
 
-`useQueue().close()` closes every location built so far at shutdown: the queues and the clients the providers opened
+`useQueue().close()` closes every location built so far at shutdown: the queues and the clients the drivers opened
 themselves.
 
 ## Worker

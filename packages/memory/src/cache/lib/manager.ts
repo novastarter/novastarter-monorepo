@@ -1,24 +1,24 @@
 import { DriverManager } from '@novastarter/utils';
 import type { Cache } from '../types/class.js';
-import type { CacheLocalOptions, CacheMultiOptions, CacheRedisOptions } from '../types/config.js';
-import { CacheLocal } from './local.js';
-import { CacheMulti } from './multi.js';
-import { CacheRedis } from './redis.js';
+import type { CacheDriverLocalConfig, CacheDriverMultiConfig, CacheDriverRedisConfig } from '../types/config.js';
+import { CacheDriverLocal } from './local.js';
+import { CacheDriverMulti } from './multi.js';
+import { CacheDriverRedis } from './redis.js';
 
 /**
  * Cache drivers by the name they are registered under, mapped to the options their constructor takes.
  *
  * The built-in ones are listed here; an application adds a driver of its own with a module augmentation —
- * `declare module '@novastarter/memory' { interface CacheDrivers { memcached: MemcachedOptions } }` — so a
+ * `declare module '@novastarter/memory' { interface CacheDrivers { memcached: CacheDriverMemcachedConfig } }` — so a
  * location's `options` are checked against the driver it names.
  */
 export interface CacheDrivers {
-	/** CacheLocal. */
-	local: CacheLocalOptions;
-	/** CacheRedis. */
-	redis: CacheRedisOptions;
-	/** CacheMulti. */
-	multi: CacheMultiOptions;
+	/** {@link CacheDriverLocal}. */
+	local: CacheDriverLocalConfig;
+	/** {@link CacheDriverRedis}. */
+	redis: CacheDriverRedisConfig;
+	/** {@link CacheDriverMulti}. */
+	multi: CacheDriverMultiConfig;
 }
 
 /**
@@ -52,8 +52,8 @@ export class CacheManager extends DriverManager<Cache, CacheDrivers> {
 
 		// 1. The drivers of the package are known up front; registering them here spares every application the same
 		//    lines, and a replacement under the same name still wins
-		this.registerDriver('local', CacheLocal);
-		this.registerDriver('redis', CacheRedis);
-		this.registerDriver('multi', CacheMulti);
+		this.registerDriver('local', CacheDriverLocal);
+		this.registerDriver('redis', CacheDriverRedis);
+		this.registerDriver('multi', CacheDriverMulti);
 	}
 }

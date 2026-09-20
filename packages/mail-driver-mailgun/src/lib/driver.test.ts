@@ -2,7 +2,10 @@
  * Tests of the Mailgun driver with the SDK mocked.
  */
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import defaultExport, { DEFAULT_MAILGUN_HOST, MailDriverMailgun, toMailgunFile, toMailgunMessage } from './index.js';
+import defaultExport from '../index.js';
+import { DEFAULT_MAILGUN_HOST } from './constants.js';
+import { MailDriverMailgun } from './driver.js';
+import { toMailgunFile, toMailgunMessage } from './to-mailgun-message.js';
 
 const create = vi.fn();
 const get = vi.fn();

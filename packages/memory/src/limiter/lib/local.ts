@@ -1,6 +1,6 @@
 import { RateLimiterMemory } from 'rate-limiter-flexible';
 import type { Limiter } from '../types/class.js';
-import type { LimiterLocalOptions } from '../types/config.js';
+import type { LimiterDriverLocalConfig } from '../types/config.js';
 import { consume } from '../utils/consume.js';
 
 /**
@@ -10,7 +10,7 @@ import { consume } from '../utils/consume.js';
  *
  * @example
  * ```ts
- * const limiter = new LimiterLocal({
+ * const limiter = new LimiterDriverLocal({
  * 	points: 10,
  * 	duration: 5,
  * });
@@ -18,7 +18,7 @@ import { consume } from '../utils/consume.js';
  * await limiter.consume(request.ip);
  * ```
  */
-export class LimiterLocal implements Limiter {
+export class LimiterDriverLocal implements Limiter {
 	/**
 	 * Underlying limiter doing the bookkeeping.
 	 *
@@ -38,7 +38,7 @@ export class LimiterLocal implements Limiter {
 	 *
 	 * @param config - Local configuration.
 	 */
-	constructor(config: LimiterLocalOptions) {
+	constructor(config: LimiterDriverLocalConfig) {
 		// 1. Hand the budget to the library and remember the points for error reporting
 		this.limiter = new RateLimiterMemory({
 			duration: config.duration,

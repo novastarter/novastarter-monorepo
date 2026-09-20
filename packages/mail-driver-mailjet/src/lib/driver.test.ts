@@ -2,7 +2,9 @@
  * Tests of the Mailjet driver with the SDK mocked.
  */
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import defaultExport, { MailDriverMailjet, toMailjetMessage } from './index.js';
+import defaultExport from '../index.js';
+import { MailDriverMailjet } from './driver.js';
+import { toMailjetMessage } from './to-mailjet-message.js';
 
 const request = vi.fn();
 const post = vi.fn(() => ({ request }));

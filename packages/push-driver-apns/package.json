@@ -7,6 +7,7 @@
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
 		"directory": "packages/push-driver-apns"
 	},
+	"sideEffects": false,
 	"type": "module",
 	"exports": {
 		".": "./dist/index.js",

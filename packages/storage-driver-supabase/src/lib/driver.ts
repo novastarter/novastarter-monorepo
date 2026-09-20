@@ -1,51 +1,54 @@
 import { basename, join } from 'node:path';
 import { Readable } from 'node:stream';
-import type { TusDriver } from '@novastarter/storage';
-import type { ChunkedUploadContext, ReadOptions } from '@novastarter/types';
+import {
+	type ChunkedUploadContext,
+	type ReadOptions,
+	type Stat,
+	StorageFileNotFoundError,
+	type TusDriver,
+} from '@novastarter/storage';
 import { normalizePath } from '@novastarter/utils';
 import { StorageClient } from '@supabase/storage-js';
 import * as tus from 'tus-js-client';
 import type { RequestInit } from 'undici';
 import { fetch } from 'undici';
+import { DEFAULT_CHUNK_SIZE } from './constants.js';
+import { dirname } from './dirname.js';
+import { FileReader } from './tus-source.js';
 
 /**
- * Chunk size used for resumable uploads when the caller configures none.
- *
- * @defaultValue 8 MiB, matching the Directus-wide default the driver was ported from.
- */
-export const DEFAULT_CHUNK_SIZE = 8_388_608;
-
-/**
- * Options accepted by {@link DriverSupabase}.
+ * Options accepted by {@link StorageDriverSupabase}.
  *
  * Either `projectId` or `endpoint` must be given: the first builds the hosted Supabase URL, the second points at a
  * self-hosted instance and wins when both are set.
  */
-export type DriverSupabaseConfig = {
+export type StorageDriverSupabaseConfig = {
 	/** Storage bucket every operation targets. */
 	bucket: string;
 	/** Service-role key; sent as both `apikey` and bearer token, so the driver bypasses row-level security. */
 	serviceRole: string;
 	/** Hosted project id, expanded to `https://<projectId>.supabase.co/storage/v1`. */
-	projectId?: string;
+	projectId?: string | undefined;
 	/** Allows a custom Supabase endpoint for self-hosting; must include the `/storage/v1` path. */
-	endpoint?: string;
+	endpoint?: string | undefined;
 	/** Path prefix every file is placed under; behaves like a root directory inside the bucket. */
-	root?: string;
+	root?: string | undefined;
 	/** Resumable-upload tuning. */
-	tus?: {
-		/** Chunk size in bytes sent per TUS PATCH request. @defaultValue {@link DEFAULT_CHUNK_SIZE} */
-		chunkSize?: number;
-	};
+	tus?:
+		| {
+				/** Chunk size in bytes sent per TUS PATCH request. @defaultValue {@link DEFAULT_CHUNK_SIZE} */
+				chunkSize?: number | undefined;
+		  }
+		| undefined;
 };
 
 /**
  * Registers the driver's options in the map of `@novastarter/storage`, so a location naming `supabase` has its
- * options checked against {@link DriverSupabaseConfig}.
+ * options checked against {@link StorageDriverSupabaseConfig}.
  */
 declare module '@novastarter/storage' {
 	interface StorageDrivers {
-		supabase: DriverSupabaseConfig;
+		supabase: StorageDriverSupabaseConfig;
 	}
 }
 
@@ -59,7 +62,7 @@ declare module '@novastarter/storage' {
  *
  * @example
  * ```ts
- * const driver = new DriverSupabase({
+ * const driver = new StorageDriverSupabase({
  * 	bucket: 'uploads',
  * 	projectId: 'abcdefghij',
  * 	serviceRole: process.env.KEY,
@@ -68,13 +71,13 @@ declare module '@novastarter/storage' {
  * await driver.write('avatar.png', fs.createReadStream('./avatar.png'), 'image/png');
  * ```
  */
-export class DriverSupabase implements TusDriver {
+export class StorageDriverSupabase implements TusDriver {
 	/**
 	 * Options this instance was created with; `root` is already normalised and is an empty string when none was configured.
 	 *
 	 * @internal
 	 */
-	private config: DriverSupabaseConfig & { root: string };
+	private config: StorageDriverSupabaseConfig & { root: string };
 
 	/**
 	 * Shared storage client; one per driver so its HTTP settings are reused across calls.
@@ -103,7 +106,7 @@ export class DriverSupabase implements TusDriver {
 	 * @param config - Connection and behaviour options.
 	 * @throws Error when neither `projectId` nor `endpoint` is given, or when `serviceRole` or `bucket` is missing.
 	 */
-	constructor(config: DriverSupabaseConfig) {
+	constructor(config: StorageDriverSupabaseConfig) {
 		// 1. Normalise the root once without a leading slash: Supabase object names are not paths, and a leading `/`
 		//    would become part of the name and produce objects nobody can find by the expected key
 		this.config = {
@@ -139,13 +142,13 @@ export class DriverSupabase implements TusDriver {
 	private getClient() {
 		// 1. Without either the endpoint getter would produce `https://undefined.supabase.co`, so refuse early
 		if (!this.config.projectId && !this.config.endpoint) {
-			throw new Error('`project_id` or `endpoint` is required');
+			throw new Error('The supabase storage driver needs a "projectId" or an "endpoint"');
 		}
 
 		// 2. The service-role key is the only credential the driver supports; without it every request would be
 		//    rejected as anonymous
 		if (!this.config.serviceRole) {
-			throw new Error('`service_role` is required');
+			throw new Error('The supabase storage driver needs a "serviceRole"');
 		}
 
 		// 3. Supabase expects the key in both headers: `apikey` identifies the project, the bearer token authorises
@@ -165,7 +168,7 @@ export class DriverSupabase implements TusDriver {
 	private getBucket() {
 		// 1. `from('')` would not fail until the first request, so check the name here
 		if (!this.config.bucket) {
-			throw new Error('`bucket` is required');
+			throw new Error('The supabase storage driver needs a "bucket"');
 		}
 
 		return this.client.from(this.config.bucket);
@@ -292,17 +295,16 @@ export class DriverSupabase implements TusDriver {
 	 *
 	 * @param filepath - Object path relative to the root.
 	 * @returns Size in bytes and modification date.
-	 * @throws Error when the object is missing, or the storage error when the lookup fails.
+	 * @throws StorageFileNotFoundError when the object is missing.
+	 * @throws The storage error when the lookup itself fails.
 	 */
-	async stat(filepath: string): Promise<{
-		size: any;
-		modified: Date;
-	}> {
+	async stat(filepath: string): Promise<Stat> {
 		const file = await this.find(filepath);
 
-		// 1. An empty listing is the only way Supabase reports a missing object
+		// 1. An empty listing is the only way Supabase reports a missing object; it becomes the error every backend
+		//    shares
 		if (!file) {
-			throw new Error('File not found');
+			throw new StorageFileNotFoundError({ filepath });
 		}
 
 		// 2. Metadata is null for folders, so fall back to zero values rather than throwing on a folder entry
@@ -518,10 +520,10 @@ export class DriverSupabase implements TusDriver {
 		await new Promise((resolve, reject) => {
 			// 2. The custom file reader feeds `tus-js-client` the chunk as a one-shot source, so the library sends
 			//    exactly this chunk instead of trying to read the whole file. `x-upsert` lets a re-upload replace the
-			//    object; retries are disabled because the TUS server in front of this driver already retries
+			//    object; retries are disabled because the TUS server in front of this driver already retries. The size
+			//    is only passed when known: an explicit `undefined` is not an absent key to the library's option types
 			const upload = new tus.Upload(content, {
 				endpoint: this.getResumableUrl(),
-				// @ts-expect-error `fileReader` is not part of the public option types, but the library honours it for custom sources
 				fileReader: new FileReader(),
 				headers: {
 					Authorization: `Bearer ${this.config.serviceRole}`,
@@ -529,7 +531,7 @@ export class DriverSupabase implements TusDriver {
 				},
 				metadata,
 				chunkSize: this.preferredChunkSize,
-				uploadSize: context.size,
+				...(context.size === undefined ? {} : { uploadSize: context.size }),
 				retryDelays: null,
 				onError(error) {
 					reject(error);
@@ -589,82 +591,5 @@ export class DriverSupabase implements TusDriver {
 		// 1. Only the object under the final name is removed; an unfinished TUS upload has no handle the driver could
 		//    abort, and Supabase expires it on its own
 		await this.delete(filepath);
-	}
-}
-
-/**
- * Default export for consumers that import the driver without a named binding.
- */
-export default DriverSupabase;
-
-/**
- * dirname implementation that always uses '/' to split and returns '' in case of no separator present.
- *
- * `node:path`'s `dirname` would return `.` for a bare name and use the platform separator, neither of which suits
- * Supabase object names.
- *
- * @param path - Object name or prefix.
- * @returns Everything before the last `/`, or an empty string.
- */
-function dirname(path: string) {
-	// 1. Drop the last segment and rejoin with `/`; a bare name has one segment, so this yields an empty string
-	return path.split('/').slice(0, -1).join('/');
-}
-
-/**
- * Stream source that hands `tus-js-client` the incoming chunk exactly once.
- *
- * The library slices its source by absolute upload offsets, but the stream given to `writeChunk` only holds the
- * bytes of one chunk starting at offset zero. This subclass rebases the slice and reports the stream as ended after
- * the first read, so a single chunk maps to a single TUS request.
- *
- * @internal
- */
-// @ts-expect-error `StreamSource` is exported at runtime but missing from the library's type declarations
-class StreamSource extends tus.StreamSource {
-	/**
-	 * Whether the one and only slice has been handed out.
-	 *
-	 * @internal
-	 */
-	_streamEnded = false;
-
-	/**
-	 * Return the chunk once, then report the stream as ended.
-	 *
-	 * @param start - Absolute upload offset the library asks for.
-	 * @param end - Absolute upload offset the slice should end at.
-	 * @returns The rebased slice on the first call, `null` afterwards.
-	 */
-	// @ts-expect-error the base method is untyped, so the override signature cannot be checked against it
-	override async slice(start: number, end: number) {
-		// 1. Act like the stream ended after it's been called once
-		if (this._streamEnded) return null;
-
-		this._streamEnded = true;
-
-		// 2. Shift the start and end offsets to always start at 0, since the read stream is only a stream of one
-		//    chunk with length of `chunkSize`
-		return super.slice(0, end - start);
-	}
-}
-
-/**
- * File reader plugged into `tus-js-client` so it accepts a Node readable as the upload input.
- *
- * @internal
- */
-class FileReader {
-	/**
-	 * Wrap the chunk stream in the one-shot {@link StreamSource}.
-	 *
-	 * @param input - Chunk stream passed to `tus.Upload`.
-	 * @param _ - Chunk size requested by the library; ignored, the stream already holds exactly one chunk.
-	 * @returns The source the library slices from.
-	 */
-	async openFile(input: Readable, _: number): Promise<StreamSource> {
-		// 1. Wrap rather than read: the source slices the stream lazily when the library asks for the chunk
-		// @ts-expect-error see `StreamSource`: the constructor is untyped
-		return new StreamSource(input);
 	}
 }

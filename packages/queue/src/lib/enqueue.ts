@@ -5,7 +5,7 @@ import { getJobId } from './get-job-id.js';
 import { useQueue } from './use-queue.js';
 
 /**
- * Action event emitted after a job was accepted by the provider; the meta carries `id`, `name`, `queue` and the
+ * Action event emitted after a job was accepted by the driver; the meta carries `id`, `name`, `queue` and the
  * parsed `payload`.
  *
  * @defaultValue `job.enqueued`
@@ -23,7 +23,7 @@ export type JobInputOf<Name extends JobName> = JobRegistry[Name] extends JobCont
  * Put a job on the queue.
  *
  * The one entry point for background work: the payload is checked against the contract (an invalid one throws
- * `InvalidPayloadError` right here, in the caller's request, not in a worker), the id is derived, the provider takes
+ * `InvalidPayloadError` right here, in the caller's request, not in a worker), the id is derived, the driver takes
  * it, and `job.enqueued` is emitted for anyone listening — the activity log, metrics.
  *
  * @typeParam Name - A job of the {@link JobRegistry}.
@@ -31,7 +31,7 @@ export type JobInputOf<Name extends JobName> = JobRegistry[Name] extends JobCont
  * @param payload - Payload as the contract's schema expects it.
  * @param options - Delay, priority, attempts, explicit id.
  * @returns The job's identity.
- * @throws InvalidPayloadError for a payload the contract rejects; whatever the provider throws.
+ * @throws InvalidPayloadError for a payload the contract rejects; whatever the driver throws.
  *
  * @example
  * ```ts

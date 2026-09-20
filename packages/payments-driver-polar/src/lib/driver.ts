@@ -25,9 +25,9 @@ import { toMetadata } from './to-metadata.js';
 import { toSubscription } from './to-subscription.js';
 
 /**
- * Options of {@link DriverPolar}, as given in the location's `options`.
+ * Options of {@link PaymentsDriverPolar}, as given in the location's `options`.
  */
-export type DriverPolarConfig = {
+export type PaymentsDriverPolarConfig = {
 	/** Organization access token from the Polar dashboard (`polar_oat_…`). */
 	accessToken: string;
 	/** Secret of the webhook endpoint, as entered in the dashboard. */
@@ -44,11 +44,11 @@ export type DriverPolarConfig = {
 
 /**
  * Registers the driver's options in the map of `@novastarter/payments`, so a location naming `polar` has its
- * options checked against {@link DriverPolarConfig}.
+ * options checked against {@link PaymentsDriverPolarConfig}.
  */
 declare module '@novastarter/payments' {
 	interface PaymentsDrivers {
-		polar: DriverPolarConfig;
+		polar: PaymentsDriverPolarConfig;
 	}
 }
 
@@ -79,7 +79,7 @@ export const PRORATION: Record<NonNullable<UpdateSubscriptionInput['proration']>
  *
  * @example
  * ```ts
- * usePayments().registerDriver('polar', DriverPolar);
+ * usePayments().registerDriver('polar', PaymentsDriverPolar);
  * usePayments().registerLocation('default', {
  * 	driver: 'polar',
  * 	options: {
@@ -90,7 +90,7 @@ export const PRORATION: Record<NonNullable<UpdateSubscriptionInput['proration']>
  * });
  * ```
  */
-export class DriverPolar implements PaymentsDriver {
+export class PaymentsDriverPolar implements PaymentsDriver {
 	/**
 	 * The `@polar-sh/sdk` client every request goes through.
 	 *
@@ -112,7 +112,7 @@ export class DriverPolar implements PaymentsDriver {
 	 * @throws Error without a token or a webhook secret — a deployment that cannot verify webhooks would drift from
 	 * Polar silently.
 	 */
-	constructor(config: DriverPolarConfig) {
+	constructor(config: PaymentsDriverPolarConfig) {
 		// 1. Fail at registration for the two values nothing works without, rather than on the first request
 		if (!config.accessToken) {
 			throw new Error('The polar payments driver needs an "accessToken"');

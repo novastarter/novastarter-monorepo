@@ -1,11 +1,22 @@
 import { join } from 'node:path';
 import { type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import type { Bucket, CreateReadStreamOptions, GetFilesOptions } from '@google-cloud/storage';
+import type {
+	Bucket,
+	CreateReadStreamOptions,
+	FileMetadata,
+	GetFilesOptions,
+	StorageOptions,
+} from '@google-cloud/storage';
 import { Storage } from '@google-cloud/storage';
 import { DEFAULT_CHUNK_SIZE } from '@novastarter/constants';
-import type { TusDriver } from '@novastarter/storage';
-import type { ChunkedUploadContext, ReadOptions } from '@novastarter/types';
+import {
+	type ChunkedUploadContext,
+	type ReadOptions,
+	type Stat,
+	StorageFileNotFoundError,
+	type TusDriver,
+} from '@novastarter/storage';
 import { normalizePath } from '@novastarter/utils';
 
 /**
@@ -17,39 +28,41 @@ import { normalizePath } from '@novastarter/utils';
 const MINIMUM_CHUNK_SIZE = 262_144;
 
 /**
- * Options accepted by {@link DriverGCS}.
+ * Options accepted by {@link StorageDriverGcs}.
  *
  * `bucket`, `root` and `tus` belong to the driver; the remaining keys (`apiEndpoint`) are handed to the `Storage`
  * client untouched. Credentials are not configured here: the client picks them up through Application Default
  * Credentials (`GOOGLE_APPLICATION_CREDENTIALS`, the metadata server, …).
  */
-export type DriverGCSConfig = {
+export type StorageDriverGcsConfig = {
 	/** Path prefix every file is placed under; behaves like a root directory inside the bucket. */
-	root?: string;
+	root?: string | undefined;
 	/** Bucket every operation targets. */
 	bucket: string;
 	/** Custom API endpoint, for emulators or private access points. */
-	apiEndpoint?: string;
+	apiEndpoint?: string | undefined;
 	/** Resumable-upload tuning. */
-	tus?: {
-		/** Whether chunked uploads are in use; turns on validation of `chunkSize`. */
-		enabled: boolean;
-		/**
-		 * Chunk size in bytes per upload request; a power of two of at least 256 KiB.
-		 *
-		 * @defaultValue {@link DEFAULT_CHUNK_SIZE}
-		 */
-		chunkSize?: number;
-	};
+	tus?:
+		| {
+				/** Whether chunked uploads are in use; turns on validation of `chunkSize`. */
+				enabled: boolean;
+				/**
+				 * Chunk size in bytes per upload request; a power of two of at least 256 KiB.
+				 *
+				 * @defaultValue {@link DEFAULT_CHUNK_SIZE}
+				 */
+				chunkSize?: number | undefined;
+		  }
+		| undefined;
 };
 
 /**
  * Registers the driver's options in the map of `@novastarter/storage`, so a location naming `gcs` has its
- * options checked against {@link DriverGCSConfig}.
+ * options checked against {@link StorageDriverGcsConfig}.
  */
 declare module '@novastarter/storage' {
 	interface StorageDrivers {
-		gcs: DriverGCSConfig;
+		gcs: StorageDriverGcsConfig;
 	}
 }
 
@@ -63,7 +76,7 @@ declare module '@novastarter/storage' {
  *
  * @example
  * ```ts
- * const driver = new DriverGCS({
+ * const driver = new StorageDriverGcs({
  * 	bucket: 'uploads',
  * 	root: 'avatars',
  * });
@@ -71,7 +84,7 @@ declare module '@novastarter/storage' {
  * await driver.write('avatar.png', fs.createReadStream('./avatar.png'));
  * ```
  */
-export class DriverGCS implements TusDriver {
+export class StorageDriverGcs implements TusDriver {
 	/**
 	 * Normalised root prefix; an empty string when none was configured.
 	 *
@@ -99,28 +112,40 @@ export class DriverGCS implements TusDriver {
 	 * @param config - Connection and behaviour options.
 	 * @throws Error when TUS is enabled and `chunkSize` is not a power of two of at least 256 KiB.
 	 */
-	constructor(config: DriverGCSConfig) {
-		// 1. Split the driver's own keys off, so everything else reaches the `Storage` client as its native options
-		const { bucket, root, tus, ...storageOptions } = config;
+	constructor(config: StorageDriverGcsConfig) {
+		const { bucket, root, tus, apiEndpoint } = config;
+
+		// 1. Every operation targets the bucket, so a missing one is refused here rather than on the first request
+		if (!bucket) {
+			throw new Error('The gcs storage driver needs a "bucket"');
+		}
 
 		// 2. Normalise the root once without a leading slash: object names are not paths, and a leading `/` would become
 		//    part of the name and produce objects nobody can find by the expected key
 		this.root = root ? normalizePath(root, { removeLeading: true }) : '';
 
-		// 3. Build the client and bucket up front, so configuration mistakes fail at construction instead of on the
+		// 3. Only the options that were given reach the client: an explicit `undefined` is not the same as an absent key
+		//    to the SDK's option types
+		const storageOptions: StorageOptions = {};
+
+		if (apiEndpoint !== undefined) {
+			storageOptions.apiEndpoint = apiEndpoint;
+		}
+
+		// 4. Build the client and bucket up front, so configuration mistakes fail at construction instead of on the
 		//    first request
 		const storage = new Storage(storageOptions);
 		this.bucket = storage.bucket(bucket);
 
 		this.preferredChunkSize = tus?.chunkSize || DEFAULT_CHUNK_SIZE;
 
-		// 4. GCS requires resumable chunks to be multiples of 256 KiB; restricting to powers of two keeps every chunk
+		// 5. GCS requires resumable chunks to be multiples of 256 KiB; restricting to powers of two keeps every chunk
 		//    aligned and rejects a misconfiguration here rather than on the first PATCH
 		if (
 			tus?.enabled &&
 			(this.preferredChunkSize < MINIMUM_CHUNK_SIZE || Math.log2(this.preferredChunkSize) % 1 !== 0)
 		) {
-			throw new Error('Invalid chunkSize provided');
+			throw new Error('The gcs storage driver got a "tus.chunkSize" that is not a power of two of at least 256 KiB');
 		}
 	}
 
@@ -140,7 +165,7 @@ export class DriverGCS implements TusDriver {
 	/**
 	 * Get the `File` handle for an object name.
 	 *
-	 * @param filepath - Full object name, already resolved through {@link DriverGCS.fullPath}.
+	 * @param filepath - Full object name, already resolved through {@link StorageDriverGcs.fullPath}.
 	 * @returns A lazy handle; no request is made until a method on it is called.
 	 * @internal
 	 */
@@ -204,15 +229,24 @@ export class DriverGCS implements TusDriver {
 	 * @returns Size in bytes and modification date.
 	 * @throws The SDK error when the object is missing or the request fails.
 	 */
-	async stat(filepath: string): Promise<{
-		size: number;
-		modified: Date;
-	}> {
-		// 1. The SDK types `size` as `string | number` and `updated` as a string; GCS returns an ISO timestamp, so it is
-		//    converted into the `Date` the storage contract expects
-		const [{ size, updated }] = await this.file(this.fullPath(filepath)).getMetadata();
+	async stat(filepath: string): Promise<Stat> {
+		let metadata: FileMetadata;
 
-		return { size: size as number, modified: new Date(updated as string) };
+		// 1. A 404 from the API is the one answer that confirms the object is missing; it becomes the error every backend
+		//    shares, anything else says nothing about the object and is rethrown
+		try {
+			[metadata] = await this.file(this.fullPath(filepath)).getMetadata();
+		} catch (error) {
+			if ((error as { code?: number })?.code === 404) {
+				throw new StorageFileNotFoundError({ filepath }, { cause: error });
+			}
+
+			throw error;
+		}
+
+		// 2. The SDK types `size` as `string | number` and `updated` as a string; GCS returns an ISO timestamp, so it is
+		//    converted into the `Date` the storage contract expects
+		return { size: metadata.size as number, modified: new Date(metadata.updated as string) };
 	}
 
 	/**
@@ -357,7 +391,7 @@ export class DriverGCS implements TusDriver {
 	 * Complete a chunked upload.
 	 *
 	 * Nothing to do: GCS finalises the object itself when the chunk that reaches `contentLength` lands, see
-	 * {@link DriverGCS.writeChunk}.
+	 * {@link StorageDriverGcs.writeChunk}.
 	 *
 	 * @param _filepath - Final object path relative to the root; unused.
 	 * @param _context - Upload context; unused.
@@ -376,8 +410,3 @@ export class DriverGCS implements TusDriver {
 		await this.delete(filepath);
 	}
 }
-
-/**
- * Default export for consumers that import the driver without a named binding.
- */
-export default DriverGCS;

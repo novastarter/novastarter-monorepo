@@ -3,7 +3,11 @@
  */
 import { PushTargetGoneError } from '@novastarter/push';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import defaultExport, { describeError, PushDriverFcm, readServiceAccount, toFcmMessage } from './index.js';
+import defaultExport from '../index.js';
+import { describeError } from './describe-error.js';
+import { PushDriverFcm } from './driver.js';
+import { readServiceAccount } from './read-service-account.js';
+import { toFcmMessage } from './to-fcm-message.js';
 
 const send = vi.fn();
 const getAccessToken = vi.fn();

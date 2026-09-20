@@ -1,5 +1,3 @@
-import type { LocationConfig } from '@novastarter/utils';
-import type { PushDrivers } from './lib/push-manager.js';
 import type { PushMessage, PushPlatform, PushResult } from './types.js';
 
 /**
@@ -55,8 +53,3 @@ export declare class PushDriver {
 	 */
 	close?(): Promise<void>;
 }
-
-/**
- * Location entry as passed to {@link PushManager.registerLocation}: a driver of {@link PushDrivers} and its options.
- */
-export type PushDriverConfig = LocationConfig<PushDrivers>;

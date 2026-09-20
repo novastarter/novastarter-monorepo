@@ -19,16 +19,17 @@ import {
 	randGitShortSha as randUnique,
 	randWord,
 } from '@ngneat/falso';
+import { StorageFileNotFoundError } from '@novastarter/storage';
 import { normalizePath } from '@novastarter/utils';
 import type { Response } from 'undici';
 import { fetch, FormData } from 'undici';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { IMAGE_EXTENSIONS, VIDEO_EXTENSIONS } from './constants.js';
-import * as toFormUrlEncodedUtil from './utils/to-form-url-encoded.js';
-import * as toSignatureStringUtil from './utils/to-signature-string.js';
-import type { DriverCloudinaryConfig } from './index.js';
-import { DriverCloudinary } from './index.js';
+import type { StorageDriverCloudinaryConfig } from './driver.js';
+import { StorageDriverCloudinary } from './driver.js';
+import * as toFormUrlEncodedUtil from './to-form-url-encoded.js';
+import * as toSignatureStringUtil from './to-signature-string.js';
 
 vi.mock('@novastarter/utils/node');
 vi.mock('@novastarter/utils');
@@ -46,7 +47,7 @@ const { join: joinActual } = await vi.importActual<typeof import('node:path')>('
  * Random fixture regenerated before every test, so no test can depend on values another one left behind.
  */
 let sample: {
-	config: Required<DriverCloudinaryConfig>;
+	config: { [Key in keyof StorageDriverCloudinaryConfig]-?: NonNullable<StorageDriverCloudinaryConfig[Key]> };
 	path: {
 		input: string;
 		inputFull: string;
@@ -86,7 +87,7 @@ let sample: {
  * Driver under test, created without a root and with every path/signature helper stubbed to the fixture values, so
  * each public method can be checked against the helpers it is expected to call.
  */
-let driver: DriverCloudinary;
+let driver: StorageDriverCloudinary;
 
 beforeEach(() => {
 	// 1. Fresh random values per test; falso keeps them realistic enough to catch accidental string handling
@@ -135,7 +136,7 @@ beforeEach(() => {
 	};
 
 	// 2. No root, so the path helpers below fully control which full path every input resolves to
-	driver = new DriverCloudinary({
+	driver = new StorageDriverCloudinary({
 		cloudName: sample.config.cloudName,
 		apiKey: sample.config.apiKey,
 		apiSecret: sample.config.apiSecret,
@@ -185,6 +186,38 @@ afterEach(() => {
 });
 
 describe('#constructor', () => {
+	test.each([
+		['cloudName', 'a "cloudName"'],
+		['apiKey', 'an "apiKey"'],
+		['apiSecret', 'an "apiSecret"'],
+	] as const)('Refuses a missing %s', (option, expected) => {
+		// 1. Every request is signed with the credentials; the driver names the missing option instead of a 401 later
+		expect(
+			() =>
+				new StorageDriverCloudinary({
+					cloudName: sample.config.cloudName,
+					apiKey: sample.config.apiKey,
+					apiSecret: sample.config.apiSecret,
+					accessMode: sample.config.accessMode,
+					[option]: '',
+				}),
+		).toThrowError(`The cloudinary storage driver needs ${expected}`);
+	});
+
+	test('Refuses a chunk size below the Cloudinary minimum when resumable uploads are on', () => {
+		// 1. Cloudinary rejects chunks under 5 MB, so a smaller TUS chunk would fail on every upload
+		expect(
+			() =>
+				new StorageDriverCloudinary({
+					cloudName: sample.config.cloudName,
+					apiKey: sample.config.apiKey,
+					apiSecret: sample.config.apiSecret,
+					accessMode: sample.config.accessMode,
+					tus: { enabled: true, chunkSize: 1000 },
+				}),
+		).toThrowErrorMatchingInlineSnapshot(`[Error: The cloudinary storage driver got a "tus.chunkSize" below 5 MB]`);
+	});
+
 	test('Saves apiKey internally', () => {
 		expect(driver['apiKey']).toBe(sample.config.apiKey);
 	});
@@ -208,7 +241,7 @@ describe('#constructor', () => {
 	test('Normalizes config path when root is given', () => {
 		vi.mocked(normalizePath).mockReturnValue(sample.path.inputFull);
 
-		new DriverCloudinary({
+		new StorageDriverCloudinary({
 			cloudName: sample.config.cloudName,
 			apiKey: sample.config.apiKey,
 			apiSecret: sample.config.apiSecret,
@@ -225,7 +258,7 @@ describe('#fullPath', () => {
 		vi.mocked(join).mockReturnValue(sample.path.inputFull);
 		vi.mocked(normalizePath).mockReturnValue(sample.path.inputFull);
 
-		const driver = new DriverCloudinary({
+		const driver = new StorageDriverCloudinary({
 			cloudName: sample.config.cloudName,
 			apiKey: sample.config.apiKey,
 			apiSecret: sample.config.apiSecret,
@@ -252,7 +285,7 @@ describe('#getFullSignature', () => {
 
 	beforeEach(() => {
 		// 1. A fresh driver, since the shared one has `getFullSignature` stubbed out
-		driver = new DriverCloudinary({
+		driver = new StorageDriverCloudinary({
 			apiKey: sample.config.apiKey,
 			apiSecret: sample.config.apiSecret,
 			cloudName: sample.config.cloudName,
@@ -346,7 +379,7 @@ describe('#getParameterSignature', () => {
 
 	beforeEach(() => {
 		// 1. A fresh driver, since the shared one has `getParameterSignature` stubbed out
-		driver = new DriverCloudinary({
+		driver = new StorageDriverCloudinary({
 			apiKey: sample.config.apiKey,
 			apiSecret: sample.config.apiSecret,
 			cloudName: sample.config.cloudName,
@@ -389,7 +422,7 @@ describe('#getTimestamp', () => {
 
 	beforeEach(() => {
 		// 1. A fresh driver, since the shared one has `getTimestamp` stubbed out
-		driver = new DriverCloudinary({
+		driver = new StorageDriverCloudinary({
 			apiKey: sample.config.apiKey,
 			apiSecret: sample.config.apiSecret,
 			cloudName: sample.config.cloudName,
@@ -414,7 +447,7 @@ describe('#getTimestamp', () => {
 describe('#getResourceType', () => {
 	beforeEach(() => {
 		// 1. A fresh driver, since the shared one has `getResourceType` stubbed out
-		driver = new DriverCloudinary({
+		driver = new StorageDriverCloudinary({
 			apiKey: sample.config.apiKey,
 			apiSecret: sample.config.apiSecret,
 			cloudName: sample.config.cloudName,
@@ -451,7 +484,7 @@ describe('#getPublicId', () => {
 	beforeEach(() => {
 		// 1. A fresh driver, since the shared one has `getPublicId` stubbed out; the resource type stays stubbed so
 		//    each test can pick the branch it exercises
-		driver = new DriverCloudinary({
+		driver = new StorageDriverCloudinary({
 			apiKey: sample.config.apiKey,
 			apiSecret: sample.config.apiSecret,
 			cloudName: sample.config.cloudName,
@@ -489,7 +522,7 @@ describe('#getBasicAuth', () => {
 
 	beforeEach(() => {
 		// 1. A fresh driver, since the shared one has `getBasicAuth` stubbed out
-		driver = new DriverCloudinary({
+		driver = new StorageDriverCloudinary({
 			apiKey: sample.config.apiKey,
 			apiSecret: sample.config.apiSecret,
 			cloudName: sample.config.cloudName,
@@ -704,14 +737,22 @@ describe('#stat', () => {
 	});
 
 	test('Throws error when status is >400', async () => {
-		mockResponse.status = randNumber({ min: 400, max: 599 });
+		// 1. Any error status but 404 says nothing about the asset, so it surfaces as a plain error with the status
+		mockResponse.status = randNumber({ min: 405, max: 599 });
 
-		try {
-			await driver.stat(sample.path.input);
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe(`No stat returned for file "${sample.path.input}"`);
-		}
+		await expect(driver.stat(sample.path.input)).rejects.toThrowError(
+			`No stat returned for file "${sample.path.input}" (${mockResponse.status})`,
+		);
+	});
+
+	test('Maps a 404 to the kit error', async () => {
+		// 1. Only a 404 is a definite "missing"; it becomes the error every backend shares
+		mockResponse.status = 404;
+
+		const error: unknown = await driver.stat(sample.path.input).catch((error: unknown) => error);
+
+		expect(error).toBeInstanceOf(StorageFileNotFoundError);
+		expect(error).toMatchObject({ extensions: { filepath: sample.path.input } });
 	});
 
 	/** An unread response body holds its connection open */

@@ -7,6 +7,7 @@
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
 		"directory": "packages/push"
 	},
+	"sideEffects": false,
 	"type": "module",
 	"exports": {
 		".": "./dist/index.js",
@@ -33,7 +34,6 @@
 		"@novastarter/tsconfig": "workspace:*",
 		"@types/node": "catalog:",
 		"@vitest/coverage-v8": "catalog:",
-		"pino": "catalog:",
 		"tsdown": "catalog:",
 		"typescript": "catalog:",
 		"vitest": "catalog:"

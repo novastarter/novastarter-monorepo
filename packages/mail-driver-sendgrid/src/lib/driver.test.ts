@@ -2,7 +2,9 @@
  * Tests of the SendGrid driver with the SDK mocked.
  */
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import defaultExport, { MailDriverSendgrid, toSendgridAttachment, toSendgridMail } from './index.js';
+import defaultExport from '../index.js';
+import { MailDriverSendgrid } from './driver.js';
+import { toSendgridAttachment, toSendgridMail } from './to-sendgrid-mail.js';
 
 const send = vi.fn();
 const setApiKey = vi.fn();

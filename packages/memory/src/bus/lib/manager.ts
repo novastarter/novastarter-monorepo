@@ -1,25 +1,25 @@
 import { DriverManager } from '@novastarter/utils';
 import type { Bus } from '../types/class.js';
-import type { BusLocalOptions, BusRedisOptions } from '../types/config.js';
-import { BusLocal } from './local.js';
-import { BusRedis } from './redis.js';
+import type { BusDriverLocalConfig, BusDriverRedisConfig } from '../types/config.js';
+import { BusDriverLocal } from './local.js';
+import { BusDriverRedis } from './redis.js';
 
 /**
  * Bus drivers by the name they are registered under, mapped to the options their constructor takes.
  *
  * The built-in ones are listed here; an application adds a driver of its own with a module augmentation —
- * `declare module '@novastarter/memory' { interface BusDrivers { memcached: MemcachedOptions } }` — so a
+ * `declare module '@novastarter/memory' { interface BusDrivers { nats: BusDriverNatsConfig } }` — so a
  * location's `options` are checked against the driver it names.
  */
 export interface BusDrivers {
-	/** BusLocal. */
-	local: BusLocalOptions;
-	/** BusRedis. */
-	redis: BusRedisOptions;
+	/** {@link BusDriverLocal}. */
+	local: BusDriverLocalConfig;
+	/** {@link BusDriverRedis}. */
+	redis: BusDriverRedisConfig;
 }
 
 /**
- * Registry of named message buss — locations — and the driver instance behind each.
+ * Registry of named message buses — locations — and the driver instance behind each.
  *
  * The {@link DriverManager} of the kit for the message bus: the built-in drivers (`local`, `redis`) are registered on
  * construction, so the application only registers its locations, with the options it read from its own configuration;
@@ -48,7 +48,7 @@ export class BusManager extends DriverManager<Bus, BusDrivers> {
 
 		// 1. The drivers of the package are known up front; registering them here spares every application the same
 		//    lines, and a replacement under the same name still wins
-		this.registerDriver('local', BusLocal);
-		this.registerDriver('redis', BusRedis);
+		this.registerDriver('local', BusDriverLocal);
+		this.registerDriver('redis', BusDriverRedis);
 	}
 }

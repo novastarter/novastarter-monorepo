@@ -1,12 +1,8 @@
-import { createPrivateKey } from 'node:crypto';
-import {
-	type PushDriver,
-	type PushMessage,
-	type PushPlatform,
-	type PushResult,
-	PushTargetGoneError,
-} from '@novastarter/push';
-import { ApnsClient, ApnsError, Errors, Host, Notification, type NotificationOptions, Priority } from 'apns2';
+import type { PushDriver, PushMessage, PushPlatform, PushResult } from '@novastarter/push';
+import { ApnsClient, Host } from 'apns2';
+import { assertSigningKey } from './assert-signing-key.js';
+import { describeError } from './describe-error.js';
+import { toApnsNotification } from './to-apns-notification.js';
 
 /**
  * The part of the APNs client the driver uses; the whole client satisfies it, and so does a test double.
@@ -51,127 +47,6 @@ declare module '@novastarter/push' {
 		apns: PushDriverApnsConfig;
 	}
 }
-
-/**
- * APNs reasons that mean the device token is dead: the app was deleted, the token belongs to another app, or the
- * token never was one.
- *
- * @defaultValue `Unregistered`, `BadDeviceToken`, `DeviceTokenNotForTopic`
- */
-export const GONE_REASONS: ReadonlySet<string> = new Set([
-	Errors.unregistered,
-	Errors.badDeviceToken,
-	Errors.deviceTokenNotForTopic,
-]);
-
-/**
- * Longest `apns-collapse-id` APNs accepts.
- *
- * @defaultValue 64 bytes.
- */
-export const COLLAPSE_ID_MAX_LENGTH = 64;
-
-/**
- * The APNs priority of a message's urgency: `high` wakes the device now, `normal` lets APNs batch, the low ones wait
- * for a power-friendly moment.
- *
- * @param urgency - The message's urgency.
- * @returns APNs's 10, 5 or 1.
- */
-export const toApnsPriority = (urgency: PushMessage['urgency']): Priority => {
-	// 1. Three levels on Apple's side for four on ours: both low ones wait for a power-friendly moment
-	if (urgency === 'high') return Priority.immediate;
-	if (urgency === 'low' || urgency === 'very-low') return Priority.low;
-
-	return Priority.throttled;
-};
-
-/**
- * Translate a message into the APNs notification for its token.
- *
- * The title and body go under `aps.alert`; the click target, the image and the custom pairs are top-level keys of
- * the payload, for the app to read (`url`, `image`, then `data`); an image sets `mutable-content` so the app's
- * notification service extension can attach it. The tag is the collapse id, the ttl the expiration.
- *
- * @param message - Ours, with a token.
- * @param config - The location's topic, ttl and sound.
- * @param now - The clock, for the expiration; the current time unless given.
- * @returns The notification.
- */
-export const toApnsNotification = (
-	message: PushMessage,
-	config: Pick<PushDriverApnsConfig, 'topic' | 'ttl' | 'sound'>,
-	now: Date = new Date(),
-): Notification => {
-	// 1. The message's own ttl wins over the location's; the custom pairs carry the click target and the image
-	const ttl = message.ttl ?? config.ttl;
-	const sound = config.sound ?? 'default';
-
-	const data = {
-		...(message.data ?? {}),
-		...(message.url !== undefined ? { url: message.url } : {}),
-		...(message.image !== undefined ? { image: message.image } : {}),
-	};
-
-	// 2. `apns-expiration` is an absolute Unix time; `0` means "deliver now or drop". The alert's body is required by
-	//    the client's types; an empty one shows the title alone
-	const options: NotificationOptions = {
-		type: 'alert',
-		topic: config.topic,
-		alert: { title: message.title, body: message.body ?? '' },
-		priority: toApnsPriority(message.urgency),
-		...(ttl !== undefined ? { expiration: ttl > 0 ? Math.floor(now.getTime() / 1000) + ttl : 0 } : {}),
-		...(message.tag !== undefined ? { collapseId: message.tag.slice(0, COLLAPSE_ID_MAX_LENGTH) } : {}),
-		...(sound ? { sound } : {}),
-		...(message.image !== undefined ? { mutableContent: true } : {}),
-		...(Object.keys(data).length > 0 ? { data } : {}),
-	};
-
-	return new Notification(message.token as string, options);
-};
-
-/**
- * Turn what the SDK threw into the error `sendPush()` expects.
- *
- * @param error - The SDK's `ApnsError`, or whatever the network threw.
- * @returns A `PushTargetGoneError` for a dead token, an error naming APNs's status and reason otherwise.
- */
-export const describeError = (error: unknown): Error => {
-	// 1. A refusal by APNs: the reason says whether the token is gone
-	if (error instanceof ApnsError) {
-		if (GONE_REASONS.has(error.reason)) {
-			return new PushTargetGoneError({ platform: 'apns', reason: error.reason });
-		}
-
-		return new Error(`APNs ${error.statusCode} ${error.reason}`, { cause: error });
-	}
-
-	// 2. Anything else — the network, a bug — as is, prefixed
-	return new Error(`APNs: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-};
-
-/**
- * Check an APNs auth key: a PEM private key on the P-256 curve, which ES256 — the only algorithm APNs takes —
- * signs with.
- *
- * @param pem - The key as given.
- * @throws Error when the PEM does not parse or is not a P-256 EC key.
- */
-export const assertSigningKey = (pem: string): void => {
-	let key;
-
-	// 1. A key that does not parse is reported by the option's name, the parser's complaint as the cause
-	try {
-		key = createPrivateKey(pem);
-	} catch (error) {
-		throw new Error('The apns push driver got a "signingKey" that is not a PEM private key', { cause: error });
-	}
-
-	// 2. An RSA key or another curve would produce a JWT APNs answers `InvalidProviderToken` to
-	if (key.asymmetricKeyType !== 'ec' || key.asymmetricKeyDetails?.namedCurve !== 'prime256v1') {
-		throw new Error('The apns push driver needs a P-256 EC key (an APNs auth key, .p8) as "signingKey"');
-	}
-};
 
 /**
  * Driver for the [Apple Push Notification service](https://developer.apple.com/documentation/usernotifications),

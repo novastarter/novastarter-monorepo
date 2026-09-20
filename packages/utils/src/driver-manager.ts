@@ -49,9 +49,9 @@ export type LocationConfig<Drivers extends object> = {
  * @typeParam Drivers - Driver names mapped to the options their constructor takes.
  * @example
  * ```ts
- * const storage = new DriverManager<Driver, { s3: DriverS3Config; local: DriverLocalConfig }>();
+ * const storage = new DriverManager<StorageDriver, { s3: StorageDriverS3Config; local: StorageDriverLocalConfig }>();
  *
- * storage.registerDriver('s3', DriverS3);
+ * storage.registerDriver('s3', StorageDriverS3);
  * storage.registerLocation('uploads', {
  * 	driver: 's3',
  * 	options: {

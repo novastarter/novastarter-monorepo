@@ -1,12 +1,13 @@
 {
 	"name": "@novastarter/types",
 	"version": "0.1.0",
-	"description": "Shared types for Nova",
+	"description": "Shared types for Novastarter",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
 		"directory": "packages/types"
 	},
+	"sideEffects": false,
 	"type": "module",
 	"exports": {
 		".": "./dist/index.js",
@@ -17,13 +18,18 @@
 		"dist"
 	],
 	"scripts": {
-		"build": "tsdown --dts",
-		"dev": "tsdown --watch",
-		"check-types": "tsc --noEmit -p tsconfig.json"
+		"build": "tsdown src/index.ts --dts",
+		"dev": "tsdown src/index.ts --dts --watch",
+		"check-types": "tsc --noEmit -p tsconfig.json",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage"
 	},
 	"devDependencies": {
 		"@novastarter/tsconfig": "workspace:*",
+		"@types/node": "catalog:",
+		"@vitest/coverage-v8": "catalog:",
+		"tsdown": "catalog:",
 		"typescript": "catalog:",
-		"tsdown": "catalog:"
+		"vitest": "catalog:"
 	}
 }

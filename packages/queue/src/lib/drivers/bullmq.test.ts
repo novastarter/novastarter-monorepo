@@ -1,5 +1,5 @@
 /**
- * Tests of `queue/lib/providers/bullmq` and `create-worker` with `bullmq` and the Redis client of
+ * Tests of `queue/lib/drivers/bullmq` and `create-worker` with `bullmq` and the Redis client of
  * `@novastarter/redis` mocked.
  */
 import { EventEmitter } from 'node:events';
@@ -10,7 +10,7 @@ import { _contracts, registerJob } from '../../contracts/index.js';
 import { createWorker, JobTimeoutError } from '../create-worker.js';
 import { defineJob } from '../define-job.js';
 import { _cache, useQueue } from '../use-queue.js';
-import { DEFAULT_REMOVE_ON_FAIL, QueueBullmq, toJobsOptions } from './bullmq.js';
+import { DEFAULT_REMOVE_ON_FAIL, QueueDriverBullmq, toJobsOptions } from './bullmq.js';
 
 /**
  * Fake of BullMQ's `Queue`: records what was added.
@@ -101,33 +101,33 @@ describe('toJobsOptions', () => {
 	});
 });
 
-describe('QueueBullmq', () => {
+describe('QueueDriverBullmq', () => {
 	test('Opens one queue per name, adds the job under its action and closes them all', async () => {
 		const telemetry = { tracer: {}, contextManager: {} };
 
-		const provider = new QueueBullmq({
+		const driver = new QueueDriverBullmq({
 			connection: { host: 'redis' },
 			prefix: 'acme',
 			telemetry: telemetry as never,
 			logger: logger as any,
 		});
 
-		// 1. A URL or options open a client of the provider's own, pinned to what BullMQ requires
+		// 1. A URL or options open a client of the driver's own, pinned to what BullMQ requires
 		expect(createRedis).toHaveBeenCalledWith({ host: 'redis' }, { maxRetriesPerRequest: null });
-		expect(provider.connection).toMatchObject({ config: { host: 'redis' } });
+		expect(driver.connection).toMatchObject({ config: { host: 'redis' } });
 
-		const first = await provider.enqueue(contract, { value: 'a' }, contract.options, 'id-1');
-		const second = await provider.enqueue(contract, { value: 'b' }, { ...contract.options, delay: 50 });
+		const first = await driver.enqueue(contract, { value: 'a' }, contract.options, 'id-1');
+		const second = await driver.enqueue(contract, { value: 'b' }, { ...contract.options, delay: 50 });
 
 		expect(first).toStrictEqual({ id: 'id-1', name: 'test.echo', queue: 'test' });
 		expect(second).toStrictEqual({ id: 'generated', name: 'test.echo', queue: 'test' });
 
 		expect(FakeQueue.instances).toHaveLength(1);
 
-		// 2. The queue opens with the client, the prefix and the telemetry add-on of the provider
+		// 2. The queue opens with the client, the prefix and the telemetry add-on of the driver
 		expect(FakeQueue.instances[0]).toMatchObject({
 			name: 'test',
-			opts: { connection: provider.connection, prefix: 'acme', telemetry },
+			opts: { connection: driver.connection, prefix: 'acme', telemetry },
 		});
 
 		expect(FakeQueue.instances[0]!.add).toHaveBeenNthCalledWith(
@@ -148,26 +148,26 @@ describe('QueueBullmq', () => {
 		FakeQueue.instances[0]!.emit('error', new Error('down'));
 		expect(logger.error).toHaveBeenCalledWith(expect.any(Error), 'Queue "test" connection error');
 
-		await provider.close();
+		await driver.close();
 		expect(FakeQueue.instances[0]!.close).toHaveBeenCalled();
-		expect(provider.connection.quit).toHaveBeenCalled();
+		expect(driver.connection.quit).toHaveBeenCalled();
 	});
 
 	test('Uses a given client as is and leaves it open', async () => {
 		const client = { quit: vi.fn(async () => 'OK') };
-		const provider = new QueueBullmq({ connection: client as never, logger: logger as any });
+		const driver = new QueueDriverBullmq({ connection: client as never, logger: logger as any });
 
 		expect(createRedis).not.toHaveBeenCalled();
-		expect(provider.connection).toBe(client);
+		expect(driver.connection).toBe(client);
 
-		await provider.close();
+		await driver.close();
 		expect(client.quit).not.toHaveBeenCalled();
 	});
 
 	test('Reports the counts of the given queues, zero for the states BullMQ leaves out', async () => {
-		const provider = new QueueBullmq({ connection: { host: 'redis' }, logger: logger as any });
+		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as any });
 
-		await expect(provider.stats(['test', 'mail'])).resolves.toStrictEqual([
+		await expect(driver.stats(['test', 'mail'])).resolves.toStrictEqual([
 			{ name: 'test', counts: { waiting: 3, active: 1, delayed: 0, failed: 2, completed: 0 } },
 			{ name: 'mail', counts: { waiting: 3, active: 1, delayed: 0, failed: 2, completed: 0 } },
 		]);
@@ -182,7 +182,7 @@ describe('QueueBullmq', () => {
 			'completed',
 		);
 
-		await provider.close();
+		await driver.close();
 	});
 });
 
@@ -216,7 +216,7 @@ describe('createWorker', () => {
 		// 1. The worker shares the location's client, prefix and telemetry with the producer of the process
 		expect(FakeWorker.instances[0]).toMatchObject({
 			name: 'test',
-			opts: { connection: (useQueue().location('test') as QueueBullmq).connection, prefix: 'acme', telemetry },
+			opts: { connection: (useQueue().location('test') as QueueDriverBullmq).connection, prefix: 'acme', telemetry },
 		});
 
 		await expect(
@@ -225,7 +225,7 @@ describe('createWorker', () => {
 				vi.fn(async () => {}),
 				{ logger: logger as any },
 			),
-		).rejects.toThrow('Queue "other" runs on the "local" driver; a worker needs a "bullmq" location');
+		).rejects.toThrow('Queue "other" is not on a "bullmq" location; a worker needs one');
 	});
 
 	test('Runs the processor with the rebuilt name and context, logging completions and failures', async () => {

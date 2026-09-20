@@ -67,9 +67,9 @@ await useLimiter().location('api').consume(ip);
 A standalone instance, outside the managers — the driver classes are exported:
 
 ```ts
-import { KvLocal } from '@novastarter/memory';
+import { KvDriverLocal } from '@novastarter/memory';
 
-const kv = new KvLocal({ maxKeys: 500 });
+const kv = new KvDriverLocal({ maxKeys: 500 });
 
 await kv.set('my-key', 'my-value');
 ```
@@ -79,11 +79,11 @@ A driver of the application's own joins a manager once it is added to the driver
 ```ts
 declare module '@novastarter/memory' {
 	interface KvDrivers {
-		memcached: MemcachedOptions;
+		memcached: KvDriverMemcachedConfig;
 	}
 }
 
-useKv().registerDriver('memcached', KvMemcached);
+useKv().registerDriver('memcached', KvDriverMemcached);
 ```
 
 ## Kv

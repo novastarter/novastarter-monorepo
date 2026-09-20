@@ -9,7 +9,7 @@ import { InvalidCredentialsError, InvalidPayloadError } from '@novastarter/error
 import { describe, expect, test } from 'vitest';
 import type { LsSubscriptionAttributes, LsSubscriptionInvoiceAttributes, LsWebhookPayload } from '../types.js';
 import { type ApiFetch, LemonSqueezyApi, LemonSqueezyApiError } from './api.js';
-import { DriverLemonSqueezy } from './driver.js';
+import { PaymentsDriverLemonSqueezy } from './driver.js';
 import { deliveryIdOf, toEvent } from './to-event.js';
 import { toInvoice } from './to-invoice.js';
 import { toMetadata } from './to-metadata.js';
@@ -121,7 +121,7 @@ const customer = {
 const setup = (responses: { status?: number; body?: unknown }[]) => {
 	const { fetch, calls } = fakeFetch(responses);
 
-	const driver = new DriverLemonSqueezy({
+	const driver = new PaymentsDriverLemonSqueezy({
 		apiKey: 'lemon-key',
 		webhookSecret: WEBHOOK_SECRET,
 		storeId: 12345,
@@ -173,11 +173,15 @@ describe('verifySignature', () => {
 	});
 });
 
-describe('DriverLemonSqueezy', () => {
+describe('PaymentsDriverLemonSqueezy', () => {
 	test('Refuses to start without a key, a webhook secret or a store', () => {
-		expect(() => new DriverLemonSqueezy({ apiKey: '', webhookSecret: 's', storeId: 1 })).toThrow('"apiKey"');
-		expect(() => new DriverLemonSqueezy({ apiKey: 'k', webhookSecret: '', storeId: 1 })).toThrow('"webhookSecret"');
-		expect(() => new DriverLemonSqueezy({ apiKey: 'k', webhookSecret: 's', storeId: '' })).toThrow('"storeId"');
+		expect(() => new PaymentsDriverLemonSqueezy({ apiKey: '', webhookSecret: 's', storeId: 1 })).toThrow('"apiKey"');
+
+		expect(() => new PaymentsDriverLemonSqueezy({ apiKey: 'k', webhookSecret: '', storeId: 1 })).toThrow(
+			'"webhookSecret"',
+		);
+
+		expect(() => new PaymentsDriverLemonSqueezy({ apiKey: 'k', webhookSecret: 's', storeId: '' })).toThrow('"storeId"');
 	});
 
 	test('Creates a customer in the store', async () => {

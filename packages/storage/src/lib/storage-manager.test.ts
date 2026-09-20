@@ -1,8 +1,11 @@
-import { afterEach, describe, expect, test, vi } from 'vitest';
-import { _cache, StorageManager, useStorage } from './index.js';
+/**
+ * Tests of `storage/lib/storage-manager`.
+ */
+import { describe, expect, test, vi } from 'vitest';
+import { StorageManager } from './storage-manager.js';
 
 // The test driver joins the driver map the way a driver package does, so its registrations type-check
-declare module './index.js' {
+declare module './storage-manager.js' {
 	interface StorageDrivers {
 		'test-driver': Record<string, unknown>;
 	}
@@ -88,31 +91,5 @@ describe('#location', () => {
 		const driverInstance = manager.location('test-location');
 
 		expect(driverInstance).toBeInstanceOf(mockDriver);
-	});
-});
-
-describe('useStorage', () => {
-	afterEach(() => {
-		_cache.storage = undefined;
-	});
-
-	test('Returns the same empty manager on every call', () => {
-		const first = useStorage();
-
-		expect(first).toBeInstanceOf(StorageManager);
-		expect(useStorage()).toBe(first);
-	});
-
-	test('Shares the registrations with every later caller', () => {
-		const mockDriver = vi.fn();
-
-		useStorage().registerDriver('test-driver', mockDriver);
-
-		useStorage().registerLocation('uploads', {
-			driver: 'test-driver',
-			options: {},
-		});
-
-		expect(useStorage().location('uploads')).toBe(useStorage().location('uploads'));
 	});
 });

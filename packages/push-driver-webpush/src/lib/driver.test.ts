@@ -4,7 +4,10 @@
 import { PushTargetGoneError } from '@novastarter/push';
 import { describe, expect, test, vi } from 'vitest';
 import webpush, { WebPushError } from 'web-push';
-import defaultExport, { describeError, PushDriverWebPush, toRequestOptions, toTopic } from './index.js';
+import defaultExport from '../index.js';
+import { describeError } from './describe-error.js';
+import { PushDriverWebPush } from './driver.js';
+import { toRequestOptions, toTopic } from './to-request-options.js';
 
 const keys = webpush.generateVAPIDKeys();
 const subject = 'mailto:ops@example.com';
