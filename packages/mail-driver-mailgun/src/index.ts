@@ -1,0 +1,254 @@
+import {
+	bareMailAddress,
+	formatMailAddress,
+	type MailAttachment,
+	type MailDriver,
+	type MailMessage,
+	type MailResult,
+	readAttachment,
+	toMailAddressList,
+} from '@novastarter/mail';
+import Mailgun from 'mailgun.js';
+import type { Interfaces, MailgunMessageData } from 'mailgun.js/definitions';
+
+/**
+ * Options accepted by {@link MailDriverMailgun}.
+ */
+export type MailDriverMailgunConfig = {
+	/** Private API key from the Mailgun dashboard. */
+	apiKey: string;
+	/** Sending domain the messages go out from (`mg.example.com`). */
+	domain: string;
+	/**
+	 * API host: `api.mailgun.net` (the default) for the US region, `api.eu.mailgun.net` for the EU one. A full URL
+	 * (`http://localhost:8080`) is taken as is, for a local stand-in of the API.
+	 */
+	host?: string | undefined;
+	/** Accept the messages without delivering them — Mailgun's test mode (`o:testmode`). */
+	testMode?: boolean | undefined;
+	/** Request timeout in milliseconds; the SDK's default unless given. */
+	timeout?: number | undefined;
+};
+
+/**
+ * Registers the driver's options in the map of `@novastarter/mail`, so a location naming `mailgun` has its options
+ * checked against {@link MailDriverMailgunConfig}.
+ */
+declare module '@novastarter/mail' {
+	interface MailDrivers {
+		mailgun: MailDriverMailgunConfig;
+	}
+}
+
+/**
+ * API host used when the location names none.
+ *
+ * @defaultValue `api.mailgun.net`, the US region.
+ */
+export const DEFAULT_MAILGUN_HOST = 'api.mailgun.net';
+
+/**
+ * A file the way Mailgun's `attachment` / `inline` form fields take it.
+ */
+export type MailgunFile = { filename: string; data: Buffer; contentType?: string };
+
+/**
+ * An attachment the way Mailgun takes it: the bytes and a filename.
+ *
+ * An inline image is referenced from the html as `cid:<filename>` on Mailgun, so the content id becomes the
+ * filename of the `inline` entry.
+ *
+ * @param attachment - Ours.
+ * @returns Mailgun's file.
+ * @throws Error when the attachment has neither content nor a path to read.
+ */
+export const toMailgunFile = async (attachment: MailAttachment): Promise<MailgunFile> => {
+	// 1. Mailgun takes the bytes in the multipart body; a path is read here rather than streamed, like the siblings do
+	const data = await readAttachment(attachment);
+
+	// 2. The content id stands in for the filename, which is how Mailgun matches `cid:` references
+	return {
+		filename: attachment.cid ?? attachment.filename,
+		data,
+		...(attachment.contentType !== undefined ? { contentType: attachment.contentType } : {}),
+	};
+};
+
+/**
+ * Translate a message into the payload of Mailgun's `messages.create()`.
+ *
+ * The category and the tags become Mailgun tags (`o:tag`), which the dashboard and the stats group by; the reply-to
+ * and the custom headers go as `h:` fields; attachments with a content id go to `inline`, the rest to `attachment`.
+ *
+ * @param message - Ours, with `from` set (`sendMail()` fills it in).
+ * @param testMode - Turn Mailgun's test mode on for this message.
+ * @returns Mailgun's.
+ * @throws Error when `from` is missing — Mailgun requires it.
+ */
+export const toMailgunMessage = async (message: MailMessage, testMode = false): Promise<MailgunMessageData> => {
+	// 1. The API refuses a message without a sender; say so before the request goes out
+	if (!message.from) {
+		throw new Error('Mailgun needs a "from" address');
+	}
+
+	// 2. Recipients as `Name <address>` strings, the form Mailgun parses
+	const data: MailgunMessageData = {
+		from: formatMailAddress(message.from),
+		to: toMailAddressList(message.to).map(formatMailAddress),
+		subject: message.subject,
+		'o:tag': [message.category ?? 'transactional', ...(message.tags ?? [])],
+		...(message.html !== undefined ? { html: message.html } : {}),
+		...(message.text !== undefined ? { text: message.text } : {}),
+		...(message.cc ? { cc: message.cc.map(formatMailAddress) } : {}),
+		...(message.bcc ? { bcc: message.bcc.map(formatMailAddress) } : {}),
+		...(message.replyTo ? { 'h:Reply-To': formatMailAddress(message.replyTo) } : {}),
+		...(testMode ? { 'o:testmode': true } : {}),
+	} as MailgunMessageData;
+
+	// 3. Any custom header is an `h:` field on Mailgun
+	for (const [name, value] of Object.entries(message.headers ?? {})) {
+		data[`h:${name}`] = value;
+	}
+
+	// 4. Inline files (content id) apart from regular attachments
+	if (message.attachments?.length) {
+		const files = await Promise.all(
+			message.attachments.map(async (attachment) => ({
+				inline: attachment.cid !== undefined,
+				file: await toMailgunFile(attachment),
+			})),
+		);
+
+		const inline = files.filter((entry) => entry.inline).map((entry) => entry.file);
+		const regular = files.filter((entry) => !entry.inline).map((entry) => entry.file);
+
+		if (regular.length) data['attachment'] = regular;
+		if (inline.length) data['inline'] = inline;
+	}
+
+	return data;
+};
+
+/**
+ * Re-throw an error of the SDK with the provider named, the original as the cause.
+ *
+ * @param error - What `mailgun.js` threw — its `APIError` carries the status and Mailgun's message.
+ * @returns Never; the type lets it sit in a `.catch()`.
+ * @throws Always.
+ */
+const rethrowMailgunError = (error: unknown): never => {
+	// 1. The SDK's message already names the status and Mailgun's reason; only the provider is added
+	const details = error instanceof Error ? error.message : String(error);
+
+	throw new Error(`Mailgun: ${details}`, { cause: error });
+};
+
+/**
+ * Driver for [Mailgun](https://www.mailgun.com), through the official `mailgun.js` SDK.
+ *
+ * The SDK is called directly, the way the other API drivers of the kit do, so the tags and the test mode reach
+ * Mailgun and no nodemailer transport package is needed.
+ *
+ * @example
+ * ```ts
+ * useMail().registerDriver('mailgun', MailDriverMailgun);
+ * useMail().registerLocation('main', {
+ * 	driver: 'mailgun',
+ * 	options: {
+ * 		apiKey: env['MAIL_MAILGUN_API_KEY'],
+ * 		domain: 'mg.example.com',
+ * 		host: 'api.eu.mailgun.net',
+ * 	},
+ * });
+ * ```
+ */
+export class MailDriverMailgun implements MailDriver {
+	/**
+	 * Mailgun's client, bound to the location's key and region.
+	 *
+	 * @internal
+	 */
+	private readonly client: Interfaces.IMailgunClient;
+
+	/**
+	 * Sending domain every message goes out from.
+	 *
+	 * @internal
+	 */
+	private readonly domain: string;
+
+	/**
+	 * Whether every message is sent in test mode.
+	 *
+	 * @internal
+	 */
+	private readonly testMode: boolean;
+
+	/**
+	 * Create a driver on a client of its own for the given key, region and domain.
+	 *
+	 * @param config - API key, sending domain, region host and test mode.
+	 * @throws Error without an API key or a domain.
+	 */
+	constructor(config: MailDriverMailgunConfig) {
+		// 1. Both the key and the domain are needed for a request; a missing one is reported by the options' names
+		if (!config.apiKey || !config.domain) {
+			throw new Error('The mailgun mail driver needs "apiKey" and "domain"');
+		}
+
+		// 2. The SDK takes a FormData implementation; Node's global one does, no `form-data` package needed
+		const host = config.host || DEFAULT_MAILGUN_HOST;
+
+		this.client = new Mailgun(FormData).client({
+			username: 'api',
+			key: config.apiKey,
+			url: /^https?:\/\//.test(host) ? host : `https://${host}`,
+			...(config.timeout !== undefined ? { timeout: config.timeout } : {}),
+		});
+
+		this.domain = config.domain;
+		this.testMode = Boolean(config.testMode);
+	}
+
+	/**
+	 * Send through the Mailgun Messages API.
+	 *
+	 * @param message - Rendered message.
+	 * @returns Mailgun's message id (without the angle brackets) and its `Queued.` line; every recipient as accepted,
+	 * since the API takes all or nothing.
+	 * @throws Error carrying Mailgun's status and details when the API refuses; the SDK's error is the cause.
+	 */
+	async send(message: MailMessage): Promise<MailResult> {
+		const data = await toMailgunMessage(message, this.testMode);
+
+		// 1. The SDK throws its `APIError` on any non-2xx; wrapped so the log names the provider
+		const result = await this.client.messages.create(this.domain, data).catch(rethrowMailgunError);
+
+		// 2. Mailgun takes a message whole or refuses it, so every recipient counts as accepted
+		return {
+			messageId: result.id?.replace(/^<|>$/g, ''),
+			accepted: toMailAddressList(message.to).map(bareMailAddress),
+			rejected: [],
+			response: result.message,
+		};
+	}
+
+	/**
+	 * Check the key and the domain without sending: the domain has to exist on the account and be active.
+	 *
+	 * @throws Error when the API refuses the key, does not know the domain, or the domain is not active.
+	 */
+	async verify(): Promise<void> {
+		const domain = await this.client.domains.get(this.domain).catch(rethrowMailgunError);
+
+		// 1. An unverified domain sends nothing; Mailgun answers 200 for it all the same
+		if (domain.state !== 'active') {
+			throw new Error(`Mailgun domain "${this.domain}" is ${domain.state}, not active`);
+		}
+	}
+}
+
+/**
+ * Default export for consumers that import the driver without a named binding.
+ */
+export default MailDriverMailgun;

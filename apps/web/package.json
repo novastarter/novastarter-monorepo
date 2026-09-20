@@ -12,7 +12,9 @@
 	},
 	"dependencies": {
 		"@novastarter/env": "workspace:*",
+		"@novastarter/errors": "workspace:*",
 		"@novastarter/logger": "workspace:*",
+		"@novastarter/mail": "workspace:*",
 		"@novastarter/memory": "workspace:*",
 		"@novastarter/queue": "workspace:*",
 		"@novastarter/redis": "workspace:*",
