@@ -6,4 +6,5 @@
  */
 export * from './error.js';
 export * from './events.js';
+export * from './filter.js';
 export * from './storage.js';

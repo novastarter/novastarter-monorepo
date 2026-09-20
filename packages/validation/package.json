@@ -1,0 +1,42 @@
+{
+	"name": "@novastarter/validation",
+	"version": "0.1.0",
+	"description": "Validate a payload against filter rules and get structured per-field errors back",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/novastarter/novastarter-monorepo.git",
+		"directory": "packages/validation"
+	},
+	"sideEffects": false,
+	"type": "module",
+	"exports": {
+		".": "./dist/index.js",
+		"./package.json": "./package.json"
+	},
+	"main": "dist/index.js",
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsdown src/index.ts --dts",
+		"dev": "tsdown src/index.ts --dts --watch",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage"
+	},
+	"dependencies": {
+		"@novastarter/errors": "workspace:*",
+		"@novastarter/utils": "workspace:*",
+		"joi": "catalog:",
+		"lodash-es": "catalog:"
+	},
+	"devDependencies": {
+		"@novastarter/tsconfig": "workspace:*",
+		"@novastarter/types": "workspace:*",
+		"@types/lodash-es": "catalog:",
+		"@types/node": "catalog:",
+		"@vitest/coverage-v8": "catalog:",
+		"tsdown": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	}
+}
