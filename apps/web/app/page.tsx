@@ -1,4 +1,3 @@
-import { Button } from '@novastarter/ui/button';
 import Image, { type ImageProps } from 'next/image';
 import styles from './page.module.css';
 
@@ -57,9 +56,10 @@ export default function Home() {
             Read our docs
           </a>
         </div>
-        <Button appName="web" className={styles.secondary}>
+        {/* Plain button left over from the removed `@novastarter/ui` demo component; no click handler, so the page stays a Server Component */}
+        <button type="button" className={styles.secondary}>
           Open alert
-        </Button>
+        </button>
       </main>
       <footer className={styles.footer}>
         <a
