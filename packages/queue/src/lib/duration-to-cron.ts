@@ -1,4 +1,4 @@
-import { random } from 'lodash-es';
+import { randomInt } from 'node:crypto';
 
 /**
  * Seconds in an hour.
@@ -36,20 +36,23 @@ const ALLOWED_HOURS: Set<number> = new Set([1, 2, 3, 4, 6, 8, 12]);
  * ```
  */
 export function durationToCron(duration: number): string {
-	const second = random(0, 59);
-	const minute = random(0, 59);
+	// 1. A random phase inside the minute; `randomInt` takes an exclusive upper bound, hence 60 for 0–59
+	const second = randomInt(0, 60);
+	const minute = randomInt(0, 60);
 
+	// 2. Whole hours only, and only the intervals that divide a day evenly, so the rule repeats identically every day
 	if (duration > 0 && duration % HOURS_IN_SECONDS === 0) {
 		const hours = duration / HOURS_IN_SECONDS;
 
 		if (ALLOWED_HOURS.has(hours)) {
-			// hours=1 has no phase offset so default to `*/1`; a phase is written as the standard `offset-23/hours`
-			// range — the `offset/hours` shorthand of the original is a non-standard stepping croner rejects
-			const offset = hours === 1 ? '*' : `${random(0, hours - 1)}-23`;
+			// 3. hours=1 has no phase offset so default to `*/1`; a phase is written as the standard `offset-23/hours`
+			//    range — the `offset/hours` shorthand of the original is a non-standard stepping croner rejects
+			const offset = hours === 1 ? '*' : `${randomInt(0, hours)}-23`;
 			return `${second} ${minute} ${offset}/${hours} * * *`;
 		}
 	}
 
-	const hour = random(0, 23);
+	// 4. Anything else runs once a day at a random hour
+	const hour = randomInt(0, 24);
 	return `${second} ${minute} ${hour} * * *`;
 }

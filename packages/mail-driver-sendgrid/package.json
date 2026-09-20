@@ -7,6 +7,7 @@
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
 		"directory": "packages/mail-driver-sendgrid"
 	},
+	"sideEffects": false,
 	"type": "module",
 	"exports": {
 		".": "./dist/index.js",

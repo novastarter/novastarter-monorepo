@@ -1,8 +1,7 @@
-import type { Env } from '@novastarter/env';
+import type { Logger } from '@novastarter/logger';
 import type { Kv } from '@novastarter/memory';
-import type { Logger } from 'pino';
 import { getSchedules, type ResolvedSchedule } from '../schedules.js';
-import type { EnqueuedJob, JobName } from '../types.js';
+import type { EnqueuedJob, JobName, ScheduleEnv } from '../types.js';
 import { type ScheduledJob, scheduleSynchronizedJob } from './schedule-synchronized-job.js';
 import { validateCron } from './validate-cron.js';
 
@@ -11,7 +10,7 @@ import { validateCron } from './validate-cron.js';
  */
 export interface StartSchedulesOptions {
 	/** Environment the rules and switches are read from. */
-	env: Env;
+	env: ScheduleEnv;
 	/** Store shared by the cluster for the synchronised clocks. */
 	kv: Kv;
 	/** Puts the job on the queue; `enqueue()` of the package, or a stand-in in tests. */

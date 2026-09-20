@@ -7,6 +7,7 @@
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
 		"directory": "packages/queue"
 	},
+	"sideEffects": false,
 	"type": "module",
 	"exports": {
 		".": "./dist/index.js",
@@ -25,7 +26,6 @@
 	},
 	"dependencies": {
 		"@novastarter/emitter": "workspace:*",
-		"@novastarter/env": "workspace:*",
 		"@novastarter/errors": "workspace:*",
 		"@novastarter/logger": "workspace:*",
 		"@novastarter/memory": "workspace:*",
@@ -33,25 +33,26 @@
 		"@novastarter/utils": "workspace:*",
 		"@novastarter/validation": "workspace:*",
 		"croner": "catalog:",
-		"lodash-es": "catalog:",
 		"zod": "catalog:"
 	},
 	"peerDependencies": {
-		"bullmq": "catalog:"
+		"bullmq": "catalog:",
+		"ioredis": "catalog:"
 	},
 	"peerDependenciesMeta": {
 		"bullmq": {
+			"optional": true
+		},
+		"ioredis": {
 			"optional": true
 		}
 	},
 	"devDependencies": {
 		"@novastarter/tsconfig": "workspace:*",
-		"@types/lodash-es": "catalog:",
 		"@types/node": "catalog:",
 		"@vitest/coverage-v8": "catalog:",
 		"bullmq": "catalog:",
 		"ioredis": "catalog:",
-		"pino": "catalog:",
 		"tsdown": "catalog:",
 		"typescript": "catalog:",
 		"vitest": "catalog:"

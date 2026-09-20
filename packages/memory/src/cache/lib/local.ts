@@ -1,19 +1,19 @@
-import { type Kv, KvLocal } from '../../kv/index.js';
+import { type Kv, KvDriverLocal } from '../../kv/index.js';
 import type { Lock } from '../../kv/types/lock.js';
 import type { Cache } from '../types/class.js';
-import type { CacheLocalOptions } from '../types/config.js';
+import type { CacheDriverLocalConfig } from '../types/config.js';
 
 /**
- * In-memory cache for a single process, a thin wrapper over `KvLocal`.
+ * In-memory cache for a single process, a thin wrapper over `KvDriverLocal`.
  *
  * @example
  * ```ts
- * const cache = new CacheLocal({ maxKeys: 500 });
+ * const cache = new CacheDriverLocal({ maxKeys: 500 });
  *
  * await cache.set('my-key', 'my-value');
  * ```
  */
-export class CacheLocal implements Cache {
+export class CacheDriverLocal implements Cache {
 	/**
 	 * Underlying key-value store doing the actual work.
 	 *
@@ -26,9 +26,9 @@ export class CacheLocal implements Cache {
 	 *
 	 * @param config - Local configuration.
 	 */
-	constructor(config: CacheLocalOptions) {
+	constructor(config: CacheDriverLocalConfig) {
 		// 1. The cache reuses the Kv store instead of holding its own map, so both share one implementation
-		this.store = new KvLocal(config);
+		this.store = new KvDriverLocal(config);
 	}
 
 	/**

@@ -1,12 +1,13 @@
 {
 	"name": "@novastarter/storage",
 	"version": "0.0.2",
-	"description": "Object storage abstraction layer for Nova",
+	"description": "Object storage abstraction layer for Novastarter",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
 		"directory": "packages/storage"
 	},
+	"sideEffects": false,
 	"type": "module",
 	"exports": {
 		".": "./dist/index.js",
@@ -24,11 +25,11 @@
 		"test:coverage": "vitest run --coverage"
 	},
 	"dependencies": {
+		"@novastarter/errors": "workspace:*",
 		"@novastarter/utils": "workspace:*"
 	},
 	"devDependencies": {
 		"@novastarter/tsconfig": "workspace:*",
-		"@novastarter/types": "workspace:*",
 		"@types/node": "catalog:",
 		"@vitest/coverage-v8": "catalog:",
 		"tsdown": "catalog:",

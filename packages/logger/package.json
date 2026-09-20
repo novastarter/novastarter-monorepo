@@ -7,6 +7,7 @@
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
 		"directory": "packages/logger"
 	},
+	"sideEffects": false,
 	"type": "module",
 	"exports": {
 		".": "./dist/index.js",
@@ -25,7 +26,6 @@
 	},
 	"dependencies": {
 		"@novastarter/constants": "workspace:*",
-		"@novastarter/memory": "workspace:*",
 		"lodash-es": "catalog:",
 		"nanoid": "catalog:",
 		"pino": "catalog:",

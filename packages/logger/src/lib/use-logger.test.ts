@@ -3,17 +3,16 @@
  *
  * `./create-logger.js` and `./logs-stream.js` are mocked, so these exercise the memoization alone.
  */
-import type { Bus } from '@novastarter/memory';
 import type { Logger } from 'pino';
 import { afterEach, expect, test, vi } from 'vitest';
 import { createLogger } from './create-logger.js';
-import { LogsStream } from './logs-stream.js';
+import { type LogsBus, LogsStream } from './logs-stream.js';
 import { _cache, getHttpLogsStream, getLogsStream, registerLogger, useLogger } from './use-logger.js';
 
 vi.mock('./create-logger.js');
 vi.mock('./logs-stream.js');
 
-const messenger = { publish: vi.fn() } as unknown as Bus;
+const messenger = { publish: vi.fn() } as unknown as LogsBus;
 
 afterEach(() => {
 	vi.resetAllMocks();

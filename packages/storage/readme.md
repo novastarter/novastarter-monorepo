@@ -19,14 +19,14 @@ is the app's typed configuration — the zod schema of the `@novastarter/env` re
 
 ```ts
 import { useStorage } from '@novastarter/storage';
-import { DriverLocal } from '@novastarter/storage-driver-local';
-import { DriverS3 } from '@novastarter/storage-driver-s3';
+import { StorageDriverLocal } from '@novastarter/storage-driver-local';
+import { StorageDriverS3 } from '@novastarter/storage-driver-s3';
 import { env } from './env';
 
 const storage = useStorage();
 
-storage.registerDriver('local', DriverLocal);
-storage.registerDriver('s3', DriverS3);
+storage.registerDriver('local', StorageDriverLocal);
+storage.registerDriver('s3', StorageDriverS3);
 
 storage.registerLocation('default', {
 	driver: 'local',
@@ -85,17 +85,38 @@ if (supportsTus(uploads)) {
 so an unused location never opens a client. `location(name)` throws for a name nobody registered; `hasLocation(name)`
 and `locationNames()` inspect the registry, `instantiated()` lists what was built so far.
 
+## Errors
+
+`stat()` throws `StorageFileNotFoundError` (code `STORAGE_FILE_NOT_FOUND`, status 404) when there is no object at the
+path, whichever backend serves the location. `read()` does the same where the backend refuses the read up front; the
+local driver opens a lazy stream, so a missing file surfaces as an error on the stream instead.
+
+```ts
+import { StorageFileNotFoundError, useStorage } from '@novastarter/storage';
+
+try {
+	const { size } = await useStorage().location('uploads').stat('avatars/ada.png');
+} catch (error) {
+	if (error instanceof StorageFileNotFoundError) return null;
+	throw error;
+}
+```
+
+A driver refuses a missing or invalid option at construction with a plain `Error` naming it:
+`The s3 storage driver needs a "bucket"`.
+
 ## Writing a driver
 
-A driver is a class taking its options in the constructor and implementing `Driver` — or `TusDriver` for resumable
-uploads — from this package; see `@novastarter/storage-driver-local` for the smallest one. Every path a driver gets is
-relative to its configured root and uses forward slashes. The package registers its options in the driver map, so a
-location naming it is type-checked:
+A driver is a class taking its options in the constructor and implementing `StorageDriver` — or `TusDriver` for
+resumable uploads — from this package; see `@novastarter/storage-driver-local` for the smallest one. Every path a driver
+gets is relative to its configured root and uses forward slashes. `stat()` throws `StorageFileNotFoundError` for a
+missing object; a missing option is refused in the constructor with `The <name> storage driver needs a "<option>"`. The
+package registers its options in the driver map, so a location naming it is type-checked:
 
 ```ts
 declare module '@novastarter/storage' {
 	interface StorageDrivers {
-		minio: DriverMinioConfig;
+		minio: StorageDriverMinioConfig;
 	}
 }
 ```

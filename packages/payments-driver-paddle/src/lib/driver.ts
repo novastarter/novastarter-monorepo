@@ -22,9 +22,9 @@ import { toMetadata } from './to-metadata.js';
 import { toSubscription } from './to-subscription.js';
 
 /**
- * Options of {@link DriverPaddle}, as given in the location's `options`.
+ * Options of {@link PaymentsDriverPaddle}, as given in the location's `options`.
  */
-export type DriverPaddleConfig = {
+export type PaymentsDriverPaddleConfig = {
 	/** API key from Paddle → Developer tools → Authentication (`pdl_live_apikey_…` / `pdl_sdbx_apikey_…`). */
 	apiKey: string;
 	/** Secret key of the notification destination (`pdl_ntfset_…`), from Developer tools → Notifications. */
@@ -48,11 +48,11 @@ export type DriverPaddleConfig = {
 
 /**
  * Registers the driver's options in the map of `@novastarter/payments`, so a location naming `paddle` has its
- * options checked against {@link DriverPaddleConfig}.
+ * options checked against {@link PaymentsDriverPaddleConfig}.
  */
 declare module '@novastarter/payments' {
 	interface PaymentsDrivers {
-		paddle: DriverPaddleConfig;
+		paddle: PaymentsDriverPaddleConfig;
 	}
 }
 
@@ -87,7 +87,7 @@ export const PRORATION: Record<NonNullable<UpdateSubscriptionInput['proration']>
  *
  * @example
  * ```ts
- * usePayments().registerDriver('paddle', DriverPaddle);
+ * usePayments().registerDriver('paddle', PaymentsDriverPaddle);
  * usePayments().registerLocation('default', {
  * 	driver: 'paddle',
  * 	options: {
@@ -99,7 +99,7 @@ export const PRORATION: Record<NonNullable<UpdateSubscriptionInput['proration']>
  * });
  * ```
  */
-export class DriverPaddle implements PaymentsDriver {
+export class PaymentsDriverPaddle implements PaymentsDriver {
 	/**
 	 * The `@paddle/paddle-node-sdk` client every request goes through.
 	 *
@@ -128,7 +128,7 @@ export class DriverPaddle implements PaymentsDriver {
 	 * @throws Error without a key or a webhook secret — a deployment that cannot verify webhooks would drift from
 	 * Paddle silently.
 	 */
-	constructor(config: DriverPaddleConfig) {
+	constructor(config: PaymentsDriverPaddleConfig) {
 		// 1. Fail at registration for the two values nothing works without, rather than on the first request
 		if (!config.apiKey) {
 			throw new Error('The paddle payments driver needs an "apiKey"');

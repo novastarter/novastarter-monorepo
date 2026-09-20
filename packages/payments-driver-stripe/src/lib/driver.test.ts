@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
 import Stripe from 'stripe';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { DriverStripe, PRORATION } from './driver.js';
+import { PaymentsDriverStripe, PRORATION } from './driver.js';
 import { toEvent } from './to-event.js';
 import { toInvoice } from './to-invoice.js';
 import { toSubscription } from './to-subscription.js';
@@ -30,7 +30,7 @@ const WEBHOOK_SECRET = 'whsec_test_secret';
  */
 const setup = () => {
 	const client = new Stripe('sk_test_x', { appInfo: { name: 'test' } });
-	const driver = new DriverStripe({ secretKey: 'sk_test_x', webhookSecret: WEBHOOK_SECRET, client });
+	const driver = new PaymentsDriverStripe({ secretKey: 'sk_test_x', webhookSecret: WEBHOOK_SECRET, client });
 
 	return { client, driver };
 };
@@ -43,7 +43,7 @@ const setup = () => {
  * @param secret - The signing secret; the right one unless given.
  * @returns What `parseWebhook` answered.
  */
-const deliver = (driver: DriverStripe, event: Stripe.Event, secret = WEBHOOK_SECRET) => {
+const deliver = (driver: PaymentsDriverStripe, event: Stripe.Event, secret = WEBHOOK_SECRET) => {
 	const payload = JSON.stringify(event);
 	const header = Stripe.webhooks.generateTestHeaderString({ payload, secret });
 
@@ -54,16 +54,16 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-describe('DriverStripe', () => {
+describe('PaymentsDriverStripe', () => {
 	test('Refuses to start without a secret key or a webhook secret', () => {
-		expect(() => new DriverStripe({ secretKey: '', webhookSecret: 'whsec' })).toThrow('"secretKey"');
-		expect(() => new DriverStripe({ secretKey: 'sk', webhookSecret: '' })).toThrow('"webhookSecret"');
+		expect(() => new PaymentsDriverStripe({ secretKey: '', webhookSecret: 'whsec' })).toThrow('"secretKey"');
+		expect(() => new PaymentsDriverStripe({ secretKey: 'sk', webhookSecret: '' })).toThrow('"webhookSecret"');
 	});
 
 	test("Passes the application's appInfo to the client and nothing without one", () => {
 		// 1. The client records what it was built with; the driver neither invents a name nor drops the given one
-		const named = new DriverStripe({ secretKey: 'sk', webhookSecret: 'whsec', appInfo: { name: 'Acme' } });
-		const anonymous = new DriverStripe({ secretKey: 'sk', webhookSecret: 'whsec' });
+		const named = new PaymentsDriverStripe({ secretKey: 'sk', webhookSecret: 'whsec', appInfo: { name: 'Acme' } });
+		const anonymous = new PaymentsDriverStripe({ secretKey: 'sk', webhookSecret: 'whsec' });
 
 		expect(named['client']._appInfo).toMatchObject({ name: 'Acme' });
 		expect(anonymous['client']._appInfo).toBeUndefined();

@@ -15,12 +15,12 @@ configuration — `env` is the app's typed configuration — the zod schema of t
 
 ```ts
 import { useStorage } from '@novastarter/storage';
-import { DriverLocal } from '@novastarter/storage-driver-local';
+import { StorageDriverLocal } from '@novastarter/storage-driver-local';
 import { env } from './env';
 
 const storage = useStorage();
 
-storage.registerDriver('local', DriverLocal);
+storage.registerDriver('local', StorageDriverLocal);
 
 storage.registerLocation('default', {
 	driver: 'local',
@@ -30,7 +30,8 @@ storage.registerLocation('default', {
 });
 ```
 
-Anywhere later: `useStorage().location('uploads').write(path, stream, type)` and the rest of the `Driver` interface.
+Anywhere later: `useStorage().location('uploads').write(path, stream, type)` and the rest of the `StorageDriver`
+contract.
 
 ## Options
 

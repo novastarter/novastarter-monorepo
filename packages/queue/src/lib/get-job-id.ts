@@ -24,7 +24,7 @@ export const JOB_ID_SEPARATOR = '_';
  * @param options - Effective options.
  * @returns The id.
  * @throws Error when a derived or explicit id contains `:`, which BullMQ reserves for its keys — caught here, so the
- * `local` provider of the tests reports it the same way the queue would.
+ * `local` driver of the tests reports it the same way the queue would.
  */
 export const getJobId = (contract: JobContract, payload: unknown, options: JobOptions & EnqueueOptions): string => {
 	const id = deriveJobId(contract, payload, options);

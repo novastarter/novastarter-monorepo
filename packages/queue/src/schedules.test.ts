@@ -1,13 +1,13 @@
 /**
  * Tests of `queue/schedules` and `lib/start-schedules` on the local `Kv` with croner on fake timers.
  */
-import type { Env } from '@novastarter/env';
-import { KvLocal } from '@novastarter/memory';
+import { KvDriverLocal } from '@novastarter/memory';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { startSchedules } from './lib/start-schedules.js';
 import { _schedules, getSchedules, registerSchedule } from './schedules.js';
+import type { ScheduleEnv } from './types.js';
 
-const kv = new KvLocal({});
+const kv = new KvDriverLocal({});
 const logger = { info: vi.fn(), debug: vi.fn(), error: vi.fn() };
 
 beforeEach(() => {
@@ -31,7 +31,7 @@ describe('getSchedules', () => {
 			job: 'test.ping',
 			cron: '*/5 * * * *',
 			payload: { message: 'scheduled ping' },
-			enabled: (env: Env) => env['NODE_ENV'] === 'development',
+			enabled: (env: ScheduleEnv) => env['NODE_ENV'] === 'development',
 		} as never);
 
 		expect(getSchedules({})).toStrictEqual([
@@ -45,8 +45,8 @@ describe('getSchedules', () => {
 		// 3. The rule may be a function of the environment too
 		registerSchedule({
 			job: 'test.ping',
-			cron: (env: Env) => String(env['PING_SCHEDULE']),
-			enabled: (env: Env) => env['PING_ENABLED'] === true,
+			cron: (env: ScheduleEnv) => String(env['PING_SCHEDULE']),
+			enabled: (env: ScheduleEnv) => env['PING_ENABLED'] === true,
 		} as never);
 
 		expect(getSchedules({ PING_SCHEDULE: '0 * * * *', PING_ENABLED: true })).toContainEqual({

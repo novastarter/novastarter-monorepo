@@ -1,6 +1,6 @@
-import { useLogger } from '@novastarter/logger';
-import type { Logger } from 'pino';
-import type { MailDriver, MailMessage, MailResult } from '../../types.js';
+import { type Logger, useLogger } from '@novastarter/logger';
+import type { MailDriver } from '../../driver.js';
+import type { MailMessage, MailResult } from '../../types.js';
 import { bareMailAddress, formatMailAddress, toMailAddressList } from '../format-address.js';
 
 /**

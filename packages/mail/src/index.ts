@@ -1,11 +1,12 @@
 /**
  * Public entry point of `@novastarter/mail`.
  *
- * Outgoing mail in three parts: the driver contract with the built-in `console`, `file`, `sendmail` and `smtp`
- * drivers (vendor SDKs live in the `@novastarter/mail-driver-*` packages), the `MailManager` of `useMail()` mapping
- * named locations to drivers and holding the routes the application registers at start-up, and `sendMail()`, which
- * fills the defaults in and routes a message down a chain of locations.
+ * Outgoing mail in three parts: the {@link MailDriver} contract with the built-in `console`, `file`, `sendmail` and
+ * `smtp` drivers (vendor SDKs live in the `@novastarter/mail-driver-*` packages), the {@link MailManager} of
+ * {@link useMail} mapping named locations to drivers and holding the routes the application registers at start-up,
+ * and {@link sendMail}, which fills the defaults in and routes a message down a chain of locations.
  */
+export * from './driver.js';
 export * from './lib/drivers/index.js';
 export * from './lib/format-address.js';
 export * from './lib/mail-manager.js';

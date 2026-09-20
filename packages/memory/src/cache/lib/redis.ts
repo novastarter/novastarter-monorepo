@@ -1,14 +1,14 @@
-import { type Kv, KvRedis } from '../../kv/index.js';
+import { type Kv, KvDriverRedis } from '../../kv/index.js';
 import type { Lock } from '../../kv/types/lock.js';
-import type { CacheRedisOptions } from '../index.js';
 import type { Cache } from '../types/class.js';
+import type { CacheDriverRedisConfig } from '../types/config.js';
 
 /**
- * Redis-backed cache shared between processes, a thin wrapper over `KvRedis`.
+ * Redis-backed cache shared between processes, a thin wrapper over `KvDriverRedis`.
  *
  * @example
  * ```ts
- * const cache = new CacheRedis({
+ * const cache = new CacheDriverRedis({
  * 	redis: new Redis(),
  * 	namespace: 'app',
  * 	ttl: 60_000,
@@ -17,7 +17,7 @@ import type { Cache } from '../types/class.js';
  * await cache.set('my-key', 'my-value');
  * ```
  */
-export class CacheRedis implements Cache {
+export class CacheDriverRedis implements Cache {
 	/**
 	 * Underlying key-value store doing the actual work.
 	 *
@@ -30,9 +30,9 @@ export class CacheRedis implements Cache {
 	 *
 	 * @param config - Redis configuration.
 	 */
-	constructor(config: CacheRedisOptions) {
+	constructor(config: CacheDriverRedisConfig) {
 		// 1. The cache reuses the Kv store, so serialization, compression and locking live in one place
-		this.store = new KvRedis(config);
+		this.store = new KvDriverRedis(config);
 	}
 
 	/**

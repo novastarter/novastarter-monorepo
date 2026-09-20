@@ -1,9 +1,8 @@
-import { useLogger } from '@novastarter/logger';
+import { type Logger, useLogger } from '@novastarter/logger';
 import type { Job, Worker, WorkerOptions } from 'bullmq';
-import type { Logger } from 'pino';
 import { getJobContract } from '../contracts/index.js';
 import type { JobContext } from '../types.js';
-import { QueueBullmq } from './providers/bullmq.js';
+import { QueueDriverBullmq } from './drivers/bullmq.js';
 import { useQueue } from './use-queue.js';
 
 /**
@@ -95,8 +94,8 @@ export const createWorker = async (
 	//    which is the one place the queue's Redis, prefix and telemetry are known
 	const location = options.connection === undefined ? useQueue().location(queue) : undefined;
 
-	if (location && !(location instanceof QueueBullmq)) {
-		throw new Error(`Queue "${queue}" runs on the "${location.type}" driver; a worker needs a "bullmq" location`);
+	if (location && !(location instanceof QueueDriverBullmq)) {
+		throw new Error(`Queue "${queue}" is not on a "bullmq" location; a worker needs one`);
 	}
 
 	const connection = options.connection ?? location!.connection;

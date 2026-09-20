@@ -8,4 +8,4 @@
 export * from './lib/create-redis.js';
 export * from './lib/redis-manager.js';
 export * from './lib/use-redis.js';
-export * from './types/config.js';
+export * from './types.js';

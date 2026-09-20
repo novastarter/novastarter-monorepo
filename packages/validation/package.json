@@ -26,6 +26,7 @@
 	},
 	"dependencies": {
 		"@novastarter/errors": "workspace:*",
+		"@novastarter/types": "workspace:*",
 		"@novastarter/utils": "workspace:*",
 		"joi": "catalog:",
 		"lodash-es": "catalog:",
@@ -33,7 +34,6 @@
 	},
 	"devDependencies": {
 		"@novastarter/tsconfig": "workspace:*",
-		"@novastarter/types": "workspace:*",
 		"@types/lodash-es": "catalog:",
 		"@types/node": "catalog:",
 		"@vitest/coverage-v8": "catalog:",

@@ -1,6 +1,7 @@
 import type { Limiter } from '@novastarter/memory';
 import { DriverManager } from '@novastarter/utils';
-import type { MailAddress, MailDriver } from '../types.js';
+import type { MailDriver } from '../driver.js';
+import type { MailAddress } from '../types.js';
 import { MailDriverConsole, type MailDriverConsoleConfig } from './drivers/console.js';
 import { MailDriverFile, type MailDriverFileConfig } from './drivers/file.js';
 import { MailDriverSendmail, type MailDriverSendmailConfig } from './drivers/sendmail.js';

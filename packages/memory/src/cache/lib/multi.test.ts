@@ -1,9 +1,9 @@
 import { Redis } from 'ioredis';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { BusRedis } from '../../index.js';
-import { CacheLocal } from './local.js';
-import { CacheMulti } from './multi.js';
-import { CacheRedis } from './redis.js';
+import { BusDriverRedis } from '../../index.js';
+import { CacheDriverLocal } from './local.js';
+import { CacheDriverMulti } from './multi.js';
+import { CacheDriverRedis } from './redis.js';
 
 vi.mock('../../bus/index.js');
 vi.mock('../../utils/index.js');
@@ -11,7 +11,7 @@ vi.mock('./local.js');
 vi.mock('./redis.js');
 vi.mock('ioredis');
 
-let cache: CacheMulti;
+let cache: CacheDriverMulti;
 
 const mockLocalConfig = {
 	maxKeys: 5,
@@ -28,7 +28,7 @@ const mockLocalValue = 'mock-local-value';
 const mockRedisValue = 'mock-redis-value';
 
 beforeEach(() => {
-	cache = new CacheMulti({
+	cache = new CacheDriverMulti({
 		local: mockLocalConfig,
 		redis: mockRedisConfig,
 	});
@@ -43,16 +43,16 @@ afterEach(() => {
 
 describe('constructor', () => {
 	test('Creates local and redis cache handlers', async () => {
-		expect(CacheLocal).toBeCalledWith(mockLocalConfig);
-		expect(cache['local']).toBeInstanceOf(CacheLocal);
+		expect(CacheDriverLocal).toBeCalledWith(mockLocalConfig);
+		expect(cache['local']).toBeInstanceOf(CacheDriverLocal);
 
-		expect(CacheRedis).toBeCalledWith(mockRedisConfig);
-		expect(cache['redis']).toBeInstanceOf(CacheRedis);
+		expect(CacheDriverRedis).toBeCalledWith(mockRedisConfig);
+		expect(cache['redis']).toBeInstanceOf(CacheDriverRedis);
 	});
 
 	test('Creates a redis bus over the L2 connection and namespace', () => {
-		expect(BusRedis).toHaveBeenCalledWith({ redis: mockRedisConfig.redis, namespace: mockRedisConfig.namespace });
-		expect(cache['bus']).toBeInstanceOf(BusRedis);
+		expect(BusDriverRedis).toHaveBeenCalledWith({ redis: mockRedisConfig.redis, namespace: mockRedisConfig.namespace });
+		expect(cache['bus']).toBeInstanceOf(BusDriverRedis);
 	});
 });
 

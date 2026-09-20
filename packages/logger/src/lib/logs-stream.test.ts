@@ -4,10 +4,9 @@
  * `nanoid` is mocked for a stable node id and the bus is a stub, so these exercise the shaping of the lines alone.
  */
 import { randomUUID } from 'node:crypto';
-import type { Bus } from '@novastarter/memory';
 import { omit } from 'lodash-es';
 import { afterEach, expect, test, vi } from 'vitest';
-import { LogsStream } from './logs-stream.js';
+import { type LogsBus, LogsStream } from './logs-stream.js';
 
 vi.mock('nanoid', () => ({
 	nanoid: () => {
@@ -17,7 +16,7 @@ vi.mock('nanoid', () => ({
 
 const messenger = {
 	publish: vi.fn(),
-} as unknown as Bus;
+} as unknown as LogsBus;
 
 afterEach(() => {
 	vi.clearAllMocks();

@@ -11,7 +11,7 @@ import {
 	withNamespace,
 } from '../../utils/index.js';
 import type { ExtendedRedis } from '../index.js';
-import { KvRedis, SET_MAX_SCRIPT } from './redis.js';
+import { KvDriverRedis, SET_MAX_SCRIPT } from './redis.js';
 
 vi.mock('ioredis');
 vi.mock('../../utils/index.js');
@@ -25,7 +25,7 @@ let mockBuffer: Buffer;
 let mockCompressedUint8Array: Uint8Array;
 let mockDecompressedUint8Array: Uint8Array;
 let mockValue: string;
-let kv: KvRedis;
+let kv: KvDriverRedis;
 
 beforeEach(() => {
 	mockKey = 'test-key';
@@ -41,7 +41,7 @@ beforeEach(() => {
 
 	mockRedis = new Redis();
 
-	kv = new KvRedis({
+	kv = new KvDriverRedis({
 		namespace: mockNamespace,
 		redis: mockRedis,
 		compression: false,
@@ -68,7 +68,7 @@ describe('constructor', () => {
 	});
 
 	test('Defaults compression settings', () => {
-		const kv = new KvRedis({
+		const kv = new KvDriverRedis({
 			namespace: mockNamespace,
 			redis: mockRedis,
 		});
@@ -92,7 +92,7 @@ describe('constructor', () => {
 	test('Skips defining commands if they already exist on redis', () => {
 		const mockRedis = { defineCommand: vi.fn(), setMax: vi.fn(), release: vi.fn() } as unknown as ExtendedRedis;
 
-		new KvRedis({ redis: mockRedis, namespace: mockNamespace, compression: false });
+		new KvDriverRedis({ redis: mockRedis, namespace: mockNamespace, compression: false });
 
 		expect(mockRedis.defineCommand).not.toHaveBeenCalled();
 	});

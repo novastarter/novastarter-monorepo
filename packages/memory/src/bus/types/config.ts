@@ -3,13 +3,12 @@ import type { Redis } from 'ioredis';
 /**
  * Options of the in-process bus, the `local` driver; it has none.
  */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- the driver takes no options
-export interface BusLocalOptions {}
+export type BusDriverLocalConfig = Record<string, never>;
 
 /**
  * Options of the Redis-backed bus, the `redis` driver.
  */
-export interface BusRedisOptions {
+export type BusDriverRedisConfig = {
 	/**
 	 * Prefix for every channel name in Redis.
 	 */
@@ -20,7 +19,7 @@ export interface BusRedisOptions {
 	 *
 	 * @default true
 	 */
-	compression?: boolean;
+	compression?: boolean | undefined;
 
 	/**
 	 * Minimum byte size of a payload before it is compressed.
@@ -30,10 +29,10 @@ export interface BusRedisOptions {
 	 *
 	 * @default 1000
 	 */
-	compressionMinSize?: number;
+	compressionMinSize?: number | undefined;
 
 	/**
 	 * Existing or new Redis connection to publish through; a duplicate of it is opened for subscribing.
 	 */
 	redis: Redis;
-}
+};

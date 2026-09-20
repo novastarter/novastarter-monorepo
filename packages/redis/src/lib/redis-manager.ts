@@ -1,5 +1,5 @@
 import type { Redis, RedisOptions } from 'ioredis';
-import type { RedisConfig } from '../types/config.js';
+import type { RedisConfig } from '../types.js';
 import { createRedis } from './create-redis.js';
 
 /**

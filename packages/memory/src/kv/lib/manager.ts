@@ -1,21 +1,21 @@
 import { DriverManager } from '@novastarter/utils';
 import type { Kv } from '../types/class.js';
-import type { KvLocalOptions, KvRedisOptions } from '../types/config.js';
-import { KvLocal } from './local.js';
-import { KvRedis } from './redis.js';
+import type { KvDriverLocalConfig, KvDriverRedisConfig } from '../types/config.js';
+import { KvDriverLocal } from './local.js';
+import { KvDriverRedis } from './redis.js';
 
 /**
  * Kv drivers by the name they are registered under, mapped to the options their constructor takes.
  *
  * The built-in ones are listed here; an application adds a driver of its own with a module augmentation —
- * `declare module '@novastarter/memory' { interface KvDrivers { memcached: MemcachedOptions } }` — so a
+ * `declare module '@novastarter/memory' { interface KvDrivers { memcached: KvDriverMemcachedConfig } }` — so a
  * location's `options` are checked against the driver it names.
  */
 export interface KvDrivers {
-	/** KvLocal. */
-	local: KvLocalOptions;
-	/** KvRedis. */
-	redis: KvRedisOptions;
+	/** {@link KvDriverLocal}. */
+	local: KvDriverLocalConfig;
+	/** {@link KvDriverRedis}. */
+	redis: KvDriverRedisConfig;
 }
 
 /**
@@ -48,7 +48,7 @@ export class KvManager extends DriverManager<Kv, KvDrivers> {
 
 		// 1. The drivers of the package are known up front; registering them here spares every application the same
 		//    lines, and a replacement under the same name still wins
-		this.registerDriver('local', KvLocal);
-		this.registerDriver('redis', KvRedis);
+		this.registerDriver('local', KvDriverLocal);
+		this.registerDriver('redis', KvDriverRedis);
 	}
 }

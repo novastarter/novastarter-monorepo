@@ -1,21 +1,21 @@
 import { DriverManager } from '@novastarter/utils';
 import type { Limiter } from '../types/class.js';
-import type { LimiterLocalOptions, LimiterRedisOptions } from '../types/config.js';
-import { LimiterLocal } from './local.js';
-import { LimiterRedis } from './redis.js';
+import type { LimiterDriverLocalConfig, LimiterDriverRedisConfig } from '../types/config.js';
+import { LimiterDriverLocal } from './local.js';
+import { LimiterDriverRedis } from './redis.js';
 
 /**
  * Limiter drivers by the name they are registered under, mapped to the options their constructor takes.
  *
  * The built-in ones are listed here; an application adds a driver of its own with a module augmentation —
- * `declare module '@novastarter/memory' { interface LimiterDrivers { memcached: MemcachedOptions } }` — so a
+ * `declare module '@novastarter/memory' { interface LimiterDrivers { memcached: LimiterDriverMemcachedConfig } }` — so a
  * location's `options` are checked against the driver it names.
  */
 export interface LimiterDrivers {
-	/** LimiterLocal. */
-	local: LimiterLocalOptions;
-	/** LimiterRedis. */
-	redis: LimiterRedisOptions;
+	/** {@link LimiterDriverLocal}. */
+	local: LimiterDriverLocalConfig;
+	/** {@link LimiterDriverRedis}. */
+	redis: LimiterDriverRedisConfig;
 }
 
 /**
@@ -50,7 +50,7 @@ export class LimiterManager extends DriverManager<Limiter, LimiterDrivers> {
 
 		// 1. The drivers of the package are known up front; registering them here spares every application the same
 		//    lines, and a replacement under the same name still wins
-		this.registerDriver('local', LimiterLocal);
-		this.registerDriver('redis', LimiterRedis);
+		this.registerDriver('local', LimiterDriverLocal);
+		this.registerDriver('redis', LimiterDriverRedis);
 	}
 }

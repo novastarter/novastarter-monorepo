@@ -8,7 +8,7 @@ import { InvalidCredentialsError, InvalidPayloadError } from '@novastarter/error
 import { Polar } from '@polar-sh/sdk';
 import { validateEvent } from '@polar-sh/sdk/webhooks';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { DriverPolar } from './driver.js';
+import { PaymentsDriverPolar } from './driver.js';
 import { toEvent } from './to-event.js';
 import { toInvoice } from './to-invoice.js';
 import { toMetadata } from './to-metadata.js';
@@ -61,7 +61,7 @@ const parsed = (name: string) => {
  */
 const setup = () => {
 	const client = new Polar({ accessToken: 'polar_oat_x', server: 'sandbox' });
-	const driver = new DriverPolar({ accessToken: 'polar_oat_x', webhookSecret: WEBHOOK_SECRET, client });
+	const driver = new PaymentsDriverPolar({ accessToken: 'polar_oat_x', webhookSecret: WEBHOOK_SECRET, client });
 
 	return { client, driver };
 };
@@ -70,10 +70,10 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-describe('DriverPolar', () => {
+describe('PaymentsDriverPolar', () => {
 	test('Refuses to start without a token or a webhook secret', () => {
-		expect(() => new DriverPolar({ accessToken: '', webhookSecret: 's' })).toThrow('"accessToken"');
-		expect(() => new DriverPolar({ accessToken: 't', webhookSecret: '' })).toThrow('"webhookSecret"');
+		expect(() => new PaymentsDriverPolar({ accessToken: '', webhookSecret: 's' })).toThrow('"accessToken"');
+		expect(() => new PaymentsDriverPolar({ accessToken: 't', webhookSecret: '' })).toThrow('"webhookSecret"');
 	});
 
 	test('Creates a customer with the organization in its metadata, values as strings', async () => {

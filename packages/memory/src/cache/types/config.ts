@@ -3,22 +3,22 @@ import type { Redis } from 'ioredis';
 /**
  * Options of the in-memory cache, the `local` driver.
  */
-export interface CacheLocalOptions {
+export type CacheDriverLocalConfig = {
 	/**
 	 * Maximum number of keys in the cache; the least recently used key is evicted beyond it.
 	 */
-	maxKeys?: number;
+	maxKeys?: number | undefined;
 
 	/**
 	 * Time-to-live: keys expire after this many milliseconds.
 	 */
-	ttl?: number;
-}
+	ttl?: number | undefined;
+};
 
 /**
  * Options of the Redis-backed cache, the `redis` driver.
  */
-export interface CacheRedisOptions {
+export type CacheDriverRedisConfig = {
 	/**
 	 * Prefix for every key, so several caches can share one Redis instance.
 	 */
@@ -29,7 +29,7 @@ export interface CacheRedisOptions {
 	 *
 	 * @default true
 	 */
-	compression?: boolean;
+	compression?: boolean | undefined;
 
 	/**
 	 * Minimum byte size of a value before it is compressed.
@@ -39,30 +39,30 @@ export interface CacheRedisOptions {
 	 *
 	 * @default 1000
 	 */
-	compressionMinSize?: number;
+	compressionMinSize?: number | undefined;
 
 	/**
 	 * Time-to-live: keys expire after this many milliseconds.
 	 */
-	ttl?: number;
+	ttl?: number | undefined;
 
 	/**
 	 * Existing or new Redis connection to use with this cache.
 	 */
 	redis: Redis;
-}
+};
 
 /**
  * Options of the multi-stage cache, the `multi` driver: a local L1 in front of a Redis L2.
  */
-export interface CacheMultiOptions {
+export type CacheDriverMultiConfig = {
 	/**
 	 * Configuration of the L1 (in-memory) cache.
 	 */
-	local: CacheLocalOptions;
+	local: CacheDriverLocalConfig;
 
 	/**
 	 * Configuration of the L2 (Redis) cache; its connection and namespace are also used for the invalidation bus.
 	 */
-	redis: CacheRedisOptions;
-}
+	redis: CacheDriverRedisConfig;
+};

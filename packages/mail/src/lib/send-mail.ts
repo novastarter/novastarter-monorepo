@@ -1,8 +1,7 @@
 import { useEmitter } from '@novastarter/emitter';
 import { ErrorCode, InvalidPayloadError, isNovastarterError } from '@novastarter/errors';
-import { useLogger } from '@novastarter/logger';
+import { type Logger, useLogger } from '@novastarter/logger';
 import type { Limiter } from '@novastarter/memory';
-import type { Logger } from 'pino';
 import type { MailAddress, MailMessage, MailResult } from '../types.js';
 import { resolveMailChain } from './router.js';
 import { useMail } from './use-mail.js';

@@ -1,9 +1,9 @@
 import type { z } from 'zod';
 
 /**
- * How a job is retried, prioritised and cleaned up; the subset of BullMQ's `JobsOptions` every provider honours.
+ * How a job is retried, prioritised and cleaned up; the subset of BullMQ's `JobsOptions` every driver honours.
  *
- * The `local` provider runs the handler once and ignores the rest, which is fine for development and tests.
+ * The `local` driver runs the handler once and ignores the rest, which is fine for development and tests.
  */
 export interface JobOptions {
 	/** Total tries including the first one. */
@@ -65,7 +65,7 @@ export type JobPayload<Contract extends JobContract> = z.output<Contract['schema
  * What a handler learns about the run besides the payload.
  */
 export interface JobContext {
-	/** Provider's id of this job instance. */
+	/** Driver's id of this job instance. */
 	id: string;
 	/** The job's name. */
 	name: string;
@@ -132,7 +132,7 @@ export interface EnqueueOptions {
 }
 
 /**
- * What `enqueue()` answers: enough to find the job again in logs and in the provider.
+ * What `enqueue()` answers: enough to find the job again in logs and in the driver.
  */
 export interface EnqueuedJob {
 	id: string;
@@ -141,49 +141,13 @@ export interface EnqueuedJob {
 }
 
 /**
- * A backend that takes jobs: runs them inline (`local`) or hands them to workers (`bullmq`).
- *
- * The payload arrives parsed — `enqueue()` checks it against the contract before the provider sees it.
- */
-export interface QueueProvider {
-	/** Which backend this is. */
-	readonly type: 'local' | 'bullmq';
-	/**
-	 * Take a job.
-	 *
-	 * @param contract - The job's contract.
-	 * @param payload - Parsed payload.
-	 * @param options - Effective options: the contract's merged with the call's.
-	 * @param id - Job id, derived by `enqueue()` from `unique` or `jobId`, `undefined` for a fresh one.
-	 */
-	enqueue(
-		contract: JobContract,
-		payload: unknown,
-		options: JobOptions & EnqueueOptions,
-		id?: string,
-	): Promise<EnqueuedJob>;
-	/**
-	 * Release connections and timers; the process is shutting down.
-	 */
-	close(): Promise<void>;
-	/**
-	 * How the queues stand — jobs waiting, active, delayed, failed — for an admin's read-only view. Optional: a
-	 * provider that runs jobs at once has nothing to count.
-	 *
-	 * @param queues - The queue names to report; every registered contract's queue unless given.
-	 * @returns One entry per queue.
-	 */
-	stats?(queues?: readonly string[]): Promise<QueueStats[]>;
-}
-
-/**
- * How one queue stands, as {@link QueueProvider.stats} reports it.
+ * How one queue stands, as {@link QueueDriver.stats} reports it.
  */
 export interface QueueStats {
 	/** The queue's name, `mail`. */
 	name: string;
 	/**
-	 * Jobs by state; a provider reports the states it has. A paused queue keeps its jobs in `waiting` — BullMQ 6 has no
+	 * Jobs by state; a driver reports the states it has. A paused queue keeps its jobs in `waiting` — BullMQ 6 has no
 	 * separate state for them.
 	 */
 	counts: {
@@ -194,3 +158,11 @@ export interface QueueStats {
 		completed: number;
 	};
 }
+
+/**
+ * Variables a schedule reads its cron rule and its switch from.
+ *
+ * Structurally the `Env` of `@novastarter/env`; kept local so the queue does not depend on that package for one
+ * type, and so an application can pass any bag of settings.
+ */
+export type ScheduleEnv = Record<string, unknown>;

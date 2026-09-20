@@ -1,15 +1,7 @@
 {
 	"name": "@novastarter/release-notes-generator",
 	"version": "0.1.0",
-	"description": "Release notes generator for changesets, tailored to the Nova monorepo",
-	"keywords": [
-		"changesets",
-		"changelog",
-		"release",
-		"release-notes",
-		"monorepo",
-		"pnpm"
-	],
+	"description": "Release notes generator for changesets, tailored to the Novastarter monorepo",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
@@ -32,14 +24,13 @@
 		"test:coverage": "vitest run --coverage"
 	},
 	"dependencies": {
-		"@pnpm/logger": "catalog:",
+		"@changesets/types": "catalog:",
 		"@pnpm/types": "catalog:",
 		"@pnpm/workspace.pkgs-graph": "catalog:",
 		"js-yaml": "catalog:",
 		"semver": "catalog:"
 	},
 	"devDependencies": {
-		"@changesets/types": "catalog:",
 		"@novastarter/tsconfig": "workspace:*",
 		"@types/js-yaml": "catalog:",
 		"@types/node": "catalog:",

@@ -12,7 +12,7 @@ import {
 	withNamespace,
 } from '../../utils/index.js';
 import type { MessageHandler } from '../types/index.js';
-import { BusRedis } from './redis.js';
+import { BusDriverRedis } from './redis.js';
 
 vi.mock('ioredis');
 vi.mock('../../utils/index.js');
@@ -29,7 +29,7 @@ let mockCompressedUint8Array: Uint8Array;
 let mockDecompressedUint8Array: Uint8Array;
 let mockMessage: string;
 let mockHandler: MessageHandler;
-let bus: BusRedis;
+let bus: BusDriverRedis;
 
 beforeEach(() => {
 	mockRedis = new Redis();
@@ -49,7 +49,7 @@ beforeEach(() => {
 	mockCompressedUint8Array = new Uint8Array([1]);
 	mockDecompressedUint8Array = new Uint8Array([1, 2, 3]);
 
-	bus = new BusRedis({
+	bus = new BusDriverRedis({
 		redis: mockRedis,
 		namespace: 'test-namespace',
 	});
@@ -83,7 +83,7 @@ describe('constructor', () => {
 	});
 
 	test('Allows setting compression settings', () => {
-		const bus = new BusRedis({
+		const bus = new BusDriverRedis({
 			redis: mockRedis,
 			namespace: mockNamespace,
 			compression: false,

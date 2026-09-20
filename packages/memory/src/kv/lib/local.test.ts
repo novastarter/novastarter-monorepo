@@ -1,15 +1,15 @@
 import { LRUCache } from 'lru-cache';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { deserialize, serialize } from '../../utils/index.js';
-import { KvLocal } from './local.js';
+import { KvDriverLocal } from './local.js';
 
 vi.mock('lru-cache');
 vi.mock('../../utils/index.js');
 
-let kv: KvLocal;
+let kv: KvDriverLocal;
 
 beforeEach(() => {
-	kv = new KvLocal({ maxKeys: 2 });
+	kv = new KvDriverLocal({ maxKeys: 2 });
 
 	kv['store'] = {
 		get: vi.fn(),
@@ -33,20 +33,20 @@ describe('constructor', () => {
 
 	test('Defaults to JS map if LRU config is not set', () => {
 		vi.mocked(LRUCache).mockClear();
-		kv = new KvLocal({});
+		kv = new KvDriverLocal({});
 		expect(LRUCache).not.toHaveBeenCalled();
 		expect(kv['store']).toBeInstanceOf(Map);
 	});
 
 	test.each([{ maxKeys: 10 }, { ttl: 5000 }])('Instantiates LRU cache if ttl OR maxKeys are provided', (config) => {
 		vi.mocked(LRUCache).mockClear();
-		kv = new KvLocal(config);
+		kv = new KvDriverLocal(config);
 		expect(LRUCache).toHaveBeenCalled();
 	});
 
 	test('Instantiates LRU cache with ttl + auto purge to prevent stale cache', () => {
 		vi.mocked(LRUCache).mockClear();
-		kv = new KvLocal({ ttl: 5000 });
+		kv = new KvDriverLocal({ ttl: 5000 });
 		expect(LRUCache).toHaveBeenCalledWith({ ttl: 5000, ttlAutopurge: true });
 	});
 });

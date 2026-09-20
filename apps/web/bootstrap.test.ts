@@ -4,7 +4,14 @@
  */
 import { _cache as mailCache, useMail } from '@novastarter/mail';
 import { _cache as memoryCache } from '@novastarter/memory';
-import { _handlers, enqueue, _cache as queueCache, registerJobHandlers, useQueue } from '@novastarter/queue';
+import {
+	_handlers,
+	enqueue,
+	_cache as queueCache,
+	QueueDriverLocal,
+	registerJobHandlers,
+	useQueue,
+} from '@novastarter/queue';
 import { _cache as redisCache, useRedis } from '@novastarter/redis';
 import { _cache as storageCache, useStorage } from '@novastarter/storage';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -31,7 +38,7 @@ test('Registers every subsystem in-process without a Redis and runs a job end to
 	expect(env.NODE_ENV).toBe('test');
 	expect(useRedis().locationNames()).toEqual([]);
 	expect(useStorage().hasLocation('default')).toBe(true);
-	expect(useQueue().location('anything').type).toBe('local');
+	expect(useQueue().location('anything')).toBeInstanceOf(QueueDriverLocal);
 	expect(useMail().hasLocation('default')).toBe(true);
 	expect(useMail().routes().from).toBe('no-reply@acme.test');
 

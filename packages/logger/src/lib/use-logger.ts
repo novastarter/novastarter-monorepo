@@ -1,7 +1,6 @@
-import type { Bus } from '@novastarter/memory';
 import type { Logger } from 'pino';
 import { createLogger } from './create-logger.js';
-import { LogsStream, type PrettyType } from './logs-stream.js';
+import { type LogsBus, LogsStream, type PrettyType } from './logs-stream.js';
 
 /**
  * Memoized logger and bus streams, held at module level so each is built once per process.
@@ -71,7 +70,7 @@ export const useLogger = (): Logger<never> => {
  * @param messenger - Bus the lines are published on.
  * @returns The same stream on every call.
  */
-export const getLogsStream = (pretty: boolean, messenger: Bus): LogsStream => {
+export const getLogsStream = (pretty: boolean, messenger: LogsBus): LogsStream => {
 	if (_cache.logsStream) {
 		return _cache.logsStream;
 	}
@@ -89,7 +88,7 @@ export const getLogsStream = (pretty: boolean, messenger: Bus): LogsStream => {
  * @param messenger - Bus the lines are published on.
  * @returns The same stream on every call.
  */
-export const getHttpLogsStream = (pretty: boolean, messenger: Bus): LogsStream => {
+export const getHttpLogsStream = (pretty: boolean, messenger: LogsBus): LogsStream => {
 	if (_cache.httpLogsStream) {
 		return _cache.httpLogsStream;
 	}

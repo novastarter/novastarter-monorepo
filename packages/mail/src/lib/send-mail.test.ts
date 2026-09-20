@@ -6,9 +6,10 @@
  */
 import { useEmitter } from '@novastarter/emitter';
 import { useLogger } from '@novastarter/logger';
-import { LimiterLocal } from '@novastarter/memory';
+import { LimiterDriverLocal } from '@novastarter/memory';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { MailDriver, MailMessage, MailResult } from '../types.js';
+import type { MailDriver } from '../driver.js';
+import type { MailMessage, MailResult } from '../types.js';
 import { MAIL_FAILED_EVENT, MAIL_SEND_FILTER, MAIL_SENT_EVENT, normalizeHtml, sendMail } from './send-mail.js';
 import { _cache, useMail } from './use-mail.js';
 
@@ -173,7 +174,7 @@ describe('sendMail', () => {
 		useMail().registerRoutes({
 			from: 'no-reply@acme.test',
 			limiters: {
-				main: new LimiterLocal({ points: 1, duration: 60 }),
+				main: new LimiterDriverLocal({ points: 1, duration: 60 }),
 			},
 		});
 

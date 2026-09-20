@@ -1,4 +1,0 @@
-{
-	"extends": "@novastarter/tsconfig/node22",
-	"include": ["."]
-}

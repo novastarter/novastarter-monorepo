@@ -1,7 +1,7 @@
 {
 	"name": "@novastarter/constants",
 	"version": "0.1.0",
-	"description": "Shared constants for Nova",
+	"description": "Shared constants for Novastarter",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
@@ -20,11 +20,16 @@
 	"scripts": {
 		"build": "tsdown src/index.ts --dts",
 		"dev": "tsdown src/index.ts --dts --watch",
-		"check-types": "tsc --noEmit -p tsconfig.json"
+		"check-types": "tsc --noEmit -p tsconfig.json",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage"
 	},
 	"devDependencies": {
 		"@novastarter/tsconfig": "workspace:*",
+		"@types/node": "catalog:",
+		"@vitest/coverage-v8": "catalog:",
 		"tsdown": "catalog:",
-		"typescript": "catalog:"
+		"typescript": "catalog:",
+		"vitest": "catalog:"
 	}
 }

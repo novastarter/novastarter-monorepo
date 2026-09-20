@@ -33,9 +33,9 @@ import { toSubscription } from './to-subscription.js';
 import { SIGNATURE_HEADER, verifySignature } from './verify-signature.js';
 
 /**
- * Options of {@link DriverLemonSqueezy}, as given in the location's `options`.
+ * Options of {@link PaymentsDriverLemonSqueezy}, as given in the location's `options`.
  */
-export type DriverLemonSqueezyConfig = {
+export type PaymentsDriverLemonSqueezyConfig = {
 	/** API key from Settings → API in the Lemon Squeezy dashboard. */
 	apiKey: string;
 	/** Signing secret entered when the webhook was created (Settings → Webhooks). */
@@ -56,11 +56,11 @@ export type DriverLemonSqueezyConfig = {
 
 /**
  * Registers the driver's options in the map of `@novastarter/payments`, so a location naming `lemonsqueezy` has its
- * options checked against {@link DriverLemonSqueezyConfig}.
+ * options checked against {@link PaymentsDriverLemonSqueezyConfig}.
  */
 declare module '@novastarter/payments' {
 	interface PaymentsDrivers {
-		lemonsqueezy: DriverLemonSqueezyConfig;
+		lemonsqueezy: PaymentsDriverLemonSqueezyConfig;
 	}
 }
 
@@ -75,7 +75,7 @@ declare module '@novastarter/payments' {
  *
  * @example
  * ```ts
- * usePayments().registerDriver('lemonsqueezy', DriverLemonSqueezy);
+ * usePayments().registerDriver('lemonsqueezy', PaymentsDriverLemonSqueezy);
  * usePayments().registerLocation('default', {
  * 	driver: 'lemonsqueezy',
  * 	options: {
@@ -86,7 +86,7 @@ declare module '@novastarter/payments' {
  * });
  * ```
  */
-export class DriverLemonSqueezy implements PaymentsDriver {
+export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 	/**
 	 * The JSON:API client every request goes through.
 	 *
@@ -122,7 +122,7 @@ export class DriverLemonSqueezy implements PaymentsDriver {
 	 * @throws Error without a key, a webhook secret or a store — a deployment that cannot verify webhooks would drift
 	 * from Lemon Squeezy silently, and a checkout belongs to a store.
 	 */
-	constructor(config: DriverLemonSqueezyConfig) {
+	constructor(config: PaymentsDriverLemonSqueezyConfig) {
 		// 1. Fail at registration for the three values nothing works without, rather than on the first request
 		if (!config.apiKey) {
 			throw new Error('The lemonsqueezy payments driver needs an "apiKey"');

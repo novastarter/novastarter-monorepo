@@ -41,9 +41,9 @@ as an augmentable interface (`StorageDrivers`, `QueueDrivers`, `KvDrivers`, …)
 ```ts
 import { DriverManager } from '@novastarter/utils';
 
-const manager = new DriverManager<Driver, { s3: DriverS3Config; local: DriverLocalConfig }>();
+const manager = new DriverManager<StorageDriver, { s3: StorageDriverS3Config; local: StorageDriverLocalConfig }>();
 
-manager.registerDriver('s3', DriverS3);
+manager.registerDriver('s3', StorageDriverS3);
 manager.registerLocation('uploads', {
 	driver: 's3',
 	options: {
@@ -51,10 +51,10 @@ manager.registerLocation('uploads', {
 	},
 });
 
-manager.location('uploads'); // the DriverS3 instance, built now and reused afterwards
+manager.location('uploads'); // the StorageDriverS3 instance, built now and reused afterwards
 manager.hasLocation('uploads'); // true
 manager.locationNames(); // ['uploads']
-manager.instantiated(); // Map { 'uploads' => DriverS3 }
+manager.instantiated(); // Map { 'uploads' => StorageDriverS3 }
 ```
 
 ## `formatTitle`

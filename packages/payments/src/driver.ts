@@ -1,5 +1,3 @@
-import type { LocationConfig } from '@novastarter/utils';
-import type { PaymentsDrivers } from './lib/payments-manager.js';
 import type {
 	CancelSubscriptionInput,
 	CheckoutSession,
@@ -28,7 +26,7 @@ export declare class PaymentsDriver {
 	/**
 	 * Create a driver from its location options.
 	 *
-	 * @param config - Driver-specific options as given in {@link PaymentsDriverConfig.options}.
+	 * @param config - Driver-specific options, as given in the location's `options`.
 	 */
 	constructor(config: Record<string, unknown>);
 
@@ -100,7 +98,8 @@ export declare class PaymentsDriver {
 	 * Verify a webhook delivery and turn it into an event the app understands.
 	 *
 	 * The body is checked against the location's webhook secret before anything is read from it. A verified event of
-	 * a type the kit does not track answers `null`: the route acknowledges it and moves on.
+	 * a type the kit does not track answers `null`: the route acknowledges it and moves on. A route calls
+	 * `handleWebhook()` of this package rather than the driver, so the event is reported and filtered on the way.
 	 *
 	 * @param rawBody - The request body byte for byte, as the signature covers it.
 	 * @param headers - The request headers, lower-cased names.
@@ -117,9 +116,3 @@ export declare class PaymentsDriver {
 	 */
 	verify?(): Promise<void>;
 }
-
-/**
- * Location entry as passed to {@link PaymentsManager.registerLocation}: a driver of {@link PaymentsDrivers} and its
- * options.
- */
-export type PaymentsDriverConfig = LocationConfig<PaymentsDrivers>;

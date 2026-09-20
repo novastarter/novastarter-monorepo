@@ -1,7 +1,8 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import nodemailer, { type Transporter } from 'nodemailer';
-import type { MailDriver, MailMessage, MailResult } from '../../types.js';
+import type { MailDriver } from '../../driver.js';
+import type { MailMessage, MailResult } from '../../types.js';
 import { toMailResult } from '../to-mail-result.js';
 import { toNodemailerMessage } from '../to-nodemailer-message.js';
 

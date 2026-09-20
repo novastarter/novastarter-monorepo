@@ -5,7 +5,7 @@ import { getJobHandler } from './handlers.js';
 /**
  * Run a job of a known contract: the schema checks the payload, the registered handler runs it.
  *
- * What {@link runJob} does once it has the contract; the `local` provider holds the contract already and calls
+ * What {@link runJob} does once it has the contract; the `local` driver holds the contract already and calls
  * this directly.
  *
  * @param contract - The job's contract.
@@ -31,7 +31,7 @@ export const runContract = async (contract: JobContract, payload: unknown, conte
 /**
  * Run a job by name in this process: the contract's schema checks the payload, the registered handler runs it.
  *
- * The one path every execution goes through — the `local` provider right after `enqueue()`, and the web app's
+ * The one path every execution goes through — the `local` driver right after `enqueue()`, and the web app's
  * receiver when a worker delivers a job over HTTP — so a payload is never handed to a handler unchecked, whichever
  * way it arrived.
  *

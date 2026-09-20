@@ -1,16 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { KvLocal } from '../../kv/index.js';
-import { CacheLocal } from './local.js';
+import { KvDriverLocal } from '../../kv/index.js';
+import { CacheDriverLocal } from './local.js';
 
 vi.mock('../../kv/index.js');
 vi.mock('../../utils/index.js');
 
 const mockKey = 'test-key';
 const mockValue = 'test-value';
-let cache: CacheLocal;
+let cache: CacheDriverLocal;
 
 beforeEach(() => {
-	cache = new CacheLocal({ maxKeys: 2 });
+	cache = new CacheDriverLocal({ maxKeys: 2 });
 });
 
 afterEach(() => {
@@ -19,9 +19,9 @@ afterEach(() => {
 
 describe('constructor', () => {
 	test('Instantiates Kv with configuration', () => {
-		expect(KvLocal).toHaveBeenCalledWith({ maxKeys: 2 });
+		expect(KvDriverLocal).toHaveBeenCalledWith({ maxKeys: 2 });
 
-		expect(cache['store']).toBeInstanceOf(KvLocal);
+		expect(cache['store']).toBeInstanceOf(KvDriverLocal);
 	});
 });
 

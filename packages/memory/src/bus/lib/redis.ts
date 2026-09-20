@@ -11,7 +11,7 @@ import {
 	withNamespace,
 } from '../../utils/index.js';
 import type { Bus, MessageHandler } from '../types/class.js';
-import type { BusRedisOptions } from '../types/config.js';
+import type { BusDriverRedisConfig } from '../types/config.js';
 
 /**
  * Bus backed by Redis pub/sub, delivering messages to every subscribed process.
@@ -21,7 +21,7 @@ import type { BusRedisOptions } from '../types/config.js';
  *
  * @example
  * ```ts
- * const bus = new BusRedis({
+ * const bus = new BusDriverRedis({
  * 	redis: new Redis(),
  * 	namespace: 'app',
  * });
@@ -29,7 +29,7 @@ import type { BusRedisOptions } from '../types/config.js';
  * await bus.subscribe('greetings', (payload) => console.log(payload));
  * ```
  */
-export class BusRedis implements Bus {
+export class BusDriverRedis implements Bus {
 	/**
 	 * Connection used for publishing.
 	 *
@@ -52,7 +52,7 @@ export class BusRedis implements Bus {
 	private namespace: string;
 
 	/**
-	 * Whether payloads above {@link BusRedis.compressionMinSize} are gzipped.
+	 * Whether payloads above {@link BusDriverRedis.compressionMinSize} are gzipped.
 	 *
 	 * @internal
 	 */
@@ -77,7 +77,7 @@ export class BusRedis implements Bus {
 	 *
 	 * @param config - Redis configuration.
 	 */
-	constructor(config: BusRedisOptions) {
+	constructor(config: BusDriverRedisConfig) {
 		// 1. Publish on the caller's connection and subscribe on a duplicate, since a subscribed connection can no
 		//    longer run regular commands
 		this.namespace = config.namespace;

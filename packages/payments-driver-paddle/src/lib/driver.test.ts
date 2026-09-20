@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
 import { Environment, Paddle, Subscription, Transaction, Webhooks } from '@paddle/paddle-node-sdk';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { DriverPaddle, PRORATION } from './driver.js';
+import { PaymentsDriverPaddle, PRORATION } from './driver.js';
 import { toEvent } from './to-event.js';
 import { toInvoice } from './to-invoice.js';
 import { toMetadata } from './to-metadata.js';
@@ -52,7 +52,7 @@ const sign = (body: string, secret = WEBHOOK_SECRET, ts = Math.floor(Date.now() 
 const setup = (checkoutUrl?: string) => {
 	const client = new Paddle('pdl_sdbx_apikey_x', { environment: Environment.sandbox });
 
-	const driver = new DriverPaddle({
+	const driver = new PaymentsDriverPaddle({
 		apiKey: 'pdl_sdbx_apikey_x',
 		webhookSecret: WEBHOOK_SECRET,
 		client,
@@ -83,10 +83,10 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-describe('DriverPaddle', () => {
+describe('PaymentsDriverPaddle', () => {
 	test('Refuses to start without a key or a webhook secret', () => {
-		expect(() => new DriverPaddle({ apiKey: '', webhookSecret: 's' })).toThrow('"apiKey"');
-		expect(() => new DriverPaddle({ apiKey: 'k', webhookSecret: '' })).toThrow('"webhookSecret"');
+		expect(() => new PaymentsDriverPaddle({ apiKey: '', webhookSecret: 's' })).toThrow('"apiKey"');
+		expect(() => new PaymentsDriverPaddle({ apiKey: 'k', webhookSecret: '' })).toThrow('"webhookSecret"');
 	});
 
 	test('Creates a customer with the organization in its custom data', async () => {

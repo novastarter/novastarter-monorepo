@@ -1,5 +1,5 @@
 import type { Bus, MessageHandler } from '../types/class.js';
-import type { BusLocalOptions } from '../types/config.js';
+import type { BusDriverLocalConfig } from '../types/config.js';
 
 /**
  * In-process bus: publishing calls the subscribers registered in this process, nothing more.
@@ -9,13 +9,13 @@ import type { BusLocalOptions } from '../types/config.js';
  *
  * @example
  * ```ts
- * const bus = new BusLocal({});
+ * const bus = new BusDriverLocal({});
  *
  * await bus.subscribe('greetings', (payload) => console.log(payload));
  * await bus.publish('greetings', 'hello');
  * ```
  */
-export class BusLocal implements Bus {
+export class BusDriverLocal implements Bus {
 	/**
 	 * Subscribers per channel; a `Set` so the same callback is never registered twice.
 	 *
@@ -28,7 +28,7 @@ export class BusLocal implements Bus {
 	 *
 	 * @param _config - Local configuration; it carries no options yet.
 	 */
-	constructor(_config: BusLocalOptions = {}) {
+	constructor(_config: BusDriverLocalConfig = {}) {
 		// 1. Start without subscribers
 		this.handlers = {};
 	}
