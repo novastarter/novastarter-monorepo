@@ -7,6 +7,15 @@ descriptions, issues, file names, identifiers, error messages, logs, chat replie
 
 **No other languages. No exceptions.** Input in another language is answered in English.
 
+## Rule: never push to git
+
+Mandatory, no exceptions.
+
+- Never run `git push` in any form: plain, `--force`, `--tags`, `-u origin <branch>`, via `gh pr create --push`, via
+  scripts or hooks, or under any other name.
+- Not after a commit, not "to finish the task", not because a PR needs the branch. Pushing is done by the user, by hand.
+- Committing and pushing are separate steps. A request to commit is never a request to push.
+
 ## Rule: comment all code
 
 This rule applies always and everywhere:
