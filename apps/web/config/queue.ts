@@ -3,15 +3,15 @@ import type { LocationConfig } from '@novastarter/utils';
 import type { AppEnv } from '../env';
 
 /**
- * Queue locations by name: where each queue's jobs run.
+ * The `default` queue location: where every queue's jobs run.
  *
- * One `default` location takes every queue; a queue that needs a server of its own gets an entry under its name.
+ * One location takes every queue; a queue that needs a server of its own gets a location registered under its name.
  *
  * @param env - The app's variables.
- * @returns The locations to register: BullMQ on the app's Redis when there is one, in-process otherwise.
+ * @returns The location to register: BullMQ on the app's Redis when there is one, in-process otherwise.
  */
-export const queueConfig = (env: AppEnv): Record<string, LocationConfig<QueueDrivers>> => ({
-	default: env.REDIS
+export const queueConfig = (env: AppEnv): LocationConfig<QueueDrivers> =>
+	env.REDIS
 		? {
 				driver: 'bullmq',
 				options: {
@@ -22,5 +22,4 @@ export const queueConfig = (env: AppEnv): Record<string, LocationConfig<QueueDri
 		: {
 				driver: 'local',
 				options: {},
-			},
-});
+			};

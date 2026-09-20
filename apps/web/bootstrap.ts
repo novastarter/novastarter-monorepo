@@ -45,40 +45,34 @@ export const bootstrap = (): AppEnv => {
 	// 2. The logger first, so everything registered next logs through the app's configuration
 	registerLogger(createLogger(loggerConfig(env)));
 
-	// 3. Redis servers by name; the other subsystems ask the manager for the client they share
-	for (const [name, connection] of Object.entries(redisConfig(env))) {
-		useRedis().registerLocation(name, connection);
+	// 3. Redis: the `default` server, when the app has one; the other subsystems ask the manager for the client they share
+	const connection = redisConfig(env);
+
+	if (connection) {
+		useRedis().registerLocation('default', connection);
 	}
 
-	const redis = useRedis().hasLocation('default') ? useRedis().location('default') : undefined;
+	const redis = connection ? useRedis().location('default') : undefined;
 
-	// 4. Memory: key-value, cache, bus and limiter locations, on the shared client or in-process
+	// 4. Memory: one key-value, cache, bus and limiter location, on the shared client or in-process
 	const memory = memoryConfig(redis);
 
-	for (const [name, location] of Object.entries(memory.kv)) useKv().registerLocation(name, location);
-	for (const [name, location] of Object.entries(memory.cache)) useCache().registerLocation(name, location);
-	for (const [name, location] of Object.entries(memory.bus)) useBus().registerLocation(name, location);
-	for (const [name, location] of Object.entries(memory.limiter)) useLimiter().registerLocation(name, location);
+	useKv().registerLocation('default', memory.kv);
+	useCache().registerLocation('default', memory.cache);
+	useBus().registerLocation('default', memory.bus);
+	useLimiter().registerLocation('api', memory.limiter);
 
-	// 5. Queues: which queue runs where
-	for (const [name, location] of Object.entries(queueConfig(env))) {
-		useQueue().registerLocation(name, location);
-	}
+	// 5. Queues: the `default` location takes every queue
+	useQueue().registerLocation('default', queueConfig(env));
 
-	// 6. Storage: the driver classes the app ships with, then the locations
+	// 6. Storage: the driver classes the app ships with, then the `default` location
 	useStorage().registerDriver('local', DriverLocal);
+	useStorage().registerLocation('default', storageConfig(env));
 
-	for (const [name, location] of Object.entries(storageConfig(env))) {
-		useStorage().registerLocation(name, location);
-	}
-
-	// 7. Mail: the built-in drivers come with the manager; the locations and the routes are the app's
+	// 7. Mail: the built-in drivers come with the manager; the `default` location and the routes are the app's
 	const mail = mailConfig(env);
 
-	for (const [name, location] of Object.entries(mail.locations)) {
-		useMail().registerLocation(name, location);
-	}
-
+	useMail().registerLocation('default', mail.location);
 	useMail().registerRoutes(mail.routes);
 
 	// 8. Jobs: the handlers of the contracts under `jobs/`, so a worker or the local queue can run them
