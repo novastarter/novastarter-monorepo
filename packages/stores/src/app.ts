@@ -39,7 +39,10 @@ export interface AppState {
  * ```ts
  * const hydrated = useAppStore((state) => state.hydrated);
  *
- * useAppStore.setState({ hydrating: false, hydrated: true });
+ * useAppStore.setState({
+ * 	hydrating: false,
+ * 	hydrated: true,
+ * });
  * ```
  */
 export const useAppStore = create<AppState>()(() => {

@@ -2,14 +2,6 @@
 
 Object storage abstraction layer for Novastarter.
 
-## Description
-
-One interface — `read`, `write`, `delete`, `stat`, `exists`, `move`, `copy`, `list`, plus resumable (TUS) uploads on the
-drivers that support them — over the local filesystem, S3, GCS, Azure Blob, Cloudinary and Supabase, one driver package
-each. `StorageManager` maps named locations to driver instances: the application registers its drivers and locations
-once at start-up, with the options it read from its own configuration, and every consumer asks for a location by name
-afterwards. The package reads nothing from the environment. Ported from `@directus/storage`.
-
 ## Installation
 
 ```
@@ -36,7 +28,12 @@ const storage = useStorage();
 storage.registerDriver('local', DriverLocal);
 storage.registerDriver('s3', DriverS3);
 
-storage.registerLocation('default', { driver: 'local', options: { root: env.STORAGE_LOCAL_ROOT } });
+storage.registerLocation('default', {
+	driver: 'local',
+	options: {
+		root: env.STORAGE_LOCAL_ROOT,
+	},
+});
 
 storage.registerLocation('uploads', {
 	driver: 's3',
@@ -68,7 +65,12 @@ import { supportsTus, useStorage } from '@novastarter/storage';
 const uploads = useStorage().location('uploads');
 
 await uploads.write('avatars/ada.png', stream, 'image/png');
-const file = await uploads.read('avatars/ada.png', { range: { start: 0, end: 1023 } });
+const file = await uploads.read('avatars/ada.png', {
+	range: {
+		start: 0,
+		end: 1023,
+	},
+});
 
 for await (const path of uploads.list('avatars/')) {
 	// …

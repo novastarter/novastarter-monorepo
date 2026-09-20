@@ -2,12 +2,6 @@
 
 Local filesystem driver for `@novastarter/storage`.
 
-## Description
-
-Every operation maps onto a `node:fs` call under the configured root; caller paths are pinned inside that root, so a
-path cannot escape it. Supports resumable (TUS) uploads. The zero-config choice for development and single-instance
-deployments.
-
 ## Installation
 
 ```
@@ -28,7 +22,12 @@ const storage = useStorage();
 
 storage.registerDriver('local', DriverLocal);
 
-storage.registerLocation('default', { driver: 'local', options: { root: env.STORAGE_LOCAL_ROOT } });
+storage.registerLocation('default', {
+	driver: 'local',
+	options: {
+		root: env.STORAGE_LOCAL_ROOT,
+	},
+});
 ```
 
 Anywhere later: `useStorage().location('uploads').write(path, stream, type)` and the rest of the `Driver` interface.

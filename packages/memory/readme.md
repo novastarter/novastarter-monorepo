@@ -2,21 +2,6 @@
 
 Memory / Redis abstraction: key-value store, cache, pub/sub bus and rate limiter.
 
-## Description
-
-Several subsystems need ephemeral storage that is synced between the processes of one deployment. This package exports
-four classes for everything related to it, each with a local (in-process) and a Redis backend behind one interface:
-
-- [Kv](#kv) — key-value store
-- [Cache](#cache) — Kv with an LRU and a multi-process mode
-- [Bus](#bus) — pub/sub
-- [Limiter](#limiter) — points-per-duration rate limiter
-
-Each is reached through a manager of named locations (`useKv().registerLocation()` / `.location()`) the application
-wires once at start-up, the same way as every other subsystem of the kit; a location is built on its first use. The
-package reads nothing from the environment: the Redis client comes from `@novastarter/redis`, the options from the
-application. Ported from `@directus/memory`.
-
 ## Installation
 
 ```
@@ -34,12 +19,36 @@ import { useRedis } from '@novastarter/redis';
 
 const redis = useRedis().location('default');
 
-useKv().registerLocation('default', { driver: 'redis', options: { redis, namespace: 'kv' } });
-useCache().registerLocation('default', { driver: 'redis', options: { redis, namespace: 'cache', ttl: 60_000 } });
-useBus().registerLocation('default', { driver: 'redis', options: { redis, namespace: 'novastarter' } });
+useKv().registerLocation('default', {
+	driver: 'redis',
+	options: {
+		redis,
+		namespace: 'kv',
+	},
+});
+useCache().registerLocation('default', {
+	driver: 'redis',
+	options: {
+		redis,
+		namespace: 'cache',
+		ttl: 60_000,
+	},
+});
+useBus().registerLocation('default', {
+	driver: 'redis',
+	options: {
+		redis,
+		namespace: 'novastarter',
+	},
+});
 useLimiter().registerLocation('api', {
 	driver: 'redis',
-	options: { redis, namespace: 'api', points: 50, duration: 1 },
+	options: {
+		redis,
+		namespace: 'api',
+		points: 50,
+		duration: 1,
+	},
 });
 ```
 

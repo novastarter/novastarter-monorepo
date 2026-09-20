@@ -30,7 +30,15 @@ export interface LimiterDrivers {
  * ```ts
  * const manager = new LimiterManager();
  *
- * manager.registerLocation('api', { driver: 'redis', options: { redis: useRedis().location('default'), namespace: 'api', points: 50, duration: 1 } });
+ * manager.registerLocation('api', {
+ * 	driver: 'redis',
+ * 	options: {
+ * 		redis: useRedis().location('default'),
+ * 		namespace: 'api',
+ * 		points: 50,
+ * 		duration: 1,
+ * 	},
+ * });
  * ```
  */
 export class LimiterManager extends DriverManager<Limiter, LimiterDrivers> {

@@ -26,7 +26,13 @@ export const _cache: {
  * @returns The same manager on every call.
  * @example
  * ```ts
- * useKv().registerLocation('default', { driver: 'redis', options: { redis: useRedis().location('default'), namespace: 'kv' } });
+ * useKv().registerLocation('default', {
+ * 	driver: 'redis',
+ * 	options: {
+ * 		redis: useRedis().location('default'),
+ * 		namespace: 'kv',
+ * 	},
+ * });
  *
  * await useKv().location('default').set('key', 'value');
  * ```

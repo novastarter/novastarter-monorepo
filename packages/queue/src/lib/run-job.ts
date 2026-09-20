@@ -44,7 +44,12 @@ export const runContract = async (contract: JobContract, payload: unknown, conte
  *
  * @example
  * ```ts
- * await runJob('mail.send', body.payload, { id: body.id, name: 'mail.send', attempt: body.attempt, enqueuedAt });
+ * await runJob('mail.send', body.payload, {
+ * 	id: body.id,
+ * 	name: 'mail.send',
+ * 	attempt: body.attempt,
+ * 	enqueuedAt,
+ * });
  * ```
  */
 export const runJob = async (name: string, payload: unknown, context: JobContext): Promise<void> => {

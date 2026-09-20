@@ -22,7 +22,10 @@ export const _cache: { queue: QueueManager | undefined } = { queue: undefined };
  * // at start-up
  * useQueue().registerLocation('mail', {
  * 	driver: 'bullmq',
- * 	options: { connection: env['QUEUE_MAIL_REDIS'] as string, prefix: env['QUEUE_MAIL_PREFIX'] as string },
+ * 	options: {
+ * 	connection: env['QUEUE_MAIL_REDIS'] as string,
+ * 	prefix: env['QUEUE_MAIL_PREFIX'] as string,
+ * },
  * });
  *
  * // anywhere later

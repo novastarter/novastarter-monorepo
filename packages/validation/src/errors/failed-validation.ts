@@ -134,7 +134,11 @@ export const messageConstructor = (extensions: FailedValidationErrorExtensions):
  *
  * @example
  * ```ts
- * throw new FailedValidationError({ field: 'email', path: [], type: 'email' });
+ * throw new FailedValidationError({
+ * 	field: 'email',
+ * 	path: [],
+ * 	type: 'email',
+ * });
  * ```
  */
 export const FailedValidationError: NovastarterErrorConstructor<FailedValidationErrorExtensions> =

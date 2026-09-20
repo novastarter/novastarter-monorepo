@@ -32,7 +32,10 @@ beforeEach(() => {
 	vi.mocked(useEmitter).mockReturnValue(emitter as any);
 
 	// Every test enqueues on a local default location, as an application without Redis would register it
-	useQueue().registerLocation('default', { driver: 'local', options: {} });
+	useQueue().registerLocation('default', {
+		driver: 'local',
+		options: {},
+	});
 });
 
 afterEach(() => {
@@ -53,7 +56,10 @@ describe('useQueue / QueueManager', () => {
 	test('Builds a bullmq location on its own Redis client and closes every location', async () => {
 		useQueue().registerLocation('mail', {
 			driver: 'bullmq',
-			options: { connection: 'redis://jobs', prefix: 'acme' },
+			options: {
+				connection: 'redis://jobs',
+				prefix: 'acme',
+			},
 		});
 
 		const mail = useQueue().location('mail');
@@ -73,9 +79,12 @@ describe('useQueue / QueueManager', () => {
 	});
 
 	test('Refuses a location of a driver nobody registered', () => {
-		expect(() => useQueue().registerLocation('x', { driver: 'sqs' as 'local', options: {} })).toThrow(
-			/isn't registered/,
-		);
+		expect(() =>
+			useQueue().registerLocation('x', {
+				driver: 'sqs' as 'local',
+				options: {},
+			}),
+		).toThrow(/isn't registered/);
 	});
 });
 

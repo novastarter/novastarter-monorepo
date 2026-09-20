@@ -27,7 +27,10 @@ export const _cache: {
  * @param logger - The logger every `useLogger()` call answers with from now on.
  * @example
  * ```ts
- * registerLogger(createLogger({ level: env['LOG_LEVEL'] as string, style: resolveLogStyle(env) }));
+ * registerLogger(createLogger({
+ * 	level: env['LOG_LEVEL'] as string,
+ * 	style: resolveLogStyle(env),
+ * }));
  * ```
  */
 export const registerLogger = (logger: Logger<never>): void => {

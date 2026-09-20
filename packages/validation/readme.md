@@ -2,14 +2,6 @@
 
 Validate a payload against filter rules and get structured per-field errors back.
 
-## Description
-
-Rules are written as filters — `{ age: { _gte: 18 } }`, grouped with `_and` / `_or` — the same shape a query filter has.
-`validatePayload()` checks an object against them and returns one `FailedValidationError` per failed rule, with the
-field, the rule and the compared value in `error.extensions`, so an API can answer with the failing fields as data and a
-form can highlight them. Joi does the evaluation underneath and never reaches the caller. Ported from the Directus
-`@directus/validation` package together with `validatePayload` / `generateJoi` from `@directus/utils`.
-
 ## Installation
 
 ```
@@ -25,7 +17,11 @@ const rules = {
 	_and: [{ age: { _gte: 18 } }, { email: { _contains: '@' } }, { role: { _in: ['admin', 'editor'] } }],
 };
 
-const errors = validatePayload(rules, { age: 3, email: 'nope', role: 'admin' });
+const errors = validatePayload(rules, {
+	age: 3,
+	email: 'nope',
+	role: 'admin',
+});
 
 errors.length; // 2
 errors[0].message; // 'Validation failed for field "age". Value has to be greater than or equal to "18".'
@@ -70,7 +66,11 @@ Checks that are not expressible as a filter can still produce the same error:
 ```ts
 import { FailedValidationError, joiValidationErrorItemToErrorExtensions } from '@novastarter/validation';
 
-throw new FailedValidationError({ field: 'email', path: [], type: 'email' });
+throw new FailedValidationError({
+	field: 'email',
+	path: [],
+	type: 'email',
+});
 
 // or from a Joi detail, when running Joi yourself
 const { error } = schema.validate(payload, { abortEarly: false });

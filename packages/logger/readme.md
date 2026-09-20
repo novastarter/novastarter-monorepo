@@ -2,14 +2,6 @@
 
 Structured logging for Novastarter, built on [pino](https://getpino.io).
 
-## Description
-
-One logger for the whole process (`useLogger()`) and a request logger for HTTP servers (`createHttpLogger()`) mounted as
-a child of it, so both share level, streams and redaction. The application builds the logger at start-up from its own
-configuration — level, console style, extra pino options — and registers it with `registerLogger()`; the package reads
-nothing from the environment. Credentials, the session cookie and query tokens are redacted before a line is written.
-Ported from the Directus API logger with the WebSocket wiring replaced by an injected message bus.
-
 ## Installation
 
 ```
@@ -71,7 +63,10 @@ import { createLogger, getLogsStream } from '@novastarter/logger';
 import { useBus } from '@novastarter/memory';
 
 const logger = createLogger({
-	logsStream: { stream: getLogsStream(true, useBus().location('default')), level: 'debug' },
+	logsStream: {
+		stream: getLogsStream(true, useBus().location('default')),
+		level: 'debug',
+	},
 });
 ```
 

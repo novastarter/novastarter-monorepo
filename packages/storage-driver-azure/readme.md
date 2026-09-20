@@ -2,10 +2,6 @@
 
 Azure Blob Storage driver for `@novastarter/storage`.
 
-## Description
-
-Blobs in an Azure container, signed with the shared account key; resumable (TUS) uploads append blocks per request.
-
 ## Installation
 
 ```

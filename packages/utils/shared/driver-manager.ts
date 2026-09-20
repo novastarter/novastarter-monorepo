@@ -13,7 +13,10 @@ export type DriverClass<Instance> = new (options: never) => Instance;
  * One entry of {@link DriverManager.registerLocation}: which driver and what to hand its constructor.
  *
  * A discriminated union over the driver map, so `driver` decides the type of `options`: with
- * `{ local: LocalOptions; bullmq: BullmqOptions }`, `{ driver: 'bullmq', options }` only compiles with
+ * `{ local: LocalOptions; bullmq: BullmqOptions }`, `{
+ * 	driver: 'bullmq',
+ * 	options,
+ * }` only compiles with
  * `BullmqOptions`.
  *
  * @typeParam Drivers - Driver names mapped to the options their constructor takes.
@@ -49,7 +52,12 @@ export type LocationConfig<Drivers extends object> = {
  * const storage = new DriverManager<Driver, { s3: DriverS3Config; local: DriverLocalConfig }>();
  *
  * storage.registerDriver('s3', DriverS3);
- * storage.registerLocation('uploads', { driver: 's3', options: { bucket: 'uploads' } });
+ * storage.registerLocation('uploads', {
+ * 	driver: 's3',
+ * 	options: {
+ * 		bucket: 'uploads',
+ * 	},
+ * });
  *
  * await storage.location('uploads').write('avatar.png', stream, 'image/png');
  * ```

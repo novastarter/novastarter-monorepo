@@ -2,11 +2,6 @@
 
 Cloudinary driver for `@novastarter/storage`.
 
-## Description
-
-Assets in a Cloudinary account, through its upload, admin and search APIs; every request is signed with the API secret,
-which never leaves the process. Resumable (TUS) uploads are supported.
-
 ## Installation
 
 ```

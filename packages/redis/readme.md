@@ -2,15 +2,6 @@
 
 Named Redis servers — locations — and the shared [ioredis](https://github.com/redis/ioredis) client of each.
 
-## Description
-
-The `@novastarter/memory` backends (`Kv`, `Cache`, `Bus`, `Limiter`) and the `bullmq` queue driver take a ready Redis
-client; this package is where that client comes from. At start-up the application registers every server it uses as a
-location — a name plus the connection URL or ioredis options, taken from its own configuration — and from then on
-`useRedis().location(name)` hands out the one client of that server to every consumer in the process; the client opens
-on the location's first use. `location()` without a name means `default`. Ported from the Directus `@directus/redis`
-package.
-
 ## Installation
 
 ```
@@ -43,8 +34,21 @@ import { useRedis } from '@novastarter/redis';
 
 const redis = useRedis().location('default');
 
-useCache().registerLocation('default', { driver: 'redis', options: { redis, namespace: 'app', ttl: 60_000 } });
-useBus().registerLocation('default', { driver: 'redis', options: { redis, namespace: 'app' } });
+useCache().registerLocation('default', {
+	driver: 'redis',
+	options: {
+		redis,
+		namespace: 'app',
+		ttl: 60_000,
+	},
+});
+useBus().registerLocation('default', {
+	driver: 'redis',
+	options: {
+		redis,
+		namespace: 'app',
+	},
+});
 
 await useRedis().location('jobs').ping();
 ```

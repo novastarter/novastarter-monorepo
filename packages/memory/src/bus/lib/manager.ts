@@ -30,7 +30,13 @@ export interface BusDrivers {
  * ```ts
  * const manager = new BusManager();
  *
- * manager.registerLocation('default', { driver: 'redis', options: { redis: useRedis().location('default'), namespace: 'novastarter' } });
+ * manager.registerLocation('default', {
+ * 	driver: 'redis',
+ * 	options: {
+ * 		redis: useRedis().location('default'),
+ * 		namespace: 'novastarter',
+ * 	},
+ * });
  * ```
  */
 export class BusManager extends DriverManager<Bus, BusDrivers> {

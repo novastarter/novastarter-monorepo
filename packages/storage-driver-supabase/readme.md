@@ -2,11 +2,6 @@
 
 Supabase Storage driver for `@novastarter/storage`.
 
-## Description
-
-Objects in a Supabase Storage bucket, hosted (`projectId`) or self-hosted (`endpoint`), with the service-role key so
-row-level security is bypassed. Resumable (TUS) uploads are supported.
-
 ## Installation
 
 ```

@@ -107,7 +107,11 @@ describe('useStorage', () => {
 		const mockDriver = vi.fn();
 
 		useStorage().registerDriver('test-driver', mockDriver);
-		useStorage().registerLocation('uploads', { driver: 'test-driver', options: {} });
+
+		useStorage().registerLocation('uploads', {
+			driver: 'test-driver',
+			options: {},
+		});
 
 		expect(useStorage().location('uploads')).toBe(useStorage().location('uploads'));
 	});

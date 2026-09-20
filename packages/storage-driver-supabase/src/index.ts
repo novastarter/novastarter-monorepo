@@ -59,7 +59,11 @@ declare module '@novastarter/storage' {
  *
  * @example
  * ```ts
- * const driver = new DriverSupabase({ bucket: 'uploads', projectId: 'abcdefghij', serviceRole: process.env.KEY });
+ * const driver = new DriverSupabase({
+ * 	bucket: 'uploads',
+ * 	projectId: 'abcdefghij',
+ * 	serviceRole: process.env.KEY,
+ * });
  *
  * await driver.write('avatar.png', fs.createReadStream('./avatar.png'), 'image/png');
  * ```

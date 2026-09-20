@@ -2,13 +2,6 @@
 
 Event loop and memory pressure monitor, with an Express middleware that sheds load.
 
-## Description
-
-Samples the event loop delay and utilization and the memory of the process in the background and reports whether it is
-overloaded, so a server can refuse requests before it falls over. Every threshold is off unless set; reading
-`overloaded` is a comparison against the last sample, not a live measurement. Not a rate limiter — per-key budgets are
-the `Limiter` of `@novastarter/memory`. Ported from `@directus/pressure`.
-
 ## Installation
 
 ```
@@ -22,7 +15,10 @@ Standalone — the monitor is a class that can be used anywhere:
 ```ts
 import { PressureMonitor } from '@novastarter/pressure';
 
-const monitor = new PressureMonitor({ maxEventLoopUtilization: 0.8, maxMemoryHeapUsed: 512 * 1024 * 1024 });
+const monitor = new PressureMonitor({
+	maxEventLoopUtilization: 0.8,
+	maxMemoryHeapUsed: 512 * 1024 * 1024,
+});
 
 monitor.overloaded; // true | false
 ```
@@ -41,7 +37,10 @@ app.use(
 	handlePressure({
 		maxEventLoopUtilization: 0.8,
 		retryAfter: '5',
-		error: new HitRateLimitError({ limit: 0, reset: new Date(Date.now() + 5_000) }),
+		error: new HitRateLimitError({
+			limit: 0,
+			reset: new Date(Date.now() + 5_000),
+		}),
 	}),
 );
 ```

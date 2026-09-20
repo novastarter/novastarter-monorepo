@@ -8,7 +8,11 @@ import type { Cache } from '../types/class.js';
  *
  * @example
  * ```ts
- * const cache = new CacheRedis({ redis: new Redis(), namespace: 'app', ttl: 60_000 });
+ * const cache = new CacheRedis({
+ * 	redis: new Redis(),
+ * 	namespace: 'app',
+ * 	ttl: 60_000,
+ * });
  *
  * await cache.set('my-key', 'my-value');
  * ```

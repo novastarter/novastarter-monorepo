@@ -2,13 +2,6 @@
 
 Utilities shared between the Novastarter packages.
 
-## Description
-
-Small helpers every package would otherwise write for itself, in two entry points: the platform-neutral one for code
-that also runs in a browser, and `@novastarter/utils/node` for helpers that need a Node built-in. It also holds
-`DriverManager`, the one registration shape every subsystem of the kit (storage, queues, memory) exposes to the
-application. Mostly ported from `@directus/utils`.
-
 ## Installation
 
 ```
@@ -51,7 +44,12 @@ import { DriverManager } from '@novastarter/utils';
 const manager = new DriverManager<Driver, { s3: DriverS3Config; local: DriverLocalConfig }>();
 
 manager.registerDriver('s3', DriverS3);
-manager.registerLocation('uploads', { driver: 's3', options: { bucket: 'uploads' } });
+manager.registerLocation('uploads', {
+	driver: 's3',
+	options: {
+		bucket: 'uploads',
+	},
+});
 
 manager.location('uploads'); // the DriverS3 instance, built now and reused afterwards
 manager.hasLocation('uploads'); // true

@@ -16,7 +16,11 @@ import { createRedis } from './create-redis.js';
  * const redis = new RedisManager();
  *
  * redis.registerLocation('default', 'redis://cache:6379');
- * redis.registerLocation('jobs', { host: 'jobs.internal', port: 6379, password: '…' });
+ * redis.registerLocation('jobs', {
+ * 	host: 'jobs.internal',
+ * 	port: 6379,
+ * 	password: '…',
+ * });
  *
  * await redis.location('jobs').ping();
  * ```

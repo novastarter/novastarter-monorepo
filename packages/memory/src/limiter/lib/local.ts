@@ -10,7 +10,10 @@ import { consume } from '../utils/consume.js';
  *
  * @example
  * ```ts
- * const limiter = new LimiterLocal({ points: 10, duration: 5 });
+ * const limiter = new LimiterLocal({
+ * 	points: 10,
+ * 	duration: 5,
+ * });
  *
  * await limiter.consume(request.ip);
  * ```

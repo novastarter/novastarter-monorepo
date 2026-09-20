@@ -30,7 +30,13 @@ export interface KvDrivers {
  * ```ts
  * const manager = new KvManager();
  *
- * manager.registerLocation('sessions', { driver: 'redis', options: { redis: useRedis().location('default'), namespace: 'sessions' } });
+ * manager.registerLocation('sessions', {
+ * 	driver: 'redis',
+ * 	options: {
+ * 		redis: useRedis().location('default'),
+ * 		namespace: 'sessions',
+ * 	},
+ * });
  * ```
  */
 export class KvManager extends DriverManager<Kv, KvDrivers> {

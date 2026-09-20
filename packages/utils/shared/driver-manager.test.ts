@@ -20,7 +20,10 @@ describe('#registerLocation', () => {
 		const manager = new DriverManager();
 
 		expect(() =>
-			manager.registerLocation('test-location', { driver: 's3', options: {} }),
+			manager.registerLocation('test-location', {
+				driver: 's3',
+				options: {},
+			}),
 		).toThrowErrorMatchingInlineSnapshot(`[Error: Driver "s3" isn't registered.]`);
 	});
 
@@ -29,7 +32,13 @@ describe('#registerLocation', () => {
 		const manager = new DriverManager();
 
 		manager.registerDriver('test-driver', mockDriver);
-		manager.registerLocation('test-location', { driver: 'test-driver', options: { foo: 'bar' } });
+
+		manager.registerLocation('test-location', {
+			driver: 'test-driver',
+			options: {
+				foo: 'bar',
+			},
+		});
 
 		expect(mockDriver).not.toHaveBeenCalled();
 		expect(manager.hasLocation('test-location')).toBe(true);
@@ -42,10 +51,22 @@ describe('#registerLocation', () => {
 		const manager = new DriverManager();
 
 		manager.registerDriver('test-driver', mockDriver);
-		manager.registerLocation('test-location', { driver: 'test-driver', options: { foo: 'bar' } });
+
+		manager.registerLocation('test-location', {
+			driver: 'test-driver',
+			options: {
+				foo: 'bar',
+			},
+		});
+
 		const first = manager.location('test-location');
 
-		manager.registerLocation('test-location', { driver: 'test-driver', options: { foo: 'baz' } });
+		manager.registerLocation('test-location', {
+			driver: 'test-driver',
+			options: {
+				foo: 'baz',
+			},
+		});
 
 		expect(manager.location('test-location')).not.toBe(first);
 		expect(mockDriver).toHaveBeenLastCalledWith({ foo: 'baz' });
@@ -66,7 +87,13 @@ describe('#location', () => {
 		const manager = new DriverManager();
 
 		manager.registerDriver('test-driver', mockDriver);
-		manager.registerLocation('test-location', { driver: 'test-driver', options: { foo: 'bar' } });
+
+		manager.registerLocation('test-location', {
+			driver: 'test-driver',
+			options: {
+				foo: 'bar',
+			},
+		});
 
 		const first = manager.location('test-location');
 

@@ -50,7 +50,10 @@ export interface DefineJobOptions<Name extends string, Schema extends z.ZodType>
  * ```ts
  * export const mailSend = defineJob({
  * 	name: 'mail.send',
- * 	schema: z.object({ to: z.email(), subject: z.string() }),
+ * 	schema: z.object({
+ * 	to: z.email(),
+ * 	subject: z.string(),
+ * }),
  * 	options: { attempts: 5 },
  * });
  * ```
