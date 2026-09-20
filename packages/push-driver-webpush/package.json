@@ -1,0 +1,39 @@
+{
+	"name": "@novastarter/push-driver-webpush",
+	"version": "0.0.1",
+	"description": "Web Push (VAPID) push driver for `@novastarter/push`",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/novastarter/novastarter-monorepo.git",
+		"directory": "packages/push-driver-webpush"
+	},
+	"type": "module",
+	"exports": {
+		".": "./dist/index.js",
+		"./package.json": "./package.json"
+	},
+	"main": "dist/index.js",
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsdown src/index.ts --dts",
+		"dev": "tsdown src/index.ts --dts --watch",
+		"check-types": "tsc --noEmit -p tsconfig.json",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage"
+	},
+	"dependencies": {
+		"@novastarter/push": "workspace:*",
+		"web-push": "catalog:"
+	},
+	"devDependencies": {
+		"@novastarter/tsconfig": "workspace:*",
+		"@types/node": "catalog:",
+		"@types/web-push": "catalog:",
+		"@vitest/coverage-v8": "catalog:",
+		"tsdown": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	}
+}
