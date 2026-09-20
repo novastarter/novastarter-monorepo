@@ -7,18 +7,30 @@
 		"dev": "next dev --port 3000",
 		"build": "next build",
 		"start": "next start",
-		"check-types": "next typegen && tsc --noEmit"
+		"check-types": "next typegen && tsc --noEmit",
+		"test": "vitest run"
 	},
 	"dependencies": {
+		"@novastarter/env": "workspace:*",
+		"@novastarter/logger": "workspace:*",
+		"@novastarter/memory": "workspace:*",
+		"@novastarter/queue": "workspace:*",
+		"@novastarter/redis": "workspace:*",
+		"@novastarter/storage": "workspace:*",
+		"@novastarter/storage-driver-local": "workspace:*",
+		"@novastarter/utils": "workspace:*",
+		"ioredis": "catalog:",
 		"next": "16.3.4",
 		"react": "19.2.8",
-		"react-dom": "19.2.8"
+		"react-dom": "19.2.8",
+		"zod": "catalog:"
 	},
 	"devDependencies": {
 		"@novastarter/tsconfig": "workspace:*",
 		"@types/node": "26.4.1",
 		"@types/react": "19.2.18",
 		"@types/react-dom": "19.2.5",
-		"typescript": "7.0.2"
+		"typescript": "7.0.2",
+		"vitest": "catalog:"
 	}
 }

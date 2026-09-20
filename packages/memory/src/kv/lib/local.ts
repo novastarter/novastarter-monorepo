@@ -1,7 +1,7 @@
 import { LRUCache } from 'lru-cache';
 import { deserialize, serialize } from '../../utils/index.js';
 import type { Kv } from '../types/class.js';
-import type { KvConfigLocal } from '../types/config.js';
+import type { KvLocalOptions } from '../types/config.js';
 
 /**
  * In-memory key-value store for a single process.
@@ -28,9 +28,9 @@ export class KvLocal implements Kv {
 	/**
 	 * Create the store with optional size and time limits.
 	 *
-	 * @param config - Local configuration without the `type` discriminant.
+	 * @param config - Local configuration.
 	 */
-	constructor(config: Omit<KvConfigLocal, 'type'>) {
+	constructor(config: KvLocalOptions) {
 		// 1. `LRUCache` refuses to be constructed without `max` or `ttl`, so fall back to a plain `Map` when neither
 		//    limit is configured
 		if (config.maxKeys || config.ttl) {

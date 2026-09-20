@@ -14,22 +14,26 @@ afterEach(() => {
 	vi.resetAllMocks();
 });
 
-test('Opens the client of a location on registration and hands it out by name', () => {
+test('Opens the client of a location on first use and hands it out by name from then on', () => {
 	const client = {} as Redis;
 	vi.mocked(createRedis).mockReturnValue(client);
 
 	const manager = new RedisManager();
 	manager.registerLocation('jobs', 'redis://jobs:6379', { maxRetriesPerRequest: null });
 
-	expect(createRedis).toHaveBeenCalledWith('redis://jobs:6379', { maxRetriesPerRequest: null });
-	expect(manager.location('jobs')).toBe(client);
+	expect(createRedis).not.toHaveBeenCalled();
 	expect(manager.hasLocation('jobs')).toBe(true);
 	expect(manager.locationNames()).toEqual(['jobs']);
+
+	expect(manager.location('jobs')).toBe(client);
+	expect(manager.location('jobs')).toBe(client);
+	expect(createRedis).toHaveBeenCalledOnce();
+	expect(createRedis).toHaveBeenCalledWith('redis://jobs:6379', { maxRetriesPerRequest: null });
 });
 
-test('Falls back to the default location, and throws without one', () => {
-	const fallback = {} as Redis;
-	vi.mocked(createRedis).mockReturnValue(fallback);
+test('Answers default without a name and throws for an unknown location', () => {
+	const client = {} as Redis;
+	vi.mocked(createRedis).mockReturnValue(client);
 
 	const manager = new RedisManager();
 
@@ -37,21 +41,22 @@ test('Falls back to the default location, and throws without one', () => {
 
 	manager.registerLocation('default', 'redis://cache:6379');
 
-	expect(manager.location('jobs')).toBe(fallback);
-	expect(manager.location()).toBe(fallback);
+	expect(manager.location()).toBe(client);
+	expect(() => manager.location('jobs')).toThrow(/doesn't exist/);
 	expect(manager.hasLocation('jobs')).toBe(false);
 });
 
-test('Quits every client on close', async () => {
+test('Quits every opened client on close, leaving the registrations in place', async () => {
 	const quit = vi.fn().mockResolvedValue('OK');
 	vi.mocked(createRedis).mockImplementation(() => ({ quit }) as unknown as Redis);
 
 	const manager = new RedisManager();
 	manager.registerLocation('default', 'redis://cache:6379');
 	manager.registerLocation('jobs', 'redis://jobs:6379');
+	manager.location('default');
 
 	await manager.close();
 
-	expect(quit).toHaveBeenCalledTimes(2);
-	expect(manager.locationNames()).toEqual([]);
+	expect(quit).toHaveBeenCalledTimes(1);
+	expect(manager.locationNames()).toEqual(['default', 'jobs']);
 });

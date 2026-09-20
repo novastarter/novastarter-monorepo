@@ -44,6 +44,16 @@ export type DriverGCSConfig = {
 };
 
 /**
+ * Registers the driver's options in the map of `@novastarter/storage`, so a location naming `gcs` has its
+ * options checked against {@link DriverGCSConfig}.
+ */
+declare module '@novastarter/storage' {
+	interface StorageDrivers {
+		gcs: DriverGCSConfig;
+	}
+}
+
+/**
  * Storage driver backed by Google Cloud Storage.
  *
  * Plain operations go through `@google-cloud/storage` `File` handles. Resumable (TUS) uploads map onto GCS's own

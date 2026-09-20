@@ -18,7 +18,8 @@
 	],
 	"scripts": {
 		"build": "tsdown --dts",
-		"dev": "tsdown --watch"
+		"dev": "tsdown --watch",
+		"check-types": "tsc --noEmit -p tsconfig.json"
 	},
 	"devDependencies": {
 		"@novastarter/tsconfig": "workspace:*",

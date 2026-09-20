@@ -20,9 +20,10 @@
 	],
 	"scripts": {
 		"build": "pnpm run '/^build:.*/'",
-		"build:node": "tsdown node/index.ts --tsconfig node/tsconfig.json --out-dir dist/node --dts",
 		"build:shared": "tsdown shared/index.ts --tsconfig shared/tsconfig.json --out-dir dist/shared --dts",
+		"build:node": "tsdown node/index.ts --tsconfig node/tsconfig.json --out-dir dist/node --dts",
 		"dev": "pnpm run '/^build:.*/' --watch",
+		"check-types": "tsc --noEmit -p shared/tsconfig.json && tsc --noEmit -p node/tsconfig.json",
 		"test": "vitest run",
 		"test:coverage": "vitest run --coverage"
 	},

@@ -27,6 +27,7 @@
 	"scripts": {
 		"build": "tsdown src/index.ts --dts",
 		"dev": "tsdown src/index.ts --dts --watch",
+		"check-types": "tsc --noEmit -p tsconfig.json",
 		"test": "vitest run",
 		"test:coverage": "vitest run --coverage"
 	},

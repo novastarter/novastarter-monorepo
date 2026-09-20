@@ -17,14 +17,13 @@ pnpm add @novastarter/storage @novastarter/storage-driver-s3
 ## Usage
 
 Register the class once at start-up, then a location per bucket with the options read from the application's
-configuration:
+configuration — `env` is the app's typed configuration — the zod schema of the `@novastarter/env` readme.
 
 ```ts
-import { useEnv } from '@novastarter/env';
 import { useStorage } from '@novastarter/storage';
 import { DriverS3 } from '@novastarter/storage-driver-s3';
+import { env } from './env';
 
-const env = useEnv();
 const storage = useStorage();
 
 storage.registerDriver('s3', DriverS3);
@@ -32,21 +31,21 @@ storage.registerDriver('s3', DriverS3);
 storage.registerLocation('uploads', {
 	driver: 's3',
 	options: {
-		bucket: env['STORAGE_UPLOADS_BUCKET'] as string,
-		region: env['STORAGE_UPLOADS_REGION'] as string,
-		key: env['STORAGE_UPLOADS_KEY'] as string,
-		secret: env['STORAGE_UPLOADS_SECRET'] as string,
+		bucket: env.STORAGE_UPLOADS_BUCKET,
+		region: env.STORAGE_UPLOADS_REGION,
+		key: env.STORAGE_UPLOADS_KEY,
+		secret: env.STORAGE_UPLOADS_SECRET,
 	},
 });
 
 storage.registerLocation('backups', {
 	driver: 's3',
 	options: {
-		bucket: env['STORAGE_BACKUPS_BUCKET'] as string,
-		endpoint: env['STORAGE_BACKUPS_ENDPOINT'] as string,
+		bucket: env.STORAGE_BACKUPS_BUCKET,
+		endpoint: env.STORAGE_BACKUPS_ENDPOINT,
 		forcePathStyle: true,
-		key: env['STORAGE_BACKUPS_KEY'] as string,
-		secret: env['STORAGE_BACKUPS_SECRET'] as string,
+		key: env.STORAGE_BACKUPS_KEY,
+		secret: env.STORAGE_BACKUPS_SECRET,
 	},
 });
 ```

@@ -21,41 +21,41 @@ One driver package per backend: `storage-driver-local`, `storage-driver-s3`, `st
 
 ## Usage
 
-At start-up, once — drivers as classes, locations as explicit options. The same driver can back several locations with
-different credentials; a location named `default` answers for any name nobody registered:
+At start-up, once — drivers as classes, locations as explicit options; a driver is built on the location's first use.
+The same driver can back several locations with different credentials, and `driver` decides the type of `options`; `env`
+is the app's typed configuration — the zod schema of the `@novastarter/env` readme.
 
 ```ts
-import { useEnv } from '@novastarter/env';
 import { useStorage } from '@novastarter/storage';
 import { DriverLocal } from '@novastarter/storage-driver-local';
 import { DriverS3 } from '@novastarter/storage-driver-s3';
+import { env } from './env';
 
-const env = useEnv();
 const storage = useStorage();
 
 storage.registerDriver('local', DriverLocal);
 storage.registerDriver('s3', DriverS3);
 
-storage.registerLocation('default', { driver: 'local', options: { root: env['STORAGE_LOCAL_ROOT'] as string } });
+storage.registerLocation('default', { driver: 'local', options: { root: env.STORAGE_LOCAL_ROOT } });
 
 storage.registerLocation('uploads', {
 	driver: 's3',
 	options: {
-		bucket: env['STORAGE_UPLOADS_BUCKET'] as string,
-		region: env['STORAGE_UPLOADS_REGION'] as string,
-		key: env['STORAGE_UPLOADS_KEY'] as string,
-		secret: env['STORAGE_UPLOADS_SECRET'] as string,
+		bucket: env.STORAGE_UPLOADS_BUCKET,
+		region: env.STORAGE_UPLOADS_REGION,
+		key: env.STORAGE_UPLOADS_KEY,
+		secret: env.STORAGE_UPLOADS_SECRET,
 	},
 });
 
 storage.registerLocation('backups', {
 	driver: 's3',
 	options: {
-		bucket: env['STORAGE_BACKUPS_BUCKET'] as string,
-		endpoint: env['STORAGE_BACKUPS_ENDPOINT'] as string,
+		bucket: env.STORAGE_BACKUPS_BUCKET,
+		endpoint: env.STORAGE_BACKUPS_ENDPOINT,
 		forcePathStyle: true,
-		key: env['STORAGE_BACKUPS_KEY'] as string,
-		secret: env['STORAGE_BACKUPS_SECRET'] as string,
+		key: env.STORAGE_BACKUPS_KEY,
+		secret: env.STORAGE_BACKUPS_SECRET,
 	},
 });
 ```
@@ -79,12 +79,21 @@ if (supportsTus(uploads)) {
 }
 ```
 
-`registerLocation()` instantiates the driver at once, so a wrong option fails at start-up rather than on the first
-request; `location(name)` throws for a name that has neither a location nor a default. `hasLocation(name)` and
-`locationNames()` inspect the registry.
+`registerLocation()` checks that the driver exists and keeps the options; the first `location(name)` builds the driver,
+so an unused location never opens a client. `location(name)` throws for a name nobody registered; `hasLocation(name)`
+and `locationNames()` inspect the registry, `instantiated()` lists what was built so far.
 
 ## Writing a driver
 
 A driver is a class taking its options in the constructor and implementing `Driver` — or `TusDriver` for resumable
 uploads — from this package; see `@novastarter/storage-driver-local` for the smallest one. Every path a driver gets is
-relative to its configured root and uses forward slashes.
+relative to its configured root and uses forward slashes. The package registers its options in the driver map, so a
+location naming it is type-checked:
+
+```ts
+declare module '@novastarter/storage' {
+	interface StorageDrivers {
+		minio: DriverMinioConfig;
+	}
+}
+```

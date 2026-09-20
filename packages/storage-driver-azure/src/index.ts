@@ -48,6 +48,16 @@ export type DriverAzureConfig = {
 };
 
 /**
+ * Registers the driver's options in the map of `@novastarter/storage`, so a location naming `azure` has its
+ * options checked against {@link DriverAzureConfig}.
+ */
+declare module '@novastarter/storage' {
+	interface StorageDrivers {
+		azure: DriverAzureConfig;
+	}
+}
+
+/**
  * Storage driver backed by Azure Blob Storage.
  *
  * Plain files are stored as block blobs through `@azure/storage-blob`. Resumable (TUS) uploads use an append blob

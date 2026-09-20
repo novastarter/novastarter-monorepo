@@ -1,7 +1,7 @@
 import { InvalidPayloadError } from '@novastarter/errors';
+import { zodErrorToErrorExtensions } from '@novastarter/validation';
 import { z } from 'zod';
 import type { JobContract, JobOptions } from '../types.js';
-import { zodErrorToErrorExtensions } from '../utils/zod-error-to-error-extensions.js';
 
 /**
  * Shape of a job name: `<queue>.<action>`, lower-case words with digits and dashes, exactly one dot.

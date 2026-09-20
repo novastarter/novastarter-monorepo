@@ -1,20 +1,12 @@
 /**
  * Tests of `queue/schedules` and `lib/start-schedules` on the local `Kv` with croner on fake timers.
  */
-import { createKv } from '@novastarter/memory';
+import { KvLocal } from '@novastarter/memory';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { startSchedules } from './lib/start-schedules.js';
-import {
-	_schedules,
-	DEFAULT_DIGEST_SCHEDULE,
-	DEFAULT_RETENTION_SCHEDULE,
-	DEFAULT_TUS_CLEANUP_SCHEDULE,
-	DEV_PING_SCHEDULE,
-	getSchedules,
-	registerSchedule,
-} from './schedules.js';
+import { _schedules, DEV_PING_SCHEDULE, getSchedules, registerSchedule } from './schedules.js';
 
-const kv = createKv({ type: 'local' });
+const kv = new KvLocal({});
 const logger = { info: vi.fn(), debug: vi.fn(), error: vi.fn() };
 const kitSchedules = [..._schedules];
 
@@ -30,30 +22,28 @@ afterEach(async () => {
 });
 
 describe('getSchedules', () => {
-	test('Resolves the kit schedules against the environment', () => {
+	test('Resolves the kit schedule against the environment: the ping runs in development only', () => {
 		expect(getSchedules({})).toStrictEqual([
-			{ job: 'retention.run', cron: DEFAULT_RETENTION_SCHEDULE, payload: {}, enabled: true },
-			{ job: 'notifications.digest', cron: DEFAULT_DIGEST_SCHEDULE, payload: {}, enabled: true },
-			{ job: 'tus.cleanup', cron: DEFAULT_TUS_CLEANUP_SCHEDULE, payload: {}, enabled: false },
 			{ job: 'system.ping', cron: DEV_PING_SCHEDULE, payload: { message: 'scheduled ping' }, enabled: false },
 		]);
 
-		expect(
-			getSchedules({
-				RETENTION_SCHEDULE: '0 4 * * *',
-				RETENTION_ENABLED: false,
-				NOTIFICATIONS_DIGEST_CRON: '0 9 * * 1',
-				NOTIFICATIONS_DIGEST_ENABLED: false,
-				TUS_ENABLED: true,
-				TUS_CLEANUP_SCHEDULE: '*/30 * * * *',
-				NODE_ENV: 'development',
-			}),
-		).toStrictEqual([
-			{ job: 'retention.run', cron: '0 4 * * *', payload: {}, enabled: false },
-			{ job: 'notifications.digest', cron: '0 9 * * 1', payload: {}, enabled: false },
-			{ job: 'tus.cleanup', cron: '*/30 * * * *', payload: {}, enabled: true },
+		expect(getSchedules({ NODE_ENV: 'development' })).toStrictEqual([
 			{ job: 'system.ping', cron: DEV_PING_SCHEDULE, payload: { message: 'scheduled ping' }, enabled: true },
 		]);
+
+		// A rule and a switch may be functions of the environment
+		registerSchedule({
+			job: 'system.ping',
+			cron: (env) => String(env['PING_SCHEDULE']),
+			enabled: (env) => env['PING_ENABLED'] === true,
+		});
+
+		expect(getSchedules({ PING_SCHEDULE: '0 * * * *', PING_ENABLED: true })).toContainEqual({
+			job: 'system.ping',
+			cron: '0 * * * *',
+			payload: {},
+			enabled: true,
+		});
 	});
 });
 
@@ -76,14 +66,14 @@ describe('startSchedules', () => {
 	test('Starts the enabled schedules, skips disabled and invalid ones, enqueues on tick, stops', async () => {
 		_schedules.splice(0, _schedules.length);
 		registerSchedule({ job: 'system.ping', cron: '* * * * * *', payload: { message: 'tick' } });
-		registerSchedule({ job: 'retention.run', cron: '0 3 * * *', enabled: () => false });
-		registerSchedule({ job: 'mail.send', cron: 'nonsense' });
+		registerSchedule({ job: 'system.ping', cron: '0 3 * * *', enabled: () => false });
+		registerSchedule({ job: 'system.ping', cron: 'nonsense' });
 
 		const enqueue = vi.fn(async () => ({ id: '1', name: 'system.ping', queue: 'system' }));
 		const running = startSchedules({ env: {}, kv, enqueue, logger: logger as any });
 
 		expect(running.schedules.map((schedule) => schedule.job)).toStrictEqual(['system.ping']);
-		expect(logger.debug).toHaveBeenCalledWith('Schedule of "retention.run" is disabled');
+		expect(logger.debug).toHaveBeenCalledWith('Schedule of "system.ping" is disabled');
 		expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('invalid cron rule "nonsense"'));
 
 		await vi.advanceTimersByTimeAsync(2_000);

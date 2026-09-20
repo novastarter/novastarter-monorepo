@@ -11,7 +11,7 @@ import {
 	withNamespace,
 } from '../../utils/index.js';
 import type { Bus, MessageHandler } from '../types/class.js';
-import type { BusConfigRedis } from '../types/config.js';
+import type { BusRedisOptions } from '../types/config.js';
 
 /**
  * Bus backed by Redis pub/sub, delivering messages to every subscribed process.
@@ -72,9 +72,9 @@ export class BusRedis implements Bus {
 	/**
 	 * Create the bus on top of an existing Redis connection.
 	 *
-	 * @param config - Redis configuration without the `type` discriminant.
+	 * @param config - Redis configuration.
 	 */
-	constructor(config: Omit<BusConfigRedis, 'type'>) {
+	constructor(config: BusRedisOptions) {
 		// 1. Publish on the caller's connection and subscribe on a duplicate, since a subscribed connection can no
 		//    longer run regular commands
 		this.namespace = config.namespace;

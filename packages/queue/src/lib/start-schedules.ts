@@ -37,7 +37,7 @@ export interface RunningSchedules {
 /**
  * Start every enabled schedule: on each tick the job is enqueued, once per cluster.
  *
- * What `apps/worker` calls at start. A rule that does not parse is logged and skipped rather than taking the worker
+ * What the worker process calls at start. A rule that does not parse is logged and skipped rather than taking the worker
  * down — the other schedules are still worth running.
  *
  * @param options - Environment, shared store, enqueue function and logger.

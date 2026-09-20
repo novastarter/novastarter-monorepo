@@ -1,11 +1,11 @@
 import type { RequestHandler } from 'express';
-import type { RateLimiterOptions } from './monitor.js';
-import { RateLimiter } from './monitor.js';
+import type { PressureMonitorOptions } from './monitor.js';
+import { PressureMonitor } from './monitor.js';
 
 /**
  * Create an Express middleware that rejects requests while the process is overloaded.
  *
- * One {@link RateLimiter} is created per middleware instance and shared by every request passing through it.
+ * One {@link PressureMonitor} is created per middleware instance and shared by every request passing through it.
  * When it reports overload the request is handed to the error handler with `options.error` (or a generic
  * `Error`); otherwise the request continues normally.
  *
@@ -14,18 +14,18 @@ import { RateLimiter } from './monitor.js';
  * @example
  * ```ts
  * app.use(
- * 	handleRateLimit({
+ * 	handlePressure({
  * 		maxEventLoopUtilization: 0.8,
  * 		retryAfter: '5',
  * 	}),
  * );
  * ```
  */
-export const handleRateLimit = (
-	options: RateLimiterOptions & { error?: Error; retryAfter?: string },
+export const handlePressure = (
+	options: PressureMonitorOptions & { error?: Error; retryAfter?: string },
 ): RequestHandler => {
 	// 1. Create the monitor once, outside the handler, so its sampling timer is not restarted for each request
-	const monitor = new RateLimiter(options);
+	const monitor = new PressureMonitor(options);
 
 	// 2. The handler closes over that single monitor and only reads its cached verdict per request
 	return (_req, res, next) => {

@@ -15,14 +15,13 @@ pnpm add @novastarter/storage @novastarter/storage-driver-azure
 ## Usage
 
 Register the class once at start-up, then a location per container with the options read from the application's
-configuration:
+configuration — `env` is the app's typed configuration — the zod schema of the `@novastarter/env` readme.
 
 ```ts
-import { useEnv } from '@novastarter/env';
 import { useStorage } from '@novastarter/storage';
 import { DriverAzure } from '@novastarter/storage-driver-azure';
+import { env } from './env';
 
-const env = useEnv();
 const storage = useStorage();
 
 storage.registerDriver('azure', DriverAzure);
@@ -30,9 +29,9 @@ storage.registerDriver('azure', DriverAzure);
 storage.registerLocation('uploads', {
 	driver: 'azure',
 	options: {
-		containerName: env['STORAGE_UPLOADS_CONTAINER_NAME'] as string,
-		accountName: env['STORAGE_UPLOADS_ACCOUNT_NAME'] as string,
-		accountKey: env['STORAGE_UPLOADS_ACCOUNT_KEY'] as string,
+		containerName: env.STORAGE_UPLOADS_CONTAINER_NAME,
+		accountName: env.STORAGE_UPLOADS_ACCOUNT_NAME,
+		accountKey: env.STORAGE_UPLOADS_ACCOUNT_KEY,
 	},
 });
 ```

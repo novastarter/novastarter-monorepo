@@ -8,11 +8,14 @@
 			"outputs": [".next/**", "!.next/cache/**", "!.next/dev/**", "dist/**"]
 		},
 		"check-types": {
-			"dependsOn": ["^check-types"]
+			"dependsOn": ["^build"]
 		},
 		"dev": {
 			"cache": false,
 			"persistent": true
+		},
+		"test": {
+			"dependsOn": ["^build"]
 		}
 	}
 }

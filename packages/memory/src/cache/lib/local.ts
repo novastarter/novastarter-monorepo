@@ -1,7 +1,7 @@
-import { createKv, type Kv } from '../../kv/index.js';
+import { type Kv, KvLocal } from '../../kv/index.js';
 import type { Lock } from '../../kv/types/lock.js';
 import type { Cache } from '../types/class.js';
-import type { CacheConfigLocal } from '../types/config.js';
+import type { CacheLocalOptions } from '../types/config.js';
 
 /**
  * In-memory cache for a single process, a thin wrapper over `KvLocal`.
@@ -24,11 +24,11 @@ export class CacheLocal implements Cache {
 	/**
 	 * Create the cache with optional size and time limits.
 	 *
-	 * @param config - Local configuration without the `type` discriminant.
+	 * @param config - Local configuration.
 	 */
-	constructor(config: Omit<CacheConfigLocal, 'type'>) {
+	constructor(config: CacheLocalOptions) {
 		// 1. The cache reuses the Kv store instead of holding its own map, so both share one implementation
-		this.store = createKv({ type: 'local', ...config });
+		this.store = new KvLocal(config);
 	}
 
 	/**

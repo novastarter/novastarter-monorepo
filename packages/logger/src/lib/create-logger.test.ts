@@ -75,12 +75,20 @@ describe('createLogger', () => {
 		]);
 	});
 
-	test('Redacts authorization and cookie headers', () => {
+	test('Redacts credentials, the session cookie and query tokens', () => {
 		createLogger();
 
 		expect(pino).toHaveBeenCalledWith(
 			expect.objectContaining({
-				redact: { paths: ['req.headers.authorization', 'req.headers.cookie'], censor: expect.any(String) },
+				redact: {
+					paths: [
+						'req.headers.authorization',
+						'req.headers.cookie',
+						'res.headers["set-cookie"]',
+						'req.query.access_token',
+					],
+					censor: expect.any(String),
+				},
 			}),
 			expect.anything(),
 		);

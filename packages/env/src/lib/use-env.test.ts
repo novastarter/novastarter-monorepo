@@ -18,12 +18,13 @@ test('Returns cached env if exists', () => {
 	expect(env).toBe(_cache.env);
 });
 
-test('Creates new cached env if not exists', () => {
+test('Creates new cached env if not exists, passing the options along', () => {
 	const mockEnv = {};
 	vi.mocked(createEnv).mockReturnValue(mockEnv);
 
-	const env = useEnv();
+	const env = useEnv({ fileVariables: ['DB_PASSWORD'] });
 
 	expect(env).toBe(mockEnv);
+	expect(createEnv).toHaveBeenCalledWith({ fileVariables: ['DB_PASSWORD'] });
 	expect(_cache.env).toBe(mockEnv);
 });

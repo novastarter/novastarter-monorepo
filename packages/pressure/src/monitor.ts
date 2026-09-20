@@ -5,12 +5,12 @@ import { setTimeout } from 'node:timers';
 import { defaults } from '@novastarter/utils';
 
 /**
- * Thresholds and sampling settings for {@link RateLimiter}.
+ * Thresholds and sampling settings for {@link PressureMonitor}.
  *
  * Every threshold defaults to `false`, which disables that check entirely; only the limits a caller sets are
  * enforced.
  */
-export type RateLimiterOptions = {
+export type PressureMonitorOptions = {
 	/** Largest tolerated mean event loop delay in milliseconds, or `false` to ignore delay. */
 	maxEventLoopDelay?: number | false;
 	/** Largest tolerated event loop utilization, a ratio between `0` and `1`, or `false` to ignore utilization. */
@@ -28,20 +28,20 @@ export type RateLimiterOptions = {
 /**
  * Samples event loop and memory metrics in the background and reports whether the process is overloaded.
  *
- * Metrics are refreshed on a timer, so reading {@link RateLimiter.overloaded} is a cheap comparison against the
+ * Metrics are refreshed on a timer, so reading {@link PressureMonitor.overloaded} is a cheap comparison against the
  * last sample rather than a live measurement. The timer is unref'd and therefore never keeps the process alive on
  * its own.
  *
  * @example
  * ```ts
- * const monitor = new RateLimiter({ maxEventLoopUtilization: 0.8 });
+ * const monitor = new PressureMonitor({ maxEventLoopUtilization: 0.8 });
  *
  * if (monitor.overloaded) {
  * 	throw new Error('Pressure limit exceeded');
  * }
  * ```
  */
-export class RateLimiter {
+export class PressureMonitor {
 	/**
 	 * V8 heap usage in bytes from the latest sample.
 	 *
@@ -75,7 +75,7 @@ export class RateLimiter {
 	 *
 	 * @internal
 	 */
-	private options: Required<RateLimiterOptions>;
+	private options: Required<PressureMonitorOptions>;
 
 	/**
 	 * Node histogram that accumulates event loop delay between two samples.
@@ -94,9 +94,9 @@ export class RateLimiter {
 	/**
 	 * Start sampling right away using the given thresholds.
 	 *
-	 * @param options - Thresholds and sampling settings; see {@link RateLimiterOptions} for the defaults.
+	 * @param options - Thresholds and sampling settings; see {@link PressureMonitorOptions} for the defaults.
 	 */
-	constructor(options: RateLimiterOptions = {}) {
+	constructor(options: PressureMonitorOptions = {}) {
 		// 1. Fill in the defaults so every later comparison can read the options without null checks
 		this.options = defaults(options, {
 			sampleInterval: 250,

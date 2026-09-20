@@ -46,6 +46,20 @@ export interface CreateLoggerOptions {
 }
 
 /**
+ * Paths redacted in every line: the credentials of a request, the session cookie of a response and a token in the
+ * query string.
+ *
+ * @defaultValue `req.headers.authorization`, `req.headers.cookie`, `res.headers["set-cookie"]`,
+ * `req.query.access_token`
+ */
+export const REDACTED_PATHS: readonly string[] = [
+	'req.headers.authorization',
+	'req.headers.cookie',
+	'res.headers["set-cookie"]',
+	'req.query.access_token',
+];
+
+/**
  * Numeric value of a pino level name, falling back to `info` for unknown names.
  *
  * @param level - Level name such as `debug`.
@@ -85,18 +99,20 @@ export const buildLevelFormatters = (
  * Build the application logger.
  *
  * `level` sets the level, `style` picks pretty console output or JSON lines, `pino` is merged into the pino options
- * verbatim and `levels` remaps level names to a `severity` field. Authorization and cookie headers are always
- * redacted. The application passes what it read from its configuration: `createLogger({ level: env['LOG_LEVEL'] })`.
+ * verbatim and `levels` remaps level names to a `severity` field. The {@link REDACTED_PATHS} are always redacted. The
+ * application passes what it read from its configuration: `createLogger({ level: env['LOG_LEVEL'] })`.
  *
  * @param options - Level, style, pino options and extra destinations.
  * @returns A configured pino logger.
  */
 export const createLogger = (options: CreateLoggerOptions = {}): Logger<never> => {
-	// 1. Secrets are redacted before any stream sees the line
+	// 1. Secrets are redacted before any stream sees the line: the credentials of a request, the session cookie of
+	//    a response and a token in the query string — the request logger is a child of this logger, so its lines go
+	//    through the same list
 	const pinoOptions: LoggerOptions = {
 		level: options.level || 'info',
 		redact: {
-			paths: ['req.headers.authorization', 'req.headers.cookie'],
+			paths: [...REDACTED_PATHS],
 			censor: REDACTED_TEXT,
 		},
 	};

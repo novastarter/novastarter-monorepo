@@ -17,19 +17,18 @@ pnpm add @novastarter/storage @novastarter/storage-driver-local
 ## Usage
 
 Register the class once at start-up, then a location per directory with the options read from the application's
-configuration:
+configuration — `env` is the app's typed configuration — the zod schema of the `@novastarter/env` readme.
 
 ```ts
-import { useEnv } from '@novastarter/env';
 import { useStorage } from '@novastarter/storage';
 import { DriverLocal } from '@novastarter/storage-driver-local';
+import { env } from './env';
 
-const env = useEnv();
 const storage = useStorage();
 
 storage.registerDriver('local', DriverLocal);
 
-storage.registerLocation('default', { driver: 'local', options: { root: env['STORAGE_LOCAL_ROOT'] as string } });
+storage.registerLocation('default', { driver: 'local', options: { root: env.STORAGE_LOCAL_ROOT } });
 ```
 
 Anywhere later: `useStorage().location('uploads').write(path, stream, type)` and the rest of the `Driver` interface.

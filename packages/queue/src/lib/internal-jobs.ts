@@ -1,6 +1,6 @@
 /**
- * What the worker and the web app agree on for job delivery: the path, the headers, the body — one place, so the
- * sender (`apps/worker`) and the receiver (`apps/web`) cannot drift apart.
+ * What a worker and the web app agree on for job delivery: the path, the headers, the body — one place, so the
+ * sender (the worker process) and the receiver (the web app) cannot drift apart.
  */
 
 /**

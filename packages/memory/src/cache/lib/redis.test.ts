@@ -1,6 +1,6 @@
 import { Redis } from 'ioredis';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { createKv, KvRedis } from '../../kv/index.js';
+import { KvRedis } from '../../kv/index.js';
 import { CacheRedis } from './redis.js';
 
 vi.mock('ioredis');
@@ -15,8 +15,6 @@ let mockRedis: Redis;
 let cache: CacheRedis;
 
 beforeEach(() => {
-	vi.mocked(createKv).mockReturnValue(new KvRedis({ namespace: mockNamespace, redis: mockRedis }));
-
 	mockRedis = new Redis();
 	cache = new CacheRedis({ namespace: mockNamespace, redis: mockRedis });
 });
@@ -27,11 +25,7 @@ afterEach(() => {
 
 describe('constructor', () => {
 	test('Instantiates Kv with configuration', () => {
-		expect(createKv).toHaveBeenCalledWith({
-			type: 'redis',
-			redis: mockRedis,
-			namespace: mockNamespace,
-		});
+		expect(KvRedis).toHaveBeenCalledWith({ redis: mockRedis, namespace: mockNamespace });
 
 		expect(cache['store']).toBeInstanceOf(KvRedis);
 	});

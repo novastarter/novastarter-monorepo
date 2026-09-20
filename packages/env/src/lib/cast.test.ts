@@ -1,16 +1,12 @@
 import { toArray, toBoolean } from '@novastarter/utils';
 import { toNumber, toString } from 'lodash-es';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { getDefaultType } from '../utils/get-default-type.js';
-import { guessType } from '../utils/guess-type.js';
 import { getCastFlag } from '../utils/has-cast-prefix.js';
 import { tryJson } from '../utils/try-json.js';
 import { cast } from './cast.js';
 
 vi.mock('@novastarter/utils');
 vi.mock('lodash-es');
-vi.mock('../utils/get-default-type.js');
-vi.mock('../utils/guess-type.js');
 vi.mock('../utils/has-cast-prefix.js');
 vi.mock('../utils/try-json.js');
 
@@ -22,7 +18,7 @@ describe('Type extraction', () => {
 	test('Uses cast flag if exists', () => {
 		vi.mocked(getCastFlag).mockReturnValue('string');
 
-		cast('string:value', 'key');
+		cast('string:value');
 
 		expect(getCastFlag).toHaveBeenCalledWith('string:value');
 		expect(toString).toHaveBeenCalledWith('value');
@@ -39,7 +35,7 @@ describe('Type extraction', () => {
 		vi.mocked(toNumber).mockReturnValue(1);
 		vi.mocked(toArray).mockReturnValue(['string:hey', 'number:1']);
 
-		const res = cast('array:string:hey,number:1', 'key');
+		const res = cast('array:string:hey,number:1');
 
 		expect(getCastFlag).toHaveBeenNthCalledWith(1, 'array:string:hey,number:1');
 		expect(getCastFlag).toHaveBeenCalledWith('string:hey');
@@ -50,25 +46,13 @@ describe('Type extraction', () => {
 		expect(res).toEqual(['hey', 1]);
 	});
 
-	test('Uses type map entry if cast flag does not exist', () => {
+	test('Returns the value untouched without a cast flag', () => {
 		vi.mocked(getCastFlag).mockReturnValue(null);
-		vi.mocked(getDefaultType).mockReturnValue('string');
 
-		cast('value', 'key');
-
-		expect(getDefaultType).toHaveBeenCalledWith('key');
-		expect(toString).toHaveBeenCalledWith('value');
-	});
-
-	test('Uses guessed type if no flag or type map entry exist', () => {
-		vi.mocked(getCastFlag).mockReturnValue(null);
-		vi.mocked(getDefaultType).mockReturnValue(null);
-		vi.mocked(guessType).mockReturnValue('string');
-
-		cast('value', 'key');
-
-		expect(guessType).toHaveBeenCalledWith('value');
-		expect(toString).toHaveBeenCalledWith('value');
+		expect(cast('8055')).toBe('8055');
+		expect(cast('true')).toBe('true');
+		expect(cast(42)).toBe(42);
+		expect(toString).not.toHaveBeenCalled();
 	});
 });
 
@@ -105,11 +89,9 @@ describe('Casting', () => {
 			return null;
 		});
 
-		vi.mocked(guessType).mockReturnValue('number');
-		vi.mocked(toNumber).mockImplementation((v) => v);
-		vi.mocked(toArray).mockReturnValue([1, 2, 3]);
+		vi.mocked(toArray).mockReturnValue(['1', '2', '3']);
 
-		expect(cast('array:value')).toEqual([1, 2, 3]);
+		expect(cast('array:value')).toEqual(['1', '2', '3']);
 	});
 
 	test('Filters empty strings values out of the array', () => {

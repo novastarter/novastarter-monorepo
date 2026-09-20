@@ -1,17 +1,18 @@
-# `@novastarter/rate-limiter`
+# `@novastarter/pressure`
 
-Pressure based rate limiter.
+Event loop and memory pressure monitor, with an Express middleware that sheds load.
 
 ## Description
 
 Samples the event loop delay and utilization and the memory of the process in the background and reports whether it is
-overloaded, so a server can shed load before it falls over. Every threshold is off unless set; reading `overloaded` is a
-comparison against the last sample, not a live measurement. Ported from `@directus/pressure`.
+overloaded, so a server can refuse requests before it falls over. Every threshold is off unless set; reading
+`overloaded` is a comparison against the last sample, not a live measurement. Not a rate limiter — per-key budgets are
+the `Limiter` of `@novastarter/memory`. Ported from `@directus/pressure`.
 
 ## Installation
 
 ```
-pnpm add @novastarter/rate-limiter
+pnpm add @novastarter/pressure
 ```
 
 ## Usage
@@ -19,9 +20,9 @@ pnpm add @novastarter/rate-limiter
 Standalone — the monitor is a class that can be used anywhere:
 
 ```ts
-import { RateLimiter } from '@novastarter/rate-limiter';
+import { PressureMonitor } from '@novastarter/pressure';
 
-const monitor = new RateLimiter({ maxEventLoopUtilization: 0.8, maxMemoryHeapUsed: 512 * 1024 * 1024 });
+const monitor = new PressureMonitor({ maxEventLoopUtilization: 0.8, maxMemoryHeapUsed: 512 * 1024 * 1024 });
 
 monitor.overloaded; // true | false
 ```
@@ -32,12 +33,12 @@ transparent otherwise:
 ```ts
 import express from 'express';
 import { HitRateLimitError } from '@novastarter/errors';
-import { handleRateLimit } from '@novastarter/rate-limiter';
+import { handlePressure } from '@novastarter/pressure';
 
 const app = express();
 
 app.use(
-	handleRateLimit({
+	handlePressure({
 		maxEventLoopUtilization: 0.8,
 		retryAfter: '5',
 		error: new HitRateLimitError({ limit: 0, reset: new Date(Date.now() + 5_000) }),

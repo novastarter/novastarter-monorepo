@@ -1,5 +1,5 @@
 import type { Bus, MessageHandler } from '../types/class.js';
-import type { BusConfigLocal } from '../types/config.js';
+import type { BusLocalOptions } from '../types/config.js';
 
 /**
  * In-process bus: publishing calls the subscribers registered in this process, nothing more.
@@ -28,7 +28,7 @@ export class BusLocal implements Bus {
 	 *
 	 * @param _config - Local configuration; it carries no options yet.
 	 */
-	constructor(_config: Omit<BusConfigLocal, 'type'>) {
+	constructor(_config: BusLocalOptions = {}) {
 		// 1. Start without subscribers
 		this.handlers = {};
 	}

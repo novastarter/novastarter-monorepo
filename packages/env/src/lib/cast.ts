@@ -1,56 +1,55 @@
 import { toArray, toBoolean } from '@novastarter/utils';
 import { toNumber, toString } from 'lodash-es';
-import { getDefaultType } from '../utils/get-default-type.js';
-import { guessType } from '../utils/guess-type.js';
 import { getCastFlag } from '../utils/has-cast-prefix.js';
 import { tryJson } from '../utils/try-json.js';
 
 /**
- * Coerce a raw configuration value to its intended type.
+ * Apply the cast prefix of a raw configuration value, when it carries one.
  *
- * The type is chosen in this order: an explicit cast prefix on the value (`number:1`), the entry for the variable in
- * the type map, and finally a guess from the value itself. Array members are cast one by one, so
- * `array:string:a,number:1` yields `['a', 1]`.
+ * Only an explicit prefix converts: `number:1` becomes `1`, `boolean:true` becomes `true`, `array:a,b` becomes
+ * `['a', 'b']` with its members cast one by one (`array:string:a,number:1` yields `['a', 1]`). A value without a
+ * prefix is returned as it is — a string from the environment, whatever type a config file gave it — and the
+ * application's schema decides what it becomes. Nothing is guessed from the look of a value, so `0123` and `true`
+ * stay strings until a schema says otherwise.
  *
  * @param value - Raw value, possibly carrying a cast prefix.
- * @param key - Variable name used for the type-map lookup; omitted for array members.
- * @returns The cast value.
+ * @returns The converted value, or the value untouched.
  * @example
  * ```ts
- * cast('8055', 'PORT');
- * // => '8055' — PORT is mapped to string
+ * cast('number:8055');
+ * // => 8055
  *
  * cast('8055');
- * // => 8055 — guessed as number
+ * // => '8055'
  * ```
  */
-export const cast = (value: unknown, key?: string): unknown => {
-	// 1. Resolve the type: explicit prefix, then type map, then guess
+export const cast = (value: unknown): unknown => {
+	// 1. Only an explicit prefix converts; without one the value is the application's to interpret
 	const castFlag = getCastFlag(value);
 
-	const type = castFlag ?? getDefaultType(key) ?? guessType(value);
-
-	// 2. Strip the prefix and its colon, so the remainder is the actual payload
-	if (typeof value === 'string' && castFlag) {
-		value = value.substring(castFlag.length + 1);
+	if (!castFlag) {
+		return value;
 	}
 
-	// 3. Apply the conversion. Array members recurse without a key: they carry their own prefixes or get guessed, and
-	//    empty members from a trailing comma are dropped
-	switch (type) {
+	// 2. Strip the prefix and its colon, so the remainder is the actual payload
+	const payload = typeof value === 'string' ? value.substring(castFlag.length + 1) : value;
+
+	// 3. Apply the conversion. Array members recurse: they carry their own prefixes or stay strings, and empty members
+	//    from a trailing comma are dropped
+	switch (castFlag) {
 		case 'string':
-			return toString(value);
+			return toString(payload);
 		case 'number':
-			return toNumber(value);
+			return toNumber(payload);
 		case 'boolean':
-			return toBoolean(value);
+			return toBoolean(payload);
 		case 'regex':
-			return new RegExp(String(value));
+			return new RegExp(String(payload));
 		case 'array':
-			return toArray(value)
+			return toArray(payload)
 				.map((v) => cast(v))
 				.filter((v) => v !== '');
 		case 'json':
-			return tryJson(value);
+			return tryJson(payload);
 	}
 };

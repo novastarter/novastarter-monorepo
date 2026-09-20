@@ -1,7 +1,6 @@
 /**
- * Bus implementations and their factory.
+ * Bus drivers and their manager.
  */
-export * from './create.js';
 export * from './local.js';
 export * from './manager.js';
 export * from './redis.js';

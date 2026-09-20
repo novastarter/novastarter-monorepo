@@ -7,6 +7,9 @@ import { useEmitter } from '@novastarter/emitter';
 import { useLogger } from '@novastarter/logger';
 import { createRedis } from '@novastarter/redis';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { z } from 'zod';
+import { _contracts, registerJob } from '../contracts/index.js';
+import { defineJob } from './define-job.js';
 import { enqueue, JOB_ENQUEUED_EVENT, jobs } from './enqueue.js';
 import { _handlers, registerJobHandlers } from './handlers.js';
 import { QueueBullmq } from './providers/bullmq.js';
@@ -63,8 +66,16 @@ describe('useQueue / QueueManager', () => {
 		expect((mail as QueueBullmq).connection.quit).toHaveBeenCalled();
 	});
 
+	test('Names the queue when neither its location nor the default one exists', () => {
+		_cache.queue = undefined;
+
+		expect(() => useQueue().location('mail')).toThrow('Queue "mail" has no location of its own and no "default" one.');
+	});
+
 	test('Refuses a location of a driver nobody registered', () => {
-		expect(() => useQueue().registerLocation('x', { driver: 'sqs', options: {} })).toThrow(/isn't registered/);
+		expect(() => useQueue().registerLocation('x', { driver: 'sqs' as 'local', options: {} })).toThrow(
+			/isn't registered/,
+		);
 	});
 });
 
@@ -94,14 +105,21 @@ describe('enqueue', () => {
 
 	test('Applies the contract options and the call overrides, deriving the id', async () => {
 		const handler = vi.fn(async () => {});
-		registerJobHandlers({ 'retention.run': handler });
+		registerJobHandlers({ 'system.ping': handler });
 
-		const job = await enqueue('retention.run', {}, { jobId: 'nightly' });
+		const job = await enqueue('system.ping', {}, { jobId: 'nightly' });
 
 		expect(job.id).toBe('nightly');
 
-		const derived = await enqueue('retention.run', { batch: 10 });
+		registerJob(
+			defineJob({ name: 'reports.build', schema: z.object({ customer: z.string() }), options: { unique: true } }),
+		);
 
-		expect(derived.id).toMatch(/^retention\.run_/);
+		registerJobHandlers({ 'reports.build': handler } as never);
+
+		const derived = await enqueue('reports.build' as never, { customer: 'c1' } as never);
+
+		expect(derived.id).toMatch(/^reports\.build_/);
+		_contracts.delete('reports.build');
 	});
 });

@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, expect, test, vi } from 'vitest';
-import { isNovaVariable } from '../utils/is-nova-variable.js';
 import { readConfigurationFromProcess } from '../utils/read-configuration-from-process.js';
 import { createEnv } from './create-env.js';
 import { readConfigurationFromFile } from './read-configuration-from-file.js';
@@ -8,7 +7,6 @@ import { readConfigurationFromFile } from './read-configuration-from-file.js';
 vi.mock('../utils/get-config-path.js');
 vi.mock('../utils/read-configuration-from-process.js');
 vi.mock('./read-configuration-from-file.js');
-vi.mock('../utils/is-nova-variable.js');
 vi.mock('node:fs');
 
 vi.mock('../constants/defaults.js', () => ({
@@ -22,7 +20,7 @@ afterEach(() => {
 	vi.resetAllMocks();
 });
 
-test('Defaults that have a type set is casted', () => {
+test('Applies cast prefixes, inline and on file contents, and keeps everything else as given', () => {
 	const processConfigs = {
 		PROCESS1: 'test-process',
 		PROCESS2: 'array:one,two',
@@ -42,19 +40,18 @@ test('Defaults that have a type set is casted', () => {
 
 	vi.mocked(readConfigurationFromProcess).mockReturnValue(processConfigs);
 	vi.mocked(readConfigurationFromFile).mockReturnValue(fileConfigs);
-	vi.mocked(isNovaVariable).mockReturnValue(true);
 	vi.mocked(readFileSync).mockReturnValueOnce('file-content');
 	vi.mocked(readFileSync).mockReturnValueOnce('one,two,three');
 	vi.mocked(readFileSync).mockReturnValueOnce('ran,d0m,from-file');
 	vi.mocked(readFileSync).mockReturnValueOnce('file-from-file-content');
 	vi.mocked(readFileSync).mockReturnValueOnce('elem1,elem2');
 
-	const env = createEnv();
+	const env = createEnv({ fileVariables: ['PROCESS5', 'PROCESS6', 'PROCESS8', 'FILE2', 'FILE3'] });
 
 	expect(env).toEqual({
 		PROCESS1: 'test-process',
 		PROCESS2: ['one', 'two'],
-		PROCESS3: ['one', 'two', 'three'],
+		PROCESS3: 'one,two,three',
 		PROCESS4: ['hey', 1],
 		PROCESS5: 'file-content',
 		PROCESS6: ['one', 'two', 'three'],

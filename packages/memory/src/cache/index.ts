@@ -1,5 +1,5 @@
 /**
- * Cache: the `Cache` interface, its local, Redis and multi-stage implementations and the `createCache` factory.
+ * Cache: the `Cache` interface, its `local`, `redis` and `multi` drivers and the `CacheManager` of their locations.
  */
 export * from './lib/index.js';
 export * from './types/index.js';

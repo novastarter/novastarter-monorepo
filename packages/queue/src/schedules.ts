@@ -1,5 +1,4 @@
 import type { Env } from '@novastarter/env';
-import { toBoolean } from '@novastarter/utils';
 import type { JobInputOf } from './lib/enqueue.js';
 import type { JobName } from './types.js';
 
@@ -30,29 +29,6 @@ export interface ResolvedSchedule {
 }
 
 /**
- * Nightly hour of the retention sweep when `RETENTION_SCHEDULE` is not set: when a long delete is least likely to
- * fight with traffic.
- *
- * @defaultValue `0 3 * * *`
- */
-export const DEFAULT_RETENTION_SCHEDULE = '0 3 * * *';
-
-/**
- * Morning hour of the notification digest when `NOTIFICATIONS_DIGEST_CRON` is not set.
- *
- * @defaultValue `0 8 * * *`
- */
-export const DEFAULT_DIGEST_SCHEDULE = '0 8 * * *';
-
-/**
- * How often the abandoned resumable uploads are swept when `TUS_CLEANUP_SCHEDULE` is not set: hourly, the
- * granularity of their expiration.
- *
- * @defaultValue `0 * * * *`
- */
-export const DEFAULT_TUS_CLEANUP_SCHEDULE = '0 * * * *';
-
-/**
  * How often the development ping fires.
  *
  * @defaultValue every five minutes
@@ -60,32 +36,13 @@ export const DEFAULT_TUS_CLEANUP_SCHEDULE = '0 * * * *';
 export const DEV_PING_SCHEDULE = '*/5 * * * *';
 
 /**
- * The schedules of the kit; the app adds its own with {@link registerSchedule}.
+ * The schedules of the kit — the development ping; the app adds its own with {@link registerSchedule}.
  *
  * Exported as a bare array so tests can reset it in place.
  *
  * @internal
  */
 export const _schedules: Schedule[] = [
-	{
-		job: 'retention.run',
-		cron: (env) => String(env['RETENTION_SCHEDULE'] ?? DEFAULT_RETENTION_SCHEDULE),
-		payload: {},
-		enabled: (env) => toBoolean(env['RETENTION_ENABLED'] ?? true),
-	},
-	{
-		job: 'notifications.digest',
-		cron: (env) => String(env['NOTIFICATIONS_DIGEST_CRON'] ?? DEFAULT_DIGEST_SCHEDULE),
-		payload: {},
-		enabled: (env) => toBoolean(env['NOTIFICATIONS_DIGEST_ENABLED'] ?? true),
-	},
-	{
-		job: 'tus.cleanup',
-		cron: (env) => String(env['TUS_CLEANUP_SCHEDULE'] ?? DEFAULT_TUS_CLEANUP_SCHEDULE),
-		payload: {},
-		// Nothing to sweep while resumable uploads are off
-		enabled: (env) => toBoolean(env['TUS_ENABLED'] ?? false),
-	},
 	{
 		job: 'system.ping',
 		cron: DEV_PING_SCHEDULE,

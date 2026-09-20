@@ -20,6 +20,7 @@
 	"scripts": {
 		"build": "tsdown src/index.ts --dts",
 		"dev": "tsdown src/index.ts --dts --watch",
+		"check-types": "tsc --noEmit -p tsconfig.json",
 		"test": "vitest run",
 		"test:coverage": "vitest run --coverage"
 	},
@@ -27,7 +28,8 @@
 		"@novastarter/errors": "workspace:*",
 		"@novastarter/utils": "workspace:*",
 		"joi": "catalog:",
-		"lodash-es": "catalog:"
+		"lodash-es": "catalog:",
+		"zod": "catalog:"
 	},
 	"devDependencies": {
 		"@novastarter/tsconfig": "workspace:*",

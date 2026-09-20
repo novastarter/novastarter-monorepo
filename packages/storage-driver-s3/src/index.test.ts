@@ -601,7 +601,7 @@ describe('#copy', () => {
 
 	test('Optionally sets ServerSideEncryption', async () => {
 		// 1. Encryption alone, with no KMS key id configured, so only the mode header may appear whatever the mode
-		driver['config'].serverSideEncryption = sample.config.serverSideEncryption;
+		driver['config'].serverSideEncryption = sample.config.serverSideEncryption!;
 
 		await driver.copy(sample.path.src, sample.path.dest);
 
@@ -618,7 +618,7 @@ describe('#copy', () => {
 		async (sse) => {
 			// 1. For the KMS modes the configured key id must travel with the mode
 			driver['config'].serverSideEncryption = sse;
-			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId;
+			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId!;
 
 			await driver.copy(sample.path.src, sample.path.dest);
 
@@ -637,7 +637,7 @@ describe('#copy', () => {
 		async (sse) => {
 			// 1. For the non-KMS modes the key id must be dropped even though it is configured: S3 rejects it
 			driver['config'].serverSideEncryption = sse;
-			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId;
+			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId!;
 
 			await driver.copy(sample.path.src, sample.path.dest);
 
@@ -653,7 +653,7 @@ describe('#copy', () => {
 
 	test('Optionally sets ACL', async () => {
 		// 1. The ACL is restated on the copy, since S3 does not carry it over from the source object
-		driver['config'].acl = sample.config.acl;
+		driver['config'].acl = sample.config.acl!;
 
 		await driver.copy(sample.path.src, sample.path.dest);
 
@@ -708,7 +708,7 @@ describe('#write', () => {
 
 	test('Optionally sets ServerSideEncryption', async () => {
 		// 1. Encryption alone, with no KMS key id configured, so only the mode header may appear whatever the mode
-		driver['config'].serverSideEncryption = sample.config.serverSideEncryption;
+		driver['config'].serverSideEncryption = sample.config.serverSideEncryption!;
 
 		await driver.write(sample.path.input, sample.stream);
 
@@ -728,7 +728,7 @@ describe('#write', () => {
 		async (sse) => {
 			// 1. For the KMS modes the configured key id must travel with the mode
 			driver['config'].serverSideEncryption = sse;
-			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId;
+			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId!;
 
 			await driver.write(sample.path.input, sample.stream);
 
@@ -750,7 +750,7 @@ describe('#write', () => {
 		async (sse) => {
 			// 1. For the non-KMS modes the key id must be dropped even though it is configured: S3 rejects it
 			driver['config'].serverSideEncryption = sse;
-			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId;
+			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId!;
 
 			await driver.write(sample.path.input, sample.stream);
 
@@ -769,7 +769,7 @@ describe('#write', () => {
 
 	test('Optionally sets ACL', async () => {
 		// 1. The ACL applies per object, so the configured value must be part of every write
-		driver['config'].acl = sample.config.acl;
+		driver['config'].acl = sample.config.acl!;
 
 		await driver.write(sample.path.input, sample.stream);
 
@@ -931,7 +931,7 @@ describe('#createChunkedUpload', () => {
 		async (sse) => {
 			// 1. For the KMS modes the configured key id must travel with the mode; empty metadata adds no content headers
 			driver['config'].serverSideEncryption = sse;
-			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId;
+			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId!;
 
 			await driver.createChunkedUpload(sample.path.input, { metadata: {} });
 
@@ -950,7 +950,7 @@ describe('#createChunkedUpload', () => {
 		async (sse) => {
 			// 1. For the non-KMS modes the key id must be dropped even though it is configured: S3 rejects it
 			driver['config'].serverSideEncryption = sse;
-			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId;
+			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId!;
 
 			await driver.createChunkedUpload(sample.path.input, { metadata: {} });
 
