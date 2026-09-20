@@ -1,15 +1,18 @@
 import { createLogger, registerLogger, useLogger } from '@novastarter/logger';
+import { useMail } from '@novastarter/mail';
 import { useBus, useCache, useKv, useLimiter } from '@novastarter/memory';
-import { useQueue } from '@novastarter/queue';
+import { registerJobHandlers, useQueue } from '@novastarter/queue';
 import { useRedis } from '@novastarter/redis';
 import { useStorage } from '@novastarter/storage';
 import { DriverLocal } from '@novastarter/storage-driver-local';
 import { loggerConfig } from './config/logger';
+import { mailConfig } from './config/mail';
 import { memoryConfig } from './config/memory';
 import { queueConfig } from './config/queue';
 import { redisConfig } from './config/redis';
 import { storageConfig } from './config/storage';
 import { type AppEnv, readEnv } from './env';
+import { createMailSendHandler } from './jobs/mail-send';
 
 /**
  * Whether {@link bootstrap} ran already in this process.
@@ -24,9 +27,10 @@ export const _state: { booted: boolean } = { booted: false };
  * Wire every subsystem of the kit from the app's configuration, once per process.
  *
  * The one place the environment meets the packages: the variables are parsed against the app's schema, turned into
- * the location configs under `config/`, and registered on the managers — logger, Redis, memory, queue, storage. Each
- * package reads nothing itself; a location opens its connections on first use. Registering is idempotent across
- * calls, so a second `bootstrap()` (Next.js reloading the server module in development, a test suite) is a no-op.
+ * the location configs under `config/`, and registered on the managers — logger, Redis, memory, queue, storage, mail —
+ * then the handlers of the app's jobs under `jobs/`. Each package reads nothing itself; a location opens its
+ * connections on first use. Registering is idempotent across calls, so a second `bootstrap()` (Next.js reloading the
+ * server module in development, a test suite) is a no-op.
  *
  * @returns The parsed variables, for the caller that wants them.
  */
@@ -67,6 +71,18 @@ export const bootstrap = (): AppEnv => {
 	for (const [name, location] of Object.entries(storageConfig(env))) {
 		useStorage().registerLocation(name, location);
 	}
+
+	// 7. Mail: the built-in drivers come with the manager; the locations and the routes are the app's
+	const mail = mailConfig(env);
+
+	for (const [name, location] of Object.entries(mail.locations)) {
+		useMail().registerLocation(name, location);
+	}
+
+	useMail().registerRoutes(mail.routes);
+
+	// 8. Jobs: the handlers of the contracts under `jobs/`, so a worker or the local queue can run them
+	registerJobHandlers({ 'mail.send': createMailSendHandler() });
 
 	_state.booted = true;
 	useLogger().debug({ redis: Boolean(redis) }, 'Application bootstrapped');
