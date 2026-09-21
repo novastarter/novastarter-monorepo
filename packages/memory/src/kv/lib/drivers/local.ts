@@ -1,6 +1,6 @@
 import { LRUCache } from 'lru-cache';
 import { deserialize, serialize } from '../../../utils/index.js';
-import type { Kv } from '../../driver.js';
+import type { KvDriver } from '../../driver.js';
 
 /**
  * Options of {@link KvDriverLocal}, the `local` driver.
@@ -34,20 +34,20 @@ export type KvDriverLocalConfig = {
  * await kv.set('my-key', { hello: 'world' });
  * ```
  */
-export class KvDriverLocal implements Kv {
+export class KvDriverLocal implements KvDriver {
 	/**
 	 * Backing store: an LRU when a size or time limit is configured, a plain `Map` otherwise.
 	 *
 	 * @internal
 	 */
-	private store: LRUCache<string, Uint8Array, unknown> | Map<string, Uint8Array>;
+	private readonly store: LRUCache<string, Uint8Array, unknown> | Map<string, Uint8Array>;
 
 	/**
 	 * Create the store with optional size and time limits.
 	 *
 	 * @param config - Local configuration.
 	 */
-	constructor(config: KvDriverLocalConfig) {
+	constructor(config: KvDriverLocalConfig = {}) {
 		// 1. `LRUCache` refuses to be constructed without `max` or `ttl`, so fall back to a plain `Map` when neither
 		//    limit is configured
 		if (config.maxKeys || config.ttl) {
@@ -177,7 +177,7 @@ export class KvDriverLocal implements Kv {
 	 * Hand out a lock handle that does nothing.
 	 *
 	 * A single process has no competing holders, so there is nothing to wait for or release; the handle exists so
-	 * callers can be written against the `Kv` interface without caring about the backend.
+	 * callers can be written against the `KvDriver` interface without caring about the backend.
 	 *
 	 * @param _key - Key to lock; unused.
 	 * @returns Handle whose `release` and `extend` resolve immediately.

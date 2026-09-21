@@ -1,4 +1,4 @@
-import type { Kv } from '@novastarter/memory';
+import type { KvDriver } from '@novastarter/memory';
 
 /**
  * A clock several processes agree on: only the one that advances it past the current reading gets to act.
@@ -11,13 +11,13 @@ import type { Kv } from '@novastarter/memory';
 export class SynchronizedClock {
 	private readonly key: string;
 
-	private readonly kv: Kv;
+	private readonly kv: KvDriver;
 
 	/**
 	 * @param id - What the clock is for; becomes the key.
 	 * @param kv - Store shared by every instance — Redis in a cluster, in-process for a single node.
 	 */
-	constructor(id: string, kv: Kv) {
+	constructor(id: string, kv: KvDriver) {
 		this.key = `clock:${id}`;
 		this.kv = kv;
 	}

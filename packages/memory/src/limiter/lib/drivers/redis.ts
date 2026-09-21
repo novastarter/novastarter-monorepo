@@ -1,6 +1,6 @@
 import type { Redis } from 'ioredis';
 import { RateLimiterRedis } from 'rate-limiter-flexible';
-import type { Limiter } from '../../driver.js';
+import type { LimiterDriver } from '../../driver.js';
 import type { LimiterDriverConfigBase } from '../../types.js';
 import { consume } from '../../utils/consume.js';
 
@@ -34,20 +34,20 @@ export type LimiterDriverRedisConfig = LimiterDriverConfigBase & {
  * await limiter.consume(request.ip);
  * ```
  */
-export class LimiterDriverRedis implements Limiter {
+export class LimiterDriverRedis implements LimiterDriver {
 	/**
 	 * Underlying limiter doing the bookkeeping in Redis.
 	 *
 	 * @internal
 	 */
-	private limiter: RateLimiterRedis;
+	private readonly limiter: RateLimiterRedis;
 
 	/**
 	 * Configured points per window, reported in the error when a key runs out.
 	 *
 	 * @internal
 	 */
-	private points: number;
+	private readonly points: number;
 
 	/**
 	 * Create the limiter on top of an existing Redis connection.

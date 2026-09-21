@@ -1,3 +1,6 @@
+/**
+ * Tests of `memory/cache/lib/drivers/multi`.
+ */
 import { Redis } from 'ioredis';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { BusDriverRedis } from '../../../bus/index.js';

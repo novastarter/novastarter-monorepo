@@ -1,6 +1,6 @@
 /**
- * Tests of `queue/lib/synchronized-clock` and `schedule-synchronized-job` on the local `Kv` of `@novastarter/memory`;
- * croner runs on fake timers.
+ * Tests of `queue/lib/synchronized-clock` and `schedule-synchronized-job` on the local `KvDriver` of
+ * `@novastarter/memory`; croner runs on fake timers.
  */
 import { KvDriverLocal } from '@novastarter/memory';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';

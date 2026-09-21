@@ -1,3 +1,6 @@
+/**
+ * Tests of `memory/kv/lib/drivers/local` with its real dependencies.
+ */
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { KvDriverLocal } from './local.js';
 

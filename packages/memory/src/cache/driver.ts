@@ -3,10 +3,10 @@ import type { Lock } from '../kv/types.js';
 /**
  * Cache shared by the local, Redis and multi-stage backends.
  *
- * A cache is a `Kv` without the numeric helpers and with an always-asynchronous API, so callers can swap backends
+ * A cache is a `KvDriver` without the numeric helpers and with an always-asynchronous API, so callers can swap backends
  * without changing their code.
  */
-export interface Cache {
+export interface CacheDriver {
 	/**
 	 * Get the cached value by key.
 	 *

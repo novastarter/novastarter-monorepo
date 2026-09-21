@@ -1,7 +1,7 @@
 import type { Redis } from 'ioredis';
-import { type Kv, KvDriverRedis } from '../../../kv/index.js';
+import { type KvDriver, KvDriverRedis } from '../../../kv/index.js';
 import type { Lock } from '../../../kv/types.js';
-import type { Cache } from '../../driver.js';
+import type { CacheDriver } from '../../driver.js';
 
 /**
  * Options of {@link CacheDriverRedis}, the `redis` driver.
@@ -15,7 +15,7 @@ export type CacheDriverRedisConfig = {
 	/**
 	 * Enable gzip compression of cached values.
 	 *
-	 * @default true
+	 * @defaultValue true
 	 */
 	compression?: boolean | undefined;
 
@@ -25,7 +25,7 @@ export type CacheDriverRedisConfig = {
 	 * There is a trade-off between size and the time spent gzipping; below roughly 1 kB the savings do not pay for
 	 * the CPU time.
 	 *
-	 * @default 1000
+	 * @defaultValue 1000
 	 */
 	compressionMinSize?: number | undefined;
 
@@ -54,13 +54,13 @@ export type CacheDriverRedisConfig = {
  * await cache.set('my-key', 'my-value');
  * ```
  */
-export class CacheDriverRedis implements Cache {
+export class CacheDriverRedis implements CacheDriver {
 	/**
 	 * Underlying key-value store doing the actual work.
 	 *
 	 * @internal
 	 */
-	private store: Kv;
+	private readonly store: KvDriver;
 
 	/**
 	 * Create the cache on top of an existing Redis connection.

@@ -1,3 +1,6 @@
+/**
+ * Tests of `memory/bus/lib/drivers/redis`.
+ */
 import { Redis } from 'ioredis';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
@@ -108,7 +111,11 @@ describe('publish', () => {
 	});
 
 	test('Skips compression if compression is set to false', async () => {
-		bus['compression'] = false;
+		bus = new BusDriverRedis({
+			redis: mockRedis,
+			namespace: 'test-namespace',
+			compression: false,
+		});
 
 		await bus.publish(mockChannel, mockMessage);
 
@@ -117,8 +124,12 @@ describe('publish', () => {
 	});
 
 	test('Compresses if compression is enabled, and value is larger than min size', async () => {
-		bus['compression'] = true;
-		bus['compressionMinSize'] = 1;
+		bus = new BusDriverRedis({
+			redis: mockRedis,
+			namespace: 'test-namespace',
+			compression: true,
+			compressionMinSize: 1,
+		});
 
 		await bus.publish(mockChannel, mockMessage);
 
@@ -211,11 +222,15 @@ describe('#messageBufferHandler', () => {
 	});
 
 	test('Skips decompression if compression is disabled', async () => {
+		bus = new BusDriverRedis({
+			redis: mockRedis,
+			namespace: 'test-namespace',
+			compression: false,
+		});
+
 		bus['handlers'] = {
 			[mockNamespacedChannel]: new Set([mockHandler]),
 		};
-
-		bus['compression'] = false;
 
 		await bus['messageBufferHandler'](mockNamespacedChannelBuffer, mockBuffer);
 
@@ -223,11 +238,15 @@ describe('#messageBufferHandler', () => {
 	});
 
 	test('Decompresses binary if value is compressed and compression is enabled', async () => {
+		bus = new BusDriverRedis({
+			redis: mockRedis,
+			namespace: 'test-namespace',
+			compression: true,
+		});
+
 		bus['handlers'] = {
 			[mockNamespacedChannel]: new Set([mockHandler]),
 		};
-
-		bus['compression'] = true;
 
 		await bus['messageBufferHandler'](mockNamespacedChannelBuffer, mockBuffer);
 

@@ -1,4 +1,4 @@
-import type { Bus } from '../../driver.js';
+import type { BusDriver } from '../../driver.js';
 import type { MessageHandler } from '../../types.js';
 
 /**
@@ -9,7 +9,7 @@ export type BusDriverLocalConfig = Record<string, never>;
 /**
  * In-process bus: publishing calls the subscribers registered in this process, nothing more.
  *
- * It exists so code written against the `Bus` interface runs unchanged in a single-process setup; it adds no
+ * It exists so code written against the `BusDriver` interface runs unchanged in a single-process setup; it adds no
  * cross-process delivery.
  *
  * @example
@@ -20,13 +20,13 @@ export type BusDriverLocalConfig = Record<string, never>;
  * await bus.publish('greetings', 'hello');
  * ```
  */
-export class BusDriverLocal implements Bus {
+export class BusDriverLocal implements BusDriver {
 	/**
 	 * Subscribers per channel; a `Set` so the same callback is never registered twice.
 	 *
 	 * @internal
 	 */
-	private handlers: Record<string, Set<MessageHandler<any>>>;
+	private readonly handlers: Record<string, Set<MessageHandler<any>>>;
 
 	/**
 	 * Create an empty bus.

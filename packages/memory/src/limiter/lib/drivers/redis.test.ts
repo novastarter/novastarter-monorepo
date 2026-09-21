@@ -1,3 +1,6 @@
+/**
+ * Tests of `memory/limiter/lib/drivers/redis`.
+ */
 import { Redis } from 'ioredis';
 import { RateLimiterRedis } from 'rate-limiter-flexible';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';

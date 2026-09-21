@@ -10,7 +10,7 @@ import {
 	uint8ArrayToBuffer,
 	withNamespace,
 } from '../../../utils/index.js';
-import type { Kv } from '../../driver.js';
+import type { KvDriver } from '../../driver.js';
 
 /**
  * ioredis client extended with the Lua commands {@link KvDriverRedis} defines on it.
@@ -49,7 +49,7 @@ export type KvDriverRedisConfig = {
 	/**
 	 * Enable gzip compression of stored values.
 	 *
-	 * @default true
+	 * @defaultValue true
 	 */
 	compression?: boolean | undefined;
 
@@ -59,7 +59,7 @@ export type KvDriverRedisConfig = {
 	 * There is a trade-off between size and the time spent gzipping; below roughly 1 kB the savings do not pay for
 	 * the CPU time.
 	 *
-	 * @default 1000
+	 * @defaultValue 1000
 	 */
 	compressionMinSize?: number | undefined;
 
@@ -136,55 +136,55 @@ const RELEASE_SCRIPT = `
  * });
  * ```
  */
-export class KvDriverRedis implements Kv {
+export class KvDriverRedis implements KvDriver {
 	/**
 	 * Client with the custom `setMax` and `release` commands attached.
 	 *
 	 * @internal
 	 */
-	private redis: ExtendedRedis;
+	private readonly redis: ExtendedRedis;
 
 	/**
 	 * Prefix applied to every key.
 	 *
 	 * @internal
 	 */
-	private namespace: string;
+	private readonly namespace: string;
 
 	/**
 	 * Whether values above {@link KvDriverRedis.compressionMinSize} are gzipped.
 	 *
 	 * @internal
 	 */
-	private compression: boolean;
+	private readonly compression: boolean;
 
 	/**
 	 * Smallest serialized size, in bytes, that gets compressed.
 	 *
 	 * @internal
 	 */
-	private compressionMinSize: number;
+	private readonly compressionMinSize: number;
 
 	/**
 	 * Duration a lock is held, in milliseconds.
 	 *
 	 * @internal
 	 */
-	private lockTimeout: number;
+	private readonly lockTimeout: number;
 
 	/**
 	 * Distributed lock manager over the same client.
 	 *
 	 * @internal
 	 */
-	private redlock;
+	private readonly redlock;
 
 	/**
 	 * Expiry applied to every written key, in milliseconds, or `undefined` for no expiry.
 	 *
 	 * @internal
 	 */
-	private ttl: number | undefined;
+	private readonly ttl: number | undefined;
 
 	/**
 	 * Create the store on top of an existing Redis connection.

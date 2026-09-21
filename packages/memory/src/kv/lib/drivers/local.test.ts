@@ -1,3 +1,6 @@
+/**
+ * Tests of `memory/kv/lib/drivers/local`.
+ */
 import { LRUCache } from 'lru-cache';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { deserialize, serialize } from '../../../utils/index.js';
@@ -9,15 +12,8 @@ vi.mock('../../../utils/index.js');
 let kv: KvDriverLocal;
 
 beforeEach(() => {
+	// 1. `lru-cache` is automocked, so the store built here already answers with mock functions
 	kv = new KvDriverLocal({ maxKeys: 2 });
-
-	kv['store'] = {
-		get: vi.fn(),
-		set: vi.fn(),
-		delete: vi.fn(),
-		has: vi.fn(),
-		clear: vi.fn(),
-	} as unknown as LRUCache<string, Uint8Array, unknown>;
 });
 
 afterEach(() => {

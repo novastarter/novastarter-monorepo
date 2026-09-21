@@ -1,0 +1,63 @@
+/**
+ * Tests of `memory/cache/lib/cache-manager`.
+ */
+import { describe, expect, test, vi } from 'vitest';
+import { CacheManager } from './cache-manager.js';
+import { CacheDriverLocal } from './drivers/local.js';
+
+// The test driver joins the driver map the way a driver package does, so its registrations type-check
+declare module './cache-manager.js' {
+	interface CacheDrivers {
+		'test-driver': Record<string, unknown>;
+	}
+}
+
+describe('CacheManager', () => {
+	test('Registers the built-in drivers on construction and builds a location on first use', () => {
+		const manager = new CacheManager();
+
+		// 1. The built-ins are known without any registration by the application
+		expect([...manager['drivers'].keys()]).toStrictEqual(['local', 'redis', 'multi']);
+
+		// 2. Registering a location keeps the configuration only; the first `location()` builds the driver
+		manager.registerLocation('default', {
+			driver: 'local',
+			options: {},
+		});
+
+		expect(manager.instantiated().size).toBe(0);
+		expect(manager.location('default')).toBeInstanceOf(CacheDriverLocal);
+		expect(manager.location('default')).toBe(manager.location('default'));
+	});
+
+	test('Passes the location options to a registered driver class', () => {
+		const manager = new CacheManager();
+		const mockDriver = vi.fn();
+
+		// 1. A bare mock stands in for a driver class of the application, recording how the manager calls `new Driver(...)`
+		manager.registerDriver('test-driver', mockDriver);
+
+		manager.registerLocation('main', {
+			driver: 'test-driver',
+			options: {
+				namespace: 'n',
+			},
+		});
+
+		manager.location('main');
+
+		expect(mockDriver).toHaveBeenCalledExactlyOnceWith({ namespace: 'n' });
+	});
+
+	test('Refuses a location whose driver is not registered', () => {
+		const manager = new CacheManager();
+
+		// 1. The lookup by name fails at registration, before any instantiation happens
+		expect(() =>
+			manager.registerLocation('main', {
+				driver: 'missing' as 'local',
+				options: {},
+			}),
+		).toThrowErrorMatchingInlineSnapshot(`[Error: Driver "missing" isn't registered.]`);
+	});
+});

@@ -1,5 +1,5 @@
 /**
- * Key-value store: the `Kv` contract, its `local` and `redis` drivers, the `KvManager` of their locations and the
+ * Key-value store: the `KvDriver` contract, its `local` and `redis` drivers, the `KvManager` of their locations and the
  * `useKv` accessor of the process-wide one.
  */
 export * from './driver.js';

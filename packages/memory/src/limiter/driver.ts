@@ -3,7 +3,7 @@
  *
  * Every key gets `points` per `duration` seconds; consuming past that budget throws.
  */
-export interface Limiter {
+export interface LimiterDriver {
 	/**
 	 * Consume one point for the given key.
 	 *

@@ -1,3 +1,6 @@
+/**
+ * Tests of `memory/utils/with-namespace`.
+ */
 import { expect, test } from 'vitest';
 import { withNamespace } from './with-namespace.js';
 

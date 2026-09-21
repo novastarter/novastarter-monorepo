@@ -1,5 +1,5 @@
 import type { Logger } from '@novastarter/logger';
-import type { Kv } from '@novastarter/memory';
+import type { KvDriver } from '@novastarter/memory';
 import { getSchedules, type ResolvedSchedule } from '../schedules.js';
 import type { EnqueuedJob, JobName, ScheduleEnv } from '../types.js';
 import { type ScheduledJob, scheduleSynchronizedJob } from './schedule-synchronized-job.js';
@@ -12,7 +12,7 @@ export interface StartSchedulesOptions {
 	/** Environment the rules and switches are read from. */
 	env: ScheduleEnv;
 	/** Store shared by the cluster for the synchronised clocks. */
-	kv: Kv;
+	kv: KvDriver;
 	/** Puts the job on the queue; `enqueue()` of the package, or a stand-in in tests. */
 	enqueue: (name: JobName, payload: unknown) => Promise<EnqueuedJob>;
 	/** Where starts, skips and failures are reported. */

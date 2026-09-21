@@ -1,7 +1,7 @@
 import { processId } from '@novastarter/utils/node';
-import { type Bus, BusDriverRedis } from '../../../bus/index.js';
+import { type BusDriver, BusDriverRedis } from '../../../bus/index.js';
 import type { Lock } from '../../../kv/types.js';
-import type { Cache } from '../../driver.js';
+import type { CacheDriver } from '../../driver.js';
 import { CacheDriverLocal, type CacheDriverLocalConfig } from './local.js';
 import { CacheDriverRedis, type CacheDriverRedisConfig } from './redis.js';
 
@@ -61,7 +61,7 @@ export type CacheMultiMessageClear = {
  * });
  * ```
  */
-export class CacheDriverMulti implements Cache {
+export class CacheDriverMulti implements CacheDriver {
 	/** Id of this process, stamped on outgoing invalidations. */
 	processId: string = processId();
 
@@ -72,7 +72,7 @@ export class CacheDriverMulti implements Cache {
 	redis: CacheDriverRedis;
 
 	/** Pub/sub used to invalidate the L1 of other processes. */
-	bus: Bus;
+	bus: BusDriver;
 
 	/**
 	 * Create both cache levels and subscribe to invalidations from other processes.

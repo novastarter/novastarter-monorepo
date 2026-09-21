@@ -1,3 +1,6 @@
+/**
+ * Tests of `memory/bus/lib/drivers/local`.
+ */
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { BusDriverLocal } from './local.js';
 

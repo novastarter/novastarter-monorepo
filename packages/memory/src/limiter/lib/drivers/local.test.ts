@@ -1,3 +1,6 @@
+/**
+ * Tests of `memory/limiter/lib/drivers/local`.
+ */
 import { RateLimiterMemory } from 'rate-limiter-flexible';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { consume } from '../../utils/consume.js';

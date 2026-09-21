@@ -1,5 +1,5 @@
 import { DriverManager } from '@novastarter/utils';
-import type { Limiter } from '../driver.js';
+import type { LimiterDriver } from '../driver.js';
 import { LimiterDriverLocal, type LimiterDriverLocalConfig } from './drivers/local.js';
 import { LimiterDriverRedis, type LimiterDriverRedisConfig } from './drivers/redis.js';
 
@@ -40,7 +40,7 @@ export interface LimiterDrivers {
  * });
  * ```
  */
-export class LimiterManager extends DriverManager<Limiter, LimiterDrivers> {
+export class LimiterManager extends DriverManager<LimiterDriver, LimiterDrivers> {
 	/**
 	 * Create the registry with the built-in drivers already registered.
 	 */

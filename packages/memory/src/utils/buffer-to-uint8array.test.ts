@@ -1,3 +1,6 @@
+/**
+ * Tests of `memory/utils/buffer-to-uint8array`.
+ */
 import { expect, test } from 'vitest';
 import { bufferToUint8Array } from './buffer-to-uint8array.js';
 

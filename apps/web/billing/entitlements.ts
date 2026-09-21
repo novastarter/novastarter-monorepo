@@ -1,4 +1,4 @@
-import type { Bus, Cache } from '@novastarter/memory';
+import type { BusDriver, CacheDriver } from '@novastarter/memory';
 import { LimitExceededError, ResourceRestrictedError } from './errors';
 import type { PlanCatalog } from './plan-catalog';
 import type { EntitlementValue } from './plans';
@@ -70,9 +70,9 @@ export interface EntitlementManagerOptions {
 	/** How an organization's plan is found. */
 	resolvePlan: PlanResolver;
 	/** Where usage and plans are remembered between checks; nothing is cached without one. */
-	cache?: Cache | undefined;
+	cache?: CacheDriver | undefined;
 	/** How other processes hear about an invalidation; local only without one. */
-	bus?: Bus | undefined;
+	bus?: BusDriver | undefined;
 	/** The bus channel; {@link ENTITLEMENTS_CHANNEL} unless given. */
 	channel?: string | undefined;
 }
@@ -138,14 +138,14 @@ export class EntitlementManager {
 	 *
 	 * @internal
 	 */
-	private readonly cache: Cache | undefined;
+	private readonly cache: CacheDriver | undefined;
 
 	/**
 	 * How other processes hear about an invalidation; local only without one.
 	 *
 	 * @internal
 	 */
-	private readonly bus: Bus | undefined;
+	private readonly bus: BusDriver | undefined;
 
 	/**
 	 * The bus channel invalidations travel on.

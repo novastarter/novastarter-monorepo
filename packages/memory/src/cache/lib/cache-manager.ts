@@ -1,5 +1,5 @@
 import { DriverManager } from '@novastarter/utils';
-import type { Cache } from '../driver.js';
+import type { CacheDriver } from '../driver.js';
 import { CacheDriverLocal, type CacheDriverLocalConfig } from './drivers/local.js';
 import { CacheDriverMulti, type CacheDriverMultiConfig } from './drivers/multi.js';
 import { CacheDriverRedis, type CacheDriverRedisConfig } from './drivers/redis.js';
@@ -42,7 +42,7 @@ export interface CacheDrivers {
  * });
  * ```
  */
-export class CacheManager extends DriverManager<Cache, CacheDrivers> {
+export class CacheManager extends DriverManager<CacheDriver, CacheDrivers> {
 	/**
 	 * Create the registry with the built-in drivers already registered.
 	 */

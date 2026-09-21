@@ -3,7 +3,7 @@ import type { MessageHandler } from './types.js';
 /**
  * Publish/subscribe bus shared by the local and Redis backends.
  */
-export interface Bus {
+export interface BusDriver {
 	/**
 	 * Publish a message to every subscriber of the given channel.
 	 *

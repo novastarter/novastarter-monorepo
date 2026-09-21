@@ -3,7 +3,7 @@ import type { Lock, MaybePromise } from './types.js';
 /**
  * Key-value store shared by the local and Redis backends.
  */
-export interface Kv {
+export interface KvDriver {
 	/**
 	 * Get the stored value by key.
 	 *

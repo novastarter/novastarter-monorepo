@@ -1,3 +1,6 @@
+/**
+ * Tests of `memory/cache/lib/drivers/local`.
+ */
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { KvDriverLocal } from '../../../kv/index.js';
 import { CacheDriverLocal } from './local.js';

@@ -1,5 +1,5 @@
 import { RateLimiterMemory } from 'rate-limiter-flexible';
-import type { Limiter } from '../../driver.js';
+import type { LimiterDriver } from '../../driver.js';
 import type { LimiterDriverConfigBase } from '../../types.js';
 import { consume } from '../../utils/consume.js';
 
@@ -23,20 +23,20 @@ export type LimiterDriverLocalConfig = LimiterDriverConfigBase;
  * await limiter.consume(request.ip);
  * ```
  */
-export class LimiterDriverLocal implements Limiter {
+export class LimiterDriverLocal implements LimiterDriver {
 	/**
 	 * Underlying limiter doing the bookkeeping.
 	 *
 	 * @internal
 	 */
-	private limiter: RateLimiterMemory;
+	private readonly limiter: RateLimiterMemory;
 
 	/**
 	 * Configured points per window, reported in the error when a key runs out.
 	 *
 	 * @internal
 	 */
-	private points: number;
+	private readonly points: number;
 
 	/**
 	 * Create the limiter with its points and window.

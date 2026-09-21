@@ -1,3 +1,6 @@
+/**
+ * Tests of `memory/cache/lib/drivers/redis`.
+ */
 import { Redis } from 'ioredis';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { KvDriverRedis } from '../../../kv/index.js';

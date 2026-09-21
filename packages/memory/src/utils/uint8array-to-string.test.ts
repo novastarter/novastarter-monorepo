@@ -1,3 +1,6 @@
+/**
+ * Tests of `memory/utils/uint8array-to-string`.
+ */
 import { expect, test } from 'vitest';
 import { uint8ArrayToString } from './uint8array-to-string.js';
 

@@ -1,7 +1,7 @@
 import { useEmitter } from '@novastarter/emitter';
 import { ErrorCode, InvalidPayloadError, isNovastarterError } from '@novastarter/errors';
 import { type Logger, useLogger } from '@novastarter/logger';
-import type { Limiter } from '@novastarter/memory';
+import type { LimiterDriver } from '@novastarter/memory';
 import type { MailAddress, MailMessage, MailResult } from '../types.js';
 import { resolveMailChain } from './router.js';
 import { useMail } from './use-mail.js';
@@ -170,7 +170,7 @@ const resolveFrom = (from: MailAddress | undefined, fallback: MailAddress | unde
  * without a limiter.
  * @throws Whatever a broken limiter store throws — a limit that cannot be checked is not silently ignored.
  */
-const consume = async (location: string, limiter: Limiter | undefined, logger: Logger): Promise<unknown> => {
+const consume = async (location: string, limiter: LimiterDriver | undefined, logger: Logger): Promise<unknown> => {
 	// 1. No limiter, no budget to spend
 	if (!limiter) return undefined;
 

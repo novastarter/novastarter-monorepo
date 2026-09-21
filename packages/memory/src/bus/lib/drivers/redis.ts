@@ -10,7 +10,7 @@ import {
 	uint8ArrayToString,
 	withNamespace,
 } from '../../../utils/index.js';
-import type { Bus } from '../../driver.js';
+import type { BusDriver } from '../../driver.js';
 import type { MessageHandler } from '../../types.js';
 
 /**
@@ -25,7 +25,7 @@ export type BusDriverRedisConfig = {
 	/**
 	 * Enable gzip compression of published payloads.
 	 *
-	 * @default true
+	 * @defaultValue true
 	 */
 	compression?: boolean | undefined;
 
@@ -35,7 +35,7 @@ export type BusDriverRedisConfig = {
 	 * There is a trade-off between size and the time spent gzipping; below roughly 1 kB the savings do not pay for
 	 * the CPU time.
 	 *
-	 * @default 1000
+	 * @defaultValue 1000
 	 */
 	compressionMinSize?: number | undefined;
 
@@ -61,41 +61,41 @@ export type BusDriverRedisConfig = {
  * await bus.subscribe('greetings', (payload) => console.log(payload));
  * ```
  */
-export class BusDriverRedis implements Bus {
+export class BusDriverRedis implements BusDriver {
 	/**
 	 * Connection used for publishing.
 	 *
 	 * @internal
 	 */
-	private pub: Redis;
+	private readonly pub: Redis;
 
 	/**
 	 * Dedicated connection in subscriber mode.
 	 *
 	 * @internal
 	 */
-	private sub: Redis;
+	private readonly sub: Redis;
 
 	/**
 	 * Prefix applied to every channel name.
 	 *
 	 * @internal
 	 */
-	private namespace: string;
+	private readonly namespace: string;
 
 	/**
 	 * Whether payloads above {@link BusDriverRedis.compressionMinSize} are gzipped.
 	 *
 	 * @internal
 	 */
-	private compression: boolean;
+	private readonly compression: boolean;
 
 	/**
 	 * Smallest serialized size, in bytes, that gets compressed.
 	 *
 	 * @internal
 	 */
-	private compressionMinSize: number;
+	private readonly compressionMinSize: number;
 
 	/**
 	 * Subscribers per namespaced channel.
@@ -130,11 +130,11 @@ export class BusDriverRedis implements Bus {
 	 *
 	 * @typeParam T - Payload type.
 	 * @param channel - Channel to publish to.
-	 * @param message - Value sent to the subscribers.
+	 * @param payload - Value sent to the subscribers.
 	 */
-	async publish<T = unknown>(channel: string, message: T): Promise<void> {
+	async publish<T = unknown>(channel: string, payload: T): Promise<void> {
 		// 1. Serialize and, when large enough to be worth it, compress
-		let binaryArray = serialize(message);
+		let binaryArray = serialize(payload);
 
 		if (this.compression === true && binaryArray.byteLength >= this.compressionMinSize) {
 			binaryArray = await compress(binaryArray);

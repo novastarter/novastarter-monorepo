@@ -1,5 +1,5 @@
 import { DriverManager } from '@novastarter/utils';
-import type { Bus } from '../driver.js';
+import type { BusDriver } from '../driver.js';
 import { BusDriverLocal, type BusDriverLocalConfig } from './drivers/local.js';
 import { BusDriverRedis, type BusDriverRedisConfig } from './drivers/redis.js';
 
@@ -38,7 +38,7 @@ export interface BusDrivers {
  * });
  * ```
  */
-export class BusManager extends DriverManager<Bus, BusDrivers> {
+export class BusManager extends DriverManager<BusDriver, BusDrivers> {
 	/**
 	 * Create the registry with the built-in drivers already registered.
 	 */

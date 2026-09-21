@@ -1,5 +1,5 @@
 import { DriverManager } from '@novastarter/utils';
-import type { Kv } from '../driver.js';
+import type { KvDriver } from '../driver.js';
 import { KvDriverLocal, type KvDriverLocalConfig } from './drivers/local.js';
 import { KvDriverRedis, type KvDriverRedisConfig } from './drivers/redis.js';
 
@@ -38,7 +38,7 @@ export interface KvDrivers {
  * });
  * ```
  */
-export class KvManager extends DriverManager<Kv, KvDrivers> {
+export class KvManager extends DriverManager<KvDriver, KvDrivers> {
 	/**
 	 * Create the registry with the built-in drivers already registered.
 	 */

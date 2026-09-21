@@ -16,8 +16,8 @@ const nodeId = nanoid(8);
 /**
  * The part of a message bus {@link LogsStream} needs: publishing a line on a channel.
  *
- * Structural on purpose, so the `Bus` of `@novastarter/memory` fits without this package depending on it, and a test
- * can pass a plain object.
+ * Structural on purpose, so the `BusDriver` of `@novastarter/memory` fits without this package depending on it, and
+ * a test can pass a plain object.
  */
 export interface LogsBus {
 	/**

@@ -1,3 +1,6 @@
+/**
+ * Tests of `memory/limiter/utils/consume`.
+ */
 import { HitRateLimitError } from '@novastarter/errors';
 import { type IRateLimiterRes, RateLimiterMemory } from 'rate-limiter-flexible';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -31,7 +34,7 @@ test('Rejects error as-is if error instance is given', async () => {
 	const mockError = new Error('test');
 	vi.mocked(limiter.consume).mockRejectedValue(mockError);
 
-	expect(() => consume(limiter, key, points)).rejects.toBe(mockError);
+	await expect(consume(limiter, key, points)).rejects.toBe(mockError);
 });
 
 test('Rejects HitRateLimitError', async () => {

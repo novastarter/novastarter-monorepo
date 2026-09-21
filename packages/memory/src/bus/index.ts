@@ -1,5 +1,5 @@
 /**
- * Pub/sub bus: the `Bus` contract, its `local` and `redis` drivers, the `BusManager` of their locations and the
+ * Pub/sub bus: the `BusDriver` contract, its `local` and `redis` drivers, the `BusManager` of their locations and the
  * `useBus` accessor of the process-wide one.
  */
 export * from './driver.js';

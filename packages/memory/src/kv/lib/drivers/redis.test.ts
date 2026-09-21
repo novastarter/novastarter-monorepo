@@ -1,3 +1,6 @@
+/**
+ * Tests of `memory/kv/lib/drivers/redis`.
+ */
 import { Redis } from 'ioredis';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
@@ -124,7 +127,11 @@ describe('get', () => {
 	});
 
 	test('Decompresses value when compress has been set and value is gzip compressed', async () => {
-		kv['compression'] = true;
+		kv = new KvDriverRedis({
+			namespace: mockNamespace,
+			redis: mockRedis,
+			compression: true,
+		});
 
 		vi.mocked(kv['redis'].getBuffer).mockResolvedValue(mockBuffer);
 
@@ -139,7 +146,11 @@ describe('get', () => {
 	});
 
 	test('Skips decompression if compression is enabled but value is not compressed', async () => {
-		kv['compression'] = true;
+		kv = new KvDriverRedis({
+			namespace: mockNamespace,
+			redis: mockRedis,
+			compression: true,
+		});
 
 		vi.mocked(kv['redis'].getBuffer).mockResolvedValue(mockBuffer);
 
@@ -174,8 +185,12 @@ describe('set', () => {
 	});
 
 	test('Compresses the value before saving when compression is enabled and value is large enough', async () => {
-		kv['compression'] = true;
-		kv['compressionMinSize'] = 0;
+		kv = new KvDriverRedis({
+			namespace: mockNamespace,
+			redis: mockRedis,
+			compression: true,
+			compressionMinSize: 0,
+		});
 
 		await kv.set(mockKey, mockValue);
 
@@ -187,8 +202,12 @@ describe('set', () => {
 	});
 
 	test('Skips compression for values that are too small', async () => {
-		kv['compression'] = true;
-		kv['compressionMinSize'] = 5;
+		kv = new KvDriverRedis({
+			namespace: mockNamespace,
+			redis: mockRedis,
+			compression: true,
+			compressionMinSize: 5,
+		});
 
 		await kv.set(mockKey, mockValue);
 
@@ -202,15 +221,26 @@ describe('set', () => {
 	test('Custom TTL', async () => {
 		const mockValue = 15;
 		const mockTTL = 3600000;
-		kv['ttl'] = mockTTL;
+
+		kv = new KvDriverRedis({
+			namespace: mockNamespace,
+			redis: mockRedis,
+			compression: false,
+			ttl: mockTTL,
+		});
+
 		await kv.set(mockKey, mockValue);
 		expect(kv['redis'].set).toHaveBeenCalledWith(mockNamespacedKey, mockValue, 'PX', mockTTL);
 	});
 
 	test('Custom TTL with compression', async () => {
-		kv['compression'] = true;
-		kv['compressionMinSize'] = 0;
-		kv['ttl'] = 3600000;
+		kv = new KvDriverRedis({
+			namespace: mockNamespace,
+			redis: mockRedis,
+			compression: true,
+			compressionMinSize: 0,
+			ttl: 3600000,
+		});
 
 		await kv.set(mockKey, mockValue);
 
