@@ -43,13 +43,19 @@ declare module '@novastarter/mail' {
  *
  * @example
  * ```ts
- * useMail().registerDriver('ses', MailDriverSes);
- * useMail().registerLocation('main', {
+ * import { useMail } from '@novastarter/mail';
+ * import { MailDriverSes } from '@novastarter/mail-driver-ses';
+ * import { env } from './env';
+ *
+ * const mail = useMail();
+ *
+ * mail.registerDriver('ses', MailDriverSes);
+ * mail.registerLocation('main', {
  * 	driver: 'ses',
  * 	options: {
  * 		region: 'eu-west-1',
- * 		accessKeyId: env['MAIL_SES_ACCESS_KEY_ID'],
- * 		secretAccessKey: env['MAIL_SES_SECRET_ACCESS_KEY'],
+ * 		accessKeyId: env.MAIL_SES_ACCESS_KEY_ID,
+ * 		secretAccessKey: env.MAIL_SES_SECRET_ACCESS_KEY,
  * 	},
  * });
  * ```
@@ -80,9 +86,11 @@ export class MailDriverSes implements MailDriver {
 	 * Create a driver on an SES client of its own.
 	 *
 	 * @param config - Region, credentials, endpoint, configuration set.
+	 * @throws Error when only one half of the `accessKeyId` / `secretAccessKey` pair is given.
 	 */
 	constructor(config: MailDriverSesConfig = {}) {
-		// 1. A client per location, so two regions or two accounts never share credentials
+		// 1. A client per location, so two regions or two accounts never share credentials; `toSesClientConfig` is
+		//    what refuses half a credential pair
 		this.sesClient = new SESv2Client(toSesClientConfig(config));
 
 		this.transporter = nodemailer.createTransport({ SES: { sesClient: this.sesClient, SendEmailCommand } });
@@ -127,8 +135,3 @@ export class MailDriverSes implements MailDriver {
 		this.sesClient.destroy();
 	}
 }
-
-/**
- * Default export for consumers that import the driver without a named binding.
- */
-export default MailDriverSes;

@@ -50,13 +50,30 @@ describe('toSesClientConfig', () => {
 			endpoint: 'http://localhost:4566',
 			credentials: { accessKeyId: 'AKIA', secretAccessKey: 'secret', sessionToken: 'tok' },
 		});
+	});
 
-		// 3. Half a key pair is dropped rather than handed to the SDK
-		expect(toSesClientConfig({ accessKeyId: 'AKIA' })).toStrictEqual({});
+	test('Refuses half a credential pair instead of falling back to the SDK chain', () => {
+		expect(() => toSesClientConfig({ accessKeyId: 'AKIA' })).toThrow(
+			'The ses mail driver needs "accessKeyId" and "secretAccessKey" together',
+		);
+
+		expect(() => toSesClientConfig({ secretAccessKey: 'secret' })).toThrow(
+			'The ses mail driver needs "accessKeyId" and "secretAccessKey" together',
+		);
 	});
 });
 
 describe('MailDriverSes', () => {
+	test('Refuses half a credential pair before building a client', () => {
+		expect(() => new MailDriverSes({ accessKeyId: 'AKIA' })).toThrow(
+			'The ses mail driver needs "accessKeyId" and "secretAccessKey" together',
+		);
+
+		expect(() => new MailDriverSes({ secretAccessKey: 'secret' })).toThrow(
+			'The ses mail driver needs "accessKeyId" and "secretAccessKey" together',
+		);
+	});
+
 	test('Builds the SES transport and sends with tags and the configuration set', async () => {
 		sendMail.mockResolvedValueOnce({ messageId: '<ses-1>', envelope: { to: ['ada@example.com'] }, response: '0100…' });
 
