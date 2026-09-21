@@ -10,15 +10,15 @@
 		"check-types": "next typegen && tsc --noEmit"
 	},
 	"dependencies": {
-		"next": "16.3.4",
-		"react": "19.2.8",
-		"react-dom": "19.2.8"
+		"next": "catalog:",
+		"react": "catalog:",
+		"react-dom": "catalog:"
 	},
 	"devDependencies": {
 		"@novastarter/tsconfig": "workspace:*",
-		"@types/node": "26.4.1",
-		"@types/react": "19.2.18",
-		"@types/react-dom": "19.2.5",
-		"typescript": "7.0.2"
+		"@types/node": "catalog:apps",
+		"@types/react": "catalog:",
+		"@types/react-dom": "catalog:",
+		"typescript": "catalog:apps"
 	}
 }

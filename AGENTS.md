@@ -270,6 +270,8 @@ Mandatory, no exceptions.
 - Versions of all external dependencies live in the root `pnpm-workspace.yaml` under the `catalog:` section.
 - In the `package.json` of packages and apps, external dependencies are declared as `"dependency": "catalog:"`. No
   versions inline.
+- When an app needs a different version of a tool than the packages — TypeScript, `@types/node` — it lives in a named
+  catalog under `catalogs:` and is declared as `"dependency": "catalog:<name>"`. Still no versions inline.
 - Internal monorepo packages are linked as `"@novastarter/name": "workspace:*"`.
 - Native dependencies (with a postinstall build) are allowed via `allowBuilds` in `pnpm-workspace.yaml`.
 
