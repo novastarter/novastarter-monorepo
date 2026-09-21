@@ -1,3 +1,6 @@
+/**
+ * Tests of `logger/utils/resolve-log-style`.
+ */
 import { describe, expect, test } from 'vitest';
 import { resolveLogStyle } from './resolve-log-style.js';
 

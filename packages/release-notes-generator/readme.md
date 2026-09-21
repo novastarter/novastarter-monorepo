@@ -1,6 +1,6 @@
 # `@novastarter/release-notes-generator`
 
-A release notes generator for [`changesets`](https://github.com/changesets/changesets) used in the Nova monorepo.
+A release notes generator for [`changesets`](https://github.com/changesets/changesets) used in the Novastarter monorepo.
 
 ## Installation
 

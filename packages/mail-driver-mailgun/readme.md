@@ -1,6 +1,6 @@
 # `@novastarter/mail-driver-mailgun`
 
-Mailgun driver for `@novastarter/mail`.
+Mailgun mail driver for `@novastarter/mail`.
 
 ## Installation
 

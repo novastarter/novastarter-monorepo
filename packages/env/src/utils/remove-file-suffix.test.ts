@@ -1,3 +1,6 @@
+/**
+ * Tests of `env/utils/remove-file-suffix`.
+ */
 import { expect, test } from 'vitest';
 import { removeFileSuffix } from './remove-file-suffix.js';
 

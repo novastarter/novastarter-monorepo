@@ -1,6 +1,6 @@
 # `@novastarter/payments-driver-lemonsqueezy`
 
-Lemon Squeezy driver for `@novastarter/payments`.
+Lemon Squeezy payments driver for `@novastarter/payments`.
 
 ## Installation
 

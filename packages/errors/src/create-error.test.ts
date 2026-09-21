@@ -1,3 +1,6 @@
+/**
+ * Tests of `errors/create-error`.
+ */
 import { beforeEach, expect, test, vi } from 'vitest';
 import { createError } from './create-error.js';
 

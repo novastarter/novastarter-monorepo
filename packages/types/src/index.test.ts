@@ -1,3 +1,6 @@
+/**
+ * Tests of `types/index`.
+ */
 import { expect, expectTypeOf, test } from 'vitest';
 import type { ClientFilterOperator, Filter, FilterOperator, NovastarterError } from './index.js';
 import * as types from './index.js';

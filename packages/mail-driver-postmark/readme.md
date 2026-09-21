@@ -1,6 +1,6 @@
 # `@novastarter/mail-driver-postmark`
 
-Postmark driver for `@novastarter/mail`.
+Postmark mail driver for `@novastarter/mail`.
 
 ## Installation
 

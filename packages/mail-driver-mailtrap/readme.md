@@ -1,6 +1,6 @@
 # `@novastarter/mail-driver-mailtrap`
 
-Mailtrap driver for `@novastarter/mail`.
+Mailtrap mail driver for `@novastarter/mail`.
 
 ## Installation
 

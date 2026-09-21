@@ -1,3 +1,6 @@
+/**
+ * Tests of `env/utils/read-configuration-from-dotenv`.
+ */
 import { readFileSync } from 'node:fs';
 import { parse } from 'dotenv';
 import { afterEach, expect, test, vi } from 'vitest';

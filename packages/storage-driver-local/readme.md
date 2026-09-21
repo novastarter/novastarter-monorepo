@@ -1,6 +1,6 @@
 # `@novastarter/storage-driver-local`
 
-Local filesystem driver for `@novastarter/storage`.
+Local filesystem storage driver for `@novastarter/storage`.
 
 ## Installation
 

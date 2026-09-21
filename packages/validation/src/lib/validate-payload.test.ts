@@ -1,3 +1,6 @@
+/**
+ * Tests of `validation/lib/validate-payload`.
+ */
 import type { Filter } from '@novastarter/types';
 import { describe, expect, it, test } from 'vitest';
 import { FailedValidationError } from '../errors/failed-validation.js';

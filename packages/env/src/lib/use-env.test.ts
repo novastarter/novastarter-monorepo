@@ -3,7 +3,7 @@
  *
  * `./create-env.js` is mocked, so these exercise the memoization alone.
  */
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { createEnv } from './create-env.js';
 import { useEnv } from './use-env.js';
 
@@ -15,26 +15,28 @@ afterEach(() => {
 	useEnv.reset();
 });
 
-test('Returns the cached env if it exists', () => {
-	// 1. The first call builds; the second answers with the same object without building again
-	const mockEnv = {};
-	vi.mocked(createEnv).mockReturnValue(mockEnv);
+describe('useEnv', () => {
+	test('Returns the cached env if it exists', () => {
+		// 1. The first call builds; the second answers with the same object without building again
+		const mockEnv = {};
+		vi.mocked(createEnv).mockReturnValue(mockEnv);
 
-	const first = useEnv();
+		const first = useEnv();
 
-	expect(useEnv()).toBe(first);
-	expect(createEnv).toHaveBeenCalledOnce();
-});
+		expect(useEnv()).toBe(first);
+		expect(createEnv).toHaveBeenCalledOnce();
+	});
 
-test('Creates the env on first use, passing the options along', () => {
-	// 1. The options of the first call reach the builder; a later call without options gets the same object
-	const mockEnv = {};
-	vi.mocked(createEnv).mockReturnValue(mockEnv);
+	test('Creates the env on first use, passing the options along', () => {
+		// 1. The options of the first call reach the builder; a later call without options gets the same object
+		const mockEnv = {};
+		vi.mocked(createEnv).mockReturnValue(mockEnv);
 
-	const env = useEnv({ fileVariables: ['DB_PASSWORD'] });
+		const env = useEnv({ fileVariables: ['DB_PASSWORD'] });
 
-	expect(env).toBe(mockEnv);
-	expect(createEnv).toHaveBeenCalledWith({ fileVariables: ['DB_PASSWORD'] });
-	expect(useEnv()).toBe(mockEnv);
-	expect(createEnv).toHaveBeenCalledOnce();
+		expect(env).toBe(mockEnv);
+		expect(createEnv).toHaveBeenCalledWith({ fileVariables: ['DB_PASSWORD'] });
+		expect(useEnv()).toBe(mockEnv);
+		expect(createEnv).toHaveBeenCalledOnce();
+	});
 });

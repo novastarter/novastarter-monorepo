@@ -1,3 +1,6 @@
+/**
+ * Tests of `env/lib/read-configuration-from-file`.
+ */
 import { existsSync } from 'node:fs';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { getFileExtension } from '../utils/get-file-extension.js';

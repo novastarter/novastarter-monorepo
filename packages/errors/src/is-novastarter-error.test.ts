@@ -1,3 +1,6 @@
+/**
+ * Tests of `errors/is-novastarter-error`.
+ */
 import { beforeEach, expect, test } from 'vitest';
 import { createError } from './create-error.js';
 import { isNovastarterError } from './is-novastarter-error.js';

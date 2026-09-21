@@ -1,3 +1,6 @@
+/**
+ * Tests of `env/utils/read-configuration-from-javascript`.
+ */
 import { createRequire } from 'node:module';
 import { isPlainObject } from 'lodash-es';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';

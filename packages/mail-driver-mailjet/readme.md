@@ -1,6 +1,6 @@
 # `@novastarter/mail-driver-mailjet`
 
-Mailjet driver for `@novastarter/mail`.
+Mailjet mail driver for `@novastarter/mail`.
 
 ## Installation
 

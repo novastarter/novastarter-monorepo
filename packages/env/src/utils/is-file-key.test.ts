@@ -1,3 +1,6 @@
+/**
+ * Tests of `env/utils/is-file-key`.
+ */
 import { expect, test } from 'vitest';
 import { isFileKey } from './is-file-key.js';
 

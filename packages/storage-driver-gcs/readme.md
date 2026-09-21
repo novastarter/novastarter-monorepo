@@ -25,7 +25,7 @@ storage.registerDriver('gcs', StorageDriverGcs);
 storage.registerLocation('uploads', {
 	driver: 'gcs',
 	options: {
-		bucket: env.STORAGE_UPLOADS_BUCKET,
+		bucket: env.STORAGE_GCS_BUCKET,
 		root: 'uploads',
 	},
 });

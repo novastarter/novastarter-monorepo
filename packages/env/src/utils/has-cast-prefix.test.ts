@@ -1,3 +1,6 @@
+/**
+ * Tests of `env/utils/has-cast-prefix`.
+ */
 import { expect, test, vi } from 'vitest';
 import { getCastFlag } from './has-cast-prefix.js';
 

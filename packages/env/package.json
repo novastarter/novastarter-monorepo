@@ -1,7 +1,7 @@
 {
 	"name": "@novastarter/env",
 	"version": "0.1.1",
-	"description": "Utilities around using global env configuration",
+	"description": "The process configuration, read once and handed out",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",

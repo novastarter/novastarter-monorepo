@@ -1,6 +1,6 @@
 # `@novastarter/payments-driver-polar`
 
-Polar driver for `@novastarter/payments`.
+Polar payments driver for `@novastarter/payments`.
 
 ## Installation
 

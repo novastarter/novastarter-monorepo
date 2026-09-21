@@ -1,3 +1,6 @@
+/**
+ * Tests of `env/lib/create-env` with its real dependencies.
+ */
 import { readFileSync } from 'node:fs';
 import { afterEach, expect, test, vi } from 'vitest';
 import { readConfigurationFromProcess } from '../utils/read-configuration-from-process.js';

@@ -1,6 +1,6 @@
 # `@novastarter/storage-driver-s3`
 
-Amazon S3 driver for `@novastarter/storage`.
+Amazon S3 storage driver for `@novastarter/storage`.
 
 ## Installation
 
@@ -25,21 +25,21 @@ storage.registerDriver('s3', StorageDriverS3);
 storage.registerLocation('uploads', {
 	driver: 's3',
 	options: {
-		bucket: env.STORAGE_UPLOADS_BUCKET,
-		region: env.STORAGE_UPLOADS_REGION,
-		key: env.STORAGE_UPLOADS_KEY,
-		secret: env.STORAGE_UPLOADS_SECRET,
+		bucket: env.STORAGE_S3_BUCKET,
+		region: env.STORAGE_S3_REGION,
+		key: env.STORAGE_S3_KEY,
+		secret: env.STORAGE_S3_SECRET,
 	},
 });
 
 storage.registerLocation('backups', {
 	driver: 's3',
 	options: {
-		bucket: env.STORAGE_BACKUPS_BUCKET,
-		endpoint: env.STORAGE_BACKUPS_ENDPOINT,
+		bucket: env.STORAGE_S3_BACKUPS_BUCKET,
+		endpoint: env.STORAGE_S3_BACKUPS_ENDPOINT,
 		forcePathStyle: true,
-		key: env.STORAGE_BACKUPS_KEY,
-		secret: env.STORAGE_BACKUPS_SECRET,
+		key: env.STORAGE_S3_BACKUPS_KEY,
+		secret: env.STORAGE_S3_BACKUPS_SECRET,
 	},
 });
 ```

@@ -1,3 +1,6 @@
+/**
+ * Tests of `pressure/lib/pressure-monitor`.
+ */
 import type { EventLoopUtilization, IntervalHistogram } from 'node:perf_hooks';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { memoryUsage } from 'node:process';

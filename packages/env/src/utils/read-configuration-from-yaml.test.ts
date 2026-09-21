@@ -1,3 +1,6 @@
+/**
+ * Tests of `env/utils/read-configuration-from-yaml`.
+ */
 import { requireYaml } from '@novastarter/utils/node';
 import { isPlainObject } from 'lodash-es';
 import { expect, test, vi } from 'vitest';

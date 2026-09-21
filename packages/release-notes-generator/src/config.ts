@@ -1,7 +1,7 @@
 import type { Config } from './types.js';
 
 /**
- * Release notes settings for the Nova monorepo.
+ * Release notes settings for the Novastarter monorepo.
  *
  * There is no main package, so the headline version only exists when `NOVASTARTER_VERSION` is set. Neither a package
  * order nor linked packages are needed yet, hence the empty lists.

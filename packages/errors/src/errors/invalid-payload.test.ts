@@ -1,3 +1,6 @@
+/**
+ * Tests of `errors/errors/invalid-payload`.
+ */
 import { expect, test } from 'vitest';
 import { InvalidPayloadError, messageConstructor } from './invalid-payload.js';
 

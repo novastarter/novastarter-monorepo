@@ -1,3 +1,6 @@
+/**
+ * Tests of `errors/errors/hit-rate-limit`.
+ */
 import { afterAll, beforeAll, expect, test, vi } from 'vitest';
 import { messageConstructor } from './hit-rate-limit.js';
 
