@@ -6,13 +6,13 @@ import { BusDriverLocal } from '../bus/lib/local.js';
 import { CacheDriverLocal } from '../cache/lib/local.js';
 import { KvDriverLocal } from '../kv/lib/local.js';
 import { LimiterDriverLocal } from '../limiter/lib/local.js';
-import { _cache, useBus, useCache, useKv, useLimiter } from './use-memory.js';
+import { useBus, useCache, useKv, useLimiter } from './use-memory.js';
 
 afterEach(() => {
-	_cache.kv = undefined;
-	_cache.cache = undefined;
-	_cache.bus = undefined;
-	_cache.limiter = undefined;
+	useKv.reset();
+	useCache.reset();
+	useBus.reset();
+	useLimiter.reset();
 });
 
 test('Each accessor keeps one manager per process', () => {

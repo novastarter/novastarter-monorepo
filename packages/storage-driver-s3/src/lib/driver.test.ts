@@ -847,6 +847,15 @@ describe('#delete', () => {
 	});
 });
 
+describe('#close', () => {
+	test('Destroys the SDK client', async () => {
+		// 1. The auto-mocked S3Client records the call; nothing else is released
+		await driver.close();
+
+		expect(driver['client'].destroy).toHaveBeenCalledOnce();
+	});
+});
+
 describe('#list', () => {
 	test('Constructs list objects params based on input prefix', async () => {
 		// 1. An empty page ends the generator after one request, so a single `next()` is enough to trigger it

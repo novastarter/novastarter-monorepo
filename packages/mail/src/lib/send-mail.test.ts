@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { MailDriver } from '../driver.js';
 import type { MailMessage, MailResult } from '../types.js';
 import { MAIL_FAILED_EVENT, MAIL_SEND_FILTER, MAIL_SENT_EVENT, normalizeHtml, sendMail } from './send-mail.js';
-import { _cache, useMail } from './use-mail.js';
+import { useMail } from './use-mail.js';
 
 vi.mock('@novastarter/logger');
 vi.mock('@novastarter/emitter');
@@ -92,7 +92,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	_cache.mail = undefined;
+	useMail.reset();
 	sent.length = 0;
 	vi.clearAllMocks();
 });

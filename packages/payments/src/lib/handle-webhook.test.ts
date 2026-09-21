@@ -15,7 +15,7 @@ import {
 	PAYMENTS_RECEIVED_EVENT,
 	PAYMENTS_WEBHOOK_FILTER,
 } from './handle-webhook.js';
-import { _cache, usePayments } from './use-payments.js';
+import { usePayments } from './use-payments.js';
 
 vi.mock('@novastarter/logger');
 vi.mock('@novastarter/emitter');
@@ -126,7 +126,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	_cache.payments = undefined;
+	usePayments.reset();
 	vi.clearAllMocks();
 });
 

@@ -89,12 +89,25 @@ export const bootstrap = (): AppEnv => {
 };
 
 /**
- * Release what the subsystems hold — queues, Redis clients — for a clean shutdown.
+ * Release what the subsystems hold — queues, SDK clients, subscriptions, Redis clients — for a clean shutdown.
+ *
+ * Every manager keeps its locations, so a later `bootstrap()` in the same process (a test suite) finds them again.
  *
  * @returns Once every connection has closed.
  */
 export const shutdown = async (): Promise<void> => {
-	// 1. Queues first, since their drivers may hold clients of their own; the shared Redis clients last
-	await useQueue().close();
+	// 1. Every manager whose drivers hold connections of their own, or sit on the shared Redis client, closes first,
+	//    in parallel — each releases only what it built
+	await Promise.all([
+		useQueue().close(),
+		useMail().close(),
+		useStorage().close(),
+		useBus().close(),
+		useKv().close(),
+		useCache().close(),
+		useLimiter().close(),
+	]);
+
+	// 2. The shared Redis clients last, once nothing uses them any more
 	await useRedis().close();
 };

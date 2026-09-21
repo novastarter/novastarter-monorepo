@@ -1,9 +1,9 @@
 /**
- * Tests of `storage/lib/use-storage`: one manager per process, resettable through `_cache`.
+ * Tests of `storage/lib/use-storage`: one manager per process, resettable.
  */
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { StorageManager } from './storage-manager.js';
-import { _cache, useStorage } from './use-storage.js';
+import { useStorage } from './use-storage.js';
 
 // The test driver joins the driver map the way a driver package does, so its registrations type-check
 declare module './storage-manager.js' {
@@ -13,7 +13,7 @@ declare module './storage-manager.js' {
 }
 
 afterEach(() => {
-	_cache.storage = undefined;
+	useStorage.reset();
 });
 
 describe('useStorage', () => {

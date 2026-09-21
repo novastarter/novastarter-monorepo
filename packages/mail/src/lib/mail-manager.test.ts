@@ -7,7 +7,7 @@ import { useLogger } from '@novastarter/logger';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { MailDriverConsole } from './drivers/console.js';
 import { MailManager } from './mail-manager.js';
-import { _cache, useMail } from './use-mail.js';
+import { useMail } from './use-mail.js';
 
 vi.mock('@novastarter/logger');
 
@@ -23,7 +23,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	_cache.mail = undefined;
+	useMail.reset();
 	vi.clearAllMocks();
 });
 
@@ -103,7 +103,7 @@ describe('useMail', () => {
 			options: {},
 		});
 
-		_cache.mail = undefined;
+		useMail.reset();
 
 		expect(useMail().hasLocation('default')).toBe(false);
 	});

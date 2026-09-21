@@ -83,7 +83,8 @@ if (supportsTus(uploads)) {
 
 `registerLocation()` checks that the driver exists and keeps the options; the first `location(name)` builds the driver,
 so an unused location never opens a client. `location(name)` throws for a name nobody registered; `hasLocation(name)`
-and `locationNames()` inspect the registry, `instantiated()` lists what was built so far.
+and `locationNames()` inspect the registry, `instantiated()` lists what was built so far, `close()` releases the drivers
+built so far at shutdown — the S3 client's connection pool, say — and keeps the registrations.
 
 ## Errors
 
@@ -110,8 +111,9 @@ A driver refuses a missing or invalid option at construction with a plain `Error
 A driver is a class taking its options in the constructor and implementing `StorageDriver` — or `TusDriver` for
 resumable uploads — from this package; see `@novastarter/storage-driver-local` for the smallest one. Every path a driver
 gets is relative to its configured root and uses forward slashes. `stat()` throws `StorageFileNotFoundError` for a
-missing object; a missing option is refused in the constructor with `The <name> storage driver needs a "<option>"`. The
-package registers its options in the driver map, so a location naming it is type-checked:
+missing object; a missing option is refused in the constructor with `The <name> storage driver needs a "<option>"`;
+`close()`, when the SDK keeps connections open, releases them. The package registers its options in the driver map, so a
+location naming it is type-checked:
 
 ```ts
 declare module '@novastarter/storage' {

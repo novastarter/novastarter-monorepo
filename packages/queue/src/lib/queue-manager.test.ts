@@ -8,7 +8,7 @@ import { createRedis } from '@novastarter/redis';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { QueueDriverBullmq } from './drivers/bullmq.js';
 import { QueueDriverLocal } from './drivers/local.js';
-import { _cache, useQueue } from './use-queue.js';
+import { useQueue } from './use-queue.js';
 
 vi.mock('@novastarter/logger');
 
@@ -28,7 +28,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	_cache.queue = undefined;
+	useQueue.reset();
 	vi.clearAllMocks();
 });
 
@@ -55,10 +55,11 @@ describe('QueueManager', () => {
 
 		await useQueue().close();
 		expect((mail as QueueDriverBullmq).connection.quit).toHaveBeenCalled();
+		expect(useQueue().instantiated().size).toBe(0);
 	});
 
 	test('Names the queue when neither its location nor the default one exists', () => {
-		_cache.queue = undefined;
+		useQueue.reset();
 
 		expect(() => useQueue().location('mail')).toThrow('Queue "mail" has no location of its own and no "default" one.');
 	});

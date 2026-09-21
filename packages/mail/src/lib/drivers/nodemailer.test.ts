@@ -15,6 +15,7 @@ const transporter = {
 		response: '250 OK',
 	})),
 	verify: vi.fn(async () => true),
+	close: vi.fn(),
 };
 
 vi.mock('nodemailer', () => ({ default: { createTransport: vi.fn(() => transporter) } }));
@@ -97,6 +98,11 @@ describe('MailDriverSmtp', () => {
 		await driver.verify();
 
 		expect(transporter.verify).toHaveBeenCalled();
+
+		// 4. `close()` hands the pooled sockets back
+		await driver.close();
+
+		expect(transporter.close).toHaveBeenCalledOnce();
 	});
 });
 

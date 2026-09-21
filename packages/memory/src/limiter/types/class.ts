@@ -20,4 +20,14 @@ export interface Limiter {
 	 * @returns Resolves once the key is reset.
 	 */
 	delete(key: string): Promise<void>;
+
+	/**
+	 * Release what the driver holds — a connection of its own, timers — so the process can exit.
+	 *
+	 * Optional: a driver in memory or on a connection it was handed has nothing to release. The manager calls it at
+	 * shutdown.
+	 *
+	 * @returns Once the connections are closed.
+	 */
+	close?(): Promise<void>;
 }

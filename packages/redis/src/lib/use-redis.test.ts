@@ -1,19 +1,12 @@
 /**
- * Tests of `redis/lib/use-redis`.
+ * Tests of `redis/lib/use-redis`: one manager per process, resettable.
  */
 import { afterEach, expect, test } from 'vitest';
 import { RedisManager } from './redis-manager.js';
-import { _cache, useRedis } from './use-redis.js';
+import { useRedis } from './use-redis.js';
 
 afterEach(() => {
-	_cache.redis = undefined;
-});
-
-test('Returns the cached manager if it exists', () => {
-	const cached = new RedisManager();
-	_cache.redis = cached;
-
-	expect(useRedis()).toBe(cached);
+	useRedis.reset();
 });
 
 test('Creates one empty manager and keeps it across calls', () => {
@@ -22,4 +15,13 @@ test('Creates one empty manager and keeps it across calls', () => {
 	expect(first).toBeInstanceOf(RedisManager);
 	expect(first.locationNames()).toEqual([]);
 	expect(useRedis()).toBe(first);
+});
+
+test('Builds a fresh manager after reset()', () => {
+	const first = useRedis();
+	first.registerLocation('default', 'redis://cache:6379');
+	useRedis.reset();
+
+	expect(useRedis()).not.toBe(first);
+	expect(useRedis().hasLocation('default')).toBe(false);
 });

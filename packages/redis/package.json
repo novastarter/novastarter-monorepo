@@ -25,6 +25,7 @@
 		"test:coverage": "vitest run --coverage"
 	},
 	"dependencies": {
+		"@novastarter/utils": "workspace:*",
 		"ioredis": "catalog:"
 	},
 	"devDependencies": {

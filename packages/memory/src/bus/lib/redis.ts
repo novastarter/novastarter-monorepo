@@ -165,6 +165,20 @@ export class BusDriverRedis implements Bus {
 	}
 
 	/**
+	 * Quit the subscribing connection; the process is shutting down.
+	 *
+	 * The publishing connection belongs to the caller — the `@novastarter/redis` location it came from — and is
+	 * closed there.
+	 *
+	 * @returns Once the server acknowledged the quit.
+	 */
+	async close(): Promise<void> {
+		// 1. Only the duplicate is the driver's own; its subscriptions end with it, so the handlers can go too
+		this.handlers = {};
+		await this.sub.quit();
+	}
+
+	/**
 	 * Dispatch a raw message from Redis to the callbacks of its channel.
 	 *
 	 * One listener serves every channel and fans out from the handlers map, so the number of active Node handles

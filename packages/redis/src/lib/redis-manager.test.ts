@@ -59,4 +59,5 @@ test('Quits every opened client on close, leaving the registrations in place', a
 
 	expect(quit).toHaveBeenCalledTimes(1);
 	expect(manager.locationNames()).toEqual(['default', 'jobs']);
+	expect(manager.instantiated().size).toBe(0);
 });

@@ -1,14 +1,5 @@
+import { type Singleton, singleton } from '@novastarter/utils';
 import { MailManager } from './mail-manager.js';
-
-/**
- * The manager of the process.
- *
- * Wrapped in an object rather than exported as a bare binding, so tests can reset it in place instead of reloading
- * the module.
- *
- * @internal
- */
-export const _cache: { mail: MailManager | undefined } = { mail: undefined };
 
 /**
  * Return the process-wide {@link MailManager}, creating one with only the built-in drivers on first use.
@@ -16,7 +7,7 @@ export const _cache: { mail: MailManager | undefined } = { mail: undefined };
  * The application registers its vendor drivers, locations and routes on it at start-up; `sendMail()` looks the
  * locations up on the same instance afterwards.
  *
- * @returns The same manager on every call.
+ * @returns The same manager on every call; `useMail.reset()` drops it, for tests.
  * @example
  * ```ts
  * // at start-up
@@ -41,13 +32,4 @@ export const _cache: { mail: MailManager | undefined } = { mail: undefined };
  * });
  * ```
  */
-export const useMail = (): MailManager => {
-	// 1. One manager per process: a second one would build every location, and its connections, again
-	if (_cache.mail) {
-		return _cache.mail;
-	}
-
-	_cache.mail = new MailManager();
-
-	return _cache.mail;
-};
+export const useMail: Singleton<MailManager> = singleton(() => new MailManager());

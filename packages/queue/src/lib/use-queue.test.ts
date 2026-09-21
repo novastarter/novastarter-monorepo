@@ -1,25 +1,24 @@
 /**
- * Tests of `queue/lib/use-queue`: one manager per process, resettable through `_cache`.
+ * Tests of `queue/lib/use-queue`: one manager per process, resettable.
  */
 import { afterEach, describe, expect, test } from 'vitest';
 import { QueueManager } from './queue-manager.js';
-import { _cache, useQueue } from './use-queue.js';
+import { useQueue } from './use-queue.js';
 
 afterEach(() => {
-	_cache.queue = undefined;
+	useQueue.reset();
 });
 
 describe('useQueue', () => {
 	test('Creates a manager on first use and hands the same one out afterwards', () => {
-		// 1. Nothing is built until asked, so a process without jobs never constructs a manager
-		expect(_cache.queue).toBeUndefined();
-
+		// 1. Every later call returns the cached instance, so registrations made at start-up are visible everywhere
 		const manager = useQueue();
 
 		expect(manager).toBeInstanceOf(QueueManager);
-		expect(_cache.queue).toBe(manager);
-
-		// 2. Every later call returns the cached instance, so registrations made at start-up are visible everywhere
 		expect(useQueue()).toBe(manager);
+
+		// 2. `reset()` drops it, so the next test starts from an empty manager
+		useQueue.reset();
+		expect(useQueue()).not.toBe(manager);
 	});
 });

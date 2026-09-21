@@ -66,4 +66,14 @@ export interface Cache {
 	 * @returns Whatever the callback resolves to.
 	 */
 	usingLock<T>(key: string, callback: () => Promise<T>): Promise<T>;
+
+	/**
+	 * Release what the driver holds — a connection of its own, timers — so the process can exit.
+	 *
+	 * Optional: a driver in memory or on a connection it was handed has nothing to release. The manager calls it at
+	 * shutdown.
+	 *
+	 * @returns Once the connections are closed.
+	 */
+	close?(): Promise<void>;
 }
