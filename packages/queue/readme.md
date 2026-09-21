@@ -149,7 +149,7 @@ await enqueue('mail.send', {
 
 `enqueue(name, payload, options)` parses the payload, derives the id (`options.jobId`, else
 `<name>_<hash of the payload>` or `<name>_<unique(payload)>` for `unique` contracts, else random — never with a `:`,
-which BullMQ reserves), hands the job to `useQueue().location(queue)` and emits the `job.enqueued` action with the
+which BullMQ reserves), hands the job to `useQueue().location(queue)` and emits the `queue.enqueued` action with the
 parsed payload. Per-call `options` override the contract's: `delay`, `priority`, `attempts`, `jobId`.
 
 ## Drivers
@@ -210,7 +210,7 @@ process.once('SIGTERM', () => running.stop());
 
 A schedule is data: a job, a cron rule (or a function reading it from the environment the application passes in), a
 payload and a switch. `startSchedules()` runs every enabled one through `scheduleSynchronizedJob()`: each instance of
-the cluster keeps its own croner timer, and on a tick tries to advance a `SynchronizedClock` in the shared `Kv`
+the cluster keeps its own croner timer, and on a tick tries to advance a `SynchronizedClock` in the shared `KvDriver`
 (`setMax`, a Lua script on Redis) to the next fire time — the first writer enqueues, the others stand down. Rules may
 carry seconds (six fields); `validateCron()` checks one; `durationToCron(seconds)` turns an interval into a rule with a
 random phase, so many deployments do not fire together.

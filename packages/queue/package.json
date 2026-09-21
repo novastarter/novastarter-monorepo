@@ -1,7 +1,7 @@
 {
 	"name": "@novastarter/queue",
 	"version": "0.0.1",
-	"description": "Job contracts, queue client and providers (local, BullMQ) for Novastarter",
+	"description": "Background jobs for Novastarter: contracts, a client to enqueue them, drivers that run them",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
@@ -33,17 +33,14 @@
 		"@novastarter/utils": "workspace:*",
 		"@novastarter/validation": "workspace:*",
 		"croner": "catalog:",
+		"ioredis": "catalog:",
 		"zod": "catalog:"
 	},
 	"peerDependencies": {
-		"bullmq": "catalog:",
-		"ioredis": "catalog:"
+		"bullmq": "catalog:"
 	},
 	"peerDependenciesMeta": {
 		"bullmq": {
-			"optional": true
-		},
-		"ioredis": {
 			"optional": true
 		}
 	},
@@ -52,7 +49,6 @@
 		"@types/node": "catalog:",
 		"@vitest/coverage-v8": "catalog:",
 		"bullmq": "catalog:",
-		"ioredis": "catalog:",
 		"tsdown": "catalog:",
 		"typescript": "catalog:",
 		"vitest": "catalog:"

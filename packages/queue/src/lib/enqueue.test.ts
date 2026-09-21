@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { z } from 'zod';
 import { _contracts, registerJob } from '../contracts/index.js';
 import { defineJob } from './define-job.js';
-import { enqueue, JOB_ENQUEUED_EVENT, jobs } from './enqueue.js';
+import { enqueue, jobs, QUEUE_ENQUEUED_EVENT } from './enqueue.js';
 import { _handlers, registerJobHandlers } from './handlers.js';
 import { useQueue } from './use-queue.js';
 
@@ -52,7 +52,7 @@ afterEach(() => {
 });
 
 describe('enqueue', () => {
-	test('Parses the payload, runs the handler and emits job.enqueued', async () => {
+	test('Parses the payload, runs the handler and emits queue.enqueued', async () => {
 		const handler = vi.fn(async () => {});
 		registerJobHandlers({ 'test.ping': handler } as never);
 
@@ -61,7 +61,7 @@ describe('enqueue', () => {
 		expect(job).toStrictEqual({ id: expect.any(String), name: 'test.ping', queue: 'test' });
 		expect(handler).toHaveBeenCalledWith({ message: 'ping' }, expect.objectContaining({ id: job.id, attempt: 1 }));
 
-		expect(emitter.emitAction).toHaveBeenCalledWith(JOB_ENQUEUED_EVENT, { ...job, payload: { message: 'ping' } });
+		expect(emitter.emitAction).toHaveBeenCalledWith(QUEUE_ENQUEUED_EVENT, { ...job, payload: { message: 'ping' } });
 		expect(jobs.enqueue).toBe(enqueue);
 	});
 
