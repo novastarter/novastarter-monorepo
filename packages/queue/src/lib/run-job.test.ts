@@ -1,3 +1,6 @@
+/**
+ * Tests of `queue/lib/run-job`.
+ */
 import { InvalidPayloadError } from '@novastarter/errors';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { z } from 'zod';

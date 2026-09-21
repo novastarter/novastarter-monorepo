@@ -1,6 +1,6 @@
 # `@novastarter/push-driver-fcm`
 
-Firebase Cloud Messaging driver for `@novastarter/push`.
+Firebase Cloud Messaging push driver for `@novastarter/push`.
 
 ## Installation
 

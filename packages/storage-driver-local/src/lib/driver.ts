@@ -39,9 +39,19 @@ declare module '@novastarter/storage' {
  *
  * @example
  * ```ts
- * const driver = new StorageDriverLocal({ root: './uploads' });
+ * import { useStorage } from '@novastarter/storage';
+ * import { StorageDriverLocal } from '@novastarter/storage-driver-local';
+ * import { env } from './env';
  *
- * await driver.write('avatar.png', fs.createReadStream('./avatar.png'));
+ * const storage = useStorage();
+ *
+ * storage.registerDriver('local', StorageDriverLocal);
+ * storage.registerLocation('uploads', {
+ * 	driver: 'local',
+ * 	options: {
+ * 		root: env.STORAGE_LOCAL_ROOT,
+ * 	},
+ * });
  * ```
  */
 export class StorageDriverLocal implements TusDriver {
@@ -103,19 +113,19 @@ export class StorageDriverLocal implements TusDriver {
 	async read(filepath: string, options?: ReadOptions): Promise<ReadStream> {
 		const { range } = options || {};
 
-		const stream_options: Parameters<typeof createReadStream>[1] = {};
+		const streamOptions: Parameters<typeof createReadStream>[1] = {};
 
 		// 1. Only forward the bounds that were given, so the stream keeps its own defaults (start of file, end of
 		//    file) for the missing side. Both bounds are inclusive, matching `createReadStream`
 		if (range?.start) {
-			stream_options.start = range.start;
+			streamOptions.start = range.start;
 		}
 
 		if (range?.end) {
-			stream_options.end = range.end;
+			streamOptions.end = range.end;
 		}
 
-		return createReadStream(this.fullPath(filepath), stream_options);
+		return createReadStream(this.fullPath(filepath), streamOptions);
 	}
 
 	/**
@@ -127,12 +137,12 @@ export class StorageDriverLocal implements TusDriver {
 	 * @throws The `node:fs` error for any other failure, such as a permission error.
 	 */
 	async stat(filepath: string): Promise<Stat> {
-		let statRes: Awaited<ReturnType<typeof stat>>;
+		let fileStat: Awaited<ReturnType<typeof stat>>;
 
 		// 1. Only the errors that prove the path cannot exist become the kit's "not found": ENOENT is the plain case,
 		//    ENOTDIR means a parent of the path is a file. Anything else says nothing about the file and is rethrown
 		try {
-			statRes = await stat(this.fullPath(filepath));
+			fileStat = await stat(this.fullPath(filepath));
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException)?.code;
 
@@ -145,14 +155,14 @@ export class StorageDriverLocal implements TusDriver {
 
 		// 2. `stat` rejects rather than resolving empty, so this guard only covers a misbehaving filesystem; it is kept
 		//    so callers always get either real numbers or an error
-		if (!statRes) {
+		if (!fileStat) {
 			throw new StorageFileNotFoundError({ filepath });
 		}
 
 		// 3. `mtime` is the closest match to "modified": `ctime` also moves on permission changes
 		return {
-			size: statRes.size,
-			modified: statRes.mtime,
+			size: fileStat.size,
+			modified: fileStat.mtime,
 		};
 	}
 
@@ -366,14 +376,14 @@ export class StorageDriverLocal implements TusDriver {
 			}),
 		);
 
-		let bytes_received = 0;
+		let bytesReceived = 0;
 
 		// 2. A pass-through transform counts the bytes as they flow, because neither the readable nor the write
 		//    stream reports how much actually went through
 		const transform = new stream.Transform({
 			transform(chunk, _, callback) {
 				// 1. Count first, then hand the chunk on unchanged; the stream is only tapped, never altered
-				bytes_received += chunk.length;
+				bytesReceived += chunk.length;
 				callback(null, chunk);
 			},
 		});
@@ -390,7 +400,7 @@ export class StorageDriverLocal implements TusDriver {
 				}
 
 				// 2. Only bytes that went through the pipeline count; a chunk cut short by an error never reaches here
-				offset += bytes_received;
+				offset += bytesReceived;
 
 				return resolve(offset);
 			});

@@ -1,6 +1,6 @@
 # `@novastarter/payments-driver-paddle`
 
-Paddle Billing driver for `@novastarter/payments`.
+Paddle Billing payments driver for `@novastarter/payments`.
 
 ## Installation
 

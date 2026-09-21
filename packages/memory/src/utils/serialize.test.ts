@@ -1,3 +1,6 @@
+/**
+ * Tests of `memory/utils/serialize`.
+ */
 import { expect, test } from 'vitest';
 import { deserialize, serialize } from './serialize.js';
 

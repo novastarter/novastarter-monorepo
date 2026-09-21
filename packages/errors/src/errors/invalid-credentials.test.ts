@@ -1,3 +1,6 @@
+/**
+ * Tests of `errors/errors/invalid-credentials`.
+ */
 import { expect, test } from 'vitest';
 import { InvalidCredentialsError } from './invalid-credentials.js';
 

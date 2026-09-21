@@ -1,3 +1,6 @@
+/**
+ * Tests of `utils/is-in`.
+ */
 import { describe, expect, it } from 'vitest';
 import { isIn } from './is-in.js';
 

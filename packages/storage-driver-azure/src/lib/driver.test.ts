@@ -1,4 +1,6 @@
-import { join } from 'node:path';
+/**
+ * Tests of `storage-driver-azure/lib/driver`.
+ */
 import { PassThrough } from 'node:stream';
 import { BlobServiceClient, type ContainerClient, StorageSharedKeyCredential } from '@azure/storage-blob';
 import {
@@ -16,7 +18,7 @@ import {
 	randWord,
 } from '@ngneat/falso';
 import { StorageFileNotFoundError } from '@novastarter/storage';
-import { normalizePath } from '@novastarter/utils';
+import { joinPath, normalizePath } from '@novastarter/utils';
 import { isReadableStream } from '@novastarter/utils/node';
 import { afterEach, beforeEach, describe, expect, type Mock, test, vi } from 'vitest';
 import { StorageDriverAzure, type StorageDriverAzureConfig } from './driver.js';
@@ -24,7 +26,6 @@ import { StorageDriverAzure, type StorageDriverAzureConfig } from './driver.js';
 vi.mock('@novastarter/utils/node');
 vi.mock('@novastarter/utils');
 vi.mock('@azure/storage-blob');
-vi.mock('node:path');
 
 /**
  * Random fixture regenerated before every test, so no test can depend on values another one left behind.
@@ -99,7 +100,7 @@ beforeEach(() => {
 	});
 
 	// 3. Stub the private path resolver with a lookup table, so assertions can match exact blob names without
-	//    depending on the mocked `join` and `normalizePath`
+	//    depending on the mocked `joinPath`
 	driver['fullPath'] = vi.fn().mockImplementation((input) => {
 		if (input === sample.path.src) return sample.path.srcFull;
 		if (input === sample.path.dest) return sample.path.destFull;
@@ -222,9 +223,9 @@ describe('#constructor', () => {
 });
 
 describe('#fullPath', () => {
-	test('Returns normalized joined path', () => {
-		vi.mocked(join).mockReturnValue(sample.path.inputFull);
-		vi.mocked(normalizePath).mockReturnValue(sample.path.inputFull);
+	test('Returns the joined path', () => {
+		// 1. `joinPath` is auto-mocked; a fixed return value lets the assertions check the wiring, not real path logic
+		vi.mocked(joinPath).mockReturnValue(sample.path.inputFull);
 
 		const driver = new StorageDriverAzure({
 			containerName: sample.config.containerName,
@@ -234,10 +235,10 @@ describe('#fullPath', () => {
 
 		driver['root'] = sample.config.root;
 
+		// 2. `joinPath` must get root and path in that order, and its result is the blob name
 		const result = driver['fullPath'](sample.path.input);
 
-		expect(join).toHaveBeenCalledWith(sample.config.root, sample.path.input);
-		expect(normalizePath).toHaveBeenCalledWith(sample.path.inputFull);
+		expect(joinPath).toHaveBeenCalledWith(sample.config.root, sample.path.input);
 		expect(result).toBe(sample.path.inputFull);
 	});
 });

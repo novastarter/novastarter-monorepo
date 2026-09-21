@@ -1,3 +1,6 @@
+/**
+ * Tests of `validation/errors/failed-validation`.
+ */
 import type { FilterOperator } from '@novastarter/types';
 import { describe, expect, test } from 'vitest';
 import { messageConstructor } from './failed-validation.js';

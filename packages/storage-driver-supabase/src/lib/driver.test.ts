@@ -1,3 +1,6 @@
+/**
+ * Tests of `storage-driver-supabase/lib/driver`.
+ */
 import { basename, dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { ReadableStream } from 'node:stream/web';

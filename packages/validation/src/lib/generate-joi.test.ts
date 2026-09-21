@@ -1,3 +1,6 @@
+/**
+ * Tests of `validation/lib/generate-joi`.
+ */
 import type { FieldFilter } from '@novastarter/types';
 import { escapeRegExp } from 'lodash-es';
 import { describe, expect, it } from 'vitest';

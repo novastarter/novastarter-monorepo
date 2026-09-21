@@ -1,5 +1,5 @@
 /**
- * Tests of `queue/schedules` and `lib/start-schedules` on the local `Kv` with croner on fake timers.
+ * Tests of `queue/schedules` and `lib/start-schedules` on the local `KvDriver` with croner on fake timers.
  */
 import { KvDriverLocal } from '@novastarter/memory';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';

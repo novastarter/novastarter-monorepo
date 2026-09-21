@@ -26,6 +26,7 @@
 	},
 	"dependencies": {
 		"@novastarter/mail": "workspace:*",
+		"@novastarter/utils": "workspace:*",
 		"mailgun.js": "catalog:"
 	},
 	"devDependencies": {

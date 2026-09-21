@@ -1,4 +1,5 @@
 import { PushTargetGoneError } from '@novastarter/push';
+import { toErrorMessage } from '@novastarter/utils';
 import { GONE_CODES } from './constants.js';
 
 /**
@@ -25,5 +26,5 @@ export const describeError = (error: unknown): Error => {
 	}
 
 	// 2. Anything else — the network, a bug — as is, prefixed
-	return new Error(`FCM: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+	return new Error(`FCM: ${toErrorMessage(error)}`, { cause: error });
 };

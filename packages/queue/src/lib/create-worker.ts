@@ -1,4 +1,5 @@
 import { type Logger, useLogger } from '@novastarter/logger';
+import { withTimeout } from '@novastarter/utils';
 import type { Job, Worker, WorkerOptions } from 'bullmq';
 import { getJobContract } from '../contracts/index.js';
 import type { JobContext } from '../types.js';
@@ -124,7 +125,11 @@ export const createWorker = async (
 				return;
 			}
 
-			await withTimeout(processor(job.data, context), timeout, name);
+			// 4. The run is raced against the clock. It is not stopped on timeout — the processor gets no signal, since
+			//    `JobContext` carries none — but the job is marked failed and retried by the contract's rules
+			await withTimeout(processor(job.data, context), timeout, {
+				error: () => new JobTimeoutError(name, timeout),
+			});
 		},
 		{
 			connection,
@@ -134,7 +139,7 @@ export const createWorker = async (
 		},
 	);
 
-	// 4. Lifecycle to the log: what ran, what failed on which attempt, and connection trouble
+	// 5. Lifecycle to the log: what ran, what failed on which attempt, and connection trouble
 	worker.on('completed', (job) => {
 		logger.info(`Job "${queue}.${job.name}" (${job.id}) completed`);
 	});
@@ -158,28 +163,4 @@ export const createWorker = async (
 			await worker.close(force);
 		},
 	};
-};
-
-/**
- * Race a run against the clock.
- *
- * @param run - The processor's promise.
- * @param timeout - Milliseconds allowed.
- * @param name - Job name for the error.
- * @returns When the run finishes in time.
- * @throws JobTimeoutError when it does not; the run itself is not cancelled — JavaScript cannot — but the job is
- * marked failed and retried by the contract's rules.
- */
-const withTimeout = async (run: Promise<void>, timeout: number, name: string): Promise<void> => {
-	let timer: NodeJS.Timeout | undefined;
-
-	const deadline = new Promise<never>((_, reject) => {
-		timer = setTimeout(() => reject(new JobTimeoutError(name, timeout)), timeout);
-	});
-
-	try {
-		await Promise.race([run, deadline]);
-	} finally {
-		clearTimeout(timer);
-	}
 };

@@ -1,3 +1,6 @@
+/**
+ * Tests of `utils/format-title/constants/constants`.
+ */
 import { expect, test } from 'vitest';
 import acronyms from '../constants/acronyms.js';
 import specialCase from '../constants/special-case.js';

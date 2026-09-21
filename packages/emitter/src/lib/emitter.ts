@@ -1,5 +1,6 @@
 import { useLogger } from '@novastarter/logger';
 import type { ActionHandler, EventContext, FilterHandler, InitHandler } from '@novastarter/types';
+import { toError } from '@novastarter/utils';
 import ee2 from 'eventemitter2';
 
 /**
@@ -136,10 +137,12 @@ export class Emitter {
 		const logger = useLogger();
 		const events = Array.isArray(event) ? event : [event];
 
+		// 1. Fire and forget: a rejected handler is logged, never awaited. Whatever it threw goes to the log as an
+		//    `Error`, since pino serialises an `Error` under `err` while a thrown string in first position would be
+		//    taken for the message and the text after it dropped
 		for (const event of events) {
-			this.actionEmitter.emitAsync(event, { event, ...meta }, context ?? this.getDefaultContext()).catch((err) => {
-				logger.warn(`An error was thrown while executing action "${event}"`);
-				logger.warn(err);
+			this.actionEmitter.emitAsync(event, { event, ...meta }, context ?? this.getDefaultContext()).catch((error) => {
+				logger.warn(toError(error), `An error was thrown while executing action "${event}"`);
 			});
 		}
 	}
@@ -155,11 +158,12 @@ export class Emitter {
 	public async emitInit(event: string, meta: Record<string, any>): Promise<void> {
 		const logger = useLogger();
 
+		// 1. Awaited, but a failure is logged rather than thrown; wrapped through `toError` for the same reason as in
+		//    `emitAction`: a thrown string must not become the message and swallow the text after it
 		try {
 			await this.initEmitter.emitAsync(event, { event, ...meta });
-		} catch (err: any) {
-			logger.warn(`An error was thrown while executing init "${event}"`);
-			logger.warn(err);
+		} catch (error) {
+			logger.warn(toError(error), `An error was thrown while executing init "${event}"`);
 		}
 	}
 

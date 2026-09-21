@@ -1,3 +1,6 @@
+/**
+ * Tests of `storage-driver-local/lib/driver`.
+ */
 import type { Dir, WriteStream } from 'node:fs';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { access, copyFile, mkdir, opendir, rename, stat, unlink } from 'node:fs/promises';

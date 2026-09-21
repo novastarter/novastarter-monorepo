@@ -1,6 +1,6 @@
 # `@novastarter/storage-driver-cloudinary`
 
-Cloudinary driver for `@novastarter/storage`.
+Cloudinary storage driver for `@novastarter/storage`.
 
 ## Installation
 
@@ -25,9 +25,9 @@ storage.registerDriver('cloudinary', StorageDriverCloudinary);
 storage.registerLocation('media', {
 	driver: 'cloudinary',
 	options: {
-		cloudName: env.STORAGE_MEDIA_CLOUD_NAME,
-		apiKey: env.STORAGE_MEDIA_API_KEY,
-		apiSecret: env.STORAGE_MEDIA_API_SECRET,
+		cloudName: env.STORAGE_CLOUDINARY_CLOUD_NAME,
+		apiKey: env.STORAGE_CLOUDINARY_API_KEY,
+		apiSecret: env.STORAGE_CLOUDINARY_API_SECRET,
 		accessMode: 'public',
 	},
 });

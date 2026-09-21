@@ -1,3 +1,6 @@
+/**
+ * Tests of `memory/utils/is-compressed`.
+ */
 import { expect, test } from 'vitest';
 import { isCompressed } from './is-compressed.js';
 

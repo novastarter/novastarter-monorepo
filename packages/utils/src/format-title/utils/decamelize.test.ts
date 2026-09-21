@@ -1,3 +1,6 @@
+/**
+ * Tests of `utils/format-title/utils/decamelize`.
+ */
 import { expect, test } from 'vitest';
 import { decamelize } from './decamelize.js';
 

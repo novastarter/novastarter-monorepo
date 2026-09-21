@@ -1,6 +1,6 @@
 # `@novastarter/mail-driver-ses`
 
-Amazon SES driver for `@novastarter/mail`.
+Amazon SES mail driver for `@novastarter/mail`.
 
 ## Installation
 

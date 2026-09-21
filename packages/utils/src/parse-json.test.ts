@@ -1,3 +1,6 @@
+/**
+ * Tests of `utils/parse-json`.
+ */
 import { describe, expect, it } from 'vitest';
 import { noproto, parseJSON } from './parse-json.js';
 

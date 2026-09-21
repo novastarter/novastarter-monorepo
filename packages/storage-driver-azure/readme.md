@@ -25,9 +25,9 @@ storage.registerDriver('azure', StorageDriverAzure);
 storage.registerLocation('uploads', {
 	driver: 'azure',
 	options: {
-		containerName: env.STORAGE_UPLOADS_CONTAINER_NAME,
-		accountName: env.STORAGE_UPLOADS_ACCOUNT_NAME,
-		accountKey: env.STORAGE_UPLOADS_ACCOUNT_KEY,
+		containerName: env.STORAGE_AZURE_CONTAINER_NAME,
+		accountName: env.STORAGE_AZURE_ACCOUNT_NAME,
+		accountKey: env.STORAGE_AZURE_ACCOUNT_KEY,
 	},
 });
 ```

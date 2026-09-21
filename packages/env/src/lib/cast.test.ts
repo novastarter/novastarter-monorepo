@@ -1,14 +1,13 @@
-import { toArray, toBoolean } from '@novastarter/utils';
-import { toNumber, toString } from 'lodash-es';
+/**
+ * Tests of `env/lib/cast`.
+ */
+import { toArray, toBoolean, toNumber, tryParseJSON } from '@novastarter/utils';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { getCastFlag } from '../utils/has-cast-prefix.js';
-import { tryJson } from '../utils/try-json.js';
 import { cast } from './cast.js';
 
 vi.mock('@novastarter/utils');
-vi.mock('lodash-es');
 vi.mock('../utils/has-cast-prefix.js');
-vi.mock('../utils/try-json.js');
 
 afterEach(() => {
 	vi.clearAllMocks();
@@ -18,10 +17,8 @@ describe('Type extraction', () => {
 	test('Uses cast flag if exists', () => {
 		vi.mocked(getCastFlag).mockReturnValue('string');
 
-		cast('string:value');
-
+		expect(cast('string:value')).toBe('value');
 		expect(getCastFlag).toHaveBeenCalledWith('string:value');
-		expect(toString).toHaveBeenCalledWith('value');
 	});
 
 	test('Uses cast flag for array with nested cast flags if exists', () => {
@@ -31,7 +28,6 @@ describe('Type extraction', () => {
 			return 'number';
 		});
 
-		vi.mocked(toString).mockReturnValue('hey');
 		vi.mocked(toNumber).mockReturnValue(1);
 		vi.mocked(toArray).mockReturnValue(['string:hey', 'number:1']);
 
@@ -40,7 +36,6 @@ describe('Type extraction', () => {
 		expect(getCastFlag).toHaveBeenNthCalledWith(1, 'array:string:hey,number:1');
 		expect(getCastFlag).toHaveBeenCalledWith('string:hey');
 		expect(getCastFlag).toHaveBeenCalledWith('number:1');
-		expect(toString).toHaveBeenCalledWith('hey');
 		expect(toArray).toHaveBeenCalledWith('string:hey,number:1');
 		expect(toNumber).toHaveBeenCalledWith('1');
 		expect(res).toEqual(['hey', 1]);
@@ -51,17 +46,18 @@ describe('Type extraction', () => {
 
 		expect(cast('8055')).toBe('8055');
 		expect(cast('true')).toBe('true');
+
+		// 1. A non-string never carries a prefix, so the flag is not even looked up
 		expect(cast(42)).toBe(42);
-		expect(toString).not.toHaveBeenCalled();
+		expect(getCastFlag).not.toHaveBeenCalledWith(42);
 	});
 });
 
 describe('Casting', () => {
-	test('Uses toString for string types', () => {
+	test('Keeps the payload as it is for string types', () => {
 		vi.mocked(getCastFlag).mockReturnValue('string');
 
-		vi.mocked(toString).mockReturnValue('cast-value');
-		expect(cast('value')).toBe('cast-value');
+		expect(cast('string:value')).toBe('value');
 	});
 
 	test('Uses toNumber for number types', () => {
@@ -105,10 +101,25 @@ describe('Casting', () => {
 		expect(cast('array:,')).toEqual([]);
 	});
 
-	test('Uses tryJson for json types', () => {
+	test('Filters members that cast to undefined out of the array', () => {
+		vi.mocked(getCastFlag).mockImplementation((v) => {
+			if (String(v).startsWith('array')) return 'array';
+			if (String(v).startsWith('number')) return 'number';
+			return null;
+		});
+
+		vi.mocked(toArray).mockReturnValue(['number:1', 'number:']);
+		vi.mocked(toNumber).mockReturnValueOnce(1).mockReturnValueOnce(undefined);
+
+		// 1. `number:` with no number is "no value", dropped like an empty member rather than kept as a hole
+		expect(cast('array:number:1,number:')).toEqual([1]);
+	});
+
+	test('Uses tryParseJSON for json types, keeping the payload when it is not JSON', () => {
 		vi.mocked(getCastFlag).mockReturnValue('json');
 
-		vi.mocked(tryJson).mockReturnValue('cast-value');
-		expect(cast('value')).toBe('cast-value');
+		vi.mocked(tryParseJSON).mockReturnValue('cast-value');
+		expect(cast('json:value')).toBe('cast-value');
+		expect(tryParseJSON).toHaveBeenCalledWith('value', 'value');
 	});
 });

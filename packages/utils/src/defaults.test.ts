@@ -1,3 +1,6 @@
+/**
+ * Tests of `utils/defaults`.
+ */
 import { expect, test } from 'vitest';
 import { defaults } from './defaults.js';
 

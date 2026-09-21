@@ -1,3 +1,6 @@
+/**
+ * Tests of `utils/format-title/utils/capitalize`.
+ */
 import { expect, test } from 'vitest';
 import { capitalize } from './capitalize.js';
 

@@ -1,3 +1,6 @@
+/**
+ * Tests of `env/utils/get-file-extension`.
+ */
 import { extname } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
 import { getFileExtension } from './get-file-extension.js';

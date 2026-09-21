@@ -1,3 +1,6 @@
+/**
+ * Tests of `env/utils/get-config-path`.
+ */
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { DEFAULTS } from '../constants/defaults.js';

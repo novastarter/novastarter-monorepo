@@ -1,3 +1,6 @@
+/**
+ * Tests of `validation/utils/zod-error-to-error-extensions`.
+ */
 import { expect, test } from 'vitest';
 import { z } from 'zod';
 import { zodErrorToErrorExtensions } from './zod-error-to-error-extensions.js';

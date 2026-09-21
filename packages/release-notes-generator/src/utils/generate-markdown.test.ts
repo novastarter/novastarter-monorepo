@@ -1,3 +1,6 @@
+/**
+ * Tests of `release-notes-generator/utils/generate-markdown`.
+ */
 import { describe, expect, test } from 'vitest';
 import config from '../config.js';
 import type { Change, Notice, PackageVersion, Type, UntypedPackage } from '../types.js';

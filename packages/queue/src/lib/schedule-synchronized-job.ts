@@ -1,4 +1,4 @@
-import type { Kv } from '@novastarter/memory';
+import type { KvDriver } from '@novastarter/memory';
 import { Cron } from 'croner';
 import { SynchronizedClock } from './synchronized-clock.js';
 
@@ -17,7 +17,7 @@ export interface ScheduledJob {
  */
 export interface ScheduleSynchronizedJobOptions {
 	/** Store shared by every instance of the cluster; the clock lives there. */
-	kv: Kv;
+	kv: KvDriver;
 	/** IANA time zone the rule is read in; the process's unless given. */
 	timezone?: string | undefined;
 	/** Where a failing callback is reported; a throw would otherwise stop the schedule. */

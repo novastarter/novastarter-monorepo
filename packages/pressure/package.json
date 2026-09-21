@@ -1,7 +1,7 @@
 {
 	"name": "@novastarter/pressure",
 	"version": "0.0.1",
-	"description": "Event loop and memory pressure monitor with an Express middleware that sheds load",
+	"description": "Event loop and memory pressure monitor, with an Express middleware that sheds load",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
@@ -40,6 +40,7 @@
 		"@types/express": "catalog:",
 		"@types/node": "catalog:",
 		"@vitest/coverage-v8": "catalog:",
+		"express": "catalog:",
 		"tsdown": "catalog:",
 		"typescript": "catalog:",
 		"vitest": "catalog:"

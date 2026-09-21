@@ -78,12 +78,18 @@ export const PRORATION: Record<
  *
  * @example
  * ```ts
- * usePayments().registerDriver('stripe', PaymentsDriverStripe);
- * usePayments().registerLocation('default', {
+ * import { usePayments } from '@novastarter/payments';
+ * import { PaymentsDriverStripe } from '@novastarter/payments-driver-stripe';
+ * import { env } from './env';
+ *
+ * const payments = usePayments();
+ *
+ * payments.registerDriver('stripe', PaymentsDriverStripe);
+ * payments.registerLocation('default', {
  * 	driver: 'stripe',
  * 	options: {
- * 		secretKey: env['PAYMENTS_STRIPE_SECRET_KEY'],
- * 		webhookSecret: env['PAYMENTS_STRIPE_WEBHOOK_SECRET'],
+ * 		secretKey: env.PAYMENTS_STRIPE_SECRET_KEY,
+ * 		webhookSecret: env.PAYMENTS_STRIPE_WEBHOOK_SECRET,
  * 	},
  * });
  * ```

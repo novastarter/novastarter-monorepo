@@ -26,6 +26,7 @@
 	},
 	"dependencies": {
 		"@novastarter/push": "workspace:*",
+		"@novastarter/utils": "workspace:*",
 		"firebase-admin": "catalog:"
 	},
 	"devDependencies": {

@@ -18,15 +18,15 @@ export const consume = async (limiter: RateLimiterAbstract, key: string, availab
 	// 1. Let the library do the bookkeeping; it rejects when the budget is spent
 	try {
 		await limiter.consume(key);
-	} catch (err) {
+	} catch (error) {
 		// 2. Real errors (connection problems and the like) are not rate-limit hits; rethrow them as they are
-		if (err instanceof Error) {
-			throw err;
+		if (error instanceof Error) {
+			throw error;
 		}
 
 		// 3. The rejection value is the limiter result; `msBeforeNext` is always set on it despite the optional
 		//    type, so the non-null assertion is safe
-		const { msBeforeNext } = err as IRateLimiterRes;
+		const { msBeforeNext } = error as IRateLimiterRes;
 
 		throw new HitRateLimitError({
 			limit: availablePoints,

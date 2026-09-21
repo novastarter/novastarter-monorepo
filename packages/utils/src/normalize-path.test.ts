@@ -1,3 +1,6 @@
+/**
+ * Tests of `utils/normalize-path`.
+ */
 import { describe, expect, it } from 'vitest';
 import { normalizePath } from './normalize-path.js';
 

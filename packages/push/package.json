@@ -1,7 +1,7 @@
 {
 	"name": "@novastarter/push",
 	"version": "0.0.1",
-	"description": "Push notifications for Novastarter: driver contract, manager of named locations, console driver",
+	"description": "Push notification abstraction layer for Novastarter",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",

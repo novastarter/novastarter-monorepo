@@ -1,3 +1,6 @@
+/**
+ * Tests of `release-notes-generator/utils/process-packages`.
+ */
 import type { Project } from '@pnpm/types';
 import { beforeEach, expect, test, vi } from 'vitest';
 import type { Config } from '../types.js';

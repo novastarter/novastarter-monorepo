@@ -1,7 +1,7 @@
 {
 	"name": "@novastarter/tsconfig",
 	"version": "0.0.1",
-	"description": "Shared TSConfig files used by Novastarter packages",
+	"description": "Shared TSConfig files used by packages and apps in this monorepo",
 	"exports": {
 		"./base": "./configs/base/tsconfig.json",
 		"./node22": "./configs/node22/tsconfig.json",

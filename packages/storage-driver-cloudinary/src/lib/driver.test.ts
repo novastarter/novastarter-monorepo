@@ -1,8 +1,11 @@
+/**
+ * Tests of `storage-driver-cloudinary/lib/driver`.
+ */
 import { Blob, Buffer } from 'node:buffer';
 import type { Hash } from 'node:crypto';
 import { createHash } from 'node:crypto';
 import type { ParsedPath } from 'node:path';
-import { extname, join, parse } from 'node:path';
+import { extname, parse } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { ReadableStream } from 'node:stream/web';
 import {
@@ -20,7 +23,7 @@ import {
 	randWord,
 } from '@ngneat/falso';
 import { StorageFileNotFoundError } from '@novastarter/storage';
-import { normalizePath } from '@novastarter/utils';
+import { joinPath, normalizePath } from '@novastarter/utils';
 import type { Response } from 'undici';
 import { fetch, FormData } from 'undici';
 import type { Mock } from 'vitest';
@@ -39,9 +42,10 @@ vi.mock('node:crypto');
 vi.mock('undici');
 
 /**
- * Real `join`, kept for the suites that need genuine path joining while `node:path` stays mocked for the rest.
+ * Real `joinPath`, kept for the suites that need genuine path joining while `@novastarter/utils` stays mocked for the
+ * rest.
  */
-const { join: joinActual } = await vi.importActual<typeof import('node:path')>('node:path');
+const { joinPath: joinPathActual } = await vi.importActual<typeof import('@novastarter/utils')>('@novastarter/utils');
 
 /**
  * Random fixture regenerated before every test, so no test can depend on values another one left behind.
@@ -255,7 +259,8 @@ describe('#constructor', () => {
 
 describe('#fullPath', () => {
 	test('Returns normalized joined path', () => {
-		vi.mocked(join).mockReturnValue(sample.path.inputFull);
+		// 1. Both helpers are auto-mocked; fixed return values let the assertions check the wiring, not real path logic
+		vi.mocked(joinPath).mockReturnValue(sample.path.inputFull);
 		vi.mocked(normalizePath).mockReturnValue(sample.path.inputFull);
 
 		const driver = new StorageDriverCloudinary({
@@ -267,9 +272,10 @@ describe('#fullPath', () => {
 
 		driver['root'] = sample.config.root;
 
+		// 2. `joinPath` must get root and path in that order, and its result must lose its leading slash
 		const result = driver['fullPath'](sample.path.input);
 
-		expect(join).toHaveBeenCalledWith(sample.config.root, sample.path.input);
+		expect(joinPath).toHaveBeenCalledWith(sample.config.root, sample.path.input);
 		expect(normalizePath).toHaveBeenCalledWith(sample.path.inputFull, { removeLeading: true });
 		expect(result).toBe(sample.path.inputFull);
 	});
@@ -678,7 +684,7 @@ describe('#stat', () => {
 		};
 
 		// 2. Real joining here, because the public id assertions rebuild `folder/id` the same way the driver does
-		vi.mocked(join).mockImplementation(joinActual);
+		vi.mocked(joinPath).mockImplementation(joinPathActual);
 
 		vi.mocked(fetch).mockResolvedValue(mockResponse as unknown as Response);
 	});
@@ -703,7 +709,7 @@ describe('#stat', () => {
 
 		expect(driver['getFullSignature']).toHaveBeenCalledWith({
 			type: 'upload',
-			public_id: normalizePath(joinActual(sample.path.inputFolder, sample.publicId.input), { removeLeading: true }),
+			public_id: normalizePath(joinPathActual(sample.path.inputFolder, sample.publicId.input), { removeLeading: true }),
 			api_key: sample.config.apiKey,
 			timestamp: sample.timestamp,
 		});
@@ -714,7 +720,7 @@ describe('#stat', () => {
 
 		expect(toFormUrlEncodedUtil.toFormUrlEncoded).toHaveBeenCalledWith({
 			type: 'upload',
-			public_id: normalizePath(joinActual(sample.path.inputFolder, sample.publicId.input), { removeLeading: true }),
+			public_id: normalizePath(joinPathActual(sample.path.inputFolder, sample.publicId.input), { removeLeading: true }),
 			api_key: sample.config.apiKey,
 			timestamp: sample.timestamp,
 			signature: sample.fullSignature,
@@ -833,7 +839,7 @@ describe('#move', () => {
 	beforeEach(() => {
 		// 1. Real joining here, because the `from`/`to` public id assertions rebuild `folder/id` the same way the
 		//    driver does
-		vi.mocked(join).mockImplementation(joinActual);
+		vi.mocked(joinPath).mockImplementation(joinPathActual);
 
 		// 2. An empty success body by default; the error tests fill in `error.message` to check what is surfaced
 		mockResponseBody = {};
@@ -880,8 +886,8 @@ describe('#move', () => {
 		await driver.move(sample.path.src, sample.path.dest);
 
 		expect(driver['getFullSignature']).toHaveBeenCalledWith({
-			from_public_id: joinActual(sample.path.srcFolder, sample.publicId.src),
-			to_public_id: joinActual(sample.path.destFolder, sample.publicId.dest),
+			from_public_id: joinPathActual(sample.path.srcFolder, sample.publicId.src),
+			to_public_id: joinPathActual(sample.path.destFolder, sample.publicId.dest),
 			api_key: sample.config.apiKey,
 			timestamp: sample.timestamp,
 		});
@@ -891,8 +897,8 @@ describe('#move', () => {
 		await driver.move(sample.path.src, sample.path.dest);
 
 		expect(toFormUrlEncodedUtil.toFormUrlEncoded).toHaveBeenCalledWith({
-			from_public_id: joinActual(sample.path.srcFolder, sample.publicId.src),
-			to_public_id: joinActual(sample.path.destFolder, sample.publicId.dest),
+			from_public_id: joinPathActual(sample.path.srcFolder, sample.publicId.src),
+			to_public_id: joinPathActual(sample.path.destFolder, sample.publicId.dest),
 			api_key: sample.config.apiKey,
 			timestamp: sample.timestamp,
 			signature: sample.fullSignature,
@@ -1167,7 +1173,7 @@ describe('#uploadChunk', () => {
 describe('#delete', () => {
 	beforeEach(async () => {
 		// 1. Real joining here, because the public id assertion rebuilds `folder/id` the same way the driver does
-		vi.mocked(join).mockImplementation(joinActual);
+		vi.mocked(joinPath).mockImplementation(joinPathActual);
 
 		// 2. One call up front; every test below asserts a different helper or request the call made
 		await driver.delete(sample.path.input);
@@ -1190,7 +1196,7 @@ describe('#delete', () => {
 			timestamp: sample.timestamp,
 			api_key: sample.config.apiKey,
 			resource_type: sample.resourceType,
-			public_id: normalizePath(joinActual(sample.path.inputFolder, sample.publicId.input), { removeLeading: true }),
+			public_id: normalizePath(joinPathActual(sample.path.inputFolder, sample.publicId.input), { removeLeading: true }),
 		});
 	});
 
@@ -1199,7 +1205,7 @@ describe('#delete', () => {
 			timestamp: sample.timestamp,
 			api_key: sample.config.apiKey,
 			resource_type: sample.resourceType,
-			public_id: normalizePath(joinActual(sample.path.inputFolder, sample.publicId.input), { removeLeading: true }),
+			public_id: normalizePath(joinPathActual(sample.path.inputFolder, sample.publicId.input), { removeLeading: true }),
 			signature: sample.fullSignature,
 		});
 

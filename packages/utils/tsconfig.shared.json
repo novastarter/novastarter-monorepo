@@ -1,8 +1,12 @@
 {
 	"extends": "@novastarter/tsconfig/node22",
 	"compilerOptions": {
+		// No `@types/node` and no `DOM` lib: the shared entry point has to compile on every runtime, so a platform
+		// global slipping in fails here. The few host globals it does use are declared in `shared-globals.d.ts`
 		"types": []
 	},
-	"include": ["src"],
-	"exclude": ["src/node"]
+	"include": ["src", "shared-globals.d.ts"],
+	// The tests run under Node and are checked by `tsconfig.json`; here they would drag `@types/node` in through
+	// vitest and quietly hand every Node global to the shared sources
+	"exclude": ["src/node", "src/**/*.test.ts"]
 }

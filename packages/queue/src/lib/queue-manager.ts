@@ -1,4 +1,4 @@
-import { DriverManager } from '@novastarter/utils';
+import { DEFAULT_LOCATION, DriverManager } from '@novastarter/utils';
 import type { QueueDriver } from '../driver.js';
 import { QueueDriverBullmq, type QueueDriverBullmqConfig } from './drivers/bullmq.js';
 import { QueueDriverLocal, type QueueDriverLocalConfig } from './drivers/local.js';
@@ -18,18 +18,11 @@ export interface QueueDrivers {
 }
 
 /**
- * Name of the location that takes every queue without a location of its own.
- *
- * @defaultValue `default`
- */
-export const DEFAULT_QUEUE_LOCATION = 'default';
-
-/**
  * Registry of named queues — locations — and the driver instance behind each.
  *
  * The {@link DriverManager} of the kit for background jobs. A location is named after a queue — the part of a job
  * name before the dot — so `enqueue('mail.send')` goes to the location `mail`; the one named
- * {@link DEFAULT_QUEUE_LOCATION} takes every queue without a location of its own, since the queue names come from
+ * {@link DEFAULT_LOCATION} takes every queue without a location of its own, since the queue names come from
  * the contracts at runtime and most of them share one server. The built-in drivers (`local`, `bullmq`) are registered
  * on construction, so the application only registers its locations, with the options it read from its own
  * configuration; a driver is built on the location's first use. The application wires it at start-up through
@@ -68,11 +61,11 @@ export class QueueManager extends DriverManager<QueueDriver, QueueDrivers> {
 	/**
 	 * Return the driver of a queue: its own location, or the default one.
 	 *
-	 * @param name - Queue name, the part of a job name before the dot.
-	 * @returns The driver bound to that queue, or to {@link DEFAULT_QUEUE_LOCATION} when it has none of its own.
+	 * @param name - Queue name, the part of a job name before the dot; {@link DEFAULT_LOCATION} when omitted.
+	 * @returns The driver bound to that queue, or to {@link DEFAULT_LOCATION} when it has none of its own.
 	 * @throws Error when neither the queue's location nor the default one is registered.
 	 */
-	override location(name: string): QueueDriver {
+	override location(name: string = DEFAULT_LOCATION): QueueDriver {
 		// 1. The queue's own location wins; the default one covers every queue nobody registered, which is how a
 		//    single-server deployment needs one registration for all of its jobs
 		if (this.hasLocation(name)) {
@@ -80,10 +73,10 @@ export class QueueManager extends DriverManager<QueueDriver, QueueDrivers> {
 		}
 
 		// 2. Name the queue in the error, not the default location: the reader has to learn which job has nowhere to go
-		if (!this.hasLocation(DEFAULT_QUEUE_LOCATION)) {
-			throw new Error(`Queue "${name}" has no location of its own and no "${DEFAULT_QUEUE_LOCATION}" one.`);
+		if (!this.hasLocation(DEFAULT_LOCATION)) {
+			throw new Error(`Queue "${name}" has no location of its own and no "${DEFAULT_LOCATION}" one.`);
 		}
 
-		return super.location(DEFAULT_QUEUE_LOCATION);
+		return super.location(DEFAULT_LOCATION);
 	}
 }

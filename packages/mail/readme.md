@@ -114,7 +114,7 @@ useMail().registerRoutes({
 });
 ```
 
-A limiter is any `Limiter` of `@novastarter/memory`; the location name is its key, so the budget is per location.
+A limiter is any `LimiterDriver` of `@novastarter/memory`; the location name is its key, so the budget is per location.
 
 Sending from a request is the application's job, not the package's: the app declares a `mail.send` contract with
 `@novastarter/queue` and a handler that turns the payload into a message and calls `sendMail()` — see

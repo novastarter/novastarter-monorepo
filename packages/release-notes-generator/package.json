@@ -1,12 +1,13 @@
 {
 	"name": "@novastarter/release-notes-generator",
 	"version": "0.1.0",
-	"description": "Release notes generator for changesets, tailored to the Novastarter monorepo",
+	"description": "A release notes generator for changesets used in the Novastarter monorepo",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
 		"directory": "packages/release-notes-generator"
 	},
+	"sideEffects": false,
 	"type": "module",
 	"exports": {
 		".": "./dist/index.js",

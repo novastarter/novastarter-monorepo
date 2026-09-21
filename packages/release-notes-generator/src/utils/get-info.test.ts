@@ -1,3 +1,6 @@
+/**
+ * Tests of `release-notes-generator/utils/get-info`.
+ */
 import { expect, test, vi } from 'vitest';
 import type { Changesets, Config } from '../types.js';
 import { getInfo } from './get-info.js';

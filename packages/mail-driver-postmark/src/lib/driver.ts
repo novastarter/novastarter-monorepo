@@ -37,11 +37,17 @@ declare module '@novastarter/mail' {
  *
  * @example
  * ```ts
- * useMail().registerDriver('postmark', MailDriverPostmark);
- * useMail().registerLocation('main', {
+ * import { useMail } from '@novastarter/mail';
+ * import { MailDriverPostmark } from '@novastarter/mail-driver-postmark';
+ * import { env } from './env';
+ *
+ * const mail = useMail();
+ *
+ * mail.registerDriver('postmark', MailDriverPostmark);
+ * mail.registerLocation('main', {
  * 	driver: 'postmark',
  * 	options: {
- * 		serverToken: env['MAIL_POSTMARK_SERVER_TOKEN'],
+ * 		serverToken: env.MAIL_POSTMARK_SERVER_TOKEN,
  * 		broadcastStream: 'newsletter',
  * 	},
  * });
@@ -113,8 +119,3 @@ export class MailDriverPostmark implements MailDriver {
 		await this.client.getServer();
 	}
 }
-
-/**
- * Default export for consumers that import the driver without a named binding.
- */
-export default MailDriverPostmark;

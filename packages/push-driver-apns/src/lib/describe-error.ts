@@ -1,4 +1,5 @@
 import { PushTargetGoneError } from '@novastarter/push';
+import { toErrorMessage } from '@novastarter/utils';
 import { ApnsError } from 'apns2';
 import { GONE_REASONS } from './constants.js';
 
@@ -19,5 +20,5 @@ export const describeError = (error: unknown): Error => {
 	}
 
 	// 2. Anything else — the network, a bug — as is, prefixed
-	return new Error(`APNs: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+	return new Error(`APNs: ${toErrorMessage(error)}`, { cause: error });
 };

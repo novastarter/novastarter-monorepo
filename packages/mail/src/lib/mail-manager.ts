@@ -1,4 +1,4 @@
-import type { Limiter } from '@novastarter/memory';
+import type { LimiterDriver } from '@novastarter/memory';
 import { DriverManager } from '@novastarter/utils';
 import type { MailDriver } from '../driver.js';
 import type { MailAddress } from '../types.js';
@@ -43,7 +43,7 @@ export interface MailRoutes {
 	/** Locations to try, in order, by the sender's domain (lower-cased, e.g. `news.acme.com`); wins over the category. */
 	domains?: Record<string, string[]> | undefined;
 	/** Rate limiter by location name; a location over its limit is skipped for the next one in the chain. */
-	limiters?: Record<string, Limiter> | undefined;
+	limiters?: Record<string, LimiterDriver> | undefined;
 }
 
 /**

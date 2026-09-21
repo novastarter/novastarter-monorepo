@@ -1,13 +1,17 @@
-import { join } from 'node:path';
+/**
+ * Tests of `storage-driver-s3/lib/driver`.
+ */
 import { PassThrough, Readable } from 'node:stream';
 import type { HeadObjectCommandOutput } from '@aws-sdk/client-s3';
 import {
+	CompleteMultipartUploadCommand,
 	CopyObjectCommand,
 	CreateMultipartUploadCommand,
 	DeleteObjectCommand,
 	GetObjectCommand,
 	HeadObjectCommand,
 	ListObjectsV2Command,
+	ListPartsCommand,
 	S3Client,
 	ServerSideEncryption,
 } from '@aws-sdk/client-s3';
@@ -28,7 +32,7 @@ import {
 	randWord,
 } from '@ngneat/falso';
 import { StorageFileNotFoundError } from '@novastarter/storage';
-import { normalizePath } from '@novastarter/utils';
+import { joinPath, normalizePath, retry } from '@novastarter/utils';
 import { isReadableStream } from '@novastarter/utils/node';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -40,7 +44,8 @@ vi.mock('@novastarter/utils/node');
 vi.mock('@novastarter/utils');
 vi.mock('@aws-sdk/client-s3');
 vi.mock('@aws-sdk/lib-storage');
-vi.mock('node:path');
+
+const { retry: retryActual } = await vi.importActual<typeof import('@novastarter/utils')>('@novastarter/utils');
 
 /**
  * Random fixture regenerated before every test, so no test can depend on values another one left behind.
@@ -120,7 +125,7 @@ beforeEach(() => {
 	});
 
 	// 3. Stub the private path resolver with a lookup table, so assertions can match exact keys without depending on
-	//    the mocked `join` and `normalizePath`
+	//    the mocked `joinPath`
 	driver['fullPath'] = vi.fn().mockImplementation((input) => {
 		if (input === sample.path.src) return sample.path.srcFull;
 		if (input === sample.path.dest) return sample.path.destFull;
@@ -369,19 +374,17 @@ describe('#fullPath', () => {
 			bucket: sample.config.bucket,
 		});
 
-		// 2. Both helpers are auto-mocked; fixed return values let the assertions check the wiring, not real path logic
-		vi.mocked(join).mockReturnValue(sample.path.inputFull);
-		vi.mocked(normalizePath).mockReturnValue(sample.path.inputFull);
+		// 2. `joinPath` is auto-mocked; a fixed return value lets the assertions check the wiring, not real path logic
+		vi.mocked(joinPath).mockReturnValue(sample.path.inputFull);
 
 		// 3. Point the driver at a root, since the shared config leaves it empty
 		// @ts-expect-error - mutating private attribute
 		driver['root'] = sample.config.root;
 
-		// 4. `join` must get root and path in that order, and its result must pass through `normalizePath`
+		// 4. `joinPath` must get root and path in that order, and its result is the key
 		const result = driver['fullPath'](sample.path.input);
 
-		expect(join).toHaveBeenCalledWith(sample.config.root, sample.path.input);
-		expect(normalizePath).toHaveBeenCalledWith(sample.path.inputFull);
+		expect(joinPath).toHaveBeenCalledWith(sample.config.root, sample.path.input);
 		expect(result).toBe(sample.path.inputFull);
 	});
 });
@@ -461,7 +464,7 @@ describe('#read', () => {
 		// 1. A body that is not a Node readable (for example a Web stream) is rejected the same way
 		vi.mocked(isReadableStream).mockReturnValue(false);
 
-		expect(driver.read(sample.path.input, { range: sample.range })).rejects.toThrowError(
+		await expect(driver.read(sample.path.input, { range: sample.range })).rejects.toThrowError(
 			new Error(`No stream returned for file "${sample.path.input}"`),
 		);
 	});
@@ -1002,4 +1005,97 @@ describe('#createChunkedUpload', () => {
 			});
 		},
 	);
+});
+
+describe('#finishChunkedUpload', () => {
+	const uploadId = 'test-upload-id';
+	const chunkSize = 1000;
+	const context = { metadata: { 'upload-id': uploadId }, size: 3 * chunkSize };
+
+	/**
+	 * `ListParts` response with the given number of parts, numbered from one.
+	 *
+	 * @param count - Parts to list.
+	 * @returns What the mocked `send` resolves to for the listing.
+	 */
+	const listing = (count: number) => ({
+		Parts: Array.from({ length: count }, (_, index) => ({ PartNumber: index + 1, ETag: `etag-${index + 1}` })),
+		IsTruncated: false,
+	});
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+
+		// 1. `retry` is auto-mocked with the rest of utils; the real one runs here, since its pacing is what is tested
+		vi.mocked(retry).mockImplementation(retryActual);
+
+		// 2. A fixed part size, so the context's size means exactly three parts
+		driver['calcOptimalPartSize'] = vi.fn().mockReturnValue(chunkSize);
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	test('Completes the upload once the listing shows every part', async () => {
+		vi.mocked(driver['client'].send).mockResolvedValue(listing(3) as unknown as void);
+
+		await driver.finishChunkedUpload(sample.path.input, context);
+
+		expect(ListPartsCommand).toHaveBeenCalledTimes(1);
+
+		expect(CompleteMultipartUploadCommand).toHaveBeenCalledWith({
+			Bucket: sample.config.bucket,
+			Key: sample.path.inputFull,
+			UploadId: uploadId,
+			MultipartUpload: {
+				Parts: [
+					{ ETag: 'etag-1', PartNumber: 1 },
+					{ ETag: 'etag-2', PartNumber: 2 },
+					{ ETag: 'etag-3', PartNumber: 3 },
+				],
+			},
+		});
+	});
+
+	test('Polls the listing with growing pauses until every part shows', async () => {
+		// 1. Two short listings, then a full one: the completion goes out after 0.5 s + 1 s of waiting
+		vi.mocked(driver['client'].send)
+			.mockResolvedValueOnce(listing(2) as unknown as void)
+			.mockResolvedValueOnce(listing(2) as unknown as void)
+			.mockResolvedValue(listing(3) as unknown as void);
+
+		const run = driver.finishChunkedUpload(sample.path.input, context);
+
+		await vi.advanceTimersByTimeAsync(1500);
+		await run;
+
+		expect(ListPartsCommand).toHaveBeenCalledTimes(3);
+		expect(CompleteMultipartUploadCommand).toHaveBeenCalledTimes(1);
+	});
+
+	test('Refuses with the TUS error object when parts are still missing after three retries', async () => {
+		// 1. Four short listings — the first attempt and three retries — and nothing is completed
+		vi.mocked(driver['client'].send).mockResolvedValue(listing(2) as unknown as void);
+
+		const run = driver.finishChunkedUpload(sample.path.input, context);
+		const outcome = run.catch((error: unknown) => error);
+
+		await vi.advanceTimersByTimeAsync(500 + 1000 + 1500);
+
+		await expect(outcome).resolves.toEqual({ status_code: 500, body: 'Failed to upload all parts to S3.' });
+		expect(ListPartsCommand).toHaveBeenCalledTimes(4);
+		expect(CompleteMultipartUploadCommand).not.toHaveBeenCalled();
+	});
+
+	test('Throws a failing listing at once, without retrying it', async () => {
+		// 1. A rejected `ListParts` is a real error, not a listing that lags: it goes out as it is after one call
+		const failure = new Error('connection reset');
+
+		vi.mocked(driver['client'].send).mockRejectedValue(failure);
+
+		await expect(driver.finishChunkedUpload(sample.path.input, context)).rejects.toBe(failure);
+		expect(ListPartsCommand).toHaveBeenCalledTimes(1);
+		expect(CompleteMultipartUploadCommand).not.toHaveBeenCalled();
+	});
 });

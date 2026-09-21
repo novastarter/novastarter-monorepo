@@ -36,11 +36,17 @@ declare module '@novastarter/mail' {
  *
  * @example
  * ```ts
- * useMail().registerDriver('sendgrid', MailDriverSendgrid);
- * useMail().registerLocation('main', {
+ * import { useMail } from '@novastarter/mail';
+ * import { MailDriverSendgrid } from '@novastarter/mail-driver-sendgrid';
+ * import { env } from './env';
+ *
+ * const mail = useMail();
+ *
+ * mail.registerDriver('sendgrid', MailDriverSendgrid);
+ * mail.registerLocation('main', {
  * 	driver: 'sendgrid',
  * 	options: {
- * 		apiKey: env['MAIL_SENDGRID_API_KEY'],
+ * 		apiKey: env.MAIL_SENDGRID_API_KEY,
  * 	},
  * });
  * ```
@@ -99,8 +105,3 @@ export class MailDriverSendgrid implements MailDriver {
 		};
 	}
 }
-
-/**
- * Default export for consumers that import the driver without a named binding.
- */
-export default MailDriverSendgrid;

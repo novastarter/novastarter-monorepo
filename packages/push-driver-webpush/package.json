@@ -1,7 +1,7 @@
 {
 	"name": "@novastarter/push-driver-webpush",
 	"version": "0.0.1",
-	"description": "Web Push (VAPID) push driver for `@novastarter/push`",
+	"description": "Web Push (VAPID) driver for `@novastarter/push`",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
@@ -26,6 +26,7 @@
 	},
 	"dependencies": {
 		"@novastarter/push": "workspace:*",
+		"@novastarter/utils": "workspace:*",
 		"web-push": "catalog:"
 	},
 	"devDependencies": {

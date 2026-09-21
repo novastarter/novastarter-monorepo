@@ -1,3 +1,6 @@
+/**
+ * Tests of `env/lib/create-env`.
+ */
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { getConfigPath } from '../utils/get-config-path.js';

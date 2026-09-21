@@ -1,6 +1,6 @@
 # `@novastarter/mail-driver-resend`
 
-Resend driver for `@novastarter/mail`.
+Resend mail driver for `@novastarter/mail`.
 
 ## Installation
 

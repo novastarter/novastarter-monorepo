@@ -6,6 +6,7 @@ import {
 	type PushResult,
 	toWebPushPayload,
 } from '@novastarter/push';
+import { toErrorMessage } from '@novastarter/utils';
 import webpush, { type ContentEncoding, type PushSubscription, type RequestOptions, type SendResult } from 'web-push';
 import { VERIFY_AUDIENCE } from './constants.js';
 import { describeError } from './describe-error.js';
@@ -38,7 +39,11 @@ export type PushDriverWebPushConfig = {
 	timeout?: number | undefined;
 	/** Proxy URL for the requests to the push services. */
 	proxy?: string | undefined;
-	/** A `sendNotification`, for tests; the library's otherwise. */
+	/**
+	 * A `sendNotification`, for tests; the library's otherwise.
+	 *
+	 * @internal
+	 */
 	sendNotification?: SendNotification | undefined;
 };
 
@@ -62,13 +67,19 @@ declare module '@novastarter/push' {
  *
  * @example
  * ```ts
- * usePush().registerDriver('webpush', PushDriverWebPush);
- * usePush().registerLocation('webpush', {
+ * import { usePush } from '@novastarter/push';
+ * import { PushDriverWebPush } from '@novastarter/push-driver-webpush';
+ * import { env } from './env';
+ *
+ * const push = usePush();
+ *
+ * push.registerDriver('webpush', PushDriverWebPush);
+ * push.registerLocation('webpush', {
  * 	driver: 'webpush',
  * 	options: {
- * 		publicKey: env['PUSH_WEBPUSH_PUBLIC_KEY'],
- * 		privateKey: env['PUSH_WEBPUSH_PRIVATE_KEY'],
- * 		subject: env['PUSH_WEBPUSH_SUBJECT'],
+ * 		publicKey: env.PUSH_WEBPUSH_PUBLIC_KEY,
+ * 		privateKey: env.PUSH_WEBPUSH_PRIVATE_KEY,
+ * 		subject: env.PUSH_WEBPUSH_SUBJECT,
  * 	},
  * });
  * ```
@@ -198,14 +209,7 @@ export class PushDriverWebPush implements PushDriver {
 				throw new Error('the public and the private key are not a pair');
 			}
 		} catch (error) {
-			throw new Error(`Web push VAPID keys are invalid: ${error instanceof Error ? error.message : String(error)}`, {
-				cause: error,
-			});
+			throw new Error(`Web push VAPID keys are invalid: ${toErrorMessage(error)}`, { cause: error });
 		}
 	}
 }
-
-/**
- * Default export for consumers that import the driver without a named binding.
- */
-export default PushDriverWebPush;

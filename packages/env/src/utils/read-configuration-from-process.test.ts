@@ -1,3 +1,6 @@
+/**
+ * Tests of `env/utils/read-configuration-from-process`.
+ */
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { readConfigurationFromProcess } from './read-configuration-from-process.js';
 

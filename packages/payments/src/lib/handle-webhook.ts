@@ -1,8 +1,8 @@
 import { useEmitter } from '@novastarter/emitter';
 import { ErrorCode, isNovastarterError } from '@novastarter/errors';
 import { useLogger } from '@novastarter/logger';
+import { DEFAULT_LOCATION } from '@novastarter/utils';
 import type { PaymentsEvent, WebhookHeaders } from '../types.js';
-import { DEFAULT_PAYMENTS_LOCATION } from './payments-manager.js';
 import { usePayments } from './use-payments.js';
 
 /**
@@ -31,7 +31,7 @@ export const PAYMENTS_FAILED_EVENT = 'payments.failed';
  * Per-call overrides of {@link handleWebhook}.
  */
 export interface PaymentsWebhookOptions {
-	/** Verify against this location; {@link DEFAULT_PAYMENTS_LOCATION} unless given. */
+	/** Verify against this location; {@link DEFAULT_LOCATION} unless given. */
 	location?: string | undefined;
 }
 
@@ -41,7 +41,7 @@ export interface PaymentsWebhookOptions {
  * The one entry point for incoming webhooks, on the `PaymentsManager` of `usePayments()`. What it does for every
  * delivery:
  *
- * 1. Resolves the location: the one asked for, else {@link DEFAULT_PAYMENTS_LOCATION}.
+ * 1. Resolves the location: the one asked for, else {@link DEFAULT_LOCATION}.
  * 2. Has the driver verify the signature and normalise the payload. A delivery that does not verify is logged,
  *    reported as `payments.failed` and rethrown as is, so a route answers 400 or 401 from the error's status; any
  *    other failure travels as the cause of a plain `Error`.
@@ -78,7 +78,7 @@ export const handleWebhook = async (
 	const logger = useLogger();
 
 	// 1. One location, named or the default; a name nobody registered is a configuration mistake worth naming
-	const location = options.location ?? DEFAULT_PAYMENTS_LOCATION;
+	const location = options.location ?? DEFAULT_LOCATION;
 
 	if (!manager.hasLocation(location)) {
 		throw new Error(`Payments location "${location}" doesn't exist.`);

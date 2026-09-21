@@ -1,3 +1,6 @@
+/**
+ * Tests of `utils/node/process-id`.
+ */
 import { createHash, type Hash } from 'node:crypto';
 import { hostname } from 'node:os';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';

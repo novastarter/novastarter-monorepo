@@ -1,6 +1,6 @@
 # `@novastarter/push-driver-webpush`
 
-Web Push driver for `@novastarter/push`.
+Web Push (VAPID) driver for `@novastarter/push`.
 
 ## Installation
 

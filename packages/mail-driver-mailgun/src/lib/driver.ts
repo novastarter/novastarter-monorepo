@@ -5,6 +5,7 @@ import {
 	type MailResult,
 	toMailAddressList,
 } from '@novastarter/mail';
+import { toErrorMessage } from '@novastarter/utils';
 import Mailgun from 'mailgun.js';
 import type { Interfaces } from 'mailgun.js/definitions';
 import { DEFAULT_MAILGUN_HOST } from './constants.js';
@@ -48,7 +49,7 @@ declare module '@novastarter/mail' {
  */
 const rethrowMailgunError = (error: unknown): never => {
 	// 1. The SDK's message already names the status and Mailgun's reason; only the provider is added
-	const details = error instanceof Error ? error.message : String(error);
+	const details = toErrorMessage(error);
 
 	throw new Error(`Mailgun: ${details}`, { cause: error });
 };
@@ -61,11 +62,17 @@ const rethrowMailgunError = (error: unknown): never => {
  *
  * @example
  * ```ts
- * useMail().registerDriver('mailgun', MailDriverMailgun);
- * useMail().registerLocation('main', {
+ * import { useMail } from '@novastarter/mail';
+ * import { MailDriverMailgun } from '@novastarter/mail-driver-mailgun';
+ * import { env } from './env';
+ *
+ * const mail = useMail();
+ *
+ * mail.registerDriver('mailgun', MailDriverMailgun);
+ * mail.registerLocation('main', {
  * 	driver: 'mailgun',
  * 	options: {
- * 		apiKey: env['MAIL_MAILGUN_API_KEY'],
+ * 		apiKey: env.MAIL_MAILGUN_API_KEY,
  * 		domain: 'mg.example.com',
  * 		host: 'api.eu.mailgun.net',
  * 	},
@@ -157,8 +164,3 @@ export class MailDriverMailgun implements MailDriver {
 		}
 	}
 }
-
-/**
- * Default export for consumers that import the driver without a named binding.
- */
-export default MailDriverMailgun;

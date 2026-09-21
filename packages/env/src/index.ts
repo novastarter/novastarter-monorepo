@@ -1,5 +1,5 @@
 /**
- * Entry point of `@novastarter/env`.
+ * Public entry point of `@novastarter/env`.
  *
  * {@link useEnv} hands out the one configuration object — an {@link Env} — read once from the process environment
  * and the optional config file, cast prefixes applied, with the `*_FILE` secrets of the application's variables

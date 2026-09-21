@@ -5,7 +5,7 @@ Shared types for Novastarter.
 ## Installation
 
 ```
-pnpm add -D @novastarter/types
+pnpm add @novastarter/types
 ```
 
 ## Usage

@@ -1,4 +1,12 @@
 /**
+ * Name of the location every manager answers with when {@link LocationManager.location} is called without one — the
+ * one a deployment with a single server, bucket or provider registers.
+ *
+ * @defaultValue `default`
+ */
+export const DEFAULT_LOCATION = 'default';
+
+/**
  * Registry of named instances — locations — built from their configuration on first use.
  *
  * The part every manager of the kit shares, whether or not it has a driver step: a location is registered as the
@@ -6,8 +14,10 @@
  * registration, so a process that never touches a location never opens its connections, and kept for every later
  * caller, so the connections it holds are shared. A subclass says how a location is built
  * ({@link LocationManager.build}) and how a built one lets go of what it holds ({@link LocationManager.release});
- * {@link LocationManager.close} runs the latter over every built location at shutdown. `DriverManager` adds the
- * driver step on top; `RedisManager` builds clients of one library straight from their connection.
+ * {@link LocationManager.close} runs the latter over every built location at shutdown. `location()` without a name
+ * answers with {@link DEFAULT_LOCATION}, so a deployment with one location of a kind reads the same everywhere.
+ * `DriverManager` adds the driver step on top; `RedisManager` builds clients of one library straight from their
+ * connection.
  *
  * @typeParam Instance - What a location builds; what {@link LocationManager.location} hands out.
  * @typeParam Config - The arguments of {@link LocationManager.registerLocation} after the name, as a tuple, so a
@@ -58,11 +68,12 @@ export abstract class LocationManager<Instance, Config extends unknown[]> {
 	/**
 	 * Return the instance behind a registered location, building it on the first call.
 	 *
-	 * @param name - Location identifier passed to {@link LocationManager.registerLocation}.
+	 * @param name - Location identifier passed to {@link LocationManager.registerLocation}; {@link DEFAULT_LOCATION}
+	 * when omitted.
 	 * @returns The instance bound to that location; the same one on every later call.
 	 * @throws Error when no location of that name is registered.
 	 */
-	location(name: string): Instance {
+	location(name: string = DEFAULT_LOCATION): Instance {
 		// 1. Serve the instance built earlier, so every consumer shares the connections it holds
 		const existing = this.instances.get(name);
 

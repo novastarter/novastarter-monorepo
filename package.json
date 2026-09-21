@@ -24,7 +24,7 @@
 		"globals": "catalog:",
 		"lefthook": "catalog:",
 		"prettier": "catalog:",
-		"turbo": "^2.11.1",
+		"turbo": "catalog:",
 		"typescript": "catalog:",
 		"typescript-eslint": "catalog:"
 	},

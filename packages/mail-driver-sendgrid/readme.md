@@ -1,6 +1,6 @@
 # `@novastarter/mail-driver-sendgrid`
 
-SendGrid driver for `@novastarter/mail`.
+SendGrid mail driver for `@novastarter/mail`.
 
 ## Installation
 

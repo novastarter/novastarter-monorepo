@@ -25,9 +25,9 @@ storage.registerDriver('supabase', StorageDriverSupabase);
 storage.registerLocation('uploads', {
 	driver: 'supabase',
 	options: {
-		bucket: env.STORAGE_UPLOADS_BUCKET,
-		projectId: env.STORAGE_UPLOADS_PROJECT_ID,
-		serviceRole: env.STORAGE_UPLOADS_SERVICE_ROLE,
+		bucket: env.STORAGE_SUPABASE_BUCKET,
+		projectId: env.STORAGE_SUPABASE_PROJECT_ID,
+		serviceRole: env.STORAGE_SUPABASE_SERVICE_ROLE,
 	},
 });
 ```

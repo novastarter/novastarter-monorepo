@@ -75,13 +75,19 @@ declare module '@novastarter/payments' {
  *
  * @example
  * ```ts
- * usePayments().registerDriver('lemonsqueezy', PaymentsDriverLemonSqueezy);
- * usePayments().registerLocation('default', {
+ * import { usePayments } from '@novastarter/payments';
+ * import { PaymentsDriverLemonSqueezy } from '@novastarter/payments-driver-lemonsqueezy';
+ * import { env } from './env';
+ *
+ * const payments = usePayments();
+ *
+ * payments.registerDriver('lemonsqueezy', PaymentsDriverLemonSqueezy);
+ * payments.registerLocation('default', {
  * 	driver: 'lemonsqueezy',
  * 	options: {
- * 		apiKey: env['PAYMENTS_LEMONSQUEEZY_API_KEY'],
- * 		webhookSecret: env['PAYMENTS_LEMONSQUEEZY_WEBHOOK_SECRET'],
- * 		storeId: env['PAYMENTS_LEMONSQUEEZY_STORE_ID'],
+ * 		apiKey: env.PAYMENTS_LEMONSQUEEZY_API_KEY,
+ * 		webhookSecret: env.PAYMENTS_LEMONSQUEEZY_WEBHOOK_SECRET,
+ * 		storeId: env.PAYMENTS_LEMONSQUEEZY_STORE_ID,
  * 	},
  * });
  * ```

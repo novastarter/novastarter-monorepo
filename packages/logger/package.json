@@ -1,7 +1,7 @@
 {
 	"name": "@novastarter/logger",
 	"version": "0.0.1",
-	"description": "Structured logging for Novastarter",
+	"description": "Structured logging for Novastarter, built on pino",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
@@ -26,6 +26,7 @@
 	},
 	"dependencies": {
 		"@novastarter/constants": "workspace:*",
+		"@novastarter/utils": "workspace:*",
 		"lodash-es": "catalog:",
 		"nanoid": "catalog:",
 		"pino": "catalog:",

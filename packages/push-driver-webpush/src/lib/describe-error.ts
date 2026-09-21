@@ -1,4 +1,5 @@
 import { PushTargetGoneError } from '@novastarter/push';
+import { toErrorMessage } from '@novastarter/utils';
 import { WebPushError } from 'web-push';
 import { GONE_STATUSES } from './constants.js';
 
@@ -24,5 +25,5 @@ export const describeError = (error: unknown): Error => {
 	}
 
 	// 2. Anything else — the network, a bad key — as is, prefixed
-	return new Error(`Web push: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+	return new Error(`Web push: ${toErrorMessage(error)}`, { cause: error });
 };

@@ -1,3 +1,6 @@
+/**
+ * Tests of `memory/utils/compress`.
+ */
 import { expect, test } from 'vitest';
 import { compress, decompress } from './compress.js';
 

@@ -1,6 +1,6 @@
 import { Blob, Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
-import { extname, join, parse } from 'node:path';
+import { extname, parse } from 'node:path';
 import { Readable } from 'node:stream';
 import {
 	type ChunkedUploadContext,
@@ -9,7 +9,7 @@ import {
 	StorageFileNotFoundError,
 	type TusDriver,
 } from '@novastarter/storage';
-import { normalizePath } from '@novastarter/utils';
+import { joinPath, normalizePath } from '@novastarter/utils';
 import PQueue from 'p-queue';
 import type { RequestInit } from 'undici';
 import { fetch, FormData } from 'undici';
@@ -63,14 +63,22 @@ declare module '@novastarter/storage' {
  *
  * @example
  * ```ts
- * const driver = new StorageDriverCloudinary({
- *   cloudName: 'demo',
- *   apiKey: process.env.CLOUDINARY_KEY,
- *   apiSecret: process.env.CLOUDINARY_SECRET,
- *   accessMode: 'public',
- * });
+ * import { useStorage } from '@novastarter/storage';
+ * import { StorageDriverCloudinary } from '@novastarter/storage-driver-cloudinary';
+ * import { env } from './env';
  *
- * await driver.write('avatar.png', fs.createReadStream('./avatar.png'));
+ * const storage = useStorage();
+ *
+ * storage.registerDriver('cloudinary', StorageDriverCloudinary);
+ * storage.registerLocation('media', {
+ * 	driver: 'cloudinary',
+ * 	options: {
+ * 		cloudName: env.STORAGE_CLOUDINARY_CLOUD_NAME,
+ * 		apiKey: env.STORAGE_CLOUDINARY_API_KEY,
+ * 		apiSecret: env.STORAGE_CLOUDINARY_API_SECRET,
+ * 		accessMode: 'public',
+ * 	},
+ * });
  * ```
  */
 export class StorageDriverCloudinary implements TusDriver {
@@ -148,9 +156,9 @@ export class StorageDriverCloudinary implements TusDriver {
 	 * @internal
 	 */
 	private fullPath(filepath: string) {
-		// 1. Strip the leading slash again after joining: `join` keeps one when the root is empty and the path
+		// 1. Strip the leading slash again after joining: `joinPath` keeps one when the root is empty and the path
 		//    starts with `/`, and Cloudinary would treat it as part of the public id
-		return normalizePath(join(this.root, filepath), { removeLeading: true });
+		return normalizePath(joinPath(this.root, filepath), { removeLeading: true });
 	}
 
 	/**
@@ -341,7 +349,7 @@ export class StorageDriverCloudinary implements TusDriver {
 
 		// 1. The public id sent to the API is the folder plus the id, again without a leading slash
 		const parameters = {
-			public_id: normalizePath(join(folder, publicId), { removeLeading: true }),
+			public_id: normalizePath(joinPath(folder, publicId), { removeLeading: true }),
 			type: 'upload',
 			api_key: this.apiKey,
 			timestamp: this.getTimestamp(),
@@ -440,8 +448,8 @@ export class StorageDriverCloudinary implements TusDriver {
 		const url = `https://api.cloudinary.com/v1_1/${this.cloudName}/${resourceType}/rename`;
 
 		const parameters = {
-			from_public_id: join(srcFolderPath, srcPublicId),
-			to_public_id: join(destFolderPath, destPublicId),
+			from_public_id: joinPath(srcFolderPath, srcPublicId),
+			to_public_id: joinPath(destFolderPath, destPublicId),
 			api_key: this.apiKey,
 			timestamp: this.getTimestamp(),
 		};
@@ -663,7 +671,7 @@ export class StorageDriverCloudinary implements TusDriver {
 			timestamp: this.getTimestamp(),
 			api_key: this.apiKey,
 			resource_type: resourceType,
-			public_id: normalizePath(join(folderPath, publicId), { removeLeading: true }),
+			public_id: normalizePath(joinPath(folderPath, publicId), { removeLeading: true }),
 		};
 
 		const signature = this.getFullSignature(parameters);

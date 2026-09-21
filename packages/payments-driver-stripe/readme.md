@@ -1,6 +1,6 @@
 # `@novastarter/payments-driver-stripe`
 
-Stripe driver for `@novastarter/payments`.
+Stripe payments driver for `@novastarter/payments`.
 
 ## Installation
 

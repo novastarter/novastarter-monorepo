@@ -1,3 +1,6 @@
+/**
+ * Tests of `release-notes-generator/utils/find-workspace-packages`.
+ */
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';

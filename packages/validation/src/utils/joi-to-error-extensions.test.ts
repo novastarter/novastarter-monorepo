@@ -1,3 +1,6 @@
+/**
+ * Tests of `validation/utils/joi-to-error-extensions`.
+ */
 import type { ValidationErrorItem } from 'joi';
 import { describe, expect, test } from 'vitest';
 import { joiValidationErrorItemToErrorExtensions } from './joi-to-error-extensions.js';
