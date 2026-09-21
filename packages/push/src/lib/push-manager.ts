@@ -96,15 +96,4 @@ export class PushManager extends DriverManager<PushDriver, PushDrivers> {
 	routes(): PushRoutes {
 		return this.pushRoutes;
 	}
-
-	/**
-	 * Close the driver of every location built so far; the process is shutting down.
-	 *
-	 * @returns Once every driver that holds connections released them.
-	 */
-	async close(): Promise<void> {
-		// 1. Only the drivers built so far have anything to release, and only those with an SDK that keeps connections
-		//    open implement `close()`; they close in parallel, each its own sessions
-		await Promise.all([...this.instantiated().values()].map((driver) => driver.close?.()));
-	}
 }

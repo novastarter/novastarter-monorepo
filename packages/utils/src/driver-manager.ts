@@ -1,3 +1,5 @@
+import { LocationManager } from './location-manager.js';
+
 /**
  * Constructor of a driver: one class per backend, instantiated once per location with that location's options.
  *
@@ -8,6 +10,23 @@
  * @typeParam Instance - What the driver builds.
  */
 export type DriverClass<Instance> = new (options: never) => Instance;
+
+/**
+ * What every driver of a {@link DriverManager} may implement to be closed at shutdown.
+ *
+ * Optional on purpose: a driver that holds connections or timers — an SDK client, a subscription, a scheduler —
+ * implements `close()` and the manager calls it; a driver that only makes HTTP requests has nothing to release and
+ * leaves it out. Every driver contract of the kit declares it, so a manager can close its locations without knowing
+ * which driver is behind each.
+ */
+export interface Closable {
+	/**
+	 * Release what the driver holds — connections, timers — so the process can exit.
+	 *
+	 * @returns Once everything is released.
+	 */
+	close?(): Promise<void>;
+}
 
 /**
  * One entry of {@link DriverManager.registerLocation}: which driver and what to hand its constructor.
@@ -36,10 +55,11 @@ export type LocationConfig<Drivers extends object> = {
  * The one registration shape every subsystem of the kit shares: storage, queues, key-value stores and so on all
  * expose a manager of this class, so an application wires each of them the same way at start-up — drivers as
  * classes, locations as explicit options read from its own configuration. Nothing is read from the environment here.
- * A location is instantiated on its first {@link DriverManager.location} call, not at registration, so a process that
- * never touches a location never opens its connections — what a serverless cold start wants — and a driver is
- * instantiated once per location, so one class (S3, say) can back several locations with different credentials.
- * Order matters: a location can only be registered once its driver is.
+ * The {@link LocationManager} underneath builds a location on its first {@link DriverManager.location} call, not at
+ * registration, so a process that never touches a location never opens its connections — what a serverless cold
+ * start wants — and a driver is instantiated once per location, so one class (S3, say) can back several locations
+ * with different credentials. Order matters: a location can only be registered once its driver is.
+ * {@link DriverManager.close} calls the `close()` of every driver built so far that has one.
  *
  * `Drivers` maps the driver names to their options, so a location's `options` are checked against the driver it
  * names. Each subsystem declares its map as an augmentable interface, so a driver package or an application can add
@@ -60,29 +80,19 @@ export type LocationConfig<Drivers extends object> = {
  * });
  *
  * await storage.location('uploads').write('avatar.png', stream, 'image/png');
+ * await storage.close();
  * ```
  */
-export class DriverManager<Instance, Drivers extends object = Record<string, unknown>> {
+export class DriverManager<
+	Instance extends Closable,
+	Drivers extends object = Record<string, unknown>,
+> extends LocationManager<Instance, [config: LocationConfig<Drivers>]> {
 	/**
 	 * Driver classes keyed by the name they were registered under.
 	 *
 	 * @internal
 	 */
 	private drivers: Map<string, DriverClass<Instance>> = new Map();
-
-	/**
-	 * Location configurations keyed by location name, as registered.
-	 *
-	 * @internal
-	 */
-	private configs: Map<string, LocationConfig<Drivers>> = new Map();
-
-	/**
-	 * Instantiated drivers keyed by location name; a location appears here on its first use.
-	 *
-	 * @internal
-	 */
-	private instances: Map<string, Instance> = new Map();
 
 	/**
 	 * Make a driver class available under a name for locations to reference.
@@ -108,83 +118,42 @@ export class DriverManager<Instance, Drivers extends object = Record<string, unk
 	 * @param config - Which driver to use and the options passed to its constructor.
 	 * @throws Error when `config.driver` names a driver that has not been registered.
 	 */
-	registerLocation(name: string, config: LocationConfig<Drivers>): void {
+	override registerLocation(name: string, config: LocationConfig<Drivers>): void {
 		// 1. Resolve the driver class up front, so a typo in the config fails at registration rather than on first use
 		if (!this.drivers.has(config.driver)) {
 			throw new Error(`Driver "${config.driver}" isn't registered.`);
 		}
 
-		// 2. Only the configuration is kept: the driver is built when the location is first asked for
-		this.configs.set(name, config);
-		this.instances.delete(name);
+		// 2. The base keeps the configuration and drops the earlier instance
+		super.registerLocation(name, config);
 	}
 
 	/**
-	 * Return the driver instance behind a registered location, building it on the first call.
+	 * Instantiate the driver a location names with the location's options.
 	 *
-	 * @param name - Location identifier passed to {@link DriverManager.registerLocation}.
-	 * @returns The driver bound to that location; the same instance on every later call.
-	 * @throws Error when no location of that name is registered.
+	 * @param config - Which driver and which options, as the location was registered with.
+	 * @returns The driver instance.
+	 * @throws Error when `config.driver` names no registered driver.
 	 */
-	location(name: string): Instance {
-		// 1. Serve the instance built earlier, so every consumer shares the connections it holds
-		const existing = this.instances.get(name);
-
-		if (existing) {
-			return existing;
-		}
-
-		// 2. Fail loudly instead of returning `undefined`: callers chain calls on the result, and a missing location
-		//    is a configuration bug that deserves a clear message
-		const config = this.configs.get(name);
-
-		if (!config) {
-			throw new Error(`Location "${name}" doesn't exist.`);
-		}
-
-		// 3. The driver was checked at registration; it may have been replaced since, which is why it is looked up now
+	protected build(config: LocationConfig<Drivers>): Instance {
+		// 1. The driver was checked at registration; it may have been replaced since, which is why it is looked up now
 		const Driver = this.drivers.get(config.driver);
 
 		if (!Driver) {
 			throw new Error(`Driver "${config.driver}" isn't registered.`);
 		}
 
-		const instance = new Driver(config.options as never);
-		this.instances.set(name, instance);
-
-		return instance;
+		return new Driver(config.options as never);
 	}
 
 	/**
-	 * Whether a location of this name is registered.
+	 * Close a driver that holds connections; one without a `close()` has nothing to release.
 	 *
-	 * @param name - Location identifier.
-	 * @returns `true` when {@link DriverManager.registerLocation} was called with that name.
+	 * @param driver - A driver built by {@link DriverManager.build}.
+	 * @returns Once the driver released everything.
 	 */
-	hasLocation(name: string): boolean {
-		// 1. Registration is what counts, not whether the instance was built yet
-		return this.configs.has(name);
-	}
-
-	/**
-	 * Names of every registered location, in registration order.
-	 *
-	 * @returns The names.
-	 */
-	locationNames(): string[] {
-		// 1. A copy, so a caller iterating while registering more locations never sees the map change under it
-		return [...this.configs.keys()];
-	}
-
-	/**
-	 * The instances built so far, keyed by location name — what a shutdown has to close.
-	 *
-	 * Locations never asked for have no instance and nothing to release.
-	 *
-	 * @returns The built instances, in order of first use.
-	 */
-	instantiated(): Map<string, Instance> {
-		// 1. A copy, so closing an instance and dropping it cannot disturb a caller still iterating
-		return new Map(this.instances);
+	protected async release(driver: Instance): Promise<void> {
+		// 1. `close()` is optional on every contract: only the drivers with an SDK that keeps connections open have it
+		await driver.close?.();
 	}
 }

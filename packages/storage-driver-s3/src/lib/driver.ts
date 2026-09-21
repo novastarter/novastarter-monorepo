@@ -503,6 +503,16 @@ export class StorageDriverS3 implements TusDriver {
 	}
 
 	/**
+	 * Release the SDK client's connection pool; the process is shutting down.
+	 *
+	 * @returns Once the client is destroyed.
+	 */
+	async close(): Promise<void> {
+		// 1. The SDK keeps sockets alive between calls, which keeps the process up once nothing else does
+		this.client.destroy();
+	}
+
+	/**
 	 * Enumerate object paths under a prefix, page by page.
 	 *
 	 * @param prefix - Path prefix relative to the root; the whole root when empty.

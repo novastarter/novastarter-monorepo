@@ -388,6 +388,9 @@ importers:
       '@novastarter/types':
         specifier: workspace:*
         version: link:../types
+      '@novastarter/utils':
+        specifier: workspace:*
+        version: link:../utils
       eventemitter2:
         specifier: 'catalog:'
         version: 6.4.9
@@ -1171,6 +1174,9 @@ importers:
 
   packages/redis:
     dependencies:
+      '@novastarter/utils':
+        specifier: workspace:*
+        version: link:../utils
       ioredis:
         specifier: 'catalog:'
         version: 5.8.2(supports-color@7.2.0)

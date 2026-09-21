@@ -36,7 +36,9 @@ The registration shape every subsystem of the kit shares: drivers are registered
 options, and consumers ask for a location by name; the driver is built on the location's first use. The second type
 parameter maps driver names to their options, so `driver` decides the type of `options` — each package declares its map
 as an augmentable interface (`StorageDrivers`, `QueueDrivers`, `KvDrivers`, …). `StorageManager`, `QueueManager`,
-`KvManager` and the others extend it; a new subsystem does the same rather than inventing its own.
+`KvManager` and the others extend it; a new subsystem does the same rather than inventing its own. Every driver contract
+declares an optional `close()` (`Closable`); `close()` on the manager calls it on the drivers built so far, drops them
+and keeps the registrations, so a location asked for after shutdown is built afresh.
 
 ```ts
 import { DriverManager } from '@novastarter/utils';
@@ -55,6 +57,43 @@ manager.location('uploads'); // the StorageDriverS3 instance, built now and reus
 manager.hasLocation('uploads'); // true
 manager.locationNames(); // ['uploads']
 manager.instantiated(); // Map { 'uploads' => StorageDriverS3 }
+await manager.close(); // StorageDriverS3.close(), then instantiated() is empty
+```
+
+## `LocationManager`
+
+What `DriverManager` is built on: named locations, each registered with the arguments it is built from and built on its
+first `location(name)` call, without the driver step. A subsystem with one client library — `RedisManager` of
+`@novastarter/redis` — extends it directly: `build()` says how a location's instance is made from its registration,
+`release()` how a built one lets go of its connections at `close()`. The second type parameter is the tuple of arguments
+`registerLocation(name, ...)` takes after the name, so a subclass keeps its own signature.
+
+```ts
+import { LocationManager } from '@novastarter/utils';
+
+class RedisManager extends LocationManager<Redis, [config: RedisConfig, overrides?: RedisOptions]> {
+	protected build(config: RedisConfig, overrides: RedisOptions = {}): Redis {
+		return createRedis(config, overrides);
+	}
+
+	protected async release(redis: Redis): Promise<void> {
+		await redis.quit();
+	}
+}
+```
+
+## `singleton`
+
+The `use*()` accessor of every manager: the builder runs on the first call, every later call answers with the same
+instance, and `reset()` drops it for a test that needs a clean slate.
+
+```ts
+import { type Singleton, singleton } from '@novastarter/utils';
+
+export const useStorage: Singleton<StorageManager> = singleton(() => new StorageManager());
+
+useStorage() === useStorage(); // true
+useStorage.reset(); // the next call builds a new manager
 ```
 
 ## `formatTitle`

@@ -1,14 +1,5 @@
+import { type Singleton, singleton } from '@novastarter/utils';
 import { PaymentsManager } from './payments-manager.js';
-
-/**
- * The payments manager of the process, held at module level so it is built once.
- *
- * Wrapped in an object rather than exported as a bare binding, so tests can reset it in place instead of reloading
- * the module.
- *
- * @internal
- */
-export const _cache: { payments: PaymentsManager | undefined } = { payments: undefined };
 
 /**
  * Return the process-wide {@link PaymentsManager}, creating an empty one on first use.
@@ -16,7 +7,7 @@ export const _cache: { payments: PaymentsManager | undefined } = { payments: und
  * The application registers its drivers and locations on it at start-up; every later caller gets the same instance,
  * so the locations are shared across the process.
  *
- * @returns The same manager on every call.
+ * @returns The same manager on every call; `usePayments.reset()` drops it, for tests.
  * @example
  * ```ts
  * // at start-up
@@ -36,13 +27,4 @@ export const _cache: { payments: PaymentsManager | undefined } = { payments: und
  * await usePayments().location('default').createCustomer({ email: 'ada@example.com' });
  * ```
  */
-export const usePayments = (): PaymentsManager => {
-	// 1. One manager per process: a second one would instantiate every driver, and its clients, again
-	if (_cache.payments) {
-		return _cache.payments;
-	}
-
-	_cache.payments = new PaymentsManager();
-
-	return _cache.payments;
-};
+export const usePayments: Singleton<PaymentsManager> = singleton(() => new PaymentsManager());

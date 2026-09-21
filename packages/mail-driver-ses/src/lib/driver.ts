@@ -63,6 +63,13 @@ export class MailDriverSes implements MailDriver {
 	private readonly transporter: Transporter;
 
 	/**
+	 * The SES client behind the transport, kept to destroy it at shutdown.
+	 *
+	 * @internal
+	 */
+	private readonly sesClient: SESv2Client;
+
+	/**
 	 * Configuration set every message is sent with, when the location names one.
 	 *
 	 * @internal
@@ -76,9 +83,9 @@ export class MailDriverSes implements MailDriver {
 	 */
 	constructor(config: MailDriverSesConfig = {}) {
 		// 1. A client per location, so two regions or two accounts never share credentials
-		const sesClient = new SESv2Client(toSesClientConfig(config));
+		this.sesClient = new SESv2Client(toSesClientConfig(config));
 
-		this.transporter = nodemailer.createTransport({ SES: { sesClient, SendEmailCommand } });
+		this.transporter = nodemailer.createTransport({ SES: { sesClient: this.sesClient, SendEmailCommand } });
 		this.configurationSet = config.configurationSet;
 	}
 
@@ -106,6 +113,18 @@ export class MailDriverSes implements MailDriver {
 
 		// 2. nodemailer reports the envelope; SES itself answers with the message id only
 		return toMailResult(info);
+	}
+
+	/**
+	 * Release the SDK's HTTP agents; the process is shutting down.
+	 *
+	 * @returns Once the client is destroyed.
+	 */
+	async close(): Promise<void> {
+		// 1. The transport holds no sockets of its own; the SDK client's keep-alive agents are what keeps the process
+		//    up
+		this.transporter.close();
+		this.sesClient.destroy();
 	}
 }
 

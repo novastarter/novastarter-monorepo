@@ -83,6 +83,15 @@ export declare class StorageDriver {
 	 * @returns Object paths relative to the driver root, produced lazily.
 	 */
 	list(prefix?: string): AsyncIterable<string>;
+
+	/**
+	 * Release what the driver holds — an SDK's HTTP agents, open sockets — so the process can exit.
+	 *
+	 * Optional: a driver that only makes HTTP requests has nothing to release. The manager calls it at shutdown.
+	 *
+	 * @returns Once the connections are closed.
+	 */
+	close?(): Promise<void>;
 }
 
 /**

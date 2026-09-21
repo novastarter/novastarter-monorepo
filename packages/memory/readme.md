@@ -64,6 +64,9 @@ await useCache().location('default').set('schema', schema);
 await useLimiter().location('api').consume(ip);
 ```
 
+`close()` on a manager releases what its locations built so far — the bus's subscribing connection — and keeps the
+registrations; the Redis client a location was handed belongs to `@novastarter/redis` and is closed there.
+
 A standalone instance, outside the managers — the driver classes are exported:
 
 ```ts

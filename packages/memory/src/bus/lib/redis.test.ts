@@ -180,6 +180,18 @@ describe('unsubscribe', () => {
 	});
 });
 
+describe('close', () => {
+	test('Quits the subscribing connection only and drops the handlers', async () => {
+		bus['handlers'][mockNamespacedChannel] = new Set([mockHandler]);
+
+		await bus.close();
+
+		expect(bus['sub'].quit).toHaveBeenCalledOnce();
+		expect(bus['pub'].quit).not.toHaveBeenCalled();
+		expect(bus['handlers']).toEqual({});
+	});
+});
+
 describe('#messageBufferHandler', () => {
 	test('Returns early if no handlers are registered for channel', async () => {
 		bus['handlers'] = {};

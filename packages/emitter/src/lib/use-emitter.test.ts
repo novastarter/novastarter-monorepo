@@ -1,31 +1,31 @@
 /**
- * Tests of `emitter/lib/use-emitter`.
+ * Tests of `emitter/lib/use-emitter`: one emitter per process, resettable.
  *
- * `./emitter.js` is mocked, so these exercise the memoization alone.
+ * `./emitter.js` is mocked, so these exercise the accessor alone.
  */
 import { afterEach, expect, test, vi } from 'vitest';
 import { Emitter } from './emitter.js';
-import { _cache, useEmitter } from './use-emitter.js';
+import { useEmitter } from './use-emitter.js';
 
 vi.mock('./emitter.js');
 
 afterEach(() => {
 	vi.resetAllMocks();
-
-	_cache.emitter = undefined;
+	useEmitter.reset();
 });
 
-test('Returns cached emitter if exists', () => {
-	_cache.emitter = {} as Emitter;
-
-	expect(useEmitter()).toBe(_cache.emitter);
-	expect(Emitter).not.toHaveBeenCalled();
-});
-
-test('Creates new cached emitter if not exists', () => {
+test('Builds the emitter on first use and hands the same one out afterwards', () => {
 	const emitter = useEmitter();
 
 	expect(Emitter).toHaveBeenCalledOnce();
-	expect(_cache.emitter).toBe(emitter);
 	expect(useEmitter()).toBe(emitter);
+	expect(Emitter).toHaveBeenCalledOnce();
+});
+
+test('Builds a fresh emitter after reset()', () => {
+	const first = useEmitter();
+	useEmitter.reset();
+
+	expect(useEmitter()).not.toBe(first);
+	expect(Emitter).toHaveBeenCalledTimes(2);
 });

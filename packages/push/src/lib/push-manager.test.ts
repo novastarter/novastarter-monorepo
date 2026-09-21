@@ -9,7 +9,7 @@ import type { PushDriver } from '../driver.js';
 import type { PushPlatform, PushResult } from '../types.js';
 import { PushDriverConsole } from './drivers/console.js';
 import { PushManager } from './push-manager.js';
-import { _cache, usePush } from './use-push.js';
+import { usePush } from './use-push.js';
 
 vi.mock('@novastarter/logger');
 
@@ -54,7 +54,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	_cache.push = undefined;
+	usePush.reset();
 	vi.clearAllMocks();
 });
 
@@ -134,7 +134,10 @@ describe('PushManager', () => {
 
 		await manager.close();
 
+		// 2. The registrations stay, the instances go: a location asked for after closing is built afresh
 		expect(closed).toHaveBeenCalledOnce();
+		expect(manager.locationNames()).toEqual(['fcm', 'log', 'unused']);
+		expect(manager.instantiated().size).toBe(0);
 	});
 });
 
@@ -163,7 +166,7 @@ describe('usePush', () => {
 			options: {},
 		});
 
-		_cache.push = undefined;
+		usePush.reset();
 
 		expect(usePush().hasLocation('default')).toBe(false);
 	});

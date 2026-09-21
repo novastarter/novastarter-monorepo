@@ -5,15 +5,8 @@
  * `@novastarter/logger` is mocked; `sendMail` is spied on through its package.
  */
 import { useLogger } from '@novastarter/logger';
-import { _cache as mailCache, sendMail, useMail } from '@novastarter/mail';
-import {
-	_handlers,
-	enqueue,
-	getJobContract,
-	_cache as queueCache,
-	registerJobHandlers,
-	useQueue,
-} from '@novastarter/queue';
+import { sendMail, useMail } from '@novastarter/mail';
+import { _handlers, enqueue, getJobContract, registerJobHandlers, useQueue } from '@novastarter/queue';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { createMailSendHandler, mailSend, toMailMessage } from './mail-send';
 
@@ -61,8 +54,8 @@ beforeEach(() => {
 
 afterEach(() => {
 	_handlers.clear();
-	queueCache.queue = undefined;
-	mailCache.mail = undefined;
+	useQueue.reset();
+	useMail.reset();
 	vi.clearAllMocks();
 });
 

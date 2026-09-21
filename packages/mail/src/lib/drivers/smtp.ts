@@ -101,4 +101,14 @@ export class MailDriverSmtp implements MailDriver {
 		// 1. A handshake and, with credentials, a login: the cheapest proof the server is reachable
 		await this.transporter.verify();
 	}
+
+	/**
+	 * Close the pooled connections; the process is shutting down.
+	 *
+	 * @returns Once the transport let them go.
+	 */
+	async close(): Promise<void> {
+		// 1. Without this a pooled transport keeps its sockets open and the process from exiting
+		this.transporter.close();
+	}
 }

@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { _contracts, registerJob } from '../../contracts/index.js';
 import { createWorker, JobTimeoutError } from '../create-worker.js';
 import { defineJob } from '../define-job.js';
-import { _cache, useQueue } from '../use-queue.js';
+import { useQueue } from '../use-queue.js';
 import { DEFAULT_REMOVE_ON_FAIL, QueueDriverBullmq, toJobsOptions } from './bullmq.js';
 
 /**
@@ -71,7 +71,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	_contracts.delete('test.echo');
-	_cache.queue = undefined;
+	useQueue.reset();
 	FakeQueue.instances = [];
 	FakeWorker.instances = [];
 	vi.clearAllMocks();

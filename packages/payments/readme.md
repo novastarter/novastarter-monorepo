@@ -76,8 +76,9 @@ const checkout = await provider.createCheckoutSession({
 
 `registerLocation()` checks that the driver exists and keeps the options; the first `location(name)` builds the driver,
 so an unused location never opens a client. `location(name)` throws for a name nobody registered; `hasLocation(name)`
-and `locationNames()` inspect the registry, `instantiated()` lists what was built so far. `DEFAULT_PAYMENTS_LOCATION` is
-`default`, the location a deployment with one provider registers and the one `handleWebhook()` verifies against.
+and `locationNames()` inspect the registry, `instantiated()` lists what was built so far, `close()` releases the drivers
+built so far at shutdown and keeps the registrations. `DEFAULT_PAYMENTS_LOCATION` is `default`, the location a
+deployment with one provider registers and the one `handleWebhook()` verifies against.
 
 ## Webhooks
 

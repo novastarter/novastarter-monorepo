@@ -105,3 +105,54 @@ describe('#location', () => {
 		expect([...manager.instantiated().keys()]).toEqual(['test-location']);
 	});
 });
+
+describe('#close', () => {
+	test('Closes the drivers built so far that have a close(), and leaves the rest alone', async () => {
+		// 1. Two driver classes: one holding connections, with a `close()`, one without — both are valid drivers
+		const built = vi.fn();
+		const closed = vi.fn();
+
+		/**
+		 * A driver that holds connections, the way an SDK-backed one does.
+		 */
+		class Closable {
+			/**
+			 * Record the construction, so the test can tell a rebuilt location from a reused one.
+			 */
+			constructor() {
+				built();
+			}
+
+			/**
+			 * Record the shutdown.
+			 */
+			async close(): Promise<void> {
+				closed();
+			}
+		}
+
+		const plain = vi.fn();
+		const manager = new DriverManager();
+
+		manager.registerDriver('closable', Closable);
+		manager.registerDriver('plain', plain);
+		manager.registerLocation('a', { driver: 'closable', options: {} });
+		manager.registerLocation('b', { driver: 'plain', options: {} });
+		manager.registerLocation('never-used', { driver: 'closable', options: {} });
+
+		// 2. Only `a` and `b` are built; `never-used` has no instance and must not be built just to be closed
+		manager.location('a');
+		manager.location('b');
+
+		await manager.close();
+
+		expect(closed).toHaveBeenCalledOnce();
+		expect(built).toHaveBeenCalledOnce();
+
+		// 3. The registrations survive, the instances do not: the next use builds afresh
+		expect(manager.locationNames()).toEqual(['a', 'b', 'never-used']);
+		expect(manager.instantiated().size).toBe(0);
+		manager.location('a');
+		expect(built).toHaveBeenCalledTimes(2);
+	});
+});

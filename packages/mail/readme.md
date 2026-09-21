@@ -76,7 +76,8 @@ const result = await sendMail({
 `registerLocation()` checks that the driver exists and keeps the options; the first use builds the driver, so an unused
 location never opens a client and a bad configuration surfaces on the first send. `location(name)` hands the driver
 itself out — `useMail().location('main').send(message)` skips the routes — and throws for a name nobody registered;
-`hasLocation(name)` and `locationNames()` inspect the registry, `instantiated()` lists what was built so far.
+`hasLocation(name)` and `locationNames()` inspect the registry, `instantiated()` lists what was built so far, `close()`
+releases the drivers built so far at shutdown — the pooled SMTP connections, say — and keeps the registrations.
 `registerRoutes()` replaces the routes whole; `routes()` reads them back.
 
 ## Sending
@@ -163,9 +164,10 @@ in a mail client.
 ## Writing a driver
 
 A driver is a class taking its options in the constructor and implementing `MailDriver` from this package — `send()`,
-and `verify()` when the provider can check credentials without sending; see `@novastarter/mail-driver-resend` for the
-smallest one. `toNodemailerMessage()` / `toMailResult()` serve a nodemailer transport, `readAttachment()` an API that
-takes the bytes inline. The package registers its options in the driver map, so a location naming it is type-checked:
+`verify()` when the provider can check credentials without sending, `close()` when the SDK keeps connections open; see
+`@novastarter/mail-driver-resend` for the smallest one. `toNodemailerMessage()` / `toMailResult()` serve a nodemailer
+transport, `readAttachment()` an API that takes the bytes inline. The package registers its options in the driver map,
+so a location naming it is type-checked:
 
 ```ts
 declare module '@novastarter/mail' {

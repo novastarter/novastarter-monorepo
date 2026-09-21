@@ -86,15 +86,4 @@ export class QueueManager extends DriverManager<QueueDriver, QueueDrivers> {
 
 		return super.location(DEFAULT_QUEUE_LOCATION);
 	}
-
-	/**
-	 * Close the driver of every location built so far; the process is shutting down.
-	 *
-	 * @returns Once every driver released its connections and timers.
-	 */
-	async close(): Promise<void> {
-		// 1. Only the drivers built so far have anything to release; they close in parallel — each its own queues
-		//    and, for `bullmq`, the client it opened
-		await Promise.all([...this.instantiated().values()].map((driver) => driver.close()));
-	}
 }

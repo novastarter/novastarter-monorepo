@@ -38,4 +38,14 @@ export interface Bus {
 	 * @returns Resolves once the callback is removed.
 	 */
 	unsubscribe<T = unknown>(channel: string, callback: MessageHandler<T>): Promise<void>;
+
+	/**
+	 * Release what the driver holds — the subscribing connection — so the process can exit.
+	 *
+	 * Optional: a driver in memory or on a connection it was handed has nothing to release. The manager calls it at
+	 * shutdown.
+	 *
+	 * @returns Once the connections are closed.
+	 */
+	close?(): Promise<void>;
 }

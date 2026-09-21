@@ -2,29 +2,25 @@
  * Integration test of the app bootstrap on the in-process drivers: the configuration under `config/` is registered
  * on the real managers and a job goes through the real queue.
  */
-import { _cache as mailCache, useMail } from '@novastarter/mail';
-import { _cache as memoryCache } from '@novastarter/memory';
-import {
-	_handlers,
-	enqueue,
-	_cache as queueCache,
-	QueueDriverLocal,
-	registerJobHandlers,
-	useQueue,
-} from '@novastarter/queue';
-import { _cache as redisCache, useRedis } from '@novastarter/redis';
-import { _cache as storageCache, useStorage } from '@novastarter/storage';
+import { useMail } from '@novastarter/mail';
+import { useBus, useCache, useKv, useLimiter } from '@novastarter/memory';
+import { _handlers, enqueue, QueueDriverLocal, registerJobHandlers, useQueue } from '@novastarter/queue';
+import { useRedis } from '@novastarter/redis';
+import { useStorage } from '@novastarter/storage';
 import { afterEach, expect, test, vi } from 'vitest';
-import { _state, bootstrap } from './bootstrap';
+import { _state, bootstrap, shutdown } from './bootstrap';
 
 afterEach(() => {
 	_state.booted = false;
-	queueCache.queue = undefined;
-	redisCache.redis = undefined;
-	storageCache.storage = undefined;
-	mailCache.mail = undefined;
+	useQueue.reset();
+	useRedis.reset();
+	useStorage.reset();
+	useMail.reset();
 	_handlers.clear();
-	memoryCache.kv = memoryCache.cache = memoryCache.bus = memoryCache.limiter = undefined;
+	useKv.reset();
+	useCache.reset();
+	useBus.reset();
+	useLimiter.reset();
 	vi.unstubAllEnvs();
 });
 
@@ -67,4 +63,26 @@ test('Boots once per process', () => {
 	bootstrap();
 
 	expect(useQueue()).toBe(first);
+});
+
+test('Shuts every manager down, leaving the registrations for a later boot', async () => {
+	vi.stubEnv('REDIS', '');
+	vi.stubEnv('MAIL_FROM', 'no-reply@acme.test');
+
+	bootstrap();
+
+	// 1. A job through the local queue builds the queue and mail locations; the rest stay unbuilt
+	await enqueue('mail.send', { to: 'ada@example.com', subject: 'Bye', text: 'Hello' });
+	expect(useQueue().instantiated().size).toBe(1);
+	expect(useMail().instantiated().size).toBe(1);
+
+	await shutdown();
+
+	// 2. Every manager let its instances go, and still knows its locations
+	expect(useQueue().instantiated().size).toBe(0);
+	expect(useMail().instantiated().size).toBe(0);
+	expect(useStorage().instantiated().size).toBe(0);
+	expect(useKv().instantiated().size).toBe(0);
+	expect(useMail().hasLocation('default')).toBe(true);
+	expect(useStorage().hasLocation('default')).toBe(true);
 });

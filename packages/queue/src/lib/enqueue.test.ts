@@ -11,7 +11,7 @@ import { _contracts, registerJob } from '../contracts/index.js';
 import { defineJob } from './define-job.js';
 import { enqueue, JOB_ENQUEUED_EVENT, jobs } from './enqueue.js';
 import { _handlers, registerJobHandlers } from './handlers.js';
-import { _cache, useQueue } from './use-queue.js';
+import { useQueue } from './use-queue.js';
 
 vi.mock('@novastarter/logger');
 vi.mock('@novastarter/emitter');
@@ -45,7 +45,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	_cache.queue = undefined;
+	useQueue.reset();
 	_handlers.clear();
 	_contracts.delete('test.ping');
 	vi.clearAllMocks();

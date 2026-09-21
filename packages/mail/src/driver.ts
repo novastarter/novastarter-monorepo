@@ -31,4 +31,13 @@ export declare class MailDriver {
 	 * @throws When it cannot.
 	 */
 	verify?(): Promise<void>;
+
+	/**
+	 * Release what the driver holds — an SMTP connection pool, an SDK's HTTP agents — so the process can exit.
+	 *
+	 * Optional: a driver that only makes HTTP requests has nothing to release. The manager calls it at shutdown.
+	 *
+	 * @returns Once the connections are closed.
+	 */
+	close?(): Promise<void>;
 }

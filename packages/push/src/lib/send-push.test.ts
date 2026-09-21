@@ -11,7 +11,7 @@ import type { PushDriver } from '../driver.js';
 import { PushTargetGoneError } from '../errors/index.js';
 import type { PushMessage, PushPlatform, PushResult } from '../types.js';
 import { PUSH_FAILED_EVENT, PUSH_GONE_EVENT, PUSH_SEND_FILTER, PUSH_SENT_EVENT, sendPush } from './send-push.js';
-import { _cache, usePush } from './use-push.js';
+import { usePush } from './use-push.js';
 
 vi.mock('@novastarter/logger');
 vi.mock('@novastarter/emitter');
@@ -121,7 +121,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	_cache.push = undefined;
+	usePush.reset();
 	sent.length = 0;
 	vi.clearAllMocks();
 });

@@ -27,6 +27,7 @@
 	"dependencies": {
 		"@novastarter/logger": "workspace:*",
 		"@novastarter/types": "workspace:*",
+		"@novastarter/utils": "workspace:*",
 		"eventemitter2": "catalog:"
 	},
 	"devDependencies": {

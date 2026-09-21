@@ -1,14 +1,5 @@
+import { type Singleton, singleton } from '@novastarter/utils';
 import { StorageManager } from './storage-manager.js';
-
-/**
- * The storage manager of the process, held at module level so it is built once.
- *
- * Wrapped in an object rather than exported as a bare binding, so tests can reset it in place instead of reloading
- * the module.
- *
- * @internal
- */
-export const _cache: { storage: StorageManager | undefined } = { storage: undefined };
 
 /**
  * Return the process-wide {@link StorageManager}, creating an empty one on first use.
@@ -16,7 +7,7 @@ export const _cache: { storage: StorageManager | undefined } = { storage: undefi
  * The application registers its drivers and locations on it at start-up; every later caller gets the same instance,
  * so the locations are shared across the process.
  *
- * @returns The same manager on every call.
+ * @returns The same manager on every call; `useStorage.reset()` drops it, for tests.
  * @example
  * ```ts
  * // at start-up
@@ -34,13 +25,4 @@ export const _cache: { storage: StorageManager | undefined } = { storage: undefi
  * await useStorage().location('uploads').write('avatar.png', stream, 'image/png');
  * ```
  */
-export const useStorage = (): StorageManager => {
-	// 1. One manager per process: a second one would instantiate every driver, and its connections, again
-	if (_cache.storage) {
-		return _cache.storage;
-	}
-
-	_cache.storage = new StorageManager();
-
-	return _cache.storage;
-};
+export const useStorage: Singleton<StorageManager> = singleton(() => new StorageManager());
