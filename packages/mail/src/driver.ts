@@ -10,11 +10,11 @@ import type { MailMessage, MailResult } from './types.js';
  */
 export declare class MailDriver {
 	/**
-	 * Create a driver from a location's options.
+	 * Create a driver from its location options.
 	 *
-	 * @param options - The driver's own options, as the location was registered with.
+	 * @param config - Driver-specific options, as given in the location's `options`.
 	 */
-	constructor(options: Record<string, unknown>);
+	constructor(config: Record<string, unknown>);
 
 	/**
 	 * Deliver a message.

@@ -47,7 +47,7 @@ import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { ERRORS, StreamSplitter, TUS_RESUMABLE } from '@tus/utils';
 import ms, { type StringValue } from 'ms';
 import type { ChecksumMode } from '../types.js';
-import { kmsKeyIdCheck } from './constants.js';
+import { KMS_KEY_ID_MODES } from './constants.js';
 
 /**
  * Options accepted by {@link StorageDriverS3}.
@@ -68,7 +68,7 @@ export type StorageDriverS3Config = {
 	acl?: ObjectCannedACL | undefined;
 	/** Server-side encryption requested for written and copied objects. */
 	serverSideEncryption?: ServerSideEncryption | undefined;
-	/** KMS key to encrypt with; only sent for the KMS-based encryption modes listed in {@link kmsKeyIdCheck}. */
+	/** KMS key to encrypt with; only sent for the KMS-based encryption modes listed in {@link KMS_KEY_ID_MODES}. */
 	serverSideEncryptionKmsKeyId?: string | undefined;
 	/** Custom endpoint for S3-compatible services; `https` is assumed unless the value starts with `http://`. */
 	endpoint?: string | undefined;
@@ -432,7 +432,7 @@ export class StorageDriverS3 implements TusDriver {
 		if (this.config.serverSideEncryption) {
 			params.ServerSideEncryption = this.config.serverSideEncryption;
 
-			if (kmsKeyIdCheck.includes(this.config.serverSideEncryption) && this.config.serverSideEncryptionKmsKeyId) {
+			if (KMS_KEY_ID_MODES.includes(this.config.serverSideEncryption) && this.config.serverSideEncryptionKmsKeyId) {
 				params.SSEKMSKeyId = this.config.serverSideEncryptionKmsKeyId;
 			}
 		}
@@ -470,7 +470,7 @@ export class StorageDriverS3 implements TusDriver {
 		if (this.config.serverSideEncryption) {
 			params.ServerSideEncryption = this.config.serverSideEncryption;
 
-			if (kmsKeyIdCheck.includes(this.config.serverSideEncryption) && this.config.serverSideEncryptionKmsKeyId) {
+			if (KMS_KEY_ID_MODES.includes(this.config.serverSideEncryption) && this.config.serverSideEncryptionKmsKeyId) {
 				params.SSEKMSKeyId = this.config.serverSideEncryptionKmsKeyId;
 			}
 		}
@@ -596,7 +596,7 @@ export class StorageDriverS3 implements TusDriver {
 		if (this.config.serverSideEncryption) {
 			params.ServerSideEncryption = this.config.serverSideEncryption;
 
-			if (kmsKeyIdCheck.includes(this.config.serverSideEncryption) && this.config.serverSideEncryptionKmsKeyId) {
+			if (KMS_KEY_ID_MODES.includes(this.config.serverSideEncryption) && this.config.serverSideEncryptionKmsKeyId) {
 				params.SSEKMSKeyId = this.config.serverSideEncryptionKmsKeyId;
 			}
 		}

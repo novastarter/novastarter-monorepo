@@ -30,10 +30,10 @@ export class QueueDriverLocal implements QueueDriver {
 	/**
 	 * Create the driver.
 	 *
-	 * @param options - Logger for failures.
+	 * @param config - Logger for failures.
 	 */
-	constructor(options: QueueDriverLocalConfig = {}) {
-		this.logger = options.logger ?? useLogger();
+	constructor(config: QueueDriverLocalConfig = {}) {
+		this.logger = config.logger ?? useLogger();
 	}
 
 	/**

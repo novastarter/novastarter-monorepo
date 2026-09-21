@@ -1,5 +1,6 @@
 import { basename, join } from 'node:path';
 import { Readable } from 'node:stream';
+import { DEFAULT_CHUNK_SIZE } from '@novastarter/constants';
 import {
 	type ChunkedUploadContext,
 	type ReadOptions,
@@ -12,7 +13,6 @@ import { StorageClient } from '@supabase/storage-js';
 import * as tus from 'tus-js-client';
 import type { RequestInit } from 'undici';
 import { fetch } from 'undici';
-import { DEFAULT_CHUNK_SIZE } from './constants.js';
 import { dirname } from './dirname.js';
 import { FileReader } from './tus-source.js';
 

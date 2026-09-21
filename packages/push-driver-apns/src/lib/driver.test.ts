@@ -7,7 +7,7 @@ import { ApnsClient, ApnsError, Host, Notification, Priority } from 'apns2';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import defaultExport from '../index.js';
 import { assertSigningKey } from './assert-signing-key.js';
-import { COLLAPSE_ID_MAX_LENGTH } from './constants.js';
+import { APNS_COLLAPSE_ID_MAX_LENGTH } from './constants.js';
 import { describeError } from './describe-error.js';
 import { PushDriverApns } from './driver.js';
 import { toApnsNotification, toApnsPriority } from './to-apns-notification.js';
@@ -81,7 +81,7 @@ describe('toApnsNotification', () => {
 			topic: 'com.example.app',
 			alert: { title: 'Hi', body: 'There' },
 			expiration: Math.floor(now.getTime() / 1000) + 60,
-			collapseId: 'x'.repeat(COLLAPSE_ID_MAX_LENGTH),
+			collapseId: 'x'.repeat(APNS_COLLAPSE_ID_MAX_LENGTH),
 			sound: 'default',
 			mutableContent: true,
 			data: { kind: 'invoice', url: '/dashboard', image: 'https://cdn/img.png' },

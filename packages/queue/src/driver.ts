@@ -12,9 +12,9 @@ export declare class QueueDriver {
 	/**
 	 * Create a driver from its location options.
 	 *
-	 * @param options - Driver-specific options, as given in the location's `options`.
+	 * @param config - Driver-specific options, as given in the location's `options`.
 	 */
-	constructor(options: Record<string, unknown>);
+	constructor(config: Record<string, unknown>);
 
 	/**
 	 * Take a job.
@@ -33,9 +33,14 @@ export declare class QueueDriver {
 	): Promise<EnqueuedJob>;
 
 	/**
-	 * Release connections and timers; the process is shutting down.
+	 * Release what the driver holds — Redis connections, pending timers — so the process can exit.
+	 *
+	 * Optional: a driver that hands jobs to a service over HTTP has nothing to release. The manager calls it at
+	 * shutdown.
+	 *
+	 * @returns Once the connections are closed.
 	 */
-	close(): Promise<void>;
+	close?(): Promise<void>;
 
 	/**
 	 * How the queues stand — jobs waiting, active, delayed, failed — for an admin's read-only view. Optional: a

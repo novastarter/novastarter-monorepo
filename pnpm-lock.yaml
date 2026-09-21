@@ -1467,6 +1467,9 @@ importers:
 
   packages/storage-driver-supabase:
     dependencies:
+      '@novastarter/constants':
+        specifier: workspace:*
+        version: link:../constants
       '@novastarter/storage':
         specifier: workspace:*
         version: link:../storage
