@@ -180,10 +180,11 @@ export class StorageDriverAzure implements TusDriver {
 		const { range } = options || {};
 
 		// 1. The SDK takes an offset and a count rather than a closed range, so `end` is turned into a count from the
-		//    start (inclusive, hence the `+ 1`); with no `end` the count stays undefined and the rest of the blob is read
+		//    start (inclusive, hence the `+ 1`); with no `end` the count stays undefined and the rest of the blob is
+		//    read. Presence, not truthiness: `end: 0` asks for the first byte, not for the whole blob
 		const { readableStreamBody } = await this.containerClient
 			.getBlobClient(this.fullPath(filepath))
-			.download(range?.start, range?.end ? range.end - (range.start || 0) + 1 : undefined);
+			.download(range?.start, range?.end !== undefined ? range.end - (range.start ?? 0) + 1 : undefined);
 
 		// 2. `readableStreamBody` is only set in Node (browsers get `blobBody` instead), so its absence here means there
 		//    is nothing to stream

@@ -116,12 +116,13 @@ export class StorageDriverLocal implements TusDriver {
 		const streamOptions: Parameters<typeof createReadStream>[1] = {};
 
 		// 1. Only forward the bounds that were given, so the stream keeps its own defaults (start of file, end of
-		//    file) for the missing side. Both bounds are inclusive, matching `createReadStream`
-		if (range?.start) {
+		//    file) for the missing side. Both bounds are inclusive, matching `createReadStream`, and both are checked
+		//    for presence rather than truthiness: `end: 0` asks for the first byte, not for the whole file
+		if (range?.start !== undefined) {
 			streamOptions.start = range.start;
 		}
 
-		if (range?.end) {
+		if (range?.end !== undefined) {
 			streamOptions.end = range.end;
 		}
 

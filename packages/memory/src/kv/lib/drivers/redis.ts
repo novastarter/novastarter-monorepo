@@ -305,10 +305,18 @@ export class KvDriverRedis implements KvDriver {
 		}
 
 		// 2. With an expiry, `INCRBY` alone would leave a key created here living for good: the expiry is set in the
-		//    same transaction, so the key never exists without one and the count is read from the first reply
+		//    same transaction, so the key never exists without one
 		const replies = await this.redis.multi().incrby(namespaced, amount).pexpire(namespaced, this.ttl).exec();
 
-		return Number(replies?.[0]?.[1]);
+		// 3. A transaction resolves even when a command failed — the failure sits in that command's reply — so the
+		//    `INCRBY` reply is checked and its error thrown, the way a plain `incrby` call would reject
+		const [error, count] = replies?.[0] ?? [new Error('The increment transaction was aborted'), null];
+
+		if (error) {
+			throw error;
+		}
+
+		return Number(count);
 	}
 
 	/**

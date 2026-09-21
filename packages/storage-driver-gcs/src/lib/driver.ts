@@ -193,10 +193,11 @@ export class StorageDriverGcs implements TusDriver {
 
 		const streamOptions: CreateReadStreamOptions = {};
 
-		// 1. Copy only the bounds that were set; the SDK reads `start`/`end` as inclusive byte offsets and defaults a missing
-		//    side to the start or the end of the object, so a zero `start` is the same as leaving it out
-		if (range?.start) streamOptions.start = range.start;
-		if (range?.end) streamOptions.end = range.end;
+		// 1. Copy only the bounds that were set; the SDK reads `start`/`end` as inclusive byte offsets and defaults a
+		//    missing side to the start or the end of the object. Presence, not truthiness: `end: 0` asks for the first
+		//    byte, not for the whole object
+		if (range?.start !== undefined) streamOptions.start = range.start;
+		if (range?.end !== undefined) streamOptions.end = range.end;
 
 		return this.file(this.fullPath(filepath)).createReadStream(streamOptions);
 	}

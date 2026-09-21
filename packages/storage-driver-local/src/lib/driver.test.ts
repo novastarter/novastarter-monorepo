@@ -184,6 +184,13 @@ describe('#read', () => {
 		expect(createReadStream).toHaveBeenCalledWith(sample.path.inputFull, { start: sample.range.start });
 	});
 
+	test('Forwards a zero end, which asks for the first byte', async () => {
+		// `end: 0` is a bound like any other; dropped by a truthiness check it would read the whole file
+		await driver.read(sample.path.input, { range: { start: 0, end: 0 } });
+
+		expect(createReadStream).toHaveBeenCalledWith(sample.path.inputFull, { start: 0, end: 0 });
+	});
+
 	test('Calls createReadStream with optional end range', async () => {
 		// 1. Only the given bound may appear; an explicit `start: undefined` would be a different options object
 		await driver.read(sample.path.input, { range: { start: undefined, end: sample.range.end } });

@@ -289,6 +289,13 @@ describe('#read', () => {
 		expect(mockDownload).toHaveBeenCalledWith(sample.range.start, sample.range.end - sample.range.start + 1);
 	});
 
+	test('Turns a zero end into a count of one, the first byte', async () => {
+		// `end: 0` is a bound like any other; dropped by a truthiness check it would download the whole blob
+		await driver.read(sample.path.input, { range: { start: 0, end: 0 } });
+
+		expect(mockDownload).toHaveBeenCalledWith(0, 1);
+	});
+
 	test('Throws error when no readable stream is returned', async () => {
 		mockDownload.mockResolvedValue({ readableStreamBody: undefined });
 

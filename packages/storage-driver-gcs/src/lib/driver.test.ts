@@ -239,6 +239,10 @@ describe('#read', () => {
 
 		await driver.read('/path/to/file', { range: { start: undefined, end: sample.range.end } });
 		expect(mockFile.createReadStream).toHaveBeenCalledWith({ start: undefined, end: sample.range.end });
+
+		// 2. `end: 0` is a bound like any other — the first byte — not an absent one
+		await driver.read('/path/to/file', { range: { start: 0, end: 0 } });
+		expect(mockFile.createReadStream).toHaveBeenCalledWith({ start: 0, end: 0 });
 	});
 });
 

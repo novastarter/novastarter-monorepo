@@ -317,6 +317,20 @@ describe('increment', () => {
 		expect(res).toBe(42);
 		expect(mockRedis.incrby).not.toHaveBeenCalled();
 	});
+
+	test('Throws the error of the INCRBY reply inside the transaction', async () => {
+		// A transaction resolves with the failure inside the reply; it must surface like a plain `incrby` rejection
+		const withTtl = new KvDriverRedis({ namespace: mockNamespace, redis: mockRedis, ttl: 5000 });
+
+		const exec = vi.fn().mockResolvedValue([
+			[new Error('ERR value is not an integer or out of range'), null],
+			[null, 1],
+		]);
+
+		vi.mocked(mockRedis.multi).mockReturnValue({ incrby: () => ({ pexpire: () => ({ exec }) }) } as any);
+
+		await expect(withTtl.increment(mockKey)).rejects.toThrow('ERR value is not an integer or out of range');
+	});
 });
 
 describe('setMax', () => {
