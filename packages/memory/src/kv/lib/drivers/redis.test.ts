@@ -265,7 +265,7 @@ describe('has', () => {
 		expect(res).toBe(true);
 	});
 
-	test('Returns true for exists status 1', async () => {
+	test('Returns false for exists status 0', async () => {
 		vi.mocked(kv['redis'].exists).mockResolvedValueOnce(0);
 
 		const res = await kv.has(mockKey);
@@ -410,7 +410,8 @@ describe('clear', () => {
 
 		expect(kv['redis'].pipeline).toHaveBeenCalledOnce();
 		expect(withNamespace).toHaveBeenCalledWith('*', mockNamespace);
-		expect(unlinkFn).toHaveBeenCalledTimes(2); // See the mocked key chunks from `scanStream`
+		// Two of the three mocked `scanStream` batches carry keys; the empty one is skipped
+		expect(unlinkFn).toHaveBeenCalledTimes(2);
 		expect(execFn).toHaveBeenCalledOnce();
 	});
 });

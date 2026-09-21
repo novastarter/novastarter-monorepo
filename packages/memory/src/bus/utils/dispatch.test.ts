@@ -71,7 +71,8 @@ test('Logs a subscriber that keeps failing once, and again only after it recover
 	await vi.waitFor(() => expect(useLogger().warn).toHaveBeenCalledTimes(2));
 });
 
-test('Tracks failures per subscriber, not per channel', async () => {
+test('Tracks failures per subscriber and per channel', async () => {
+	// 1. Two subscribers failing on one channel: a line each
 	const a = vi.fn(() => {
 		throw new Error('a');
 	});
@@ -82,6 +83,13 @@ test('Tracks failures per subscriber, not per channel', async () => {
 
 	dispatch('channel', [a, b], 'payload');
 	await vi.waitFor(() => expect(useLogger().warn).toHaveBeenCalledTimes(2));
+
+	// 2. The same subscriber failing on another channel is news for that channel, but not again on the first
+	dispatch('other', [a], 'payload');
+	dispatch('channel', [a], 'payload');
+	await vi.waitFor(() => expect(a).toHaveBeenCalledTimes(3));
+	expect(useLogger().warn).toHaveBeenCalledTimes(3);
+	expect(useLogger().warn).toHaveBeenLastCalledWith(expect.anything(), 'A subscriber of bus channel "other" failed');
 });
 
 test('reportUnreadable logs every unreadable message', () => {

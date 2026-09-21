@@ -41,8 +41,10 @@ export interface Singleton<T, Args extends unknown[] = []> {
  * The builder runs once, on the first call, with that call's arguments, and its result is kept for every later one,
  * so a manager and the locations it holds are shared across the process rather than rebuilt — and reconnected — by
  * every consumer. A later call with arguments throws rather than ignoring them: the one place that knows the
- * arguments calls once, everything else calls with none. `replace()` swaps in an instance the application built
- * itself; `reset()` drops the instance for tests.
+ * arguments calls once, everything else calls with none. The type cannot tell the building call from the later ones,
+ * so it allows an empty call throughout; a builder with required arguments checks for them itself and throws a
+ * clear error, rather than building from `undefined`. `replace()` swaps in an instance the application built itself;
+ * `reset()` drops the instance for tests.
  *
  * @typeParam T - What the builder makes.
  * @typeParam Args - Arguments of the builder; none for a manager, the options of the first call otherwise.

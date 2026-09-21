@@ -74,7 +74,7 @@ export class LogsStream extends Writable {
 		// 1. Raw mode wraps the line by string interpolation on purpose: parsing and re-serialising every line would cost
 		// more than the whole logging call
 		if (!this.pretty) {
-			this.messenger.publish('logs', `{"log":${chunk},"nodeId":"${nodeId}"}`);
+			this.publish(`{"log":${chunk},"nodeId":"${nodeId}"}`);
 			return callback();
 		}
 
@@ -82,8 +82,7 @@ export class LogsStream extends Writable {
 
 		// 2. An HTTP line carries request and response objects; they are folded into a single readable message
 		if (this.pretty === 'http' && log.req?.method && log.req?.url && log.res?.statusCode && log.responseTime) {
-			this.messenger.publish(
-				'logs',
+			this.publish(
 				JSON.stringify({
 					log: {
 						level: log['level'],
@@ -98,8 +97,7 @@ export class LogsStream extends Writable {
 		}
 
 		// 3. Every other line keeps only the fields a log viewer shows
-		this.messenger.publish(
-			'logs',
+		this.publish(
 			JSON.stringify({
 				log: {
 					level: log['level'],
@@ -111,5 +109,21 @@ export class LogsStream extends Writable {
 		);
 
 		callback();
+	}
+
+	/**
+	 * Publish one line on the `logs` channel without waiting for it, and without letting a failure escape.
+	 *
+	 * The bus is a mirror of the log, not its store: the line already went to the process's other streams. A publish
+	 * that fails — the Redis of the bus is down, the payload could not be compressed — must not turn into an unhandled
+	 * rejection that ends the process, and cannot be logged either, since the logger is what is writing here. The
+	 * bus's own connection reports its trouble through its client.
+	 *
+	 * @param payload - The serialised line.
+	 * @internal
+	 */
+	private publish(payload: string): void {
+		// 1. Fire and forget; the failure is observed so it is not reported as unhandled, and dropped for the reasons above
+		this.messenger.publish('logs', payload).catch(() => {});
 	}
 }

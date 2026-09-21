@@ -42,14 +42,16 @@ export const registerLogger = (logger: Logger<never>): void => {
  * Return the bus stream for application logs, building it on first use.
  *
  * The arguments belong to the first call: one stream serves the process, so its shape and bus are decided once, and a
- * later call passes none — one with arguments throws.
+ * later call passes none — one with arguments throws. The first call has to pass them: without a bus there is no
+ * stream to build, and the call is refused rather than a stream that fails on its first line handed out.
  *
  * @param pretty - `true` publishes level, time and message; `false` publishes the raw line.
  * @param messenger - Bus the lines are published on.
  * @returns The same stream on every call; `getLogsStream.reset()` drops it, for tests.
  */
 export const getLogsStream: Singleton<LogsStream, [pretty: boolean, messenger: LogsBus]> = singleton(
-	(pretty: boolean, messenger: LogsBus) => new LogsStream(pretty ? 'basic' : false, messenger),
+	(pretty?: boolean, messenger?: LogsBus) =>
+		new LogsStream(pretty ? 'basic' : false, requireBus('getLogsStream', messenger)),
 );
 
 /**
@@ -62,5 +64,27 @@ export const getLogsStream: Singleton<LogsStream, [pretty: boolean, messenger: L
  * @returns The same stream on every call; `getHttpLogsStream.reset()` drops it, for tests.
  */
 export const getHttpLogsStream: Singleton<LogsStream, [pretty: boolean, messenger: LogsBus]> = singleton(
-	(pretty: boolean, messenger: LogsBus) => new LogsStream(pretty ? 'http' : false, messenger),
+	(pretty?: boolean, messenger?: LogsBus) =>
+		new LogsStream(pretty ? 'http' : false, requireBus('getHttpLogsStream', messenger)),
 );
+
+/**
+ * The bus a stream is built on, or a clear error when the building call left it out.
+ *
+ * The accessor's type lets any call pass no arguments, since only the first one builds; a first call without them
+ * would otherwise build a stream over `undefined` and fail on the first log line, far from the cause.
+ *
+ * @param name - The accessor, for the message.
+ * @param messenger - What the building call passed.
+ * @returns The bus.
+ * @throws Error when no bus was passed.
+ * @internal
+ */
+const requireBus = (name: string, messenger: LogsBus | undefined): LogsBus => {
+	// 1. The one check that turns a late `TypeError` inside pino into an error at the call that forgot the arguments
+	if (!messenger) {
+		throw new Error(`${name}: the first call builds the stream and needs (pretty, messenger)`);
+	}
+
+	return messenger;
+};

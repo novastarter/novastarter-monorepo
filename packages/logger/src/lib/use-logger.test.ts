@@ -70,6 +70,15 @@ describe('getLogsStream', () => {
 		// 2. Arguments that would have no say are refused, not ignored
 		expect(() => getLogsStream(false, messenger)).toThrow('singleton: the instance exists already');
 	});
+
+	test('Refuses a first call without the bus instead of building a stream that fails on its first line', () => {
+		expect(() => getLogsStream()).toThrow(
+			'getLogsStream: the first call builds the stream and needs (pretty, messenger)',
+		);
+
+		expect(() => getHttpLogsStream()).toThrow('getHttpLogsStream: the first call builds the stream');
+		expect(LogsStream).not.toHaveBeenCalled();
+	});
 });
 
 describe('getHttpLogsStream', () => {

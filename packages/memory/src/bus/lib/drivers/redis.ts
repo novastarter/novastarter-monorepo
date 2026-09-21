@@ -106,6 +106,14 @@ export class BusDriverRedis implements BusDriver {
 	private handlers: Record<string, Set<MessageHandler<any>>>;
 
 	/**
+	 * The Redis `SUBSCRIBE` under way per namespaced channel, while it is; every `subscribe()` of that channel waits
+	 * for the same one, so all of them learn whether Redis took it.
+	 *
+	 * @internal
+	 */
+	private pending: Record<string, Promise<void>> = {};
+
+	/**
 	 * Create the bus on top of an existing Redis connection.
 	 *
 	 * @param config - Redis configuration.
@@ -158,9 +166,12 @@ export class BusDriverRedis implements BusDriver {
 
 		const existingSet = this.handlers[namespaced];
 
-		// 2. Only the first callback triggers a Redis `SUBSCRIBE`; later ones join the existing set
+		// 2. Only the first callback triggers a Redis `SUBSCRIBE`; later ones join the existing set — and wait for the
+		//    `SUBSCRIBE` still under way, if any, so a caller that joined while Redis was being asked learns of a
+		//    failure too instead of being told its handler is in place when the set is about to go
 		if (existingSet !== undefined) {
 			existingSet.add(callback);
+			await this.pending[namespaced];
 
 			return;
 		}
@@ -170,13 +181,29 @@ export class BusDriverRedis implements BusDriver {
 		this.handlers[namespaced] = set;
 
 		// 3. A `SUBSCRIBE` that fails leaves no set behind: with one in place, a retry would take the branch above and
-		//    add its callback without ever asking Redis again, so the channel would stay silent for good
-		try {
-			await this.sub.subscribe(namespaced);
-		} catch (error) {
-			delete this.handlers[namespaced];
+		//    add its callback without ever asking Redis again, so the channel would stay silent for good. The promise
+		//    is shared with the callers that join meanwhile and forgotten once settled. Both removals check identity:
+		//    an `unsubscribe` and a fresh `subscribe` may have replaced the set and the promise while this one was in
+		//    flight, and a stale failure must not wipe out that newer subscription
+		const subscription = this.sub.subscribe(namespaced).then(
+			() => {},
+			(error: unknown) => {
+				if (this.handlers[namespaced] === set) {
+					delete this.handlers[namespaced];
+				}
 
-			throw error;
+				throw error;
+			},
+		);
+
+		this.pending[namespaced] = subscription;
+
+		try {
+			await subscription;
+		} finally {
+			if (this.pending[namespaced] === subscription) {
+				delete this.pending[namespaced];
+			}
 		}
 	}
 

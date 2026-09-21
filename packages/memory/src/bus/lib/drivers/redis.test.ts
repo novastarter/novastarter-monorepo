@@ -43,6 +43,10 @@ beforeEach(() => {
 
 	vi.mocked(mockRedis.duplicate).mockReturnValue(mockSubRedis);
 
+	// ioredis answers `SUBSCRIBE` with a promise of the subscription count; the automock has to as well, since the
+	// driver chains on it
+	vi.mocked(mockSubRedis.subscribe).mockResolvedValue(1);
+
 	mockNamespace = 'test-namespace';
 	mockChannel = 'test-channel';
 	mockNamespacedChannel = 'test-namespace:test-channel';
@@ -151,7 +155,7 @@ describe('subscribe', () => {
 	test('Does not call redis subscribe if set already exists', async () => {
 		bus['handlers'][mockNamespacedChannel] = new Set([vi.fn()]);
 		await bus.subscribe(mockChannel, mockHandler);
-		expect(bus['sub'].subscribe).not.toHaveBeenCalledWith();
+		expect(bus['sub'].subscribe).not.toHaveBeenCalled();
 	});
 
 	test('Saves callback to new handlers set for namespaced channel', async () => {
@@ -167,6 +171,55 @@ describe('subscribe', () => {
 		expect(bus['handlers'][mockNamespacedChannel]).toBeInstanceOf(Set);
 		expect(bus['handlers'][mockNamespacedChannel]?.size).toBe(2);
 		expect(Array.from(bus['handlers'][mockNamespacedChannel]!)[1]).toBe(mockHandler);
+	});
+
+	test('Tells a caller that joined during a failing SUBSCRIBE about the failure too', async () => {
+		// The set exists before Redis answered; a second caller joins it and must share the outcome, not be told its
+		// handler is in place while the failing first call is about to drop the set
+		let reject!: (error: Error) => void;
+
+		vi.mocked(bus['sub'].subscribe).mockReturnValueOnce(
+			new Promise((_, rej) => {
+				reject = rej;
+			}) as never,
+		);
+
+		const first = bus.subscribe(mockChannel, mockHandler);
+		const second = bus.subscribe(mockChannel, vi.fn());
+
+		reject(new Error('connection lost'));
+
+		await expect(first).rejects.toThrow('connection lost');
+		await expect(second).rejects.toThrow('connection lost');
+		expect(bus['handlers'][mockNamespacedChannel]).toBeUndefined();
+		expect(bus['pending'][mockNamespacedChannel]).toBeUndefined();
+	});
+
+	test('A stale SUBSCRIBE failure does not remove a newer subscription of the same channel', async () => {
+		// Subscribe, unsubscribe while Redis has not answered, subscribe again: the first call's failure must leave the
+		// second call's set and pending promise alone, or the second caller is told it succeeded while no handler is left
+		let rejectFirst!: (error: Error) => void;
+
+		vi.mocked(bus['sub'].subscribe)
+			.mockReturnValueOnce(
+				new Promise((_, rej) => {
+					rejectFirst = rej;
+				}) as never,
+			)
+			.mockResolvedValueOnce(1);
+
+		const first = bus.subscribe(mockChannel, mockHandler);
+		await bus.unsubscribe(mockChannel, mockHandler);
+
+		const later = vi.fn();
+		const second = bus.subscribe(mockChannel, later);
+
+		rejectFirst(new Error('connection lost'));
+
+		await expect(first).rejects.toThrow('connection lost');
+		await expect(second).resolves.toBeUndefined();
+		expect(bus['handlers'][mockNamespacedChannel]).toEqual(new Set([later]));
+		expect(bus['pending'][mockNamespacedChannel]).toBeUndefined();
 	});
 
 	test('Leaves no handler set behind when the Redis SUBSCRIBE fails, so a retry subscribes again', async () => {

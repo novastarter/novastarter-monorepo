@@ -103,7 +103,7 @@ describe('emitAction', () => {
 	test('Logs a warning instead of rejecting when an async handler fails', async () => {
 		const error = new Error('boom');
 
-		// A rejected promise is what emitAsync guards against; a synchronous throw escapes eventemitter2 as is
+		// The common case: a handler that rejects; the wrapper `onAction` adds turns a synchronous throw into the same
 		emitter.onAction('items.create', async () => {
 			throw error;
 		});
@@ -136,15 +136,47 @@ describe('emitAction', () => {
 		expect(after).toHaveBeenCalledOnce();
 	});
 
-	test('offAction removes the handler onAction registered', async () => {
+	test('Logs every failing handler, not only the first', async () => {
+		// `emitAsync` is a `Promise.all`: unwrapped, the second rejection would never reach the log
+		emitter.onAction('items.create', async () => {
+			throw new Error('first');
+		});
+
+		emitter.onAction('items.create', async () => {
+			throw new Error('second');
+		});
+
+		emitter.emitAction('items.create', {});
+
+		await vi.waitFor(() => expect(logger.warn).toHaveBeenCalledTimes(2));
+
+		expect(logger.warn).toHaveBeenCalledWith(
+			expect.objectContaining({ message: 'first' }),
+			'An error was thrown while executing action "items.create"',
+		);
+
+		expect(logger.warn).toHaveBeenCalledWith(
+			expect.objectContaining({ message: 'second' }),
+			'An error was thrown while executing action "items.create"',
+		);
+	});
+
+	test('offAction removes the handler onAction registered, on whichever event', async () => {
+		// One handler on two events: removing it from the first must not touch the second, and vice versa
 		const handler = vi.fn();
 
 		emitter.onAction('items.create', handler);
+		emitter.onAction('items.update', handler);
 		emitter.offAction('items.create', handler);
-		emitter.emitAction('items.create', {});
 
-		await new Promise((resolve) => setTimeout(resolve, 0));
-		expect(handler).not.toHaveBeenCalled();
+		expect(emitter.countActionListeners('items.create')).toBe(0);
+		expect(emitter.countActionListeners('items.update')).toBe(1);
+
+		emitter.emitAction('items.create', {});
+		emitter.emitAction('items.update', {});
+
+		await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+		expect(handler).toHaveBeenCalledWith({ event: 'items.update' }, expect.anything());
 	});
 
 	test('Wraps a thrown non-Error so its text reaches the log', async () => {
@@ -199,6 +231,30 @@ describe('emitInit', () => {
 		await expect(emitter.emitInit('app.before', {})).resolves.toBeUndefined();
 
 		expect(logger.warn).toHaveBeenCalledWith(error, 'An error was thrown while executing init "app.before"');
+	});
+
+	test('Logs every failing init hook and runs the ones after a failing one', async () => {
+		const after = vi.fn();
+
+		emitter.onInit('app.before', () => {
+			throw new Error('first');
+		});
+
+		emitter.onInit('app.before', async () => {
+			throw new Error('second');
+		});
+
+		emitter.onInit('app.before', after);
+
+		await expect(emitter.emitInit('app.before', {})).resolves.toBeUndefined();
+
+		expect(after).toHaveBeenCalledOnce();
+		expect(logger.warn).toHaveBeenCalledTimes(2);
+
+		expect(logger.warn).toHaveBeenCalledWith(
+			expect.objectContaining({ message: 'second' }),
+			'An error was thrown while executing init "app.before"',
+		);
 	});
 
 	test('Wraps a thrown non-Error so its text reaches the log', async () => {

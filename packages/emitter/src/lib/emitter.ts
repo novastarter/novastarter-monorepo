@@ -50,11 +50,18 @@ export class Emitter {
 	private initEmitter: ee2.EventEmitter2;
 
 	/**
-	 * The async wrapper registered for each action handler, keyed by the handler itself, so `offAction` can find it.
+	 * The wrapper registered for each action handler, keyed by the handler itself, so `offAction` can find it.
 	 *
 	 * @internal
 	 */
 	private actionWrappers: WeakMap<ActionHandler, ActionHandler> = new WeakMap();
+
+	/**
+	 * The wrapper registered for each init handler, keyed by the handler itself, so `offInit` can find it.
+	 *
+	 * @internal
+	 */
+	private initWrappers: WeakMap<InitHandler, InitHandler> = new WeakMap();
 
 	/**
 	 * Create the three channels with identical settings.
@@ -146,13 +153,12 @@ export class Emitter {
 		const logger = useLogger();
 		const events = Array.isArray(event) ? event : [event];
 
-		// 2. Fire and forget: a failed handler is logged, never awaited, and never reaches the caller. Every handler
-		//    was wrapped in an async function by `onAction`, so a failure only ever comes back as a rejection here.
-		//    Whatever it threw goes to the log as an `Error`, since pino serialises an `Error` under `err` while a
-		//    thrown string in first position would be taken for the message and the text after it dropped
+		// 2. Fire and forget: nothing is awaited and nothing reaches the caller. Every handler logs its own failure
+		//    inside the wrapper `onAction` gave it, so two failing handlers make two lines where `emitAsync`, a
+		//    `Promise.all`, would surface only the first; what is caught here is eventemitter2's own trouble
 		for (const event of events) {
 			this.actionEmitter.emitAsync(event, { event, ...meta }, context ?? this.getDefaultContext()).catch((error) => {
-				logger.warn(toError(error), `An error was thrown while executing action "${event}"`);
+				logger.warn(toError(error), `An error was thrown while emitting action "${event}"`);
 			});
 		}
 	}
@@ -169,12 +175,13 @@ export class Emitter {
 		// 1. The logger is read per call, so a `registerLogger` after start-up is honoured
 		const logger = useLogger();
 
-		// 2. Awaited, but a failure is logged rather than thrown; wrapped through `toError` for the same reason as in
-		//    `emitAction`: a thrown string must not become the message and swallow the text after it
+		// 2. Awaited, but a failure is logged rather than thrown, so one broken hook cannot stop the start-up. Every
+		//    handler logs its own failure inside the wrapper `onInit` gave it; what is caught here is eventemitter2's
+		//    own trouble
 		try {
 			await this.initEmitter.emitAsync(event, { event, ...meta });
 		} catch (error) {
-			logger.warn(toError(error), `An error was thrown while executing init "${event}"`);
+			logger.warn(toError(error), `An error was thrown while emitting init "${event}"`);
 		}
 	}
 
@@ -192,23 +199,33 @@ export class Emitter {
 	/**
 	 * Register an action handler.
 	 *
-	 * A handler that throws synchronously is as isolated as one that rejects: the other handlers of the event still
-	 * run, and the failure goes to the log.
+	 * Every handler is isolated from the others: one that throws or rejects is logged, with the event it failed on,
+	 * and the other handlers of the event still run.
 	 *
 	 * @param event - Event name, wildcards allowed.
 	 * @param handler - Handler run after the operation.
 	 */
 	public onAction(event: string, handler: ActionHandler): void {
-		// 1. eventemitter2 calls the handlers in a plain loop and only collects their promises, so one throwing before
-		//    its first `await` would stop the loop and skip the handlers after it. Wrapped in an async function, a
-		//    throw becomes a rejection like any other, and every handler of the event gets its turn
-		const wrapper: ActionHandler = async (meta, context) => {
-			await handler(meta, context);
-		};
+		// 1. eventemitter2 calls the handlers in a plain loop and only collects their promises into a `Promise.all`:
+		//    one throwing before its first `await` would stop the loop, and of two rejecting only the first would be
+		//    seen. The wrapper catches and logs its own handler's failure, so neither happens. One wrapper per handler,
+		//    whatever the event: `offAction` finds it by the handler, and a handler registered on two events is
+		//    removed from either
+		let wrapper = this.actionWrappers.get(handler);
 
-		// 2. The same wrapper is registered under the same handler every time, so `offAction` removes what `onAction`
-		//    added, and registering one handler twice behaves as eventemitter2 would with the handler itself
-		this.actionWrappers.set(handler, wrapper);
+		if (!wrapper) {
+			wrapper = async (meta, context) => {
+				try {
+					await handler(meta, context);
+				} catch (error) {
+					useLogger().warn(toError(error), `An error was thrown while executing action "${meta['event']}"`);
+				}
+			};
+
+			this.actionWrappers.set(handler, wrapper);
+		}
+
+		// 2. The wrapper is what eventemitter2 knows; the handler itself never reaches it
 		this.actionEmitter.on(event, wrapper);
 	}
 
@@ -219,7 +236,24 @@ export class Emitter {
 	 * @param handler - Handler run at that stage of start-up.
 	 */
 	public onInit(event: string, handler: InitHandler): void {
-		this.initEmitter.on(event, handler);
+		// 1. The same isolation as for action handlers: each logs its own failure, so one broken hook neither stops
+		//    the others nor hides a second failure behind the first
+		let wrapper = this.initWrappers.get(handler);
+
+		if (!wrapper) {
+			wrapper = async (meta) => {
+				try {
+					await handler(meta);
+				} catch (error) {
+					useLogger().warn(toError(error), `An error was thrown while executing init "${meta['event']}"`);
+				}
+			};
+
+			this.initWrappers.set(handler, wrapper);
+		}
+
+		// 2. The wrapper is what eventemitter2 knows; the handler itself never reaches it
+		this.initEmitter.on(event, wrapper);
 	}
 
 	/**
@@ -286,7 +320,13 @@ export class Emitter {
 	 * @param handler - The very function that was registered.
 	 */
 	public offInit(event: string, handler: InitHandler): void {
-		this.initEmitter.off(event, handler);
+		// 1. What was registered is the wrapper, not the handler; a handler never registered has none and nothing to
+		//    remove
+		const wrapper = this.initWrappers.get(handler);
+
+		if (wrapper) {
+			this.initEmitter.off(event, wrapper);
+		}
 	}
 
 	/**

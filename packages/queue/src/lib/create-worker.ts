@@ -119,10 +119,12 @@ export const createWorker = async (
 	const prefix = options.prefix ?? location?.prefix;
 	const telemetry = options.telemetry ?? location?.telemetry;
 
+	// 4. Open the worker on the queue; the processor rebuilds the job name and enforces the timeout around every run.
+	//    Options BullMQ would take literally, `concurrency: undefined` included, are only set when given
 	const worker = new Worker(
 		queue,
 		async (job: Job) => {
-			// 4. The full name is `<queue>.<action>`; an unknown one means producer and worker disagree on the contracts
+			// 1. The full name is `<queue>.<action>`; an unknown one means producer and worker disagree on the contracts
 			const name = `${queue}.${job.name}`;
 			const contract = getJobContract(name);
 
@@ -133,7 +135,7 @@ export const createWorker = async (
 				enqueuedAt: new Date(job.timestamp),
 			};
 
-			// 5. The contract's timeout, then the worker's default; none means the job may take as long as it needs
+			// 2. The contract's timeout, then the worker's default; none means the job may take as long as it needs
 			const timeout = contract.options.timeout ?? options.timeout;
 
 			if (!timeout) {
@@ -141,7 +143,7 @@ export const createWorker = async (
 				return;
 			}
 
-			// 6. The run is raced against the clock and told when it lost: the signal in the context aborts with the
+			// 3. The run is raced against the clock and told when it lost: the signal in the context aborts with the
 			//    timeout error, so a processor that passes it on stops instead of finishing a job already marked failed
 			//    — and retried by the contract's rules — a second time in the background
 			await withTimeout((signal) => processor(job.data, { ...context, signal }), timeout, {
@@ -156,7 +158,7 @@ export const createWorker = async (
 		},
 	);
 
-	// 7. Lifecycle to the log: what ran, what failed on which attempt, and connection trouble
+	// 5. Lifecycle to the log: what ran, what failed on which attempt, and connection trouble
 	worker.on('completed', (job) => {
 		logger.info(`Job "${queue}.${job.name}" (${job.id}) completed`);
 	});
@@ -173,6 +175,7 @@ export const createWorker = async (
 		logger.error(error, `Worker of queue "${queue}" error`);
 	});
 
+	// 6. The handle: the queue and the BullMQ worker for what the wrapper does not expose, and a close that drains
 	return {
 		queue,
 		worker,

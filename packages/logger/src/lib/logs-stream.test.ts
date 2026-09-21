@@ -14,8 +14,9 @@ vi.mock('nanoid', () => ({
 	},
 }));
 
+// The bus answers a promise; the stream chains on it, so the mock has to as well
 const messenger = {
-	publish: vi.fn(),
+	publish: vi.fn(async () => {}),
 } as unknown as LogsBus;
 
 afterEach(() => {
@@ -137,4 +138,16 @@ test('Escapes quotes in error messages', () => {
 	logStream._write(JSON.stringify(log), '', () => {});
 
 	expect(messenger.publish).toBeCalledWith('logs', JSON.stringify({ log, nodeId: 'a-nanoid' }));
+});
+
+test('Drops a line the bus refuses instead of failing the stream or the process', async () => {
+	// The bus mirrors the log: a Redis outage must not turn every line into an unhandled rejection
+	const logStream = new LogsStream(false, messenger);
+	vi.mocked(messenger.publish).mockRejectedValueOnce(new Error('bus down'));
+
+	const callback = vi.fn();
+	expect(() => logStream._write(JSON.stringify(sample.log), '', callback)).not.toThrow();
+	expect(callback).toHaveBeenCalledWith();
+
+	await new Promise((resolve) => setTimeout(resolve, 0));
 });
