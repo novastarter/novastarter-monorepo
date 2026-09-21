@@ -1,3 +1,6 @@
+/**
+ * Tests of `utils/format-title/utils/combine`.
+ */
 import { expect, test } from 'vitest';
 import { combine } from './combine.js';
 

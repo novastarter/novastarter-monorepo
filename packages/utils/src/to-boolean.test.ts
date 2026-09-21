@@ -1,3 +1,6 @@
+/**
+ * Tests of `utils/to-boolean`.
+ */
 import { describe, expect, it } from 'vitest';
 import { toBoolean } from './to-boolean.js';
 

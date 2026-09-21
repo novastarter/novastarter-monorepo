@@ -1,3 +1,6 @@
+/**
+ * Tests of `utils/driver-manager`.
+ */
 import { describe, expect, test, vi } from 'vitest';
 import { DriverManager } from './driver-manager.js';
 

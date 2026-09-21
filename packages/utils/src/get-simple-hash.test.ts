@@ -1,3 +1,6 @@
+/**
+ * Tests of `utils/get-simple-hash`.
+ */
 import { expect, test } from 'vitest';
 import { getSimpleHash } from './get-simple-hash.js';
 

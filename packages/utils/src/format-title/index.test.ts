@@ -1,3 +1,6 @@
+/**
+ * Tests of `utils/format-title/index`.
+ */
 import { expect, test } from 'vitest';
 import { formatTitle } from './index.js';
 

@@ -11,24 +11,32 @@ pnpm add @novastarter/utils
 ## Usage
 
 ```ts
-import { defaults, formatTitle, getSimpleHash, isIn, parseJSON, toArray, toBoolean } from '@novastarter/utils';
+import { defaults, formatTitle, joinPath, retry, sleep, toNumber, tryParseJSON } from '@novastarter/utils';
 import { isReadableStream, processId, requireYaml } from '@novastarter/utils/node';
 ```
 
-| Helper                         | Entry  | What it does                                                                            |
-| ------------------------------ | ------ | --------------------------------------------------------------------------------------- |
-| `defaults(obj, def)`           | shared | Fill the missing optional keys of an options object from a defaults object.             |
-| `formatTitle(str, separator?)` | shared | Turn any string into Title Case; see below.                                             |
-| `getSimpleHash(str)`           | shared | Short, stable hex digest of a string for keys and ids — not cryptographic.              |
-| `isIn(value, tuple)`           | shared | Whether a string is a member of a readonly tuple, narrowing its type.                   |
-| `normalizePath(path)`          | shared | Forward-slash form of a path, repeated separators collapsed, trailing one dropped.      |
-| `parseJSON(text)`              | shared | `JSON.parse` that drops `__proto__` keys, so untrusted input cannot pollute prototypes. |
-| `toArray(value)`               | shared | Wrap a value in an array, splitting a string on commas.                                 |
-| `toBoolean(value)`             | shared | `true` for `'true'`, `true`, `'1'`, `1`; `false` for everything else.                   |
-| `DriverManager`                | shared | Registry of driver classes and named locations; see below.                              |
-| `isReadableStream(value)`      | node   | Structural check for a Node `Readable`, across copies of the `stream` module.           |
-| `processId()`                  | node   | Id unique to the current process on the current machine.                                |
-| `requireYaml(path)`            | node   | Read and parse a YAML file synchronously.                                               |
+| Helper                          | Entry  | What it does                                                                                 |
+| ------------------------------- | ------ | -------------------------------------------------------------------------------------------- |
+| `defaults(obj, def)`            | shared | Fill the missing optional keys of an options object from a defaults object.                  |
+| `formatTitle(str, separator?)`  | shared | Turn any string into Title Case; see below.                                                  |
+| `getSimpleHash(str)`            | shared | Short, stable hex digest of a string for keys and ids — not cryptographic.                   |
+| `isIn(value, tuple)`            | shared | Whether a string is a member of a readonly tuple, narrowing its type.                        |
+| `joinPath(...segments)`         | shared | `path.posix.join` without Node: forward slashes, `.` and `..` resolved; see below.           |
+| `normalizePath(path)`           | shared | Forward-slash form of a path, repeated separators collapsed, trailing one dropped.           |
+| `parseJSON(text)`               | shared | `JSON.parse` that drops `__proto__` keys, so untrusted input cannot pollute prototypes.      |
+| `retry(fn, options?)`           | shared | Run an operation again with a pause between attempts until it succeeds; see below.           |
+| `sleep(ms, signal?)`            | shared | Promise that resolves after `ms`, or rejects early when the signal aborts.                   |
+| `toArray(value)`                | shared | Wrap a value in an array, splitting a string on commas.                                      |
+| `toBoolean(value)`              | shared | `true` for `'true'`, `true`, `'1'`, `1`; `false` for everything else.                        |
+| `toError(value)`                | shared | The value when it is an `Error`, otherwise an `Error` wrapping it with the value as `cause`. |
+| `toErrorMessage(error)`         | shared | The `message` of an `Error`, anything else thrown written as text.                           |
+| `toNumber(value)`               | shared | A finite number from a number or numeric string; `undefined` for anything else.              |
+| `tryParseJSON(text, fallback?)` | shared | `parseJSON` that answers with `fallback` instead of throwing when `text` is not JSON.        |
+| `withTimeout(op, ms, options?)` | shared | Wait for a promise, or run a function with a signal, and give up once `ms` pass; see below.  |
+| `DriverManager`                 | shared | Registry of driver classes and named locations; see below.                                   |
+| `isReadableStream(value)`       | node   | Structural check for a Node `Readable`, across copies of the `stream` module.                |
+| `processId()`                   | node   | Id unique to the current process on the current machine.                                     |
+| `requireYaml(path)`             | node   | Read and parse a YAML file synchronously.                                                    |
 
 ## `DriverManager`
 
@@ -104,6 +112,71 @@ export const useEnv: Singleton<Env, [options?: CreateEnvOptions]> = singleton((o
 
 useEnv({ fileVariables: ['DB_PASSWORD'] }); // built from these options
 useEnv(); // the same object
+```
+
+## `retry`
+
+Runs an operation again until it succeeds, pausing between attempts, and throws the error of the last attempt as it came
+once the budget is spent. The operation receives the attempt number, `1` for the first call. Options, each with its
+default in `DEFAULT_RETRY_OPTIONS`: `retries` (3, attempts after the first), `delay` (100 ms; a number grown by `factor`
+on each retry, or a function of the retry number), `factor` (2; `1` keeps the pause constant), `maxDelay` (none),
+`jitter` (0; a fraction of the pause between 0 and 1, anything else is a `RangeError`: each pause is multiplied by a
+factor drawn evenly between `1 - jitter` and `1 + jitter`, so workers that failed together do not retry together),
+`shouldRetry(error, attempt)` (every error), `onRetry(error, attempt, delay)` (called before each pause, for a log
+line), `signal` (aborting it ends a pause with the abort reason, and a signal already aborted runs no attempt; the error
+of the attempt before the pause went to `onRetry`).
+
+```ts
+import { retry } from '@novastarter/utils';
+
+const parts = await retry(() => listParts(uploadId), {
+	retries: 3,
+	delay: (attempt) => 500 * attempt, // 0.5 s, 1 s, 1.5 s
+});
+
+await retry(() => fetchJson(url), {
+	shouldRetry: (error) => error instanceof HttpError && error.status >= 500,
+});
+
+await retry(() => publish(event), {
+	jitter: 0.2, // 80–120 % of each pause
+	onRetry: (error, attempt, delay) => logger.warn(error, `publish attempt ${attempt} failed, next in ${delay} ms`),
+});
+```
+
+## `withTimeout`
+
+Waits for an operation and rejects with a `TimeoutError` once `ms` pass. Two forms: a promise is raced against the clock
+— on timeout the caller gets the error, but the promise runs on, since JavaScript cannot cancel it — and a function
+receives an `AbortSignal` that is aborted with the timeout error at the deadline, so a `fetch` or an SDK call that takes
+a signal really stops. Options: `error(ms)` (a factory for the error thrown on timeout, so a package throws its own
+class), `signal` (aborting it ends the wait at once with the abort reason and aborts the function's signal too). The
+timer is cleared as soon as the operation settles.
+
+```ts
+import { withTimeout } from '@novastarter/utils';
+
+await withTimeout(processor(job.data), 30_000, {
+	error: (ms) => new JobTimeoutError(name, ms),
+});
+
+const response = await withTimeout((signal) => fetch(url, { signal }), 5_000);
+```
+
+## `joinPath`
+
+`path.posix.join` without `node:path`, for object-storage keys and URL paths that must come out the same on every
+platform: segments are joined with `/`, backslashes and repeated separators are collapsed, `.` and `..` are resolved — a
+`..` above the root of an absolute path is dropped, above the start of a relative one it stays in front — and a trailing
+slash is removed. Not for filesystem paths: a Windows drive (`C:`) or UNC root is an ordinary segment a `..` can pop;
+`node:path` knows those.
+
+```ts
+import { joinPath } from '@novastarter/utils';
+
+joinPath('uploads', 'avatars', 'me.png'); // 'uploads/avatars/me.png'
+joinPath('/root', '../etc', './passwd'); // '/etc/passwd'
+joinPath('a', '..', '..', 'b'); // '../b'
 ```
 
 ## `formatTitle`

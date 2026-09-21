@@ -1,3 +1,6 @@
+/**
+ * Tests of `utils/format-title/utils/handle-special-words`.
+ */
 import { expect, test } from 'vitest';
 import { handleSpecialWords } from './handle-special-words.js';
 

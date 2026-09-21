@@ -1,3 +1,6 @@
+/**
+ * Tests of `utils/to-array`.
+ */
 import { describe, expect, it } from 'vitest';
 import { toArray } from './to-array.js';
 
