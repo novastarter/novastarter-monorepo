@@ -1,9 +1,9 @@
 /**
- * Tests of `push/errors/push-target-gone`.
+ * Tests of `push/errors/target-gone`.
  */
 import { isNovastarterError } from '@novastarter/errors';
 import { expect, test } from 'vitest';
-import { PushTargetGoneError } from './push-target-gone.js';
+import { PushTargetGoneError } from './target-gone.js';
 
 test('Carries the code, the status, the platform and the reason in the message', () => {
 	const cause = new Error('410 Gone');

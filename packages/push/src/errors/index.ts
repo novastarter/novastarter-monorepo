@@ -1,4 +1,4 @@
 /**
  * Error classes of the package, one module per code.
  */
-export { PushTargetGoneError, type PushTargetGoneErrorExtensions } from './push-target-gone.js';
+export { PushTargetGoneError, type PushTargetGoneErrorExtensions } from './target-gone.js';
