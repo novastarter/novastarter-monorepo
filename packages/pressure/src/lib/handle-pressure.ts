@@ -1,6 +1,6 @@
 import type { RequestHandler } from 'express';
-import type { PressureMonitorOptions } from './monitor.js';
-import { PressureMonitor } from './monitor.js';
+import type { PressureMonitorOptions } from './pressure-monitor.js';
+import { PressureMonitor } from './pressure-monitor.js';
 
 /**
  * Create an Express middleware that rejects requests while the process is overloaded.

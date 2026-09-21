@@ -106,20 +106,20 @@ export class QueueDriverBullmq implements QueueDriver {
 	/**
 	 * Open the driver on its Redis.
 	 *
-	 * @param options - Connection, prefix, telemetry and logger.
+	 * @param config - Connection, prefix, telemetry and logger.
 	 */
-	constructor(options: QueueDriverBullmqConfig) {
+	constructor(config: QueueDriverBullmqConfig) {
 		// 1. A given client belongs to whoever created it; a URL or options become a client of the driver's own,
 		//    pinned to what BullMQ requires
-		this.ownsConnection = !isRedisClient(options.connection);
+		this.ownsConnection = !isRedisClient(config.connection);
 
-		this.connection = isRedisClient(options.connection)
-			? options.connection
-			: createRedis(options.connection, { maxRetriesPerRequest: null });
+		this.connection = isRedisClient(config.connection)
+			? config.connection
+			: createRedis(config.connection, { maxRetriesPerRequest: null });
 
-		this.prefix = options.prefix;
-		this.telemetry = options.telemetry;
-		this.logger = options.logger ?? useLogger();
+		this.prefix = config.prefix;
+		this.telemetry = config.telemetry;
+		this.logger = config.logger ?? useLogger();
 	}
 
 	/**

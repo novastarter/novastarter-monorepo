@@ -1,6 +1,6 @@
 import type { PushMessage } from '@novastarter/push';
 import { Notification, type NotificationOptions, Priority } from 'apns2';
-import { COLLAPSE_ID_MAX_LENGTH } from './constants.js';
+import { APNS_COLLAPSE_ID_MAX_LENGTH } from './constants.js';
 import type { PushDriverApnsConfig } from './driver.js';
 
 /**
@@ -53,7 +53,7 @@ export const toApnsNotification = (
 		alert: { title: message.title, body: message.body ?? '' },
 		priority: toApnsPriority(message.urgency),
 		...(ttl !== undefined ? { expiration: ttl > 0 ? Math.floor(now.getTime() / 1000) + ttl : 0 } : {}),
-		...(message.tag !== undefined ? { collapseId: message.tag.slice(0, COLLAPSE_ID_MAX_LENGTH) } : {}),
+		...(message.tag !== undefined ? { collapseId: message.tag.slice(0, APNS_COLLAPSE_ID_MAX_LENGTH) } : {}),
 		...(sound ? { sound } : {}),
 		...(message.image !== undefined ? { mutableContent: true } : {}),
 		...(Object.keys(data).length > 0 ? { data } : {}),

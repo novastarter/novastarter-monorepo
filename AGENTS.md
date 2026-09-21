@@ -296,6 +296,17 @@ Mandatory, no exceptions.
 - The test: code that changes when one application's product requirements change belongs in `apps/`; code that changes
   when a backend, protocol or library changes belongs in `packages/`.
 
+## Rule: working on an app, ask before touching `packages/`
+
+Mandatory, no exceptions.
+
+- While the task is in `apps/<name>/`, a change to `packages/` is never made on the way. First ask, in one line,
+  whether the same result can be reached inside `apps/<name>/` — a wrapper, a driver of the app's own, a location
+  config, a handler — and wait for the answer.
+- Only when the user confirms the package has to change is it changed, in a step of its own with its own changeset.
+- The reason: `packages/` is shared by every application; a shortcut taken for one app becomes an API every other
+  app has to live with.
+
 ## Rule: every change ships with a changeset
 
 Mandatory, no exceptions.

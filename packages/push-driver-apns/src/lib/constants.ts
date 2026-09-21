@@ -17,4 +17,4 @@ export const GONE_REASONS: ReadonlySet<string> = new Set([
  *
  * @defaultValue 64 bytes.
  */
-export const COLLAPSE_ID_MAX_LENGTH = 64;
+export const APNS_COLLAPSE_ID_MAX_LENGTH = 64;

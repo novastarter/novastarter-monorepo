@@ -1,6 +1,5 @@
 import { PushTargetGoneError } from '@novastarter/push';
 import { GONE_CODES } from './constants.js';
-import { PushDriverFcm } from './driver.js';
 
 /**
  * Turn what the SDK throws into the error `sendPush()` expects.
@@ -28,8 +27,3 @@ export const describeError = (error: unknown): Error => {
 	// 2. Anything else — the network, a bug — as is, prefixed
 	return new Error(`FCM: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
 };
-
-/**
- * Default export for consumers that import the driver without a named binding.
- */
-export default PushDriverFcm;

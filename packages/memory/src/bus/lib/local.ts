@@ -26,7 +26,7 @@ export class BusDriverLocal implements Bus {
 	/**
 	 * Create an empty bus.
 	 *
-	 * @param _config - Local configuration; it carries no options yet.
+	 * @param _config - Driver-specific options, as given in the location's `options`; the local bus has none yet.
 	 */
 	constructor(_config: BusDriverLocalConfig = {}) {
 		// 1. Start without subscribers

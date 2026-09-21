@@ -4,6 +4,13 @@ import type { RedisConfig } from '../types.js';
 import { createRedis } from './create-redis.js';
 
 /**
+ * Name of the location `location()` returns when given none — the one server most deployments have.
+ *
+ * @defaultValue `default`
+ */
+export const DEFAULT_REDIS_LOCATION = 'default';
+
+/**
  * Registry of named Redis servers — locations — and the one client each of them is reached through.
  *
  * The {@link LocationManager} of the kit for Redis, without the driver step: there is one client library, so a
@@ -30,11 +37,12 @@ export class RedisManager extends LocationManager<Redis, [config: RedisConfig, o
 	/**
 	 * Return the client of a registered location, opening it on the first call.
 	 *
-	 * @param name - Location identifier passed to {@link RedisManager.registerLocation}; `default` when omitted.
+	 * @param name - Location identifier passed to {@link RedisManager.registerLocation}; {@link DEFAULT_REDIS_LOCATION}
+	 * when omitted.
 	 * @returns The client of that location; the same one on every later call.
 	 * @throws Error when no location of that name is registered.
 	 */
-	override location(name: string = 'default'): Redis {
+	override location(name: string = DEFAULT_REDIS_LOCATION): Redis {
 		// 1. Only the default name is added here; the base builds the client on first use and keeps it
 		return super.location(name);
 	}
