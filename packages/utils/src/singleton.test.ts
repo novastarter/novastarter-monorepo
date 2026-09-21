@@ -31,6 +31,21 @@ test('Builds a fresh instance after reset()', () => {
 	expect(build).toHaveBeenCalledTimes(2);
 });
 
+test('Keeps an undefined answer of the builder like any other', () => {
+	// 1. A builder may well answer with `undefined`; that answer is the instance, not a sign that there is none yet
+	const build = vi.fn((): string | undefined => undefined);
+	const use = singleton(build);
+
+	expect(use()).toBeUndefined();
+	expect(use()).toBeUndefined();
+	expect(build).toHaveBeenCalledOnce();
+
+	// 2. `replace(undefined)` is a replacement, not a reset: the builder still does not run
+	use.replace(undefined);
+	expect(use()).toBeUndefined();
+	expect(build).toHaveBeenCalledOnce();
+});
+
 test('Keeps one instance per accessor', () => {
 	// 1. Two accessors hold two instances, and resetting one leaves the other in place
 	const a = singleton(() => ({}));
@@ -41,18 +56,28 @@ test('Keeps one instance per accessor', () => {
 	expect(b()).toBe(b());
 });
 
-test('Hands the arguments of the first call to the builder and ignores those of later calls', () => {
-	// 1. The first call decides what is built; a later call with other arguments answers with the same instance
+test('Hands the arguments of the first call to the builder and refuses arguments afterwards', () => {
+	// 1. The first call decides what is built; a later call without arguments answers with the same instance
 	const build = vi.fn((options?: { name: string }) => ({ name: options?.name ?? 'none' }));
 	const use = singleton(build);
 
 	const first = use({ name: 'first' });
 
 	expect(first).toEqual({ name: 'first' });
-	expect(use({ name: 'second' })).toBe(first);
 	expect(use()).toBe(first);
 	expect(build).toHaveBeenCalledOnce();
 	expect(build).toHaveBeenCalledWith({ name: 'first' });
+
+	// 2. A later call with arguments is refused rather than answered with an instance those arguments had no say in
+	expect(() => use({ name: 'second' })).toThrow('singleton: the instance exists already');
+	expect(build).toHaveBeenCalledOnce();
+
+	// 3. A replaced instance counts as existing too; after a reset the arguments are taken again
+	use.replace({ name: 'replaced' });
+	expect(() => use({ name: 'third' })).toThrow();
+
+	use.reset();
+	expect(use({ name: 'fourth' })).toEqual({ name: 'fourth' });
 });
 
 test('Answers with the replaced instance without ever running the builder', () => {

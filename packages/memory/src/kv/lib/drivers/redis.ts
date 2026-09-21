@@ -11,11 +11,12 @@ import {
 	withNamespace,
 } from '../../../utils/index.js';
 import type { KvDriver } from '../../driver.js';
+import type { Lock } from '../../types.js';
 
 /**
- * ioredis client extended with the Lua commands {@link KvDriverRedis} defines on it.
+ * ioredis client extended with the Lua command {@link KvDriverRedis} defines on it.
  *
- * `defineCommand` adds the methods at runtime; this interface makes them visible to the type-checker.
+ * `defineCommand` adds the method at runtime; this interface makes it visible to the type-checker.
  */
 export interface ExtendedRedis extends Redis {
 	/**
@@ -23,18 +24,10 @@ export interface ExtendedRedis extends Redis {
 	 *
 	 * @param key - Namespaced key.
 	 * @param value - Candidate value.
+	 * @param ttl - Expiry to set along with the value, in milliseconds; none when omitted.
 	 * @returns `1` when the value was stored, `0` otherwise.
 	 */
-	setMax(key: string, value: number): Promise<number>;
-
-	/**
-	 * Delete `key` only when it still holds `value`, the check-and-delete a lock release needs.
-	 *
-	 * @param key - Namespaced key.
-	 * @param value - Expected current value.
-	 * @returns Number of keys deleted.
-	 */
-	release(key: string, value: string): Promise<number>;
+	setMax(key: string, value: number, ttl?: number): Promise<number>;
 }
 
 /**
@@ -75,6 +68,9 @@ export type KvDriverRedisConfig = {
 
 	/**
 	 * Time-to-live: keys expire after this many milliseconds.
+	 *
+	 * Every write — `set`, `increment`, `setMax` — sets the expiry afresh, so a key lives this long after its last
+	 * write, the way the local store's does.
 	 */
 	ttl?: number | undefined;
 };
@@ -83,38 +79,30 @@ export type KvDriverRedisConfig = {
  * Lua script behind `setMax`: store the value only when it beats the current one.
  *
  * Running the compare-and-set inside Redis makes it atomic; a GET followed by a SET from the client would let two
- * processes race each other.
+ * processes race each other. A second argument, when given, is the expiry in milliseconds set along with the value.
+ * The answer is `1` or `0`, never a Lua boolean: Redis turns `false` into a nil reply, which the client reads as
+ * `null`, not as `0`.
  */
 export const SET_MAX_SCRIPT = `
   local key = KEYS[1]
   local value = tonumber(ARGV[1])
+  local ttl = tonumber(ARGV[2])
 
   if redis.call("EXISTS", key) == 1 then
     local oldValue = tonumber(redis.call('GET', key))
 
     if value <= oldValue then
-      return false
+      return 0
     end
   end
 
-  redis.call('SET', key, value)
+  if ttl then
+    redis.call('SET', key, value, 'PX', ttl)
+  else
+    redis.call('SET', key, value)
+  end
 
-  return true
-`;
-
-/**
- * Lua script behind `release`: delete the key only when it still holds the expected value.
- *
- * A lock holder must not delete a lock that has since expired and been taken by somebody else, hence the check.
- *
- * @internal
- */
-const RELEASE_SCRIPT = `
-	if redis.call("GET", KEYS[1]) == ARGV[1] then
-	return redis.call("DEL", KEYS[1])
-	else
-	return 0
-	end
+  return 1
 `;
 
 /**
@@ -138,7 +126,7 @@ const RELEASE_SCRIPT = `
  */
 export class KvDriverRedis implements KvDriver {
 	/**
-	 * Client with the custom `setMax` and `release` commands attached.
+	 * Client with the custom `setMax` command attached.
 	 *
 	 * @internal
 	 */
@@ -192,18 +180,12 @@ export class KvDriverRedis implements KvDriver {
 	 * @param config - Redis configuration.
 	 */
 	constructor(config: KvDriverRedisConfig) {
-		// 1. Register the Lua commands once per client; a client shared between several stores already has them
-		if ('setMax' in config.redis === false) {
+		// 1. Register the Lua command once per client; a client shared between several stores already has it. Locks
+		//    need no command of their own: Redlock brings its own check-and-delete release script
+		if (!('setMax' in config.redis)) {
 			config.redis.defineCommand('setMax', {
 				numberOfKeys: 1,
 				lua: SET_MAX_SCRIPT,
-			});
-		}
-
-		if ('release' in config.redis === false) {
-			config.redis.defineCommand('release', {
-				numberOfKeys: 1,
-				lua: RELEASE_SCRIPT,
 			});
 		}
 
@@ -314,8 +296,19 @@ export class KvDriverRedis implements KvDriver {
 	 * @returns Updated value.
 	 */
 	async increment(key: string, amount = 1): Promise<number> {
-		// 1. `INCRBY` is atomic inside Redis, so concurrent processes never lose an increment
-		return await this.redis.incrby(withNamespace(key, this.namespace), amount);
+		// 1. `INCRBY` is atomic inside Redis, so concurrent processes never lose an increment; without an expiry it is
+		//    the whole write
+		const namespaced = withNamespace(key, this.namespace);
+
+		if (!this.ttl) {
+			return await this.redis.incrby(namespaced, amount);
+		}
+
+		// 2. With an expiry, `INCRBY` alone would leave a key created here living for good: the expiry is set in the
+		//    same transaction, so the key never exists without one and the count is read from the first reply
+		const replies = await this.redis.multi().incrby(namespaced, amount).pexpire(namespaced, this.ttl).exec();
+
+		return Number(replies?.[0]?.[1]);
 	}
 
 	/**
@@ -326,10 +319,16 @@ export class KvDriverRedis implements KvDriver {
 	 * @returns `true` when the value was saved.
 	 */
 	async setMax(key: string, value: number): Promise<boolean> {
-		// 1. The Lua script answers `1` or `0`; translate to a boolean for the interface
-		const wasSet = await this.redis.setMax(withNamespace(key, this.namespace), value);
+		// 1. The expiry travels with the value into the script, so a key stored here expires like one `set` wrote
+		const namespaced = withNamespace(key, this.namespace);
 
-		return wasSet !== 0;
+		const wasSet = this.ttl
+			? await this.redis.setMax(namespaced, value, this.ttl)
+			: await this.redis.setMax(namespaced, value);
+
+		// 2. The Lua script answers `1` or `0`; only `1` means stored, so anything else — including a `null` an older
+		//    script build would answer with for "not stored" — reads as `false`
+		return wasSet === 1;
 	}
 
 	/**
@@ -339,10 +338,7 @@ export class KvDriverRedis implements KvDriver {
 	 * @returns Handle to release or extend the lock.
 	 * @throws When the lock cannot be acquired within the retry budget.
 	 */
-	async acquireLock(key: string): Promise<{
-		release: () => Promise<void>;
-		extend: (duration: number) => Promise<void>;
-	}> {
+	async acquireLock(key: string): Promise<Lock> {
 		// 1. Redlock wants an integer duration, so floor a possibly fractional timeout
 		const lock = await this.redlock.acquire([withNamespace(key, this.namespace)], Math.floor(this.lockTimeout));
 
@@ -380,11 +376,14 @@ export class KvDriverRedis implements KvDriver {
 			match: withNamespace('*', this.namespace),
 		});
 
-		// 2. Queue every batch into one pipeline and send it in a single round trip
+		// 2. Queue every batch into one pipeline and send it in a single round trip. A `SCAN` step may match nothing
+		//    and still answer with an empty batch; `UNLINK` without keys is an error, so such a batch is skipped
 		const pipeline = this.redis.pipeline();
 
-		for await (const keys of keysStream) {
-			pipeline.unlink(keys);
+		for await (const keys of keysStream as AsyncIterable<string[]>) {
+			if (keys.length > 0) {
+				pipeline.unlink(keys);
+			}
 		}
 
 		await pipeline.exec();

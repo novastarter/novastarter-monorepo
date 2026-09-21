@@ -1,5 +1,6 @@
 import type { BusDriver } from '../../driver.js';
 import type { MessageHandler } from '../../types.js';
+import { dispatch } from '../../utils/dispatch.js';
 
 /**
  * Options of {@link BusDriverLocal}, the `local` driver; it has none.
@@ -46,15 +47,9 @@ export class BusDriverLocal implements BusDriver {
 	 * @param payload - Value handed to every subscriber.
 	 */
 	async publish<T = unknown>(channel: string, payload: T): Promise<void> {
-		// 1. Call every subscriber, swallowing errors: a failing handler must not stop delivery to the others nor
-		//    crash the publisher, which matches how the Redis bus and event listeners in general behave
-		this.handlers[channel]?.forEach((callback) => {
-			try {
-				callback(payload);
-			} catch {
-				// Do nothing..
-			}
-		});
+		// 1. Every subscriber runs on its own and a failing one is logged, the same way the Redis bus fans out: a
+		//    broken handler neither stops delivery to the others nor fails the publisher
+		dispatch(channel, this.handlers[channel], payload);
 	}
 
 	/**

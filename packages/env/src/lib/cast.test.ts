@@ -76,7 +76,13 @@ describe('Casting', () => {
 
 	test('Uses RegExp for regex types', () => {
 		vi.mocked(getCastFlag).mockReturnValue('regex');
-		expect(cast('value')).toBeInstanceOf(RegExp);
+		expect(cast('regex:value')).toBeInstanceOf(RegExp);
+	});
+
+	test('Casts a broken regex pattern to undefined instead of throwing', () => {
+		// The same shape as `number:` with no number: "no value", for the schema to report
+		vi.mocked(getCastFlag).mockReturnValue('regex');
+		expect(cast('regex:(')).toBeUndefined();
 	});
 
 	test('Uses toArray for array types', () => {

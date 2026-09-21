@@ -8,7 +8,7 @@
 export type MaybePromise<T> = Promise<T> | T;
 
 /**
- * Handle on a lock acquired through `Kv.acquireLock`.
+ * Handle on a lock acquired through `KvDriver.acquireLock`.
  */
 export interface Lock {
 	/**

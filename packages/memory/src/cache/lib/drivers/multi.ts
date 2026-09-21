@@ -48,31 +48,59 @@ export type CacheMultiMessageClear = {
  *
  * Reads try L1 first and fall back to L2. Writes go to both levels and then publish an invalidation, so every other
  * process drops its stale L1 copy and re-reads from Redis on its next access. Locks always go through Redis, since a
- * local lock would not protect against other processes.
+ * local lock would not protect against other processes. The bus subscribes on a connection of its own, which
+ * `close()` quits; the L2 connection belongs to the caller.
  *
  * @example
  * ```ts
  * const cache = new CacheDriverMulti({
  * 	local: { maxKeys: 500 },
  * 	redis: {
- * 	redis: new Redis(),
- * 	namespace: 'app',
- * },
+ * 		redis: new Redis(),
+ * 		namespace: 'app',
+ * 	},
  * });
  * ```
  */
 export class CacheDriverMulti implements CacheDriver {
-	/** Id of this process, stamped on outgoing invalidations. */
-	processId: string = processId();
+	/**
+	 * Id of this process, stamped on outgoing invalidations.
+	 *
+	 * @internal
+	 */
+	private readonly processId: string = processId();
 
-	/** L1: per-process memory. */
-	local: CacheDriverLocal;
+	/**
+	 * L1: per-process memory.
+	 *
+	 * @internal
+	 */
+	private readonly local: CacheDriverLocal;
 
-	/** L2: shared Redis. */
-	redis: CacheDriverRedis;
+	/**
+	 * L2: shared Redis.
+	 *
+	 * @internal
+	 */
+	private readonly redis: CacheDriverRedis;
 
-	/** Pub/sub used to invalidate the L1 of other processes. */
-	bus: BusDriver;
+	/**
+	 * Pub/sub used to invalidate the L1 of other processes.
+	 *
+	 * @internal
+	 */
+	private readonly bus: BusDriver;
+
+	/**
+	 * The subscription to the invalidations of other processes, settled once Redis confirmed it.
+	 *
+	 * Every write awaits it before publishing: a process that never managed to subscribe would keep serving a stale
+	 * L1 for good, so its first write is where the failure comes out rather than in an unhandled rejection at
+	 * construction.
+	 *
+	 * @internal
+	 */
+	private readonly subscribed: Promise<void>;
 
 	/**
 	 * Create both cache levels and subscribe to invalidations from other processes.
@@ -85,8 +113,14 @@ export class CacheDriverMulti implements CacheDriver {
 		this.redis = new CacheDriverRedis(config.redis);
 		this.bus = new BusDriverRedis({ redis: config.redis.redis, namespace: config.redis.namespace });
 
-		// 2. Wrap the handler in a lambda, so `this` still points at the cache when the bus calls it
-		this.bus.subscribe<CacheMultiMessageClear>(CACHE_CHANNEL_KEY, (payload) => this.onMessageClear(payload));
+		// 2. Wrap the handler in a lambda, so `this` still points at the cache when the bus calls it. The promise is
+		//    kept for the writes to await; the no-op `catch` only marks a failure as observed here, so it is reported
+		//    where a write awaits it and not as an unhandled rejection nobody can act on
+		this.subscribed = this.bus.subscribe<CacheMultiMessageClear>(CACHE_CHANNEL_KEY, (payload) =>
+			this.onMessageClear(payload),
+		);
+
+		this.subscribed.catch(() => {});
 	}
 
 	/**
@@ -153,7 +187,11 @@ export class CacheDriverMulti implements CacheDriver {
 	 * @internal
 	 */
 	private async clearOthers(key?: string) {
-		// 1. Stamp the message with this process's id, so the sender can skip it when it comes back
+		// 1. A process that could not subscribe must not write as if it took part in the invalidation: the failure
+		//    that was kept at construction is thrown here, on the first write
+		await this.subscribed;
+
+		// 2. Stamp the message with this process's id, so the sender can skip it when it comes back
 		await this.bus.publish(CACHE_CHANNEL_KEY, {
 			type: 'clear',
 			key: key,
@@ -194,6 +232,19 @@ export class CacheDriverMulti implements CacheDriver {
 	async usingLock<T>(key: string, callback: () => Promise<T>): Promise<T> {
 		// 1. Only the Redis lock is visible to other processes
 		return await this.redis.usingLock(key, callback);
+	}
+
+	/**
+	 * Quit the bus's subscriber connection; the process is shutting down.
+	 *
+	 * The only connection of the driver's own: L2 runs on the connection the caller handed in and is closed there, L1
+	 * holds nothing.
+	 *
+	 * @returns Once the server acknowledged the quit.
+	 */
+	async close(): Promise<void> {
+		// 1. The bus duplicated the L2 connection for subscribing; that duplicate is what would keep the process alive
+		await this.bus.close?.();
 	}
 
 	/**

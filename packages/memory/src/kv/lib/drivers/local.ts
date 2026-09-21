@@ -1,6 +1,7 @@
 import { LRUCache } from 'lru-cache';
 import { deserialize, serialize } from '../../../utils/index.js';
 import type { KvDriver } from '../../driver.js';
+import type { Lock } from '../../types.js';
 
 /**
  * Options of {@link KvDriverLocal}, the `local` driver.
@@ -41,6 +42,15 @@ export class KvDriverLocal implements KvDriver {
 	 * @internal
 	 */
 	private readonly store: LRUCache<string, Uint8Array, unknown> | Map<string, Uint8Array>;
+
+	/**
+	 * The tail of the queue of holders per locked key: what the next `acquireLock` of that key waits for.
+	 *
+	 * A key is absent when nobody holds or waits for its lock.
+	 *
+	 * @internal
+	 */
+	private readonly locks: Map<string, Promise<void>> = new Map();
 
 	/**
 	 * Create the store with optional size and time limits.
@@ -174,36 +184,62 @@ export class KvDriverLocal implements KvDriver {
 	}
 
 	/**
-	 * Hand out a lock handle that does nothing.
+	 * Acquire a lock on the given key, waiting for the holders before it to release.
 	 *
-	 * A single process has no competing holders, so there is nothing to wait for or release; the handle exists so
-	 * callers can be written against the `KvDriver` interface without caring about the backend.
+	 * In-process only: the holders it orders are the callers of this store, the way the Redis lock orders the
+	 * processes sharing a server. A lock never expires on its own — there is no other process to protect from a
+	 * crashed holder — so `extend` has nothing to do, and a holder that never releases blocks the key for good.
 	 *
-	 * @param _key - Key to lock; unused.
-	 * @returns Handle whose `release` and `extend` resolve immediately.
+	 * @param key - Key to lock.
+	 * @returns Handle to release the lock; `extend` is a no-op.
 	 */
-	acquireLock(_key: string): {
-		release: () => Promise<void>;
-		extend: (_duration: number) => Promise<void>;
-	} {
-		// 1. Return inert callbacks with the same shape as the Redis lock
+	async acquireLock(key: string): Promise<Lock> {
+		// 1. Queue behind whoever holds or waits for the key; `released` is what the next caller will wait for
+		const previous = this.locks.get(key) ?? Promise.resolve();
+		let release!: () => void;
+
+		const released = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+
+		const turn = previous.then(() => released);
+		this.locks.set(key, turn);
+
+		// 2. The lock is held once every earlier holder released
+		await previous;
+
+		// 3. Releasing lets the next holder in; the key is forgotten when nobody queued behind, so the map does not
+		//    grow with every key ever locked
 		return {
-			release: async () => {},
-			extend: async (_duration: number) => {},
+			release: async () => {
+				release();
+
+				if (this.locks.get(key) === turn) {
+					this.locks.delete(key);
+				}
+			},
+			extend: async () => {},
 		};
 	}
 
 	/**
-	 * Run a callback "under a lock", which locally means running it right away.
+	 * Run a callback while holding the lock on the given key, releasing it afterwards — even when the callback
+	 * throws.
 	 *
 	 * @typeParam T - Value the callback resolves to.
-	 * @param _key - Key to lock; unused.
-	 * @param callback - Work to run.
+	 * @param key - Key to lock.
+	 * @param callback - Work to run under the lock.
 	 * @returns Whatever the callback resolves to.
 	 */
-	usingLock<T>(_key: string, callback: () => Promise<T>): Promise<T> {
-		// 1. No lock to take, so just run the work
-		return callback();
+	async usingLock<T>(key: string, callback: () => Promise<T>): Promise<T> {
+		// 1. Take the lock, run, and release whatever happened, so a throwing callback does not block the key for good
+		const lock = await this.acquireLock(key);
+
+		try {
+			return await callback();
+		} finally {
+			await lock.release();
+		}
 	}
 
 	/**

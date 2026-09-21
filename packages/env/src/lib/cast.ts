@@ -5,9 +5,10 @@ import { getCastFlag } from '../utils/has-cast-prefix.js';
  * Apply the cast prefix of a raw configuration value, when it carries one.
  *
  * Only an explicit prefix converts: `number:1` becomes `1` (`undefined` when the payload is not a finite number),
- * `boolean:true` becomes `true`, `array:a,b` becomes `['a', 'b']` with its members cast one by one
- * (`array:string:a,number:1` yields `['a', 1]`; a member that is empty or casts to `undefined` is dropped), `json:`
- * parses the payload and keeps it as it is when it is not JSON. A value without a prefix is returned as it is — a
+ * `boolean:true` becomes `true`, `regex:^a` becomes a `RegExp` (`undefined` when the payload is not a valid pattern),
+ * `array:a,b` becomes `['a', 'b']` with its members cast one by one (`array:string:a,number:1` yields `['a', 1]`; a
+ * member that is empty or casts to `undefined` is dropped), `json:` parses the payload and keeps it as it is when it
+ * is not JSON. A value without a prefix is returned as it is — a
  * string from the environment, whatever type a config file gave it — and the application's schema decides what it
  * becomes. Nothing is guessed from the look of a value, so `0123` and `true` stay strings until a schema says
  * otherwise.
@@ -39,8 +40,10 @@ export const cast = (value: unknown): unknown => {
 	// 3. Strip the prefix and its colon, so the remainder is the actual payload
 	const payload = value.substring(castFlag.length + 1);
 
-	// 4. Apply the conversion. Array members recurse: they carry their own prefixes or stay strings, and a member that
-	//    is empty (a trailing comma) or casts to `undefined` (`number:` with no number) is dropped. A `json:` payload
+	// 4. Apply the conversion. A payload the cast cannot read — `number:` with no number, `regex:` with a broken
+	//    pattern — becomes `undefined`, so the schema reports the variable as missing instead of the cast throwing
+	//    in the middle of reading the configuration. Array members recurse: they carry their own prefixes or stay
+	//    strings, and a member that is empty (a trailing comma) or casts to `undefined` is dropped. A `json:` payload
 	//    that is not JSON — a plain word such as `production` — is kept as the string it is
 	switch (castFlag) {
 		case 'string':
@@ -50,12 +53,35 @@ export const cast = (value: unknown): unknown => {
 		case 'boolean':
 			return toBoolean(payload);
 		case 'regex':
-			return new RegExp(payload);
+			return toRegExp(payload);
 		case 'array':
 			return toArray(payload)
 				.map((v) => cast(v))
 				.filter((v) => v !== '' && v !== undefined);
 		case 'json':
 			return tryParseJSON(payload, payload);
+	}
+};
+
+/**
+ * Compile a `regex:` payload, or answer with `undefined` when it is not a valid pattern.
+ *
+ * The same shape as {@link toNumber} for a `number:` payload: an unreadable value is "no value", which the schema
+ * reports, rather than a `SyntaxError` thrown while the configuration is read.
+ *
+ * @param pattern - Source of the regular expression, without delimiters or flags.
+ * @returns The compiled expression, or `undefined` when `pattern` does not compile.
+ * @internal
+ */
+const toRegExp = (pattern: string): RegExp | undefined => {
+	// 1. `RegExp` throws a `SyntaxError` on a broken pattern; that is the one failure to turn into "no value"
+	try {
+		return new RegExp(pattern);
+	} catch (error) {
+		if (error instanceof SyntaxError) {
+			return undefined;
+		}
+
+		throw error;
 	}
 };

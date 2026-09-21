@@ -74,11 +74,10 @@ export abstract class LocationManager<Instance, Config extends unknown[]> {
 	 * @throws Error when no location of that name is registered.
 	 */
 	location(name: string = DEFAULT_LOCATION): Instance {
-		// 1. Serve the instance built earlier, so every consumer shares the connections it holds
-		const existing = this.instances.get(name);
-
-		if (existing) {
-			return existing;
+		// 1. Serve the instance built earlier, so every consumer shares the connections it holds. Presence is checked
+		//    with `has`, not by truthiness: a driver that builds to `0`, `''` or `false` is an instance all the same
+		if (this.instances.has(name)) {
+			return this.instances.get(name) as Instance;
 		}
 
 		// 2. Fail loudly instead of returning `undefined`: callers chain calls on the result, and a missing location
@@ -132,17 +131,33 @@ export abstract class LocationManager<Instance, Config extends unknown[]> {
 	/**
 	 * Release every instance built so far; the process is shutting down.
 	 *
-	 * The registrations stay: a location asked for after closing is built afresh rather than answered with a closed
-	 * instance.
+	 * Every instance is released, whether or not another one fails to: a shutdown must not leave a connection open
+	 * because a different one refused to close. The registrations stay: a location asked for after closing is built
+	 * afresh rather than answered with a closed instance.
 	 *
 	 * @returns Once every instance let go of what it held.
+	 * @throws What the one failing {@link LocationManager.release} threw, or an `AggregateError` of all of them when
+	 * several failed — after every instance was released and dropped, so a second `close()` releases nothing twice.
 	 */
 	async close(): Promise<void> {
-		// 1. Only the instances built so far hold anything; they release in parallel, each its own connections
-		await Promise.all([...this.instances.values()].map((instance) => this.release(instance)));
+		// 1. Only the instances built so far hold anything; they release in parallel, each its own connections, and
+		//    every outcome is waited for, so one failure does not abandon the releases still running
+		const outcomes = await Promise.allSettled([...this.instances.values()].map((instance) => this.release(instance)));
 
-		// 2. Dropped rather than kept, so a stray call after closing rebuilds instead of failing on a dead instance
+		// 2. Dropped rather than kept — failed or not: a stray call after closing rebuilds instead of failing on a
+		//    dead instance, and a retried `close()` does not release an already released instance again
 		this.instances.clear();
+
+		// 3. Report the failures once nothing is left open: the one error as it came, several as an `AggregateError`
+		const failures = outcomes.filter((outcome) => outcome.status === 'rejected').map((outcome) => outcome.reason);
+
+		if (failures.length === 1) {
+			throw failures[0];
+		}
+
+		if (failures.length > 1) {
+			throw new AggregateError(failures, `${failures.length} of ${outcomes.length} locations failed to close`);
+		}
 	}
 
 	/**

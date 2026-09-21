@@ -73,6 +73,14 @@ export interface JobContext {
 	attempt: number;
 	/** When the job was put on the queue. */
 	enqueuedAt: Date;
+	/**
+	 * Aborted when the run outlives the contract's `timeout`, with the timeout error as reason.
+	 *
+	 * Only a worker with a timeout sets it. A handler passes it on to what takes a signal — `fetch`, an SDK call, a
+	 * `sleep` — so a run that is already marked failed stops instead of finishing in the background and doing its
+	 * work a second time when the retry runs.
+	 */
+	signal?: AbortSignal | undefined;
 }
 
 /**

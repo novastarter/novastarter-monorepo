@@ -1,8 +1,14 @@
 /**
  * Tests of `memory/bus/lib/drivers/local`.
  */
+import { useLogger } from '@novastarter/logger';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { BusDriverLocal } from './local.js';
+
+vi.mock('@novastarter/logger', () => {
+	const logger = { warn: vi.fn() };
+	return { useLogger: () => logger };
+});
 
 let bus: BusDriverLocal;
 
@@ -36,7 +42,7 @@ describe('publish', () => {
 		}
 	});
 
-	test('Ignores errors thrown in the registered callbacks', async () => {
+	test('Logs errors thrown in the registered callbacks and still calls the others', async () => {
 		const mockChannel = 'mock-channel';
 		const mockPayload = { hello: 'world' };
 
@@ -54,6 +60,11 @@ describe('publish', () => {
 		for (const handler of mockHandlers) {
 			expect(handler).toBeCalledWith(mockPayload);
 		}
+
+		expect(useLogger().warn).toHaveBeenCalledWith(
+			expect.objectContaining({ message: 'bad news' }),
+			`A subscriber of bus channel "${mockChannel}" failed`,
+		);
 	});
 });
 

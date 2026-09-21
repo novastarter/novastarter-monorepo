@@ -64,8 +64,9 @@ await useCache().location('default').set('schema', schema);
 await useLimiter().location('api').consume(ip);
 ```
 
-`close()` on a manager releases what its locations built so far — the bus's subscribing connection — and keeps the
-registrations; the Redis client a location was handed belongs to `@novastarter/redis` and is closed there.
+`close()` on a manager releases what its locations built so far — the subscribing connection of a bus, or of the bus
+inside a `multi` cache — and keeps the registrations; the Redis client a location was handed belongs to
+`@novastarter/redis` and is closed there.
 
 A standalone instance, outside the managers — the driver classes are exported:
 
@@ -92,8 +93,9 @@ useKv().registerDriver('memcached', KvDriverMemcached);
 ## Kv
 
 A key-value store with `get`, `set`, `delete`, `has`, `increment` and `setMax` (store only a larger number; a Lua script
-on Redis) and locks. Local options: `maxKeys`, `ttl`. Redis options: `redis`, `namespace`, `ttl`, `compression` (gzip
-values above `compressionMinSize`, on by default), `lockTimeout`.
+on Redis) and locks (`acquireLock`, `usingLock`): in-process, one holder per key at a time, on the local backend;
+distributed through Redlock on Redis. Local options: `maxKeys`, `ttl`. Redis options: `redis`, `namespace`, `ttl`,
+`compression` (gzip values above `compressionMinSize`, on by default), `lockTimeout`.
 
 ## Cache
 
@@ -103,9 +105,10 @@ in front of a Redis one and clears the local copies of every process through the
 
 ## Bus
 
-A pub/sub abstraction: `publish(channel, payload)` and `subscribe(channel, handler)`. The local backend only serves
-handlers of the same process, which adds no benefit next to having one API for both. Redis options: `redis`,
-`namespace`, `compression`.
+A pub/sub abstraction: `publish(channel, payload)` and `subscribe(channel, handler)`. A handler may be async; the bus
+waits for none of them, and one that throws or rejects is logged as a warning while the others still run. The local
+backend only serves handlers of the same process, which adds no benefit next to having one API for both. Redis options:
+`redis`, `namespace`, `compression`.
 
 ## Limiter
 

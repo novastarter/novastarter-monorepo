@@ -41,7 +41,8 @@ export const registerLogger = (logger: Logger<never>): void => {
 /**
  * Return the bus stream for application logs, building it on first use.
  *
- * The arguments count on the first call only: one stream serves the process, so its shape and bus are decided once.
+ * The arguments belong to the first call: one stream serves the process, so its shape and bus are decided once, and a
+ * later call passes none — one with arguments throws.
  *
  * @param pretty - `true` publishes level, time and message; `false` publishes the raw line.
  * @param messenger - Bus the lines are published on.
@@ -54,7 +55,7 @@ export const getLogsStream: Singleton<LogsStream, [pretty: boolean, messenger: L
 /**
  * Return the bus stream for HTTP logs, building it on first use.
  *
- * The arguments count on the first call only, like {@link getLogsStream}.
+ * The arguments belong to the first call, like {@link getLogsStream}; a later call passes none.
  *
  * @param pretty - `true` folds the request into one message; `false` publishes the raw line.
  * @param messenger - Bus the lines are published on.

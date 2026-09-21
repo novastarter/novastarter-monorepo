@@ -31,6 +31,10 @@ const mockLocalValue = 'mock-local-value';
 const mockRedisValue = 'mock-redis-value';
 
 beforeEach(() => {
+	// The automocked bus answers `undefined`; the driver keeps the subscription promise, so it has to be one
+	vi.mocked(BusDriverRedis.prototype.subscribe).mockResolvedValue(undefined);
+	vi.mocked(BusDriverRedis.prototype.close).mockResolvedValue(undefined);
+
 	cache = new CacheDriverMulti({
 		local: mockLocalConfig,
 		redis: mockRedisConfig,
@@ -128,6 +132,27 @@ describe('clear', () => {
 		expect(cache['local'].clear).toHaveBeenCalledOnce();
 		expect(cache['redis'].clear).toHaveBeenCalledOnce();
 		expect(result).toBeUndefined();
+	});
+});
+
+describe('subscription', () => {
+	test('Throws the subscription failure on the first write, not at construction', async () => {
+		const error = new Error('no subscriber connection');
+		vi.mocked(BusDriverRedis.prototype.subscribe).mockRejectedValue(error);
+
+		// Construction must not throw and must not leave an unhandled rejection behind
+		const failed = new CacheDriverMulti({ local: mockLocalConfig, redis: mockRedisConfig });
+
+		await expect(failed.set(mockKey, mockValue)).rejects.toBe(error);
+		expect(BusDriverRedis.prototype.publish).not.toHaveBeenCalled();
+	});
+});
+
+describe('close', () => {
+	test("Quits the bus, the one connection of the driver's own", async () => {
+		await cache.close();
+
+		expect(cache['bus'].close).toHaveBeenCalledOnce();
 	});
 });
 

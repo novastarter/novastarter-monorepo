@@ -2,7 +2,7 @@
  * Tests of `utils/sleep`: resolves after the given time, rejects early on abort.
  */
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { sleep } from './sleep.js';
+import { MAX_TIMER_DELAY, sleep } from './sleep.js';
 
 beforeEach(() => {
 	vi.useFakeTimers();
@@ -55,4 +55,23 @@ test('Ignores an abort after the wait ended', async () => {
 	await expect(wait).resolves.toBeUndefined();
 
 	controller.abort();
+});
+
+test('Refuses a wait the timer cannot hold instead of ending it at once', async () => {
+	// 1. Negative, NaN and overlong delays would all become a 1 ms timer in Node; each is a RangeError instead
+	await expect(sleep(-1)).rejects.toThrow(RangeError);
+	await expect(sleep(Number.NaN)).rejects.toThrow(RangeError);
+	await expect(sleep(MAX_TIMER_DELAY + 1)).rejects.toThrow(RangeError);
+	expect(vi.getTimerCount()).toBe(0);
+
+	// 2. The bounds themselves are fine
+	const zero = sleep(0);
+	const max = sleep(MAX_TIMER_DELAY);
+
+	await vi.advanceTimersByTimeAsync(0);
+	await expect(zero).resolves.toBeUndefined();
+	expect(vi.getTimerCount()).toBe(1);
+
+	await vi.advanceTimersByTimeAsync(MAX_TIMER_DELAY);
+	await expect(max).resolves.toBeUndefined();
 });

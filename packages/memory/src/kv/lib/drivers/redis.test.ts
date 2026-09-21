@@ -85,14 +85,12 @@ describe('constructor', () => {
 			lua: SET_MAX_SCRIPT,
 		});
 
-		expect(kv['redis'].defineCommand).toHaveBeenCalledWith('release', {
-			numberOfKeys: 1,
-			lua: expect.any(String),
-		});
+		// Locks go through Redlock, which ships its own release script; no command of the driver's own
+		expect(kv['redis'].defineCommand).toHaveBeenCalledOnce();
 	});
 
-	test('Skips defining commands if they already exist on redis', () => {
-		const mockRedis = { defineCommand: vi.fn(), setMax: vi.fn(), release: vi.fn() } as unknown as ExtendedRedis;
+	test('Skips defining the command if it already exists on redis', () => {
+		const mockRedis = { defineCommand: vi.fn(), setMax: vi.fn() } as unknown as ExtendedRedis;
 
 		new KvDriverRedis({ redis: mockRedis, namespace: mockNamespace, compression: false });
 
@@ -298,6 +296,27 @@ describe('increment', () => {
 
 		expect(res).toBe(mockResult);
 	});
+
+	test('Sets the expiry in the same transaction when a ttl is configured', async () => {
+		// A key created by `INCRBY` alone would live for good; the transaction pairs it with `PEXPIRE`
+		const withTtl = new KvDriverRedis({ namespace: mockNamespace, redis: mockRedis, ttl: 5000 });
+
+		const exec = vi.fn().mockResolvedValue([
+			[null, 42],
+			[null, 1],
+		]);
+
+		const pexpire = vi.fn(() => ({ exec }));
+		const incrby = vi.fn(() => ({ pexpire }));
+		vi.mocked(mockRedis.multi).mockReturnValue({ incrby } as any);
+
+		const res = await withTtl.increment(mockKey, 2);
+
+		expect(incrby).toHaveBeenCalledWith(mockNamespacedKey, 2);
+		expect(pexpire).toHaveBeenCalledWith(mockNamespacedKey, 5000);
+		expect(res).toBe(42);
+		expect(mockRedis.incrby).not.toHaveBeenCalled();
+	});
 });
 
 describe('setMax', () => {
@@ -324,7 +343,7 @@ describe('setMax', () => {
 		expect(res).toBe(true);
 	});
 
-	test('Returns false if setMax returns 1', async () => {
+	test('Returns false if setMax returns 0', async () => {
 		// ioredis makes custom functions available as methods, but those aren't typeable
 		(kv['redis'] as any).setMax = vi.fn().mockResolvedValue(0);
 
@@ -334,13 +353,33 @@ describe('setMax', () => {
 
 		expect(res).toBe(false);
 	});
+
+	test('Hands the ttl to the script when one is configured', async () => {
+		const withTtl = new KvDriverRedis({ namespace: mockNamespace, redis: mockRedis, ttl: 5000 });
+		(withTtl['redis'] as any).setMax = vi.fn().mockResolvedValue(1);
+
+		await withTtl.setMax(mockKey, 15);
+
+		expect((withTtl['redis'] as any).setMax).toHaveBeenCalledWith(mockNamespacedKey, 15, 5000);
+	});
+
+	test('Returns false if setMax returns null', async () => {
+		// Redis answers a Lua `false` with nil, which ioredis reads as `null`: not stored either way
+		(kv['redis'] as any).setMax = vi.fn().mockResolvedValue(null);
+
+		const res = await kv.setMax(mockKey, 15);
+
+		expect(res).toBe(false);
+	});
 });
 
 describe('clear', () => {
-	test('Uses stream for iterating over keys, unlinks them in a pipeline', async () => {
+	test('Uses stream for iterating over keys, unlinks them in a pipeline, skips empty batches', async () => {
+		// A `SCAN` step may match nothing and still answer with an empty batch; `UNLINK` without keys is an error
 		kv['redis'].scanStream = vi.fn().mockReturnValue({
 			async *[Symbol.asyncIterator]() {
 				yield [mockKey];
+				yield [];
 				yield [mockKey];
 			},
 		});

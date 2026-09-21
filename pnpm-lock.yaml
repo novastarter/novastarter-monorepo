@@ -806,6 +806,9 @@ importers:
       '@novastarter/errors':
         specifier: workspace:*
         version: link:../errors
+      '@novastarter/logger':
+        specifier: workspace:*
+        version: link:../logger
       '@novastarter/utils':
         specifier: workspace:*
         version: link:../utils

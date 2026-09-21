@@ -3,7 +3,7 @@
  */
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { DEFAULT_RETRY_OPTIONS, retry } from './retry.js';
-import { sleep } from './sleep.js';
+import { MAX_TIMER_DELAY, sleep } from './sleep.js';
 
 vi.mock('./sleep.js', { spy: true });
 
@@ -168,6 +168,28 @@ test('Rejects at once with a signal already aborted, without running the operati
 	await expect(retry(fn, { signal: controller.signal })).rejects.toThrow('already down');
 	expect(fn).not.toHaveBeenCalled();
 	expect(sleep).not.toHaveBeenCalled();
+});
+
+test('Refuses a retries budget that is not a whole number of zero or more', async () => {
+	// 1. `attempt > NaN` never holds, so a NaN budget would retry forever; a fraction or a negative is a mistake too
+	const fn = failing(0);
+
+	await expect(retry(fn, { retries: Number.NaN })).rejects.toThrow(RangeError);
+	await expect(retry(fn, { retries: 1.5 })).rejects.toThrow(RangeError);
+	await expect(retry(fn, { retries: -1 })).rejects.toThrow(RangeError);
+	expect(fn).not.toHaveBeenCalled();
+	expect(sleep).not.toHaveBeenCalled();
+});
+
+test('Never asks for a pause longer than a timer can hold', async () => {
+	// 1. An uncapped `maxDelay` used to let an overgrown pause reach `sleep`, which Node would arm as 1 ms
+	const fn = failing(1);
+	const run = retry(fn, { delay: MAX_TIMER_DELAY, factor: 10, maxDelay: Number.POSITIVE_INFINITY });
+
+	await vi.runAllTimersAsync();
+	await run;
+
+	expect(vi.mocked(sleep).mock.calls.map(([ms]) => ms)).toEqual([MAX_TIMER_DELAY]);
 });
 
 test('Refuses a jitter outside 0 to 1 before running the operation', async () => {

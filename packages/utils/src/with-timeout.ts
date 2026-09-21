@@ -6,11 +6,17 @@
  */
 export class TimeoutError extends Error {
 	/**
+	 * The deadline that passed, in milliseconds — as a field, so a handler reads it rather than parsing the message.
+	 */
+	readonly ms: number;
+
+	/**
 	 * @param ms - The deadline that passed, in milliseconds.
 	 */
 	constructor(ms: number) {
 		super(`Timed out after ${ms} ms`);
 		this.name = 'TimeoutError';
+		this.ms = ms;
 	}
 }
 

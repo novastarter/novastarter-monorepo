@@ -240,21 +240,73 @@ describe('has', () => {
 });
 
 describe('acquireLock', () => {
-	test('Returns no-op lock', async () => {
-		const lock = await kv.acquireLock('key');
-		expect(lock).toHaveProperty('release');
-		expect(lock).toHaveProperty('extend');
-		await expect(lock.release()).resolves.toBeUndefined();
+	test('Hands the lock to one holder at a time, in order of asking', async () => {
+		// 1. The first caller holds the lock at once; the second waits until the first releases
+		const first = await kv.acquireLock('key');
+		const secondSettled = vi.fn();
+
+		const second = kv.acquireLock('key').then((lock) => {
+			secondSettled();
+			return lock;
+		});
+
+		await Promise.resolve();
+		expect(secondSettled).not.toHaveBeenCalled();
+
+		await first.release();
+		const lock = await second;
+		expect(secondSettled).toHaveBeenCalledOnce();
+
+		// 2. `extend` has nothing to do locally; releasing the last holder forgets the key
 		await expect(lock.extend(100)).resolves.toBeUndefined();
+		await lock.release();
+		expect(kv['locks'].has('key')).toBe(false);
+	});
+
+	test('Keeps locks of different keys independent', async () => {
+		const a = await kv.acquireLock('a');
+		const b = await kv.acquireLock('b');
+
+		await a.release();
+		await b.release();
 	});
 });
 
 describe('usingLock', () => {
-	test('Executes callback directly', async () => {
+	test('Runs the callback under the lock and answers with its result', async () => {
 		const callback = vi.fn().mockResolvedValue('result');
 		const result = await kv.usingLock('key', callback);
 		expect(callback).toHaveBeenCalled();
 		expect(result).toBe('result');
+		expect(kv['locks'].has('key')).toBe(false);
+	});
+
+	test('Serialises callbacks on the same key and releases after a throwing one', async () => {
+		// 1. Two callbacks race for the key; the second starts only once the first is done
+		const order: string[] = [];
+
+		await Promise.all([
+			kv.usingLock('key', async () => {
+				order.push('a:in');
+				await new Promise((resolve) => setTimeout(resolve, 10));
+				order.push('a:out');
+			}),
+			kv.usingLock('key', async () => {
+				order.push('b:in');
+				order.push('b:out');
+			}),
+		]);
+
+		expect(order).toStrictEqual(['a:in', 'a:out', 'b:in', 'b:out']);
+
+		// 2. A callback that throws still lets the next one in
+		await expect(
+			kv.usingLock('key', async () => {
+				throw new Error('boom');
+			}),
+		).rejects.toThrow('boom');
+
+		await expect(kv.usingLock('key', async () => 'after')).resolves.toBe('after');
 	});
 });
 

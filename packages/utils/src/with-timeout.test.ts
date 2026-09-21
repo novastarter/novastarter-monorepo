@@ -57,7 +57,7 @@ test('Rejects with a TimeoutError once the deadline passes, not before', async (
 	const error = await outcome;
 
 	expect(error).toBeInstanceOf(TimeoutError);
-	expect(error).toMatchObject({ name: 'TimeoutError', message: 'Timed out after 1000 ms' });
+	expect(error).toMatchObject({ name: 'TimeoutError', message: 'Timed out after 1000 ms', ms: 1000 });
 });
 
 test('Rejects with what the error factory makes, given the deadline', async () => {

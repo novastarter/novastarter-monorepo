@@ -12,6 +12,7 @@ import {
 } from '../../../utils/index.js';
 import type { BusDriver } from '../../driver.js';
 import type { MessageHandler } from '../../types.js';
+import { dispatch } from '../../utils/dispatch.js';
 
 /**
  * Options of {@link BusDriverRedis}, the `redis` driver.
@@ -235,9 +236,8 @@ export class BusDriverRedis implements BusDriver {
 			binaryArray = await decompress(binaryArray);
 		}
 
-		// 3. Deserialize once and hand the same value to every callback
-		const deserialized = deserialize(binaryArray);
-
-		this.handlers[namespaced]?.forEach((callback) => callback(deserialized));
+		// 3. Deserialize once and hand the same value to every callback, each on its own: a failing subscriber is
+		//    logged and the others still run
+		dispatch(namespaced, this.handlers[namespaced], deserialize(binaryArray));
 	}
 }

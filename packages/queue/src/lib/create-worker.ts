@@ -73,8 +73,9 @@ export class JobTimeoutError extends Error {
  *
  * What a worker process calls per queue it consumes. The wrapper does what every worker of the kit needs: rebuilds the job
  * name from the queue and the BullMQ job name, enforces the contract's `timeout` (BullMQ has none of its own — a
- * job that hangs would otherwise block a concurrency slot forever), logs `completed` and `failed`, and closes
- * gracefully. `bullmq` is imported here, so the producer side stays free of it.
+ * job that hangs would otherwise block a concurrency slot forever) and hands the processor a signal that aborts on
+ * it, logs `completed` and `failed`, and closes gracefully. `bullmq` is imported here, so the producer side stays
+ * free of it.
  *
  * @param queue - Queue to consume, one of `getQueueNames()`.
  * @param processor - What to do with a job.
@@ -88,25 +89,38 @@ export const createWorker = async (
 	processor: WorkerProcessor,
 	options: CreateWorkerOptions = {},
 ): Promise<QueueWorker> => {
+	// 1. `bullmq` is loaded here and not at the top of the module, so a producer that never starts a worker never
+	//    pays for it; the logger falls back to the process one
 	const { Worker } = await import('bullmq');
 	const logger = options.logger ?? useLogger();
 
-	// 1. Without a connection of its own the worker consumes the location the producer of this process enqueues on,
-	//    which is the one place the queue's Redis, prefix and telemetry are known
-	const location = options.connection === undefined ? useQueue().location(queue) : undefined;
+	// 2. Without a connection of its own the worker consumes the location the producer of this process enqueues on,
+	//    which is the one place the queue's Redis, prefix and telemetry are known; any other kind of location has
+	//    nothing a worker could consume from
+	let location: QueueDriverBullmq | undefined;
+	let connection: WorkerOptions['connection'];
 
-	if (location && !(location instanceof QueueDriverBullmq)) {
-		throw new Error(`Queue "${queue}" is not on a "bullmq" location; a worker needs one`);
+	if (options.connection === undefined) {
+		const driver = useQueue().location(queue);
+
+		if (!(driver instanceof QueueDriverBullmq)) {
+			throw new Error(`Queue "${queue}" is not on a "bullmq" location; a worker needs one`);
+		}
+
+		location = driver;
+		connection = driver.connection;
+	} else {
+		connection = options.connection;
 	}
 
-	const connection = options.connection ?? location!.connection;
+	// 3. What the options leave out comes from the location, when there is one
 	const prefix = options.prefix ?? location?.prefix;
 	const telemetry = options.telemetry ?? location?.telemetry;
 
 	const worker = new Worker(
 		queue,
 		async (job: Job) => {
-			// 2. The full name is `<queue>.<action>`; an unknown one means producer and worker disagree on the contracts
+			// 4. The full name is `<queue>.<action>`; an unknown one means producer and worker disagree on the contracts
 			const name = `${queue}.${job.name}`;
 			const contract = getJobContract(name);
 
@@ -117,7 +131,7 @@ export const createWorker = async (
 				enqueuedAt: new Date(job.timestamp),
 			};
 
-			// 3. The contract's timeout, then the worker's default; none means the job may take as long as it needs
+			// 5. The contract's timeout, then the worker's default; none means the job may take as long as it needs
 			const timeout = contract.options.timeout ?? options.timeout;
 
 			if (!timeout) {
@@ -125,9 +139,10 @@ export const createWorker = async (
 				return;
 			}
 
-			// 4. The run is raced against the clock. It is not stopped on timeout — the processor gets no signal, since
-			//    `JobContext` carries none — but the job is marked failed and retried by the contract's rules
-			await withTimeout(processor(job.data, context), timeout, {
+			// 6. The run is raced against the clock and told when it lost: the signal in the context aborts with the
+			//    timeout error, so a processor that passes it on stops instead of finishing a job already marked failed
+			//    — and retried by the contract's rules — a second time in the background
+			await withTimeout((signal) => processor(job.data, { ...context, signal }), timeout, {
 				error: () => new JobTimeoutError(name, timeout),
 			});
 		},
@@ -139,7 +154,7 @@ export const createWorker = async (
 		},
 	);
 
-	// 5. Lifecycle to the log: what ran, what failed on which attempt, and connection trouble
+	// 7. Lifecycle to the log: what ran, what failed on which attempt, and connection trouble
 	worker.on('completed', (job) => {
 		logger.info(`Job "${queue}.${job.name}" (${job.id}) completed`);
 	});

@@ -58,20 +58,24 @@ describe('useLogger', () => {
 });
 
 describe('getLogsStream', () => {
-	test('Creates a basic logs stream once', () => {
+	test('Creates a basic logs stream once and refuses arguments afterwards', () => {
+		// 1. The first call decides the shape and the bus; a later call without arguments answers with the stream
 		const first = getLogsStream(true, messenger);
-		const second = getLogsStream(false, messenger);
+		const second = getLogsStream();
 
 		expect(LogsStream).toHaveBeenCalledTimes(1);
 		expect(LogsStream).toHaveBeenCalledWith('basic', messenger);
 		expect(second).toBe(first);
+
+		// 2. Arguments that would have no say are refused, not ignored
+		expect(() => getLogsStream(false, messenger)).toThrow('singleton: the instance exists already');
 	});
 });
 
 describe('getHttpLogsStream', () => {
 	test('Creates a http logs stream once, raw when not pretty', () => {
 		const first = getHttpLogsStream(false, messenger);
-		const second = getHttpLogsStream(true, messenger);
+		const second = getHttpLogsStream();
 
 		expect(LogsStream).toHaveBeenCalledTimes(1);
 		expect(LogsStream).toHaveBeenCalledWith(false, messenger);

@@ -134,10 +134,12 @@ export class Emitter {
 	 * @param context - Who acted; defaults to an anonymous context.
 	 */
 	public emitAction(event: string | string[], meta: Record<string, any>, context: EventContext | null = null): void {
+		// 1. One name or several are handled alike; the logger is read per call, so a `registerLogger` after start-up
+		//    is honoured
 		const logger = useLogger();
 		const events = Array.isArray(event) ? event : [event];
 
-		// 1. Fire and forget: a rejected handler is logged, never awaited. Whatever it threw goes to the log as an
+		// 2. Fire and forget: a rejected handler is logged, never awaited. Whatever it threw goes to the log as an
 		//    `Error`, since pino serialises an `Error` under `err` while a thrown string in first position would be
 		//    taken for the message and the text after it dropped
 		for (const event of events) {
@@ -156,9 +158,10 @@ export class Emitter {
 	 * @param meta - What the stage exposes to the hooks, merged with the event name.
 	 */
 	public async emitInit(event: string, meta: Record<string, any>): Promise<void> {
+		// 1. The logger is read per call, so a `registerLogger` after start-up is honoured
 		const logger = useLogger();
 
-		// 1. Awaited, but a failure is logged rather than thrown; wrapped through `toError` for the same reason as in
+		// 2. Awaited, but a failure is logged rather than thrown; wrapped through `toError` for the same reason as in
 		//    `emitAction`: a thrown string must not become the message and swallow the text after it
 		try {
 			await this.initEmitter.emitAsync(event, { event, ...meta });
