@@ -50,6 +50,13 @@ export class Emitter {
 	private initEmitter: ee2.EventEmitter2;
 
 	/**
+	 * The async wrapper registered for each action handler, keyed by the handler itself, so `offAction` can find it.
+	 *
+	 * @internal
+	 */
+	private actionWrappers: WeakMap<ActionHandler, ActionHandler> = new WeakMap();
+
+	/**
 	 * Create the three channels with identical settings.
 	 */
 	constructor() {
@@ -139,9 +146,10 @@ export class Emitter {
 		const logger = useLogger();
 		const events = Array.isArray(event) ? event : [event];
 
-		// 2. Fire and forget: a rejected handler is logged, never awaited. Whatever it threw goes to the log as an
-		//    `Error`, since pino serialises an `Error` under `err` while a thrown string in first position would be
-		//    taken for the message and the text after it dropped
+		// 2. Fire and forget: a failed handler is logged, never awaited, and never reaches the caller. Every handler
+		//    was wrapped in an async function by `onAction`, so a failure only ever comes back as a rejection here.
+		//    Whatever it threw goes to the log as an `Error`, since pino serialises an `Error` under `err` while a
+		//    thrown string in first position would be taken for the message and the text after it dropped
 		for (const event of events) {
 			this.actionEmitter.emitAsync(event, { event, ...meta }, context ?? this.getDefaultContext()).catch((error) => {
 				logger.warn(toError(error), `An error was thrown while executing action "${event}"`);
@@ -184,11 +192,24 @@ export class Emitter {
 	/**
 	 * Register an action handler.
 	 *
+	 * A handler that throws synchronously is as isolated as one that rejects: the other handlers of the event still
+	 * run, and the failure goes to the log.
+	 *
 	 * @param event - Event name, wildcards allowed.
 	 * @param handler - Handler run after the operation.
 	 */
 	public onAction(event: string, handler: ActionHandler): void {
-		this.actionEmitter.on(event, handler);
+		// 1. eventemitter2 calls the handlers in a plain loop and only collects their promises, so one throwing before
+		//    its first `await` would stop the loop and skip the handlers after it. Wrapped in an async function, a
+		//    throw becomes a rejection like any other, and every handler of the event gets its turn
+		const wrapper: ActionHandler = async (meta, context) => {
+			await handler(meta, context);
+		};
+
+		// 2. The same wrapper is registered under the same handler every time, so `offAction` removes what `onAction`
+		//    added, and registering one handler twice behaves as eventemitter2 would with the handler itself
+		this.actionWrappers.set(handler, wrapper);
+		this.actionEmitter.on(event, wrapper);
 	}
 
 	/**
@@ -249,7 +270,13 @@ export class Emitter {
 	 * @param handler - The very function that was registered.
 	 */
 	public offAction(event: string, handler: ActionHandler): void {
-		this.actionEmitter.off(event, handler);
+		// 1. What was registered is the wrapper, not the handler; a handler never registered has none and nothing to
+		//    remove
+		const wrapper = this.actionWrappers.get(handler);
+
+		if (wrapper) {
+			this.actionEmitter.off(event, wrapper);
+		}
 	}
 
 	/**

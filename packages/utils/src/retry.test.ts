@@ -182,14 +182,15 @@ test('Refuses a retries budget that is not a whole number of zero or more', asyn
 });
 
 test('Never asks for a pause longer than a timer can hold', async () => {
-	// 1. An uncapped `maxDelay` used to let an overgrown pause reach `sleep`, which Node would arm as 1 ms
-	const fn = failing(1);
-	const run = retry(fn, { delay: MAX_TIMER_DELAY, factor: 10, maxDelay: Number.POSITIVE_INFINITY });
+	// 1. An uncapped `maxDelay` used to let an overgrown pause reach `sleep`, which Node would arm as 1 ms: the base
+	//    pause here is already past the limit, and the second one ten times so
+	const fn = failing(2);
+	const run = retry(fn, { delay: MAX_TIMER_DELAY + 1, factor: 10, maxDelay: Number.POSITIVE_INFINITY });
 
 	await vi.runAllTimersAsync();
 	await run;
 
-	expect(vi.mocked(sleep).mock.calls.map(([ms]) => ms)).toEqual([MAX_TIMER_DELAY]);
+	expect(vi.mocked(sleep).mock.calls.map(([ms]) => ms)).toEqual([MAX_TIMER_DELAY, MAX_TIMER_DELAY]);
 });
 
 test('Refuses a jitter outside 0 to 1 before running the operation', async () => {
@@ -198,6 +199,7 @@ test('Refuses a jitter outside 0 to 1 before running the operation', async () =>
 
 	await expect(retry(fn, { jitter: 1.5 })).rejects.toThrow(RangeError);
 	await expect(retry(fn, { jitter: -0.1 })).rejects.toThrow(RangeError);
+	await expect(retry(fn, { jitter: Number.NaN })).rejects.toThrow(RangeError);
 	expect(fn).not.toHaveBeenCalled();
 	expect(sleep).not.toHaveBeenCalled();
 });

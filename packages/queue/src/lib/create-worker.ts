@@ -59,6 +59,8 @@ export interface QueueWorker {
  */
 export class JobTimeoutError extends Error {
 	/**
+	 * Create the error for a job that outlived its limit.
+	 *
 	 * @param name - Job name.
 	 * @param timeout - The limit, in milliseconds.
 	 */

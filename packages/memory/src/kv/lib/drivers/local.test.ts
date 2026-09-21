@@ -153,15 +153,17 @@ describe('setMax', () => {
 		);
 	});
 
-	test('Defaults to 0 if current value does not exist', async () => {
+	test('Stores any number, zero or negative included, when the key does not exist', async () => {
+		// A missing key has nothing to beat; the Redis script behaves the same, so the two backends agree
 		const mockKey = 'kv-key';
-		const mockValue = 42;
 
 		kv.set = vi.fn();
 
-		await kv.setMax(mockKey, mockValue);
+		expect(kv.setMax(mockKey, -5)).toBe(true);
+		expect(kv.set).toHaveBeenCalledWith(mockKey, -5);
 
-		expect(kv.set).toHaveBeenCalledWith(mockKey, mockValue);
+		expect(kv.setMax(mockKey, 0)).toBe(true);
+		expect(kv.set).toHaveBeenCalledWith(mockKey, 0);
 	});
 
 	test('Returns false if existing value is bigger than passed value', async () => {

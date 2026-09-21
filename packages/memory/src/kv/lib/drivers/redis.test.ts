@@ -442,6 +442,26 @@ describe('acquireLock', () => {
 		await lock.extend(100);
 		expect(innerExtended).toBe(true);
 	});
+
+	test('Extends and releases through the lock redlock answered with, not the one it invalidated', async () => {
+		// Redlock's `extend()` returns a new lock and marks the old one expired; a second extend must go to the new one
+		const third = { release: vi.fn(async () => {}), extend: vi.fn(async () => third) };
+		const second = { release: vi.fn(async () => {}), extend: vi.fn(async () => third) };
+		const first = { release: vi.fn(async () => {}), extend: vi.fn(async () => second) };
+
+		kv['redlock'].acquire = vi.fn().mockResolvedValue(first);
+
+		const lock = await kv.acquireLock(mockKey);
+
+		await lock.extend(100.7);
+		await lock.extend(200);
+		await lock.release();
+
+		expect(first.extend).toHaveBeenCalledExactlyOnceWith(100);
+		expect(second.extend).toHaveBeenCalledExactlyOnceWith(200);
+		expect(third.release).toHaveBeenCalledOnce();
+		expect(first.release).not.toHaveBeenCalled();
+	});
 });
 
 describe('usingLock', () => {

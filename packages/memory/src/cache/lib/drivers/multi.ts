@@ -92,15 +92,17 @@ export class CacheDriverMulti implements CacheDriver {
 	private readonly bus: BusDriver;
 
 	/**
-	 * The subscription to the invalidations of other processes, settled once Redis confirmed it.
+	 * The subscription to the invalidations of other processes, settled once Redis confirmed it; `undefined` while
+	 * none is under way, which is where a failed one puts it back.
 	 *
 	 * Every write awaits it before publishing: a process that never managed to subscribe would keep serving a stale
-	 * L1 for good, so its first write is where the failure comes out rather than in an unhandled rejection at
-	 * construction.
+	 * L1 for good, so a write is where the failure comes out rather than in an unhandled rejection at construction —
+	 * and where the subscription is tried again, so a Redis that was unreachable at start does not leave the cache
+	 * dead for the rest of the process.
 	 *
 	 * @internal
 	 */
-	private readonly subscribed: Promise<void>;
+	private subscribed: Promise<void> | undefined;
 
 	/**
 	 * Create both cache levels and subscribe to invalidations from other processes.
@@ -113,14 +115,37 @@ export class CacheDriverMulti implements CacheDriver {
 		this.redis = new CacheDriverRedis(config.redis);
 		this.bus = new BusDriverRedis({ redis: config.redis.redis, namespace: config.redis.namespace });
 
-		// 2. Wrap the handler in a lambda, so `this` still points at the cache when the bus calls it. The promise is
-		//    kept for the writes to await; the no-op `catch` only marks a failure as observed here, so it is reported
-		//    where a write awaits it and not as an unhandled rejection nobody can act on
-		this.subscribed = this.bus.subscribe<CacheMultiMessageClear>(CACHE_CHANNEL_KEY, (payload) =>
-			this.onMessageClear(payload),
-		);
+		// 2. Subscribe right away, so invalidations are received before the first write; the no-op `catch` only marks a
+		//    failure as observed here, so it is reported where a write awaits it and not as an unhandled rejection
+		//    nobody can act on
+		this.subscribe().catch(() => {});
+	}
 
-		this.subscribed.catch(() => {});
+	/**
+	 * Start the subscription to other processes' invalidations, or answer with the one under way.
+	 *
+	 * A failed subscription is forgotten, so the next call starts a fresh one: the failure has been reported to the
+	 * caller that awaited it, and the following write is the natural moment to try again.
+	 *
+	 * @returns Once Redis confirmed the subscription.
+	 * @internal
+	 */
+	private subscribe(): Promise<void> {
+		// 1. Reuse the subscription under way or already confirmed; only a missing one — never started, or failed and
+		//    forgotten — starts a new `SUBSCRIBE`
+		if (this.subscribed === undefined) {
+			// 2. Wrap the handler in a lambda, so `this` still points at the cache when the bus calls it; a failure
+			//    clears the field before it is passed on, so the caller sees the error and the next call retries
+			this.subscribed = this.bus
+				.subscribe<CacheMultiMessageClear>(CACHE_CHANNEL_KEY, (payload) => this.onMessageClear(payload))
+				.catch((error: unknown) => {
+					this.subscribed = undefined;
+
+					throw error;
+				});
+		}
+
+		return this.subscribed;
 	}
 
 	/**
@@ -187,9 +212,9 @@ export class CacheDriverMulti implements CacheDriver {
 	 * @internal
 	 */
 	private async clearOthers(key?: string) {
-		// 1. A process that could not subscribe must not write as if it took part in the invalidation: the failure
-		//    that was kept at construction is thrown here, on the first write
-		await this.subscribed;
+		// 1. A process that could not subscribe must not write as if it took part in the invalidation: the write
+		//    subscribes again when the earlier attempt failed, and throws when this one fails too
+		await this.subscribe();
 
 		// 2. Stamp the message with this process's id, so the sender can skip it when it comes back
 		await this.bus.publish(CACHE_CHANNEL_KEY, {

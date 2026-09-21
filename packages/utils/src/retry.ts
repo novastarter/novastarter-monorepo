@@ -140,9 +140,10 @@ export const retry = async <T>(fn: (attempt: number) => Promise<T>, options: Ret
 		throw new RangeError(`retry: "retries" must be a whole number of zero or more, got ${retries}`);
 	}
 
-	// 3. A jitter above one would let a pause come out negative, which `setTimeout` silently rounds up to zero; a
-	//    misconfiguration is refused before any attempt rather than turned into a busy retry loop
-	if (jitter < 0 || jitter > 1) {
+	// 3. A jitter above one would let a pause come out negative, which `setTimeout` silently rounds up to zero, and
+	//    `NaN` would poison every pause; written so that `NaN` fails the check too, the misconfiguration is refused
+	//    before any attempt rather than turned into a busy retry loop or a `RangeError` from `sleep` after the first
+	if (!(jitter >= 0 && jitter <= 1)) {
 		throw new RangeError(`retry: "jitter" must be between 0 and 1, got ${jitter}`);
 	}
 

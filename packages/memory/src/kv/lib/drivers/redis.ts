@@ -348,15 +348,17 @@ export class KvDriverRedis implements KvDriver {
 	 */
 	async acquireLock(key: string): Promise<Lock> {
 		// 1. Redlock wants an integer duration, so floor a possibly fractional timeout
-		const lock = await this.redlock.acquire([withNamespace(key, this.namespace)], Math.floor(this.lockTimeout));
+		let lock = await this.redlock.acquire([withNamespace(key, this.namespace)], Math.floor(this.lockTimeout));
 
-		// 2. Wrap the Redlock lock in the backend-agnostic handle shape
+		// 2. Wrap the Redlock lock in the backend-agnostic handle shape. Redlock's `extend()` invalidates the lock
+		//    object it was called on and answers with a new one, so the handle follows that new object: extending
+		//    through the old one a second time would throw "already expired" while Redis still holds the lock
 		return {
 			release: async () => {
 				await lock.release();
 			},
 			extend: async (duration: number) => {
-				await lock.extend(duration);
+				lock = await lock.extend(Math.floor(duration));
 			},
 		};
 	}

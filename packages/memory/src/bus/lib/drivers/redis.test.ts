@@ -15,10 +15,13 @@ import {
 	withNamespace,
 } from '../../../utils/index.js';
 import type { MessageHandler } from '../../types.js';
+import { reportUnreadable } from '../../utils/dispatch.js';
 import { BusDriverRedis } from './redis.js';
 
 vi.mock('ioredis');
 vi.mock('../../../utils/index.js');
+vi.mock('../../utils/dispatch.js', { spy: true });
+vi.mock('@novastarter/logger', () => ({ useLogger: () => ({ warn: vi.fn() }) }));
 
 let mockRedis: Redis;
 let mockSubRedis: Redis;
@@ -165,6 +168,20 @@ describe('subscribe', () => {
 		expect(bus['handlers'][mockNamespacedChannel]?.size).toBe(2);
 		expect(Array.from(bus['handlers'][mockNamespacedChannel]!)[1]).toBe(mockHandler);
 	});
+
+	test('Leaves no handler set behind when the Redis SUBSCRIBE fails, so a retry subscribes again', async () => {
+		// A set left in place would send the retry down the "already subscribed" branch and never ask Redis again
+		vi.mocked(bus['sub'].subscribe).mockRejectedValueOnce(new Error('connection lost'));
+
+		await expect(bus.subscribe(mockChannel, mockHandler)).rejects.toThrow('connection lost');
+		expect(bus['handlers'][mockNamespacedChannel]).toBeUndefined();
+
+		vi.mocked(bus['sub'].subscribe).mockResolvedValueOnce(1);
+		await bus.subscribe(mockChannel, mockHandler);
+
+		expect(bus['sub'].subscribe).toHaveBeenCalledTimes(2);
+		expect(bus['handlers'][mockNamespacedChannel]?.size).toBe(1);
+	});
 });
 
 describe('unsubscribe', () => {
@@ -252,5 +269,22 @@ describe('#messageBufferHandler', () => {
 
 		expect(decompress).toHaveBeenCalledWith(mockUint8Array);
 		expect(deserialize).toHaveBeenCalledWith(mockDecompressedUint8Array);
+	});
+
+	test('Logs a message it cannot decode instead of rejecting, and calls no handler', async () => {
+		// A foreign client publishing plain text on the channel, or a truncated gzip: the listener is fire-and-forget,
+		// so a rejection here would be unhandled and end the process
+		bus['handlers'] = {
+			[mockNamespacedChannel]: new Set([mockHandler]),
+		};
+
+		vi.mocked(deserialize).mockImplementationOnce(() => {
+			throw new SyntaxError('not JSON');
+		});
+
+		await expect(bus['messageBufferHandler'](mockNamespacedChannelBuffer, mockBuffer)).resolves.toBeUndefined();
+
+		expect(mockHandler).not.toHaveBeenCalled();
+		expect(reportUnreadable).toHaveBeenCalledWith(mockNamespacedChannel, expect.any(SyntaxError));
 	});
 });

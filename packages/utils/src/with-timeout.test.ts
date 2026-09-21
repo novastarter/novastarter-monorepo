@@ -2,6 +2,7 @@
  * Tests of `utils/withTimeout`: settles with the operation in time, gives up at the deadline or on abort, cleans up.
  */
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { MAX_TIMER_DELAY } from './sleep.js';
 import { TimeoutError, withTimeout } from './with-timeout.js';
 
 beforeEach(() => {
@@ -184,4 +185,20 @@ test('Ignores an abort after the operation settled', async () => {
 
 	controller.abort();
 	expect(vi.getTimerCount()).toBe(0);
+});
+
+test('Refuses a deadline the timer cannot hold instead of firing it at once', async () => {
+	// 1. Negative, NaN and overlong deadlines would all become a 1 ms timer in Node; each is a RangeError, and a
+	//    promise handed in is observed so its later rejection is not unhandled
+	const rejecting = Promise.reject(new Error('late'));
+
+	await expect(withTimeout(rejecting, -1)).rejects.toThrow(RangeError);
+	await expect(withTimeout(new Promise(() => {}), Number.NaN)).rejects.toThrow(RangeError);
+	await expect(withTimeout(new Promise(() => {}), MAX_TIMER_DELAY + 1)).rejects.toThrow(RangeError);
+	expect(vi.getTimerCount()).toBe(0);
+
+	// 2. A function operation is never started for a deadline that was refused
+	const operation = vi.fn(async () => 'value');
+	await expect(withTimeout(operation, -1)).rejects.toThrow(RangeError);
+	expect(operation).not.toHaveBeenCalled();
 });

@@ -136,15 +136,27 @@ describe('clear', () => {
 });
 
 describe('subscription', () => {
-	test('Throws the subscription failure on the first write, not at construction', async () => {
+	test('Reports a failed subscription on the next write and subscribes again there', async () => {
 		const error = new Error('no subscriber connection');
-		vi.mocked(BusDriverRedis.prototype.subscribe).mockRejectedValue(error);
+		vi.mocked(BusDriverRedis.prototype.subscribe).mockRejectedValueOnce(error).mockRejectedValueOnce(error);
 
-		// Construction must not throw and must not leave an unhandled rejection behind
+		// 1. Construction must not throw and must not leave an unhandled rejection behind
 		const failed = new CacheDriverMulti({ local: mockLocalConfig, redis: mockRedisConfig });
+		await Promise.resolve();
 
+		// 2. The first write tries again, fails again, and reports it without publishing. The automock records calls
+		//    on the instance's method, so the assertions go through the driver's own bus
 		await expect(failed.set(mockKey, mockValue)).rejects.toBe(error);
-		expect(BusDriverRedis.prototype.publish).not.toHaveBeenCalled();
+		expect(failed['bus'].subscribe).toHaveBeenCalledTimes(2);
+		expect(failed['bus'].publish).not.toHaveBeenCalled();
+
+		// 3. Once Redis is back the next write subscribes, publishes and succeeds; later writes reuse the subscription
+		vi.mocked(BusDriverRedis.prototype.subscribe).mockResolvedValue(undefined);
+		await failed.set(mockKey, mockValue);
+		await failed.delete(mockKey);
+
+		expect(failed['bus'].subscribe).toHaveBeenCalledTimes(3);
+		expect(failed['bus'].publish).toHaveBeenCalledTimes(2);
 	});
 });
 

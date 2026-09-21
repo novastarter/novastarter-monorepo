@@ -22,8 +22,9 @@ export type KvDriverLocalConfig = {
  * In-memory key-value store for a single process.
  *
  * Values are serialized to bytes on write and deserialized on read, the same way the Redis store does it, so a
- * caller cannot mutate a stored object through the reference it passed in. Locks are no-ops: with a single process
- * there is nobody to lock against.
+ * caller cannot mutate a stored object through the reference it passed in. Locks order the callers of this process:
+ * one holder per key at a time, the others waiting in turn, the way the Redis store orders the processes sharing a
+ * server.
  *
  * @example
  * ```ts
@@ -165,8 +166,15 @@ export class KvDriverLocal implements KvDriver {
 	 * @throws `Error` when the stored value is not a number.
 	 */
 	setMax(key: string, value: number): boolean {
-		// 1. A missing key counts as zero, the same baseline `increment` uses
-		const currentVal = this.get(key) ?? 0;
+		// 1. A missing key has nothing to beat, so any number — zero or negative included — is stored, the way the
+		//    Redis script does it; a `0` baseline would refuse `setMax('k', -5)` on one backend and take it on the other
+		const currentVal = this.get(key);
+
+		if (currentVal === undefined) {
+			this.set(key, value);
+
+			return true;
+		}
 
 		// 2. Comparing against a non-number would be meaningless, so refuse it
 		if (typeof currentVal !== 'number') {

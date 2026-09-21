@@ -115,6 +115,38 @@ describe('emitAction', () => {
 		);
 	});
 
+	test('Logs a handler that throws synchronously and still runs the handlers after it', async () => {
+		// eventemitter2 calls the handlers in a plain loop: unwrapped, a throw before the first `await` would escape
+		// `emitAsync` and skip every handler registered after the throwing one
+		const error = new Error('sync boom');
+		const after = vi.fn();
+
+		emitter.onAction('items.create', () => {
+			throw error;
+		});
+
+		emitter.onAction('items.create', after);
+
+		expect(() => emitter.emitAction('items.create', {})).not.toThrow();
+
+		await vi.waitFor(() =>
+			expect(logger.warn).toHaveBeenCalledWith(error, 'An error was thrown while executing action "items.create"'),
+		);
+
+		expect(after).toHaveBeenCalledOnce();
+	});
+
+	test('offAction removes the handler onAction registered', async () => {
+		const handler = vi.fn();
+
+		emitter.onAction('items.create', handler);
+		emitter.offAction('items.create', handler);
+		emitter.emitAction('items.create', {});
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(handler).not.toHaveBeenCalled();
+	});
+
 	test('Wraps a thrown non-Error so its text reaches the log', async () => {
 		// A string in first position would be pino's message and the text after it dropped; `toError` keeps both
 		emitter.onAction('items.create', async () => {

@@ -127,6 +127,8 @@ declare module '@novastarter/storage' {
  */
 class PartsMissingError extends Error {
 	/**
+	 * Create the error for a listing that is short of parts.
+	 *
 	 * @param listed - Parts the listing showed.
 	 * @param expected - Parts that were sent.
 	 */

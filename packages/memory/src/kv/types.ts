@@ -19,9 +19,12 @@ export interface Lock {
 	release(): Promise<void>;
 
 	/**
-	 * Push the lock's expiry further into the future.
+	 * Hold the lock for this much longer, counted from now rather than added to the current expiry.
 	 *
-	 * @param duration - Extra time to hold the lock, in milliseconds.
+	 * May be called as often as a long-running holder needs; the local store has nothing to extend and treats it as a
+	 * no-op.
+	 *
+	 * @param duration - Time to hold the lock from now, in milliseconds.
 	 * @returns Resolves once the lock is extended.
 	 */
 	extend(duration: number): Promise<void>;

@@ -12,7 +12,7 @@ import {
 } from '../../../utils/index.js';
 import type { BusDriver } from '../../driver.js';
 import type { MessageHandler } from '../../types.js';
-import { dispatch } from '../../utils/dispatch.js';
+import { dispatch, reportUnreadable } from '../../utils/dispatch.js';
 
 /**
  * Options of {@link BusDriverRedis}, the `redis` driver.
@@ -159,14 +159,24 @@ export class BusDriverRedis implements BusDriver {
 		const existingSet = this.handlers[namespaced];
 
 		// 2. Only the first callback triggers a Redis `SUBSCRIBE`; later ones join the existing set
-		if (existingSet === undefined) {
-			const set = new Set<MessageHandler<T>>();
-			set.add(callback);
-			this.handlers[namespaced] = set;
-
-			await this.sub.subscribe(namespaced);
-		} else {
+		if (existingSet !== undefined) {
 			existingSet.add(callback);
+
+			return;
+		}
+
+		const set = new Set<MessageHandler<T>>();
+		set.add(callback);
+		this.handlers[namespaced] = set;
+
+		// 3. A `SUBSCRIBE` that fails leaves no set behind: with one in place, a retry would take the branch above and
+		//    add its callback without ever asking Redis again, so the channel would stay silent for good
+		try {
+			await this.sub.subscribe(namespaced);
+		} catch (error) {
+			delete this.handlers[namespaced];
+
+			throw error;
 		}
 	}
 
@@ -221,23 +231,36 @@ export class BusDriverRedis implements BusDriver {
 	 * @param message - Raw payload bytes.
 	 * @internal
 	 */
-	private async messageBufferHandler(channel: Buffer, message: Buffer) {
+	private async messageBufferHandler(channel: Buffer, message: Buffer): Promise<void> {
 		// 1. Redis reports the channel as bytes; decode it to look the handlers up
 		const namespaced = uint8ArrayToString(bufferToUint8Array(channel));
 
-		if (namespaced in this.handlers === false) {
+		if (!(namespaced in this.handlers)) {
 			return;
 		}
 
-		// 2. Compression is decided per payload on publish, so detect it from the gzip header
-		let binaryArray = bufferToUint8Array(message);
+		// 2. Decode the payload — compression is decided per payload on publish, so it is detected from the gzip
+		//    header. A payload this bus did not write, a foreign client's plain text or a truncated gzip, fails here;
+		//    the listener is fire-and-forget, so the failure is logged rather than left as an unhandled rejection
+		//    that would end the process
+		let payload: unknown;
 
-		if (this.compression === true && isCompressed(binaryArray)) {
-			binaryArray = await decompress(binaryArray);
+		try {
+			let binaryArray = bufferToUint8Array(message);
+
+			if (this.compression === true && isCompressed(binaryArray)) {
+				binaryArray = await decompress(binaryArray);
+			}
+
+			payload = deserialize(binaryArray);
+		} catch (error) {
+			reportUnreadable(namespaced, error);
+
+			return;
 		}
 
-		// 3. Deserialize once and hand the same value to every callback, each on its own: a failing subscriber is
-		//    logged and the others still run
-		dispatch(namespaced, this.handlers[namespaced], deserialize(binaryArray));
+		// 3. Hand the same value to every callback, each on its own: a failing subscriber is logged and the others
+		//    still run
+		dispatch(namespaced, this.handlers[namespaced], payload);
 	}
 }

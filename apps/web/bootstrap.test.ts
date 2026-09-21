@@ -2,7 +2,6 @@
  * Integration test of the app bootstrap on the in-process drivers: the configuration under `config/` is registered
  * on the real managers and a job goes through the real queue.
  */
-import { useEnv } from '@novastarter/env';
 import { useMail } from '@novastarter/mail';
 import { useBus, useCache, useKv, useLimiter } from '@novastarter/memory';
 import { _handlers, enqueue, QueueDriverLocal, registerJobHandlers, useQueue } from '@novastarter/queue';
@@ -15,7 +14,6 @@ import { readEnv } from './env';
 afterEach(() => {
 	_state.booted = false;
 	readEnv.reset();
-	useEnv.reset();
 	useQueue.reset();
 	useRedis.reset();
 	useStorage.reset();

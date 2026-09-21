@@ -89,6 +89,19 @@ describe.skipIf(!REDIS)('KvDriverRedis on Redis', () => {
 		await other.clear();
 	});
 
+	test('acquireLock can be extended more than once and then released', async () => {
+		// 1. Redlock invalidates the lock object on every extend; the handle must keep following the current one
+		const lock = await kv.acquireLock('extended');
+
+		await lock.extend(2_000);
+		await lock.extend(2_000);
+		await lock.release();
+
+		// 2. Released for real: the next holder gets in at once
+		const next = await kv.acquireLock('extended');
+		await next.release();
+	});
+
 	test('usingLock lets one holder in at a time', async () => {
 		// 1. Two callers race for the same lock; the second one must see the first one's write, not run alongside it
 		const order: string[] = [];
