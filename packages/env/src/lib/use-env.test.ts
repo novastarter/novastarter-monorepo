@@ -1,24 +1,33 @@
+/**
+ * Tests of `env/lib/use-env`.
+ *
+ * `./create-env.js` is mocked, so these exercise the memoization alone.
+ */
 import { afterEach, expect, test, vi } from 'vitest';
 import { createEnv } from './create-env.js';
-import { _cache, useEnv } from './use-env.js';
+import { useEnv } from './use-env.js';
 
 vi.mock('./create-env.js');
 
 afterEach(() => {
 	vi.resetAllMocks();
 
-	_cache.env = undefined;
+	useEnv.reset();
 });
 
-test('Returns cached env if exists', () => {
-	_cache.env = {};
+test('Returns the cached env if it exists', () => {
+	// 1. The first call builds; the second answers with the same object without building again
+	const mockEnv = {};
+	vi.mocked(createEnv).mockReturnValue(mockEnv);
 
-	const env = useEnv();
+	const first = useEnv();
 
-	expect(env).toBe(_cache.env);
+	expect(useEnv()).toBe(first);
+	expect(createEnv).toHaveBeenCalledOnce();
 });
 
-test('Creates new cached env if not exists, passing the options along', () => {
+test('Creates the env on first use, passing the options along', () => {
+	// 1. The options of the first call reach the builder; a later call without options gets the same object
 	const mockEnv = {};
 	vi.mocked(createEnv).mockReturnValue(mockEnv);
 
@@ -26,5 +35,6 @@ test('Creates new cached env if not exists, passing the options along', () => {
 
 	expect(env).toBe(mockEnv);
 	expect(createEnv).toHaveBeenCalledWith({ fileVariables: ['DB_PASSWORD'] });
-	expect(_cache.env).toBe(mockEnv);
+	expect(useEnv()).toBe(mockEnv);
+	expect(createEnv).toHaveBeenCalledOnce();
 });

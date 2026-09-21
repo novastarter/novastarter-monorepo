@@ -1,8 +1,7 @@
 import { DriverManager } from '@novastarter/utils';
-import type { Bus } from '../types/class.js';
-import type { BusDriverLocalConfig, BusDriverRedisConfig } from '../types/config.js';
-import { BusDriverLocal } from './local.js';
-import { BusDriverRedis } from './redis.js';
+import type { Bus } from '../driver.js';
+import { BusDriverLocal, type BusDriverLocalConfig } from './drivers/local.js';
+import { BusDriverRedis, type BusDriverRedisConfig } from './drivers/redis.js';
 
 /**
  * Bus drivers by the name they are registered under, mapped to the options their constructor takes.
@@ -24,7 +23,7 @@ export interface BusDrivers {
  * The {@link DriverManager} of the kit for the message bus: the built-in drivers (`local`, `redis`) are registered on
  * construction, so the application only registers its locations, with the options it read from its own configuration;
  * a location is built on its first use. A further driver can be registered under a name of its own once it joined
- * {@link BusDrivers}. The application wires it at start-up through `useBus()`.
+ * {@link BusDrivers}. The application wires it at start-up through {@link useBus}.
  *
  * @example
  * ```ts

@@ -2,7 +2,7 @@
  * Tests of `utils/location-manager`: registration, lazy build, reuse and `close()` on a minimal subclass.
  */
 import { describe, expect, test, vi } from 'vitest';
-import { LocationManager } from './location-manager.js';
+import { DEFAULT_LOCATION, LocationManager } from './location-manager.js';
 
 /**
  * What the test manager builds: a handle that records whether it was released.
@@ -81,6 +81,18 @@ describe('#location', () => {
 		expect(() => manager.location('main')).toThrowErrorMatchingInlineSnapshot(
 			`[Error: Location "main" doesn't exist.]`,
 		);
+	});
+
+	test('Answers with the default location when given no name', () => {
+		// 1. `DEFAULT_LOCATION` is what a deployment with one location registers; without a name that is the one asked for
+		const manager = new TestManager();
+
+		expect(() => manager.location()).toThrowErrorMatchingInlineSnapshot(`[Error: Location "default" doesn't exist.]`);
+
+		manager.registerLocation(DEFAULT_LOCATION, 'redis://default');
+
+		expect(manager.location()).toBe(manager.location('default'));
+		expect(manager.builds).toHaveBeenCalledOnce();
 	});
 
 	test('Builds from the registered arguments on first use, then reuses the instance', () => {

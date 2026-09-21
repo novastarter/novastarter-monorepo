@@ -1,7 +1,44 @@
-import { type Kv, KvDriverRedis } from '../../kv/index.js';
-import type { Lock } from '../../kv/types/lock.js';
-import type { Cache } from '../types/class.js';
-import type { CacheDriverRedisConfig } from '../types/config.js';
+import type { Redis } from 'ioredis';
+import { type Kv, KvDriverRedis } from '../../../kv/index.js';
+import type { Lock } from '../../../kv/types.js';
+import type { Cache } from '../../driver.js';
+
+/**
+ * Options of {@link CacheDriverRedis}, the `redis` driver.
+ */
+export type CacheDriverRedisConfig = {
+	/**
+	 * Prefix for every key, so several caches can share one Redis instance.
+	 */
+	namespace: string;
+
+	/**
+	 * Enable gzip compression of cached values.
+	 *
+	 * @default true
+	 */
+	compression?: boolean | undefined;
+
+	/**
+	 * Minimum byte size of a value before it is compressed.
+	 *
+	 * There is a trade-off between size and the time spent gzipping; below roughly 1 kB the savings do not pay for
+	 * the CPU time.
+	 *
+	 * @default 1000
+	 */
+	compressionMinSize?: number | undefined;
+
+	/**
+	 * Time-to-live: keys expire after this many milliseconds.
+	 */
+	ttl?: number | undefined;
+
+	/**
+	 * Existing or new Redis connection to use with this cache.
+	 */
+	redis: Redis;
+};
 
 /**
  * Redis-backed cache shared between processes, a thin wrapper over `KvDriverRedis`.

@@ -1,21 +1,22 @@
+import { type Singleton, singleton } from '@novastarter/utils';
 import type { Logger } from 'pino';
 import { createLogger } from './create-logger.js';
-import { type LogsBus, LogsStream, type PrettyType } from './logs-stream.js';
+import { type LogsBus, LogsStream } from './logs-stream.js';
 
 /**
- * Memoized logger and bus streams, held at module level so each is built once per process.
+ * Return the process-wide logger.
  *
- * Wrapped in an object rather than exported as bare bindings, so tests can reset them in place instead of reloading
- * the module.
+ * The one given to {@link registerLogger}; before any registration, a default logger — `info`, raw JSON lines — is
+ * built on the first call and kept, so a package can log during start-up without waiting for the application.
  *
- * @internal
- * @defaultValue Everything empty until first use.
+ * @returns The same pino logger on every call, so callers may hold on to it; `useLogger.reset()` drops it, for tests.
+ * @example
+ * ```ts
+ * const logger = useLogger();
+ * logger.info('Server started');
+ * ```
  */
-export const _cache: {
-	logger: Logger<never> | undefined;
-	logsStream: LogsStream | undefined;
-	httpLogsStream: LogsStream | undefined;
-} = { logger: undefined, logsStream: undefined, httpLogsStream: undefined };
+export const useLogger: Singleton<Logger<never>> = singleton(() => createLogger());
 
 /**
  * Make a logger the process-wide one.
@@ -34,67 +35,31 @@ export const _cache: {
  */
 export const registerLogger = (logger: Logger<never>): void => {
 	// 1. Replace rather than merge: the application's logger carries its own streams and level
-	_cache.logger = logger;
-};
-
-/**
- * Return the process-wide logger.
- *
- * The one given to {@link registerLogger}; before any registration, a default logger — `info`, raw JSON lines — is
- * built on the first call and kept, so a package can log during start-up without waiting for the application.
- *
- * @returns The same pino logger on every call, so callers may hold on to it.
- *
- * @example
- * ```ts
- * const logger = useLogger();
- * logger.info('Server started');
- * ```
- */
-export const useLogger = (): Logger<never> => {
-	// 1. Reuse the registered or built logger — configuring pino on every call would open a new stream each time
-	if (_cache.logger) {
-		return _cache.logger;
-	}
-
-	// 2. Nothing registered yet: a default logger, safe for a collector, until the application registers its own
-	_cache.logger = createLogger();
-
-	return _cache.logger;
+	useLogger.replace(logger);
 };
 
 /**
  * Return the bus stream for application logs, building it on first use.
  *
+ * The arguments count on the first call only: one stream serves the process, so its shape and bus are decided once.
+ *
  * @param pretty - `true` publishes level, time and message; `false` publishes the raw line.
  * @param messenger - Bus the lines are published on.
- * @returns The same stream on every call.
+ * @returns The same stream on every call; `getLogsStream.reset()` drops it, for tests.
  */
-export const getLogsStream = (pretty: boolean, messenger: LogsBus): LogsStream => {
-	if (_cache.logsStream) {
-		return _cache.logsStream;
-	}
-
-	const shape: PrettyType = pretty ? 'basic' : false;
-	_cache.logsStream = new LogsStream(shape, messenger);
-
-	return _cache.logsStream;
-};
+export const getLogsStream: Singleton<LogsStream, [pretty: boolean, messenger: LogsBus]> = singleton(
+	(pretty: boolean, messenger: LogsBus) => new LogsStream(pretty ? 'basic' : false, messenger),
+);
 
 /**
  * Return the bus stream for HTTP logs, building it on first use.
  *
+ * The arguments count on the first call only, like {@link getLogsStream}.
+ *
  * @param pretty - `true` folds the request into one message; `false` publishes the raw line.
  * @param messenger - Bus the lines are published on.
- * @returns The same stream on every call.
+ * @returns The same stream on every call; `getHttpLogsStream.reset()` drops it, for tests.
  */
-export const getHttpLogsStream = (pretty: boolean, messenger: LogsBus): LogsStream => {
-	if (_cache.httpLogsStream) {
-		return _cache.httpLogsStream;
-	}
-
-	const shape: PrettyType = pretty ? 'http' : false;
-	_cache.httpLogsStream = new LogsStream(shape, messenger);
-
-	return _cache.httpLogsStream;
-};
+export const getHttpLogsStream: Singleton<LogsStream, [pretty: boolean, messenger: LogsBus]> = singleton(
+	(pretty: boolean, messenger: LogsBus) => new LogsStream(pretty ? 'http' : false, messenger),
+);

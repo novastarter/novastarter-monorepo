@@ -10,12 +10,12 @@ import {
 	uint8ArrayToBuffer,
 	uint8ArrayToString,
 	withNamespace,
-} from '../../utils/index.js';
-import type { MessageHandler } from '../types/index.js';
+} from '../../../utils/index.js';
+import type { MessageHandler } from '../../types.js';
 import { BusDriverRedis } from './redis.js';
 
 vi.mock('ioredis');
-vi.mock('../../utils/index.js');
+vi.mock('../../../utils/index.js');
 
 let mockRedis: Redis;
 let mockSubRedis: Redis;

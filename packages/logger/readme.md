@@ -37,7 +37,8 @@ logger.error(err, 'Request failed');
 ```
 
 Before `registerLogger()` runs, `useLogger()` answers with a default logger — `info`, raw JSON lines — so a package can
-log during start-up.
+log during start-up. `useLogger` is a `singleton` of `@novastarter/utils` like every `use*()` of the kit:
+`useLogger.reset()` drops the logger for a test that needs a clean slate.
 
 Request logging, on any Node HTTP server — a child of the process logger, one line per request:
 

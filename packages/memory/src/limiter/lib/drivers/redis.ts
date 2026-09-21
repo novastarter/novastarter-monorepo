@@ -1,7 +1,23 @@
+import type { Redis } from 'ioredis';
 import { RateLimiterRedis } from 'rate-limiter-flexible';
-import type { Limiter } from '../types/class.js';
-import type { LimiterDriverRedisConfig } from '../types/config.js';
-import { consume } from '../utils/consume.js';
+import type { Limiter } from '../../driver.js';
+import type { LimiterDriverConfigBase } from '../../types.js';
+import { consume } from '../../utils/consume.js';
+
+/**
+ * Options of {@link LimiterDriverRedis}, the `redis` driver.
+ */
+export type LimiterDriverRedisConfig = LimiterDriverConfigBase & {
+	/**
+	 * Prefix for every key in Redis.
+	 */
+	namespace: string;
+
+	/**
+	 * Existing or new Redis connection to track consumption in.
+	 */
+	redis: Redis;
+};
 
 /**
  * Rate limiter over `rate-limiter-flexible`'s Redis store, enforcing one budget across processes.

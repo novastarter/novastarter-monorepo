@@ -1,11 +1,11 @@
 import { Redis } from 'ioredis';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { KvDriverRedis } from '../../kv/index.js';
+import { KvDriverRedis } from '../../../kv/index.js';
 import { CacheDriverRedis } from './redis.js';
 
 vi.mock('ioredis');
-vi.mock('../../kv/index.js');
-vi.mock('../../utils/index.js');
+vi.mock('../../../kv/index.js');
+vi.mock('../../../utils/index.js');
 
 const mockKey = 'test-key';
 const mockValue = 'test-value';

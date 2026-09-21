@@ -9,12 +9,11 @@ import {
 	serialize,
 	uint8ArrayToBuffer,
 	withNamespace,
-} from '../../utils/index.js';
-import type { ExtendedRedis } from '../index.js';
-import { KvDriverRedis, SET_MAX_SCRIPT } from './redis.js';
+} from '../../../utils/index.js';
+import { type ExtendedRedis, KvDriverRedis, SET_MAX_SCRIPT } from './redis.js';
 
 vi.mock('ioredis');
-vi.mock('../../utils/index.js');
+vi.mock('../../../utils/index.js');
 
 let mockNamespace: string;
 let mockKey: string;

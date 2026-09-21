@@ -1,9 +1,4 @@
-/**
- * Callback invoked with every message published on a channel.
- *
- * @typeParam T - Payload type the subscriber expects.
- */
-export type MessageHandler<T = unknown> = (payload: T) => void;
+import type { MessageHandler } from './types.js';
 
 /**
  * Publish/subscribe bus shared by the local and Redis backends.

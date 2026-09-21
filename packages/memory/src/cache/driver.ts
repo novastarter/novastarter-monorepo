@@ -1,4 +1,4 @@
-import type { Lock } from '../../kv/types/lock.js';
+import type { Lock } from '../kv/types.js';
 
 /**
  * Cache shared by the local, Redis and multi-stage backends.

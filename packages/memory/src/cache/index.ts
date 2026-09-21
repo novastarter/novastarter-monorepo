@@ -1,5 +1,8 @@
 /**
- * Cache: the `Cache` interface, its `local`, `redis` and `multi` drivers and the `CacheManager` of their locations.
+ * Cache: the `Cache` contract, its `local`, `redis` and `multi` drivers, the `CacheManager` of their locations and the
+ * `useCache` accessor of the process-wide one.
  */
-export * from './lib/index.js';
-export * from './types/index.js';
+export * from './driver.js';
+export * from './lib/cache-manager.js';
+export * from './lib/drivers/index.js';
+export * from './lib/use-cache.js';

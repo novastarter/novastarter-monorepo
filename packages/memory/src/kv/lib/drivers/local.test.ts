@@ -1,10 +1,10 @@
 import { LRUCache } from 'lru-cache';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { deserialize, serialize } from '../../utils/index.js';
+import { deserialize, serialize } from '../../../utils/index.js';
 import { KvDriverLocal } from './local.js';
 
 vi.mock('lru-cache');
-vi.mock('../../utils/index.js');
+vi.mock('../../../utils/index.js');
 
 let kv: KvDriverLocal;
 

@@ -283,6 +283,19 @@ Mandatory, no exceptions.
 - Subsystems follow the single driver / manager / factory convention. A new subsystem repeats it rather than introducing
   its own.
 
+## Rule: tests sit next to the code, integration tests are marked and skip without their service
+
+Mandatory, no exceptions.
+
+- A unit test is `<name>.test.ts` next to `<name>.ts`, one file per module: a driver gets its own test file, not a
+  shared one for the library it wraps.
+- A test that runs a module with its real dependencies — the other modules of the package unmocked, or a real
+  backend — is `<name>.int.test.ts` next to the module it starts from.
+- A test that needs a running service reads its address from the environment and skips without it:
+  `describe.skipIf(!process.env['REDIS'])(…)`. `pnpm test` stays green on a machine with nothing running; the
+  service is what turns the suite on. Clients are opened inside `beforeAll`, never in the `describe` body, which
+  runs at collection even when the suite is skipped.
+
 ## Rule: no application business logic in `packages/`
 
 Mandatory, no exceptions.

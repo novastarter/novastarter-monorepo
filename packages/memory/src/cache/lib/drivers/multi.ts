@@ -1,10 +1,24 @@
 import { processId } from '@novastarter/utils/node';
-import { type Bus, BusDriverRedis } from '../../bus/index.js';
-import type { Lock } from '../../kv/types/lock.js';
-import type { Cache } from '../types/class.js';
-import type { CacheDriverMultiConfig } from '../types/config.js';
-import { CacheDriverLocal } from './local.js';
-import { CacheDriverRedis } from './redis.js';
+import { type Bus, BusDriverRedis } from '../../../bus/index.js';
+import type { Lock } from '../../../kv/types.js';
+import type { Cache } from '../../driver.js';
+import { CacheDriverLocal, type CacheDriverLocalConfig } from './local.js';
+import { CacheDriverRedis, type CacheDriverRedisConfig } from './redis.js';
+
+/**
+ * Options of {@link CacheDriverMulti}, the `multi` driver: a local L1 in front of a Redis L2.
+ */
+export type CacheDriverMultiConfig = {
+	/**
+	 * Configuration of the L1 (in-memory) cache.
+	 */
+	local: CacheDriverLocalConfig;
+
+	/**
+	 * Configuration of the L2 (Redis) cache; its connection and namespace are also used for the invalidation bus.
+	 */
+	redis: CacheDriverRedisConfig;
+};
 
 /**
  * Bus channel on which multi-stage caches tell each other to drop local entries.

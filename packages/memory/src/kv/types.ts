@@ -1,4 +1,13 @@
 /**
+ * Value that may or may not be wrapped in a promise.
+ *
+ * The local store answers synchronously while Redis answers asynchronously; callers `await` either way.
+ *
+ * @typeParam T - The unwrapped value.
+ */
+export type MaybePromise<T> = Promise<T> | T;
+
+/**
  * Handle on a lock acquired through `Kv.acquireLock`.
  */
 export interface Lock {

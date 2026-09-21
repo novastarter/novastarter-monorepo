@@ -38,7 +38,8 @@ parameter maps driver names to their options, so `driver` decides the type of `o
 as an augmentable interface (`StorageDrivers`, `QueueDrivers`, `KvDrivers`, …). `StorageManager`, `QueueManager`,
 `KvManager` and the others extend it; a new subsystem does the same rather than inventing its own. Every driver contract
 declares an optional `close()` (`Closable`); `close()` on the manager calls it on the drivers built so far, drops them
-and keeps the registrations, so a location asked for after shutdown is built afresh.
+and keeps the registrations, so a location asked for after shutdown is built afresh. `location()` without a name answers
+with `DEFAULT_LOCATION` (`default`), the one location a deployment with a single bucket, server or provider registers.
 
 ```ts
 import { DriverManager } from '@novastarter/utils';
@@ -54,6 +55,7 @@ manager.registerLocation('uploads', {
 });
 
 manager.location('uploads'); // the StorageDriverS3 instance, built now and reused afterwards
+manager.location(); // the location named DEFAULT_LOCATION, `default`
 manager.hasLocation('uploads'); // true
 manager.locationNames(); // ['uploads']
 manager.instantiated(); // Map { 'uploads' => StorageDriverS3 }
@@ -85,7 +87,9 @@ class RedisManager extends LocationManager<Redis, [config: RedisConfig, override
 ## `singleton`
 
 The `use*()` accessor of every manager: the builder runs on the first call, every later call answers with the same
-instance, and `reset()` drops it for a test that needs a clean slate.
+instance, `replace()` swaps in an instance the application built itself — what `registerLogger()` does — and `reset()`
+drops it for a test that needs a clean slate. A builder may take arguments; those of the first call are what the
+instance is built from, later calls answer with it whatever they are given.
 
 ```ts
 import { type Singleton, singleton } from '@novastarter/utils';
@@ -93,7 +97,13 @@ import { type Singleton, singleton } from '@novastarter/utils';
 export const useStorage: Singleton<StorageManager> = singleton(() => new StorageManager());
 
 useStorage() === useStorage(); // true
+useStorage.replace(new StorageManager()); // every later call answers with this one
 useStorage.reset(); // the next call builds a new manager
+
+export const useEnv: Singleton<Env, [options?: CreateEnvOptions]> = singleton((options) => createEnv(options));
+
+useEnv({ fileVariables: ['DB_PASSWORD'] }); // built from these options
+useEnv(); // the same object
 ```
 
 ## `formatTitle`

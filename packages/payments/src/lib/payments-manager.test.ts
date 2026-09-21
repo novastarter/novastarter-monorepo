@@ -2,8 +2,9 @@
  * Tests of `payments/lib/payments-manager`: the manager is the kit's `DriverManager`, so only what a payments
  * location adds on top is checked here — registration, lazy instantiation, the default location name.
  */
+import { DEFAULT_LOCATION } from '@novastarter/utils';
 import { describe, expect, test, vi } from 'vitest';
-import { DEFAULT_PAYMENTS_LOCATION, PaymentsManager } from './payments-manager.js';
+import { PaymentsManager } from './payments-manager.js';
 
 // The test driver joins the driver map the way a driver package does, so its registrations type-check
 declare module './payments-manager.js' {
@@ -31,7 +32,7 @@ describe('#registerLocation', () => {
 
 		// 1. No driver was registered, so the lookup by name must fail before any instantiation happens
 		expect(() =>
-			manager.registerLocation(DEFAULT_PAYMENTS_LOCATION, {
+			manager.registerLocation(DEFAULT_LOCATION, {
 				driver: 'test-driver',
 				options: {},
 			}),
@@ -46,7 +47,7 @@ describe('#registerLocation', () => {
 
 		manager.registerDriver('test-driver', mockDriver);
 
-		manager.registerLocation(DEFAULT_PAYMENTS_LOCATION, {
+		manager.registerLocation(DEFAULT_LOCATION, {
 			driver: 'test-driver',
 			options: {
 				apiKey: 'key',
@@ -56,11 +57,11 @@ describe('#registerLocation', () => {
 		// 2. Registration keeps the configuration only; the first use builds the driver from `options` alone
 		expect(mockDriver).not.toHaveBeenCalled();
 
-		manager.location(DEFAULT_PAYMENTS_LOCATION);
+		manager.location(DEFAULT_LOCATION);
 
 		expect(mockDriver).toHaveBeenCalledOnce();
 		expect(mockDriver).toHaveBeenCalledWith({ apiKey: 'key' });
-		expect(manager.instantiated().get(DEFAULT_PAYMENTS_LOCATION)).toBeInstanceOf(mockDriver);
+		expect(manager.instantiated().get(DEFAULT_LOCATION)).toBeInstanceOf(mockDriver);
 	});
 });
 

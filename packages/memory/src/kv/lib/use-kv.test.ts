@@ -1,69 +1,50 @@
 /**
- * Tests of `memory/lib/use-memory` and the four managers.
+ * Tests of `memory/kv/lib/use-kv`: one manager per process, resettable, with the built-in drivers registered.
  */
-import { afterEach, expect, test } from 'vitest';
-import { BusDriverLocal } from '../bus/lib/local.js';
-import { CacheDriverLocal } from '../cache/lib/local.js';
-import { KvDriverLocal } from '../kv/lib/local.js';
-import { LimiterDriverLocal } from '../limiter/lib/local.js';
-import { useBus, useCache, useKv, useLimiter } from './use-memory.js';
+import { afterEach, describe, expect, test } from 'vitest';
+import { KvDriverLocal } from './drivers/local.js';
+import { KvManager } from './kv-manager.js';
+import { useKv } from './use-kv.js';
 
 afterEach(() => {
 	useKv.reset();
-	useCache.reset();
-	useBus.reset();
-	useLimiter.reset();
 });
 
-test('Each accessor keeps one manager per process', () => {
-	expect(useKv()).toBe(useKv());
-	expect(useCache()).toBe(useCache());
-	expect(useBus()).toBe(useBus());
-	expect(useLimiter()).toBe(useLimiter());
-});
+describe('useKv', () => {
+	test('Creates a manager on first use and hands the same one out afterwards', () => {
+		// 1. Every later call returns the cached instance, so registrations made at start-up are visible everywhere
+		const manager = useKv();
 
-test('The built-in drivers are registered, so a location needs its options alone', async () => {
-	useKv().registerLocation('default', {
-		driver: 'local',
-		options: {},
+		expect(manager).toBeInstanceOf(KvManager);
+		expect(useKv()).toBe(manager);
+
+		// 2. `reset()` drops it, so the next test starts from a manager with only the built-in drivers
+		useKv.reset();
+		expect(useKv()).not.toBe(manager);
 	});
 
-	useCache().registerLocation('default', {
-		driver: 'local',
-		options: {
-			maxKeys: 10,
-		},
-	});
-
-	useBus().registerLocation('default', {
-		driver: 'local',
-		options: {},
-	});
-
-	useLimiter().registerLocation('api', {
-		driver: 'local',
-		options: {
-			points: 5,
-			duration: 1,
-		},
-	});
-
-	expect(useKv().location('default')).toBeInstanceOf(KvDriverLocal);
-	expect(useCache().location('default')).toBeInstanceOf(CacheDriverLocal);
-	expect(useBus().location('default')).toBeInstanceOf(BusDriverLocal);
-	expect(useLimiter().location('api')).toBeInstanceOf(LimiterDriverLocal);
-
-	await useKv().location('default').set('key', 'value');
-	expect(await useKv().location('default').get('key')).toBe('value');
-});
-
-test('A location of an unknown driver is refused, an unknown location too', () => {
-	expect(() =>
-		useKv().registerLocation('x', {
-			driver: 'memcached' as 'local',
+	test('The built-in drivers are registered, so a location needs its options alone', async () => {
+		// 1. `local` comes with the manager; the location is built on first use and works end to end
+		useKv().registerLocation('default', {
+			driver: 'local',
 			options: {},
-		}),
-	).toThrow(/isn't registered/);
+		});
 
-	expect(() => useKv().location('nope')).toThrow(/doesn't exist/);
+		expect(useKv().location('default')).toBeInstanceOf(KvDriverLocal);
+
+		await useKv().location('default').set('key', 'value');
+		expect(await useKv().location('default').get('key')).toBe('value');
+	});
+
+	test('A location of an unknown driver is refused, an unknown location too', () => {
+		// 1. Both are configuration bugs and fail loudly at registration or first use
+		expect(() =>
+			useKv().registerLocation('x', {
+				driver: 'memcached' as 'local',
+				options: {},
+			}),
+		).toThrow(/isn't registered/);
+
+		expect(() => useKv().location('nope')).toThrow(/doesn't exist/);
+	});
 });

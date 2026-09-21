@@ -4,20 +4,14 @@ import type { RedisConfig } from '../types.js';
 import { createRedis } from './create-redis.js';
 
 /**
- * Name of the location `location()` returns when given none — the one server most deployments have.
- *
- * @defaultValue `default`
- */
-export const DEFAULT_REDIS_LOCATION = 'default';
-
-/**
  * Registry of named Redis servers — locations — and the one client each of them is reached through.
  *
  * The {@link LocationManager} of the kit for Redis, without the driver step: there is one client library, so a
  * location is registered with its connection alone, and the client opens on the location's first use, so a process
  * that never touches a server never connects to it. One connection per location is enough for every consumer: the
- * `@novastarter/memory` backends share it, and the bus duplicates it by itself for subscribing. `close()` quits every
- * client opened so far. The application wires it at start-up through {@link useRedis}.
+ * `@novastarter/memory` backends share it, and the bus duplicates it by itself for subscribing. `location()` without
+ * a name answers with the `default` location, the one server most deployments have; `close()` quits every client
+ * opened so far. The application wires it at start-up through {@link useRedis}.
  *
  * @example
  * ```ts
@@ -34,19 +28,6 @@ export const DEFAULT_REDIS_LOCATION = 'default';
  * ```
  */
 export class RedisManager extends LocationManager<Redis, [config: RedisConfig, overrides?: RedisOptions]> {
-	/**
-	 * Return the client of a registered location, opening it on the first call.
-	 *
-	 * @param name - Location identifier passed to {@link RedisManager.registerLocation}; {@link DEFAULT_REDIS_LOCATION}
-	 * when omitted.
-	 * @returns The client of that location; the same one on every later call.
-	 * @throws Error when no location of that name is registered.
-	 */
-	override location(name: string = DEFAULT_REDIS_LOCATION): Redis {
-		// 1. Only the default name is added here; the base builds the client on first use and keeps it
-		return super.location(name);
-	}
-
 	/**
 	 * Open the client of a location from the connection it was registered with.
 	 *

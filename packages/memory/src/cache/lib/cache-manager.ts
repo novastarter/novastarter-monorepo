@@ -1,9 +1,8 @@
 import { DriverManager } from '@novastarter/utils';
-import type { Cache } from '../types/class.js';
-import type { CacheDriverLocalConfig, CacheDriverMultiConfig, CacheDriverRedisConfig } from '../types/config.js';
-import { CacheDriverLocal } from './local.js';
-import { CacheDriverMulti } from './multi.js';
-import { CacheDriverRedis } from './redis.js';
+import type { Cache } from '../driver.js';
+import { CacheDriverLocal, type CacheDriverLocalConfig } from './drivers/local.js';
+import { CacheDriverMulti, type CacheDriverMultiConfig } from './drivers/multi.js';
+import { CacheDriverRedis, type CacheDriverRedisConfig } from './drivers/redis.js';
 
 /**
  * Cache drivers by the name they are registered under, mapped to the options their constructor takes.
@@ -27,7 +26,7 @@ export interface CacheDrivers {
  * The {@link DriverManager} of the kit for the cache: the built-in drivers (`local`, `redis`, `multi`) are registered on
  * construction, so the application only registers its locations, with the options it read from its own configuration;
  * a location is built on its first use. A further driver can be registered under a name of its own once it joined
- * {@link CacheDrivers}. The application wires it at start-up through `useCache()`.
+ * {@link CacheDrivers}. The application wires it at start-up through {@link useCache}.
  *
  * @example
  * ```ts

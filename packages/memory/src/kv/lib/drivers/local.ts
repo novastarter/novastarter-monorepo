@@ -1,7 +1,21 @@
 import { LRUCache } from 'lru-cache';
-import { deserialize, serialize } from '../../utils/index.js';
-import type { Kv } from '../types/class.js';
-import type { KvDriverLocalConfig } from '../types/config.js';
+import { deserialize, serialize } from '../../../utils/index.js';
+import type { Kv } from '../../driver.js';
+
+/**
+ * Options of {@link KvDriverLocal}, the `local` driver.
+ */
+export type KvDriverLocalConfig = {
+	/**
+	 * Maximum number of keys in the store; the least recently used key is evicted beyond it.
+	 */
+	maxKeys?: number | undefined;
+
+	/**
+	 * Time-to-live: keys expire after this many milliseconds.
+	 */
+	ttl?: number | undefined;
+};
 
 /**
  * In-memory key-value store for a single process.

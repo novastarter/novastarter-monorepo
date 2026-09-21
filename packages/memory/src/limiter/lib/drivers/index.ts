@@ -1,6 +1,5 @@
 /**
- * Limiter drivers and their manager.
+ * The built-in limiter drivers: `local` and `redis`.
  */
 export * from './local.js';
-export * from './manager.js';
 export * from './redis.js';

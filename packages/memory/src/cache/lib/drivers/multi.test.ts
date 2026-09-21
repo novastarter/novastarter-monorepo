@@ -1,12 +1,12 @@
 import { Redis } from 'ioredis';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { BusDriverRedis } from '../../index.js';
+import { BusDriverRedis } from '../../../bus/index.js';
 import { CacheDriverLocal } from './local.js';
 import { CacheDriverMulti } from './multi.js';
 import { CacheDriverRedis } from './redis.js';
 
-vi.mock('../../bus/index.js');
-vi.mock('../../utils/index.js');
+vi.mock('../../../bus/index.js');
+vi.mock('../../../utils/index.js');
 vi.mock('./local.js');
 vi.mock('./redis.js');
 vi.mock('ioredis');

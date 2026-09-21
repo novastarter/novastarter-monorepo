@@ -1,7 +1,12 @@
 import { RateLimiterMemory } from 'rate-limiter-flexible';
-import type { Limiter } from '../types/class.js';
-import type { LimiterDriverLocalConfig } from '../types/config.js';
-import { consume } from '../utils/consume.js';
+import type { Limiter } from '../../driver.js';
+import type { LimiterDriverConfigBase } from '../../types.js';
+import { consume } from '../../utils/consume.js';
+
+/**
+ * Options of {@link LimiterDriverLocal}, the `local` driver; the budget alone.
+ */
+export type LimiterDriverLocalConfig = LimiterDriverConfigBase;
 
 /**
  * In-process rate limiter over `rate-limiter-flexible`'s memory store.

@@ -1,4 +1,5 @@
 import { Redlock } from '@sesamecare-oss/redlock';
+import type { Redis } from 'ioredis';
 import {
 	bufferToUint8Array,
 	compress,
@@ -8,9 +9,75 @@ import {
 	serialize,
 	uint8ArrayToBuffer,
 	withNamespace,
-} from '../../utils/index.js';
-import type { Kv } from '../types/class.js';
-import type { ExtendedRedis, KvDriverRedisConfig } from '../types/config.js';
+} from '../../../utils/index.js';
+import type { Kv } from '../../driver.js';
+
+/**
+ * ioredis client extended with the Lua commands {@link KvDriverRedis} defines on it.
+ *
+ * `defineCommand` adds the methods at runtime; this interface makes them visible to the type-checker.
+ */
+export interface ExtendedRedis extends Redis {
+	/**
+	 * Store `value` only when it is larger than the current value of `key`.
+	 *
+	 * @param key - Namespaced key.
+	 * @param value - Candidate value.
+	 * @returns `1` when the value was stored, `0` otherwise.
+	 */
+	setMax(key: string, value: number): Promise<number>;
+
+	/**
+	 * Delete `key` only when it still holds `value`, the check-and-delete a lock release needs.
+	 *
+	 * @param key - Namespaced key.
+	 * @param value - Expected current value.
+	 * @returns Number of keys deleted.
+	 */
+	release(key: string, value: string): Promise<number>;
+}
+
+/**
+ * Options of {@link KvDriverRedis}, the `redis` driver.
+ */
+export type KvDriverRedisConfig = {
+	/**
+	 * Prefix for every key, so several stores can share one Redis instance.
+	 */
+	namespace: string;
+
+	/**
+	 * Enable gzip compression of stored values.
+	 *
+	 * @default true
+	 */
+	compression?: boolean | undefined;
+
+	/**
+	 * Minimum byte size of a value before it is compressed.
+	 *
+	 * There is a trade-off between size and the time spent gzipping; below roughly 1 kB the savings do not pay for
+	 * the CPU time.
+	 *
+	 * @default 1000
+	 */
+	compressionMinSize?: number | undefined;
+
+	/**
+	 * How long an acquired lock is held, in milliseconds.
+	 */
+	lockTimeout?: number | undefined;
+
+	/**
+	 * Existing or new Redis connection to use with this store.
+	 */
+	redis: Redis | ExtendedRedis;
+
+	/**
+	 * Time-to-live: keys expire after this many milliseconds.
+	 */
+	ttl?: number | undefined;
+};
 
 /**
  * Lua script behind `setMax`: store the value only when it beats the current one.

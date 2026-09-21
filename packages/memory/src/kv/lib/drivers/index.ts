@@ -1,6 +1,5 @@
 /**
- * Kv drivers and their manager.
+ * The built-in Kv drivers: `local` and `redis`.
  */
 export * from './local.js';
-export * from './manager.js';
 export * from './redis.js';

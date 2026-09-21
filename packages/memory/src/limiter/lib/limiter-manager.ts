@@ -1,8 +1,7 @@
 import { DriverManager } from '@novastarter/utils';
-import type { Limiter } from '../types/class.js';
-import type { LimiterDriverLocalConfig, LimiterDriverRedisConfig } from '../types/config.js';
-import { LimiterDriverLocal } from './local.js';
-import { LimiterDriverRedis } from './redis.js';
+import type { Limiter } from '../driver.js';
+import { LimiterDriverLocal, type LimiterDriverLocalConfig } from './drivers/local.js';
+import { LimiterDriverRedis, type LimiterDriverRedisConfig } from './drivers/redis.js';
 
 /**
  * Limiter drivers by the name they are registered under, mapped to the options their constructor takes.
@@ -24,7 +23,7 @@ export interface LimiterDrivers {
  * The {@link DriverManager} of the kit for the rate limiter: the built-in drivers (`local`, `redis`) are registered on
  * construction, so the application only registers its locations, with the options it read from its own configuration;
  * a location is built on its first use. A further driver can be registered under a name of its own once it joined
- * {@link LimiterDrivers}. The application wires it at start-up through `useLimiter()`.
+ * {@link LimiterDrivers}. The application wires it at start-up through {@link useLimiter}.
  *
  * @example
  * ```ts

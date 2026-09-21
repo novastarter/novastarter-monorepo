@@ -1,7 +1,21 @@
-import { type Kv, KvDriverLocal } from '../../kv/index.js';
-import type { Lock } from '../../kv/types/lock.js';
-import type { Cache } from '../types/class.js';
-import type { CacheDriverLocalConfig } from '../types/config.js';
+import { type Kv, KvDriverLocal } from '../../../kv/index.js';
+import type { Lock } from '../../../kv/types.js';
+import type { Cache } from '../../driver.js';
+
+/**
+ * Options of {@link CacheDriverLocal}, the `local` driver.
+ */
+export type CacheDriverLocalConfig = {
+	/**
+	 * Maximum number of keys in the cache; the least recently used key is evicted beyond it.
+	 */
+	maxKeys?: number | undefined;
+
+	/**
+	 * Time-to-live: keys expire after this many milliseconds.
+	 */
+	ttl?: number | undefined;
+};
 
 /**
  * In-memory cache for a single process, a thin wrapper over `KvDriverLocal`.

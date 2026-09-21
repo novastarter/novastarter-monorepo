@@ -1,5 +1,10 @@
-import type { Bus, MessageHandler } from '../types/class.js';
-import type { BusDriverLocalConfig } from '../types/config.js';
+import type { Bus } from '../../driver.js';
+import type { MessageHandler } from '../../types.js';
+
+/**
+ * Options of {@link BusDriverLocal}, the `local` driver; it has none.
+ */
+export type BusDriverLocalConfig = Record<string, never>;
 
 /**
  * In-process bus: publishing calls the subscribers registered in this process, nothing more.

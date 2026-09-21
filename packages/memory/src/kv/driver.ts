@@ -1,13 +1,4 @@
-import type { Lock } from './lock.js';
-
-/**
- * Value that may or may not be wrapped in a promise.
- *
- * The local store answers synchronously while Redis answers asynchronously; callers `await` either way.
- *
- * @typeParam T - The unwrapped value.
- */
-export type MaybePromise<T> = Promise<T> | T;
+import type { Lock, MaybePromise } from './types.js';
 
 /**
  * Key-value store shared by the local and Redis backends.

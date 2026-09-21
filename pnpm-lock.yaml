@@ -487,6 +487,9 @@ importers:
       '@novastarter/constants':
         specifier: workspace:*
         version: link:../constants
+      '@novastarter/utils':
+        specifier: workspace:*
+        version: link:../utils
       lodash-es:
         specifier: 'catalog:'
         version: 4.18.1

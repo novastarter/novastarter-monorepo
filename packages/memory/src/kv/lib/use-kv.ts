@@ -1,11 +1,8 @@
 import { type Singleton, singleton } from '@novastarter/utils';
-import { BusManager } from '../bus/lib/manager.js';
-import { CacheManager } from '../cache/lib/manager.js';
-import { KvManager } from '../kv/lib/manager.js';
-import { LimiterManager } from '../limiter/lib/manager.js';
+import { KvManager } from './kv-manager.js';
 
 /**
- * Return the process-wide {@link KvManager}, creating an empty one on first use.
+ * Return the process-wide {@link KvManager}, creating one with only the built-in drivers on first use.
  *
  * The application registers its locations on it at start-up; every later caller gets the same instance.
  *
@@ -24,24 +21,3 @@ import { LimiterManager } from '../limiter/lib/manager.js';
  * ```
  */
 export const useKv: Singleton<KvManager> = singleton(() => new KvManager());
-
-/**
- * Return the process-wide {@link CacheManager}, creating an empty one on first use.
- *
- * @returns The same manager on every call; `useCache.reset()` drops it, for tests.
- */
-export const useCache: Singleton<CacheManager> = singleton(() => new CacheManager());
-
-/**
- * Return the process-wide {@link BusManager}, creating an empty one on first use.
- *
- * @returns The same manager on every call; `useBus.reset()` drops it, for tests.
- */
-export const useBus: Singleton<BusManager> = singleton(() => new BusManager());
-
-/**
- * Return the process-wide {@link LimiterManager}, creating an empty one on first use.
- *
- * @returns The same manager on every call; `useLimiter.reset()` drops it, for tests.
- */
-export const useLimiter: Singleton<LimiterManager> = singleton(() => new LimiterManager());

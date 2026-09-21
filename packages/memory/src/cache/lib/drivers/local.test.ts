@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { KvDriverLocal } from '../../kv/index.js';
+import { KvDriverLocal } from '../../../kv/index.js';
 import { CacheDriverLocal } from './local.js';
 
-vi.mock('../../kv/index.js');
-vi.mock('../../utils/index.js');
+vi.mock('../../../kv/index.js');
+vi.mock('../../../utils/index.js');
 
 const mockKey = 'test-key';
 const mockValue = 'test-value';
