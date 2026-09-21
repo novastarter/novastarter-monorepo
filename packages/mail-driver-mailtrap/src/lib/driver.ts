@@ -41,11 +41,17 @@ declare module '@novastarter/mail' {
  *
  * @example
  * ```ts
- * useMail().registerDriver('mailtrap', MailDriverMailtrap);
- * useMail().registerLocation('main', {
+ * import { useMail } from '@novastarter/mail';
+ * import { MailDriverMailtrap } from '@novastarter/mail-driver-mailtrap';
+ * import { env } from './env';
+ *
+ * const mail = useMail();
+ *
+ * mail.registerDriver('mailtrap', MailDriverMailtrap);
+ * mail.registerLocation('main', {
  * 	driver: 'mailtrap',
  * 	options: {
- * 		token: env['MAIL_MAILTRAP_TOKEN'],
+ * 		token: env.MAIL_MAILTRAP_TOKEN,
  * 		sandbox: true,
  * 		testInboxId: 123456,
  * 	},
@@ -123,8 +129,3 @@ export class MailDriverMailtrap implements MailDriver {
 		}
 	}
 }
-
-/**
- * Default export for consumers that import the driver without a named binding.
- */
-export default MailDriverMailtrap;

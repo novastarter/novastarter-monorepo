@@ -2,7 +2,6 @@ import fs, { promises as fsProm } from 'node:fs';
 import { Agent as HttpAgent } from 'node:http';
 import { Agent as HttpsAgent } from 'node:https';
 import os from 'node:os';
-import { join } from 'node:path';
 import stream, { type Readable, promises as streamProm } from 'node:stream';
 import type {
 	CompletedPart,
@@ -40,7 +39,7 @@ import {
 	StorageFileNotFoundError,
 	type TusDriver,
 } from '@novastarter/storage';
-import { normalizePath } from '@novastarter/utils';
+import { joinPath, normalizePath, retry } from '@novastarter/utils';
 import { isReadableStream } from '@novastarter/utils/node';
 import { Permit, Semaphore } from '@shopify/semaphore';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
@@ -120,6 +119,24 @@ declare module '@novastarter/storage' {
 }
 
 /**
+ * The part listing shows fewer parts than were sent: the one failure {@link StorageDriverS3.finishChunkedUpload}
+ * retries, since the listing may simply lag behind the last write. Never leaves the driver; it becomes the TUS error
+ * object once the retries are spent.
+ *
+ * @internal
+ */
+class PartsMissingError extends Error {
+	/**
+	 * @param listed - Parts the listing showed.
+	 * @param expected - Parts that were sent.
+	 */
+	constructor(listed: number, expected: number) {
+		super(`S3 lists ${listed} of ${expected} parts`);
+		this.name = 'PartsMissingError';
+	}
+}
+
+/**
  * Storage driver backed by Amazon S3 or an S3-compatible service.
  *
  * Plain operations map one-to-one onto S3 commands. Resumable (TUS) uploads are built on S3 multipart uploads and
@@ -128,13 +145,21 @@ declare module '@novastarter/storage' {
  *
  * @example
  * ```ts
- * const driver = new StorageDriverS3({
- * 	bucket: 'uploads',
- * 	region: 'eu-west-1',
- * 	root: 'media',
- * });
+ * import { useStorage } from '@novastarter/storage';
+ * import { StorageDriverS3 } from '@novastarter/storage-driver-s3';
+ * import { env } from './env';
  *
- * await driver.write('avatar.png', fs.createReadStream('./avatar.png'), 'image/png');
+ * const storage = useStorage();
+ *
+ * storage.registerDriver('s3', StorageDriverS3);
+ * storage.registerLocation('uploads', {
+ * 	driver: 's3',
+ * 	options: {
+ * 		bucket: env.STORAGE_S3_BUCKET,
+ * 		region: env.STORAGE_S3_REGION,
+ * 		root: 'media',
+ * 	},
+ * });
  * ```
  */
 export class StorageDriverS3 implements TusDriver {
@@ -304,9 +329,9 @@ export class StorageDriverS3 implements TusDriver {
 	 * @internal
 	 */
 	private fullPath(filepath: string) {
-		// 1. `join` copes with an empty root and doubled slashes; normalising afterwards turns the platform separators
-		//    it may produce into the forward slashes S3 keys use
-		return normalizePath(join(this.root, filepath));
+		// 1. `joinPath` copes with an empty root and doubled slashes and always produces the forward slashes S3 keys
+		//    use, whatever the platform's separator
+		return joinPath(this.root, filepath);
 	}
 
 	/**
@@ -519,10 +544,8 @@ export class StorageDriverS3 implements TusDriver {
 	 * @returns Object paths relative to the root. Keys ending in `/` (folder placeholders) are skipped.
 	 */
 	async *list(prefix = ''): AsyncGenerator<string, void, unknown> {
-		let Prefix = this.fullPath(prefix);
-
-		// 1. With no root and no prefix `join` yields `.`, which S3 would take as a literal key prefix and match nothing
-		if (Prefix === '.') Prefix = '';
+		// 1. With no root and no prefix `joinPath` yields an empty string, which lists the whole bucket
+		const Prefix = this.fullPath(prefix);
 
 		let continuationToken: string | undefined = undefined;
 
@@ -676,23 +699,38 @@ export class StorageDriverS3 implements TusDriver {
 		const chunkSize = this.calcOptimalPartSize(size);
 		const expectedParts = Math.ceil(size / chunkSize);
 
-		let parts = await this.retrieveParts(key, uploadId);
-		let retries = 0;
+		// 2. The listing may not yet show the last parts; poll with growing pauses (0.5 s, 1 s, 1.5 s) before giving up.
+		//    Only a short listing is retried: a failing `ListParts` call is a real error and goes out at once
+		let parts: Part[];
 
-		// 2. The listing may not yet show the last parts; poll with growing pauses (0.5 s, 1 s, 1.5 s) before giving up
-		while (parts.length !== expectedParts && retries < 3) {
-			++retries;
+		try {
+			parts = await retry(
+				async () => {
+					const listed = await this.retrieveParts(key, uploadId);
 
-			await new Promise((resolve) => setTimeout(resolve, 500 * retries));
-			parts = await this.retrieveParts(key, uploadId);
-		}
+					if (listed.length !== expectedParts) {
+						throw new PartsMissingError(listed.length, expectedParts);
+					}
 
-		// 3. Completing with a part missing would produce a truncated object, so refuse and let the client retry
-		if (parts.length !== expectedParts) {
-			throw {
-				status_code: 500,
-				body: 'Failed to upload all parts to S3.',
-			};
+					return listed;
+				},
+				{
+					retries: 3,
+					delay: (attempt) => 500 * attempt,
+					shouldRetry: (error) => error instanceof PartsMissingError,
+				},
+			);
+		} catch (error) {
+			// 3. Completing with a part missing would produce a truncated object, so refuse in the shape the TUS server
+			//    turns into an HTTP response and let the client retry
+			if (error instanceof PartsMissingError) {
+				throw {
+					status_code: 500,
+					body: 'Failed to upload all parts to S3.',
+				};
+			}
+
+			throw error;
 		}
 
 		await this.finishMultipartUpload(key, uploadId, parts);

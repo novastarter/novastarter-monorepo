@@ -1,4 +1,6 @@
-import { join } from 'node:path';
+/**
+ * Tests of `storage-driver-gcs/lib/driver`.
+ */
 import { PassThrough } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { Bucket, Storage } from '@google-cloud/storage';
@@ -14,7 +16,7 @@ import {
 	randUrl,
 } from '@ngneat/falso';
 import { StorageFileNotFoundError } from '@novastarter/storage';
-import { normalizePath } from '@novastarter/utils';
+import { joinPath, normalizePath } from '@novastarter/utils';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { StorageDriverGcsConfig } from './driver.js';
@@ -22,7 +24,6 @@ import { StorageDriverGcs } from './driver.js';
 
 vi.mock('@novastarter/utils');
 vi.mock('@google-cloud/storage');
-vi.mock('node:path');
 vi.mock('node:stream/promises');
 
 /**
@@ -92,7 +93,7 @@ beforeEach(() => {
 	});
 
 	// 3. Stub the path resolver with a fixed input → output map, so every method test can assert on the resolved name
-	//    without depending on `join`/`normalizePath`, which are mocked and would return `undefined`
+	//    without depending on `joinPath`, which is mocked and would return `undefined`
 	driver['fullPath'] = vi.fn().mockImplementation((input) => {
 		if (input === sample.path.src) return sample.path.srcFull;
 		if (input === sample.path.dest) return sample.path.destFull;
@@ -172,16 +173,14 @@ describe('#fullPath', () => {
 		driver = new StorageDriverGcs({ bucket: sample.config.bucket });
 		driver['root'] = sample.config.root;
 
-		vi.mocked(join).mockReturnValue(sample.path.src);
-		vi.mocked(normalizePath).mockReturnValue(sample.path.inputFull);
+		vi.mocked(joinPath).mockReturnValue(sample.path.inputFull);
 	});
 
-	test('Returns normalized joined path', () => {
+	test('Returns the joined path', () => {
 		const result = driver['fullPath'](sample.path.input);
 
-		// 1. Root and input are joined first, and only the joined result is normalised
-		expect(join).toHaveBeenCalledWith(sample.config.root, sample.path.input);
-		expect(normalizePath).toHaveBeenCalledWith(sample.path.src);
+		// 1. Root and input are joined in that order, and the joined result is the object name
+		expect(joinPath).toHaveBeenCalledWith(sample.config.root, sample.path.input);
 		expect(result).toBe(sample.path.inputFull);
 	});
 });

@@ -110,8 +110,25 @@ describe('emitAction', () => {
 
 		expect(() => emitter.emitAction('items.create', {})).not.toThrow();
 
-		await vi.waitFor(() => expect(logger.warn).toHaveBeenCalledWith(error));
-		expect(logger.warn).toHaveBeenCalledWith('An error was thrown while executing action "items.create"');
+		await vi.waitFor(() =>
+			expect(logger.warn).toHaveBeenCalledWith(error, 'An error was thrown while executing action "items.create"'),
+		);
+	});
+
+	test('Wraps a thrown non-Error so its text reaches the log', async () => {
+		// A string in first position would be pino's message and the text after it dropped; `toError` keeps both
+		emitter.onAction('items.create', async () => {
+			throw 'nope';
+		});
+
+		emitter.emitAction('items.create', {});
+
+		await vi.waitFor(() =>
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.objectContaining({ message: 'nope', cause: 'nope' }),
+				'An error was thrown while executing action "items.create"',
+			),
+		);
 	});
 
 	test('Fires every event of a list', async () => {
@@ -149,8 +166,20 @@ describe('emitInit', () => {
 
 		await expect(emitter.emitInit('app.before', {})).resolves.toBeUndefined();
 
-		expect(logger.warn).toHaveBeenCalledWith('An error was thrown while executing init "app.before"');
-		expect(logger.warn).toHaveBeenCalledWith(error);
+		expect(logger.warn).toHaveBeenCalledWith(error, 'An error was thrown while executing init "app.before"');
+	});
+
+	test('Wraps a thrown non-Error so its text reaches the log', async () => {
+		emitter.onInit('app.before', () => {
+			throw 'nope';
+		});
+
+		await expect(emitter.emitInit('app.before', {})).resolves.toBeUndefined();
+
+		expect(logger.warn).toHaveBeenCalledWith(
+			expect.objectContaining({ message: 'nope', cause: 'nope' }),
+			'An error was thrown while executing init "app.before"',
+		);
 	});
 });
 

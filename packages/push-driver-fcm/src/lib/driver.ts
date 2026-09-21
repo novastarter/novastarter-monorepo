@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { PushDriver, PushMessage, PushPlatform, PushResult } from '@novastarter/push';
+import { toErrorMessage } from '@novastarter/utils';
 import { type App, cert, type Credential, deleteApp, initializeApp } from 'firebase-admin/app';
 import { getMessaging, type Messaging } from 'firebase-admin/messaging';
 import { describeError } from './describe-error.js';
@@ -25,9 +26,17 @@ export type PushDriverFcmConfig = {
 	ttl?: number | undefined;
 	/** Label the messages carry into the Firebase analytics, for the console's delivery reports. */
 	analyticsLabel?: string | undefined;
-	/** A ready `Messaging`, for tests; one on the service account otherwise. */
+	/**
+	 * A ready `Messaging`, for tests; one on the service account otherwise.
+	 *
+	 * @internal
+	 */
 	messaging?: Pick<Messaging, 'send'> | undefined;
-	/** A ready credential, for tests; `cert()` of the service account otherwise. */
+	/**
+	 * A ready credential, for tests; `cert()` of the service account otherwise.
+	 *
+	 * @internal
+	 */
 	credential?: Credential | undefined;
 };
 
@@ -50,11 +59,17 @@ declare module '@novastarter/push' {
  *
  * @example
  * ```ts
- * usePush().registerDriver('fcm', PushDriverFcm);
- * usePush().registerLocation('fcm', {
+ * import { usePush } from '@novastarter/push';
+ * import { PushDriverFcm } from '@novastarter/push-driver-fcm';
+ * import { env } from './env';
+ *
+ * const push = usePush();
+ *
+ * push.registerDriver('fcm', PushDriverFcm);
+ * push.registerLocation('fcm', {
  * 	driver: 'fcm',
  * 	options: {
- * 		serviceAccount: env['PUSH_FCM_SERVICE_ACCOUNT'],
+ * 		serviceAccount: env.PUSH_FCM_SERVICE_ACCOUNT,
  * 	},
  * });
  * ```
@@ -165,9 +180,7 @@ export class PushDriverFcm implements PushDriver {
 		try {
 			await this.credential.getAccessToken();
 		} catch (error) {
-			throw new Error(`FCM credentials are invalid: ${error instanceof Error ? error.message : String(error)}`, {
-				cause: error,
-			});
+			throw new Error(`FCM credentials are invalid: ${toErrorMessage(error)}`, { cause: error });
 		}
 	}
 

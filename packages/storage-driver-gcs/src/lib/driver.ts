@@ -1,4 +1,3 @@
-import { join } from 'node:path';
 import { type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type {
@@ -17,7 +16,7 @@ import {
 	StorageFileNotFoundError,
 	type TusDriver,
 } from '@novastarter/storage';
-import { normalizePath } from '@novastarter/utils';
+import { joinPath, normalizePath } from '@novastarter/utils';
 
 /**
  * Smallest chunk size GCS accepts for a resumable upload: 256 KiB, `262_144` bytes.
@@ -76,12 +75,20 @@ declare module '@novastarter/storage' {
  *
  * @example
  * ```ts
- * const driver = new StorageDriverGcs({
- * 	bucket: 'uploads',
- * 	root: 'avatars',
- * });
+ * import { useStorage } from '@novastarter/storage';
+ * import { StorageDriverGcs } from '@novastarter/storage-driver-gcs';
+ * import { env } from './env';
  *
- * await driver.write('avatar.png', fs.createReadStream('./avatar.png'));
+ * const storage = useStorage();
+ *
+ * storage.registerDriver('gcs', StorageDriverGcs);
+ * storage.registerLocation('uploads', {
+ * 	driver: 'gcs',
+ * 	options: {
+ * 		bucket: env.STORAGE_GCS_BUCKET,
+ * 		root: 'avatars',
+ * 	},
+ * });
  * ```
  */
 export class StorageDriverGcs implements TusDriver {
@@ -157,9 +164,9 @@ export class StorageDriverGcs implements TusDriver {
 	 * @internal
 	 */
 	private fullPath(filepath: string) {
-		// 1. `join` copes with an empty root and doubled slashes; normalising afterwards turns the platform separators
-		//    it may produce into the forward slashes object names use
-		return normalizePath(join(this.root, filepath));
+		// 1. `joinPath` copes with an empty root and doubled slashes and always produces the forward slashes object
+		//    names use, whatever the platform's separator
+		return joinPath(this.root, filepath);
 	}
 
 	/**
@@ -184,14 +191,14 @@ export class StorageDriverGcs implements TusDriver {
 	async read(filepath: string, options?: ReadOptions): Promise<Readable> {
 		const { range } = options || {};
 
-		const stream_options: CreateReadStreamOptions = {};
+		const streamOptions: CreateReadStreamOptions = {};
 
 		// 1. Copy only the bounds that were set; the SDK reads `start`/`end` as inclusive byte offsets and defaults a missing
 		//    side to the start or the end of the object, so a zero `start` is the same as leaving it out
-		if (range?.start) stream_options.start = range.start;
-		if (range?.end) stream_options.end = range.end;
+		if (range?.start) streamOptions.start = range.start;
+		if (range?.end) streamOptions.end = range.end;
 
-		return this.file(this.fullPath(filepath)).createReadStream(stream_options);
+		return this.file(this.fullPath(filepath)).createReadStream(streamOptions);
 	}
 
 	/**

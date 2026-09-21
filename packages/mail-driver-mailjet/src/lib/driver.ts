@@ -29,12 +29,18 @@ declare module '@novastarter/mail' {
  *
  * @example
  * ```ts
- * useMail().registerDriver('mailjet', MailDriverMailjet);
- * useMail().registerLocation('main', {
+ * import { useMail } from '@novastarter/mail';
+ * import { MailDriverMailjet } from '@novastarter/mail-driver-mailjet';
+ * import { env } from './env';
+ *
+ * const mail = useMail();
+ *
+ * mail.registerDriver('mailjet', MailDriverMailjet);
+ * mail.registerLocation('main', {
  * 	driver: 'mailjet',
  * 	options: {
- * 		apiKey: env['MAIL_MAILJET_API_KEY'],
- * 		apiSecret: env['MAIL_MAILJET_API_SECRET'],
+ * 		apiKey: env.MAIL_MAILJET_API_KEY,
+ * 		apiSecret: env.MAIL_MAILJET_API_SECRET,
  * 	},
  * });
  * ```
@@ -106,8 +112,3 @@ export class MailDriverMailjet implements MailDriver {
 		};
 	}
 }
-
-/**
- * Default export for consumers that import the driver without a named binding.
- */
-export default MailDriverMailjet;

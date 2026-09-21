@@ -34,7 +34,11 @@ export type PushDriverApnsConfig = {
 	sound?: string | undefined;
 	/** Request timeout in milliseconds; the SDK's default unless given. */
 	requestTimeout?: number | undefined;
-	/** A ready client, for tests; built from the credentials otherwise. */
+	/**
+	 * A ready client, for tests; built from the credentials otherwise.
+	 *
+	 * @internal
+	 */
 	client?: ApnsSender | undefined;
 };
 
@@ -57,14 +61,20 @@ declare module '@novastarter/push' {
  *
  * @example
  * ```ts
- * usePush().registerDriver('apns', PushDriverApns);
- * usePush().registerLocation('apns', {
+ * import { usePush } from '@novastarter/push';
+ * import { PushDriverApns } from '@novastarter/push-driver-apns';
+ * import { env } from './env';
+ *
+ * const push = usePush();
+ *
+ * push.registerDriver('apns', PushDriverApns);
+ * push.registerLocation('apns', {
  * 	driver: 'apns',
  * 	options: {
- * 		teamId: env['PUSH_APNS_TEAM_ID'],
- * 		keyId: env['PUSH_APNS_KEY_ID'],
- * 		signingKey: env['PUSH_APNS_SIGNING_KEY'],
- * 		topic: env['PUSH_APNS_TOPIC'],
+ * 		teamId: env.PUSH_APNS_TEAM_ID,
+ * 		keyId: env.PUSH_APNS_KEY_ID,
+ * 		signingKey: env.PUSH_APNS_SIGNING_KEY,
+ * 		topic: env.PUSH_APNS_TOPIC,
  * 	},
  * });
  * ```
@@ -174,8 +184,3 @@ export class PushDriverApns implements PushDriver {
 		await this.client.close();
 	}
 }
-
-/**
- * Default export for consumers that import the driver without a named binding.
- */
-export default PushDriverApns;

@@ -1,4 +1,3 @@
-import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 import { finished } from 'node:stream/promises';
 import {
@@ -14,7 +13,7 @@ import {
 	StorageFileNotFoundError,
 	type TusDriver,
 } from '@novastarter/storage';
-import { normalizePath } from '@novastarter/utils';
+import { joinPath, normalizePath } from '@novastarter/utils';
 
 /**
  * Largest chunk an append blob accepts per `Append Block` request.
@@ -78,13 +77,21 @@ declare module '@novastarter/storage' {
  *
  * @example
  * ```ts
- * const driver = new StorageDriverAzure({
- *     containerName: 'uploads',
- *     accountName: 'myaccount',
- *     accountKey: process.env.AZURE_KEY,
- * });
+ * import { useStorage } from '@novastarter/storage';
+ * import { StorageDriverAzure } from '@novastarter/storage-driver-azure';
+ * import { env } from './env';
  *
- * await driver.write('avatar.png', fs.createReadStream('./avatar.png'), 'image/png');
+ * const storage = useStorage();
+ *
+ * storage.registerDriver('azure', StorageDriverAzure);
+ * storage.registerLocation('uploads', {
+ * 	driver: 'azure',
+ * 	options: {
+ * 		containerName: env.STORAGE_AZURE_CONTAINER_NAME,
+ * 		accountName: env.STORAGE_AZURE_ACCOUNT_NAME,
+ * 		accountKey: env.STORAGE_AZURE_ACCOUNT_KEY,
+ * 	},
+ * });
  * ```
  */
 export class StorageDriverAzure implements TusDriver {
@@ -157,8 +164,8 @@ export class StorageDriverAzure implements TusDriver {
 	 * @internal
 	 */
 	private fullPath(filepath: string) {
-		// 1. Normalising turns the platform separators `join` may produce into the forward slashes blob names use
-		return normalizePath(join(this.root, filepath));
+		// 1. `joinPath` always produces the forward slashes blob names use, whatever the platform's separator
+		return joinPath(this.root, filepath);
 	}
 
 	/**

@@ -31,11 +31,17 @@ declare module '@novastarter/mail' {
  *
  * @example
  * ```ts
- * useMail().registerDriver('resend', MailDriverResend);
- * useMail().registerLocation('main', {
+ * import { useMail } from '@novastarter/mail';
+ * import { MailDriverResend } from '@novastarter/mail-driver-resend';
+ * import { env } from './env';
+ *
+ * const mail = useMail();
+ *
+ * mail.registerDriver('resend', MailDriverResend);
+ * mail.registerLocation('main', {
  * 	driver: 'resend',
  * 	options: {
- * 		apiKey: env['MAIL_RESEND_API_KEY'],
+ * 		apiKey: env.MAIL_RESEND_API_KEY,
  * 	},
  * });
  * ```
@@ -86,8 +92,3 @@ export class MailDriverResend implements MailDriver {
 		};
 	}
 }
-
-/**
- * Default export for consumers that import the driver without a named binding.
- */
-export default MailDriverResend;

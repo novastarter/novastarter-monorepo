@@ -27,6 +27,7 @@
 	"dependencies": {
 		"@novastarter/errors": "workspace:*",
 		"@novastarter/payments": "workspace:*",
+		"@novastarter/utils": "workspace:*",
 		"@paddle/paddle-node-sdk": "catalog:"
 	},
 	"devDependencies": {

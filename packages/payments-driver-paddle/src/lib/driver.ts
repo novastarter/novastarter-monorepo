@@ -15,6 +15,7 @@ import type {
 	UpdateSubscriptionInput,
 	WebhookHeaders,
 } from '@novastarter/payments';
+import { toErrorMessage } from '@novastarter/utils';
 import { Environment, Paddle, type ProrationBillingMode } from '@paddle/paddle-node-sdk';
 import { toEvent } from './to-event.js';
 import { toInvoice } from './to-invoice.js';
@@ -87,12 +88,18 @@ export const PRORATION: Record<NonNullable<UpdateSubscriptionInput['proration']>
  *
  * @example
  * ```ts
- * usePayments().registerDriver('paddle', PaymentsDriverPaddle);
- * usePayments().registerLocation('default', {
+ * import { usePayments } from '@novastarter/payments';
+ * import { PaymentsDriverPaddle } from '@novastarter/payments-driver-paddle';
+ * import { env } from './env';
+ *
+ * const payments = usePayments();
+ *
+ * payments.registerDriver('paddle', PaymentsDriverPaddle);
+ * payments.registerLocation('default', {
  * 	driver: 'paddle',
  * 	options: {
- * 		apiKey: env['PAYMENTS_PADDLE_API_KEY'],
- * 		webhookSecret: env['PAYMENTS_PADDLE_WEBHOOK_SECRET'],
+ * 		apiKey: env.PAYMENTS_PADDLE_API_KEY,
+ * 		webhookSecret: env.PAYMENTS_PADDLE_WEBHOOK_SECRET,
  * 		environment: 'sandbox',
  * 		checkoutUrl: 'https://app.example.com/checkout',
  * 	},
@@ -322,7 +329,7 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 		try {
 			event = await this.client.webhooks.unmarshal(rawBody, this.webhookSecret, signature);
 		} catch (error) {
-			throw new InvalidPayloadError({ reason: error instanceof Error ? error.message : String(error) });
+			throw new InvalidPayloadError({ reason: toErrorMessage(error) });
 		}
 
 		if (typeof event.eventType !== 'string' || typeof event.eventId !== 'string') {

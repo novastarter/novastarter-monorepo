@@ -79,12 +79,18 @@ export const PRORATION: Record<NonNullable<UpdateSubscriptionInput['proration']>
  *
  * @example
  * ```ts
- * usePayments().registerDriver('polar', PaymentsDriverPolar);
- * usePayments().registerLocation('default', {
+ * import { usePayments } from '@novastarter/payments';
+ * import { PaymentsDriverPolar } from '@novastarter/payments-driver-polar';
+ * import { env } from './env';
+ *
+ * const payments = usePayments();
+ *
+ * payments.registerDriver('polar', PaymentsDriverPolar);
+ * payments.registerLocation('default', {
  * 	driver: 'polar',
  * 	options: {
- * 		accessToken: env['PAYMENTS_POLAR_ACCESS_TOKEN'],
- * 		webhookSecret: env['PAYMENTS_POLAR_WEBHOOK_SECRET'],
+ * 		accessToken: env.PAYMENTS_POLAR_ACCESS_TOKEN,
+ * 		webhookSecret: env.PAYMENTS_POLAR_WEBHOOK_SECRET,
  * 		server: 'sandbox',
  * 	},
  * });

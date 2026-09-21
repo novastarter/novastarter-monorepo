@@ -1,3 +1,6 @@
+/**
+ * Tests of `storage-driver-cloudinary/lib/to-signature-string`.
+ */
 import { expect, test } from 'vitest';
 import { toSignatureString } from './to-signature-string.js';
 

@@ -62,13 +62,21 @@ declare module '@novastarter/storage' {
  *
  * @example
  * ```ts
- * const driver = new StorageDriverSupabase({
- * 	bucket: 'uploads',
- * 	projectId: 'abcdefghij',
- * 	serviceRole: process.env.KEY,
- * });
+ * import { useStorage } from '@novastarter/storage';
+ * import { StorageDriverSupabase } from '@novastarter/storage-driver-supabase';
+ * import { env } from './env';
  *
- * await driver.write('avatar.png', fs.createReadStream('./avatar.png'), 'image/png');
+ * const storage = useStorage();
+ *
+ * storage.registerDriver('supabase', StorageDriverSupabase);
+ * storage.registerLocation('uploads', {
+ * 	driver: 'supabase',
+ * 	options: {
+ * 		bucket: env.STORAGE_SUPABASE_BUCKET,
+ * 		projectId: env.STORAGE_SUPABASE_PROJECT_ID,
+ * 		serviceRole: env.STORAGE_SUPABASE_SERVICE_ROLE,
+ * 	},
+ * });
  * ```
  */
 export class StorageDriverSupabase implements TusDriver {
