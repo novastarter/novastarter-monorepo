@@ -1,10 +1,10 @@
 /**
  * The host globals the shared entry point is allowed to use.
  *
- * `tsconfig.shared.json` type-checks `src` (minus `src/node`) without `@types/node` and without the `DOM` lib, so a
- * stray `process`, `window` or `fetch` fails the check instead of failing at runtime on the other platform. The ES
- * lib alone declares no timers and no abort signals, though, and `sleep`, `retry` and `withTimeout` need them — every
- * runtime provides them, so the minimum those helpers use is declared here, and nothing more.
+ * `tsconfig.shared.json` type-checks `src` (minus `src/node` and the tests) without `@types/node` and without the
+ * `DOM` lib, so a stray `process`, `window` or `fetch` fails the check instead of failing at runtime on the other
+ * platform. The ES lib alone declares no timers and no abort signals, though, and `sleep`, `retry` and `withTimeout`
+ * need them — every runtime provides them, so the minimum those helpers use is declared here, and nothing more.
  *
  * Only that tsconfig includes this file: `tsconfig.json` and the tsdown build see `@types/node`, whose declarations
  * these would clash with.

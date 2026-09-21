@@ -6,5 +6,7 @@
 		"types": []
 	},
 	"include": ["src", "shared-globals.d.ts"],
-	"exclude": ["src/node"]
+	// The tests run under Node and are checked by `tsconfig.json`; here they would drag `@types/node` in through
+	// vitest and quietly hand every Node global to the shared sources
+	"exclude": ["src/node", "src/**/*.test.ts"]
 }
