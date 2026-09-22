@@ -8,6 +8,7 @@ import { useMail } from '@novastarter/mail';
 import { useBus, useCache, useKv, useLimiter } from '@novastarter/memory';
 import { _handlers, enqueue, QueueDriverLocal, registerJobHandlers, useQueue } from '@novastarter/queue';
 import { useRedis } from '@novastarter/redis';
+import { useSms } from '@novastarter/sms';
 import { useStorage } from '@novastarter/storage';
 import { afterEach, expect, test, vi } from 'vitest';
 import { _state, bootstrap, shutdown } from './bootstrap';
@@ -22,6 +23,7 @@ afterEach(() => {
 	useStorage.reset();
 	useDatabase.reset();
 	useMail.reset();
+	useSms.reset();
 	_handlers.clear();
 	useKv.reset();
 	useCache.reset();
@@ -36,6 +38,7 @@ test('Registers every subsystem in-process without a Redis and runs a job end to
 	vi.stubEnv('DATABASE_PGLITE_DIR', 'memory://');
 	vi.stubEnv('STORAGE_LOCAL_ROOT', './uploads');
 	vi.stubEnv('MAIL_FROM', 'no-reply@acme.test');
+	vi.stubEnv('SMS_FROM', 'Acme');
 
 	const env = bootstrap();
 
@@ -61,11 +64,18 @@ test('Registers every subsystem in-process without a Redis and runs a job end to
 	expect(useQueue().location('anything')).toBeInstanceOf(QueueDriverLocal);
 	expect(useMail().hasLocation('default')).toBe(true);
 	expect(useMail().routes().from).toBe('no-reply@acme.test');
+	expect(useSms().hasLocation('default')).toBe(true);
+	expect(useSms().routes().from).toBe('Acme');
 
 	const sent = await enqueue('mail.send', { to: 'ada@example.com', subject: 'Boot', text: 'Hello' });
 
 	expect(sent.queue).toBe('mail');
 	expect(useMail().instantiated().has('default')).toBe(true);
+
+	const texted = await enqueue('sms.send', { to: '+14155550123', text: 'Boot' });
+
+	expect(texted.queue).toBe('sms');
+	expect(useSms().instantiated().has('default')).toBe(true);
 
 	// The bootstrap registered the app's ping handler; a spy takes its place to see the payload arrive
 	expect(_handlers.has('system.ping')).toBe(true);
@@ -162,6 +172,7 @@ test('Shuts every manager down, leaving the registrations for a later boot', asy
 	bootstrap();
 	expect(_state.booted).toBe(true);
 	expect(_handlers.has('mail.send')).toBe(true);
+	expect(_handlers.has('sms.send')).toBe(true);
 });
 
 test('Closes every manager and the Redis clients even when one refuses, then reports the refusal', async () => {
