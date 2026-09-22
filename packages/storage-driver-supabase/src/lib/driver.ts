@@ -646,7 +646,7 @@ export class StorageDriverSupabase implements TusDriver {
 			}
 		}
 
-		// 4. `tus-js-client` reports through callbacks, so the one chunk is wrapped in a promise the callbacks settle
+		// 5. `tus-js-client` reports through callbacks, so the one chunk is wrapped in a promise the callbacks settle
 		await new Promise((resolve, reject) => {
 			// 1. The custom file reader feeds `tus-js-client` the buffered chunk as a one-shot source, so the library
 			//    sends exactly this chunk instead of trying to read the whole file. `x-upsert` lets a re-upload
