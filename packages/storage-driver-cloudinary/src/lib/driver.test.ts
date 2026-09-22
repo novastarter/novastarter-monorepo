@@ -684,12 +684,20 @@ describe('#read', () => {
 		body: ReadableStream | null;
 	};
 
+	/**
+	 * Delivery URL the driver should build for `sample.path.input`. The path segments are percent-encoded because a
+	 * random path can carry reserved characters, such as the `+` of `lost+found`.
+	 */
+	let deliveryUrl: string;
+
 	beforeEach(() => {
 		// 1. A successful streaming response by default; tests flip the status or body to cover the failure paths
 		mockResponse = {
 			status: 200,
 			body: new ReadableStream(),
 		};
+
+		deliveryUrl = `https://res.cloudinary.com/${sample.config.cloudName}/${sample.resourceType}/upload/${sample.parameterSignature}/${sample.path.inputFull.split('/').map(encodeURIComponent).join('/')}`;
 
 		vi.mocked(fetch).mockResolvedValue(mockResponse as Response);
 		vi.spyOn(Readable, 'fromWeb').mockReturnValue(sample.stream);
@@ -721,10 +729,7 @@ describe('#read', () => {
 		// 1. Signature, resource type and full path must land in the segments Cloudinary expects them in
 		await driver.read(sample.path.input);
 
-		expect(fetch).toHaveBeenCalledWith(
-			`https://res.cloudinary.com/${sample.config.cloudName}/${sample.resourceType}/upload/${sample.parameterSignature}/${sample.path.inputFull}`,
-			{ method: 'GET' },
-		);
+		expect(fetch).toHaveBeenCalledWith(deliveryUrl, { method: 'GET' });
 	});
 
 	test('Percent-encodes path segments so a public id with reserved characters still addresses one asset', async () => {
@@ -744,30 +749,30 @@ describe('#read', () => {
 		// 1. An open end asks for everything from `start` on
 		await driver.read(sample.path.input, { range: { start: sample.range.start, end: undefined } });
 
-		expect(fetch).toHaveBeenCalledWith(
-			`https://res.cloudinary.com/${sample.config.cloudName}/${sample.resourceType}/upload/${sample.parameterSignature}/${sample.path.inputFull}`,
-			{ method: 'GET', headers: { Range: `bytes=${sample.range.start}-` } },
-		);
+		expect(fetch).toHaveBeenCalledWith(deliveryUrl, {
+			method: 'GET',
+			headers: { Range: `bytes=${sample.range.start}-` },
+		});
 	});
 
 	test('Adds optional Range header for end', async () => {
 		// 1. An omitted start is `0`: `bytes=-N` would mean the last N bytes instead of the first ones
 		await driver.read(sample.path.input, { range: { start: undefined, end: sample.range.end } });
 
-		expect(fetch).toHaveBeenCalledWith(
-			`https://res.cloudinary.com/${sample.config.cloudName}/${sample.resourceType}/upload/${sample.parameterSignature}/${sample.path.inputFull}`,
-			{ method: 'GET', headers: { Range: `bytes=0-${sample.range.end}` } },
-		);
+		expect(fetch).toHaveBeenCalledWith(deliveryUrl, {
+			method: 'GET',
+			headers: { Range: `bytes=0-${sample.range.end}` },
+		});
 	});
 
 	test('Adds optional Range header for start and end', async () => {
 		// 1. Both bounds go out as-is; HTTP ranges are inclusive like the driver's
 		await driver.read(sample.path.input, { range: sample.range });
 
-		expect(fetch).toHaveBeenCalledWith(
-			`https://res.cloudinary.com/${sample.config.cloudName}/${sample.resourceType}/upload/${sample.parameterSignature}/${sample.path.inputFull}`,
-			{ method: 'GET', headers: { Range: `bytes=${sample.range.start}-${sample.range.end}` } },
-		);
+		expect(fetch).toHaveBeenCalledWith(deliveryUrl, {
+			method: 'GET',
+			headers: { Range: `bytes=${sample.range.start}-${sample.range.end}` },
+		});
 	});
 
 	test('Throws error when response has status >= 400', async () => {
