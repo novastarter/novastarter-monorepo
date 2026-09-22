@@ -55,3 +55,4 @@ throwaway work.
 | `casing`       | —        | `snake_case` or `camelCase`: column names for properties that declare none.        |
 | `logger`       | —        | Where the queries go with `queryLogging`; the process logger unless given.         |
 | `queryLogging` | —        | Log every query with its parameters at `debug`.                                    |
+| `label`        | —        | The location's name, for log lines and errors; `registerLocation()` fills it in.   |

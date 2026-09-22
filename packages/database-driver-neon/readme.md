@@ -47,8 +47,8 @@ set `neonConfig.webSocketConstructor` first. A fresh connection pays for the Web
 keeps its pool between requests is what it is for.
 
 `neon-http` — one fetch per query. Nothing to warm up, nothing to close, the lowest latency for a single statement: what
-a serverless function or an edge runtime wants. No sessions: `db.transaction()` throws
-(`No transactions support in neon-http driver`), `db.batch([...])` runs several statements in one non-interactive
+a serverless function or an edge runtime wants. No sessions: `capabilities.transactions` is `false`, `db.transaction()`
+throws (`No transactions support in neon-http driver`), `db.batch([...])` runs several statements in one non-interactive
 transaction instead, and `migrate()` applies its statements one by one without a rollback — a failing migration leaves
 the statements before it applied; fix the cause and run again. `options.authToken` carries a JWT for Neon Authorize.
 
@@ -78,6 +78,7 @@ neonConfig.useSecureWebSocket = false;
 | `casing`       | —        | `snake_case` or `camelCase`: column names for properties that declare none.         |
 | `logger`       | —        | Pool errors and, with `queryLogging`, the queries; the process logger unless given. |
 | `queryLogging` | —        | Log every query with its parameters at `debug`.                                     |
+| `label`        | —        | The location's name, for log lines and errors; `registerLocation()` fills it in.    |
 
 ## Options of `neon-http`
 
@@ -89,3 +90,4 @@ neonConfig.useSecureWebSocket = false;
 | `casing`       | —        | `snake_case` or `camelCase`: column names for properties that declare none.         |
 | `logger`       | —        | Where the queries go with `queryLogging`; the process logger unless given.          |
 | `queryLogging` | —        | Log every query with its parameters at `debug`.                                     |
+| `label`        | —        | The location's name, for log lines and errors; `registerLocation()` fills it in.    |

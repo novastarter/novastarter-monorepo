@@ -3,3 +3,4 @@ coverage/
 pnpm-lock.yaml
 /.changeset/pre.json
 /.changeset/*.md
+apps/*/drizzle/

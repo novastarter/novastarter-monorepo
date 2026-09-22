@@ -48,3 +48,4 @@ A `Pool` handed in stays the caller's: not ended, and its `error` listener the c
 | `casing`       | —        | `snake_case` or `camelCase`: column names for properties that declare none.           |
 | `logger`       | —        | Pool errors and, with `queryLogging`, the queries; the process logger unless given.   |
 | `queryLogging` | —        | Log every query with its parameters at `debug`.                                       |
+| `label`        | —        | The location's name, for log lines and errors; `registerLocation()` fills it in.      |

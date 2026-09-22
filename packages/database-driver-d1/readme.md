@@ -49,8 +49,8 @@ are the same declarations and make Drizzle's `D1Result` fully typed in the app.
 
 ## Transactions and migrations
 
-`db.transaction()` sends `begin` and `commit`, which D1 rejects; `db.batch([...])` runs several statements atomically
-instead. There is nothing to close: the binding is the platform's.
+`db.transaction()` sends `begin` and `commit`, which D1 rejects — `capabilities.transactions` is `false`;
+`db.batch([...])` runs several statements atomically instead. There is nothing to close: the binding is the platform's.
 
 `migrate()` reads the folder through `node:fs`, so it runs from a Node process holding the binding — a deploy script
 over `getPlatformProxy()` — not from inside a Worker. The alternative is wrangler's own journal:
@@ -69,3 +69,4 @@ The kit logger (pino) and the migrator need the `nodejs_compat` compatibility fl
 | `casing`       | —        | `snake_case` or `camelCase`: column names for properties that declare none.          |
 | `logger`       | —        | Where the queries go with `queryLogging`; the process logger unless given.           |
 | `queryLogging` | —        | Log every query with its parameters at `debug`.                                      |
+| `label`        | —        | The location's name, for log lines and errors; `registerLocation()` fills it in.     |

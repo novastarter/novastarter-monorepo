@@ -49,7 +49,11 @@ test('Registers every subsystem in-process without a Redis and runs a job end to
 
 	expect(useDatabase()['configs'].get('default')?.[0]).toMatchObject({
 		driver: 'pglite',
-		options: { connection: 'memory://' },
+		options: {
+			connection: 'memory://',
+			label: 'default',
+			schema: expect.objectContaining({ users: expect.anything() }),
+		},
 	});
 
 	expect(useDatabase().instantiated().size).toBe(0);
@@ -97,7 +101,7 @@ test('Registers the default database location from DATABASE_URL without opening 
 
 	expect(useDatabase()['configs'].get('default')?.[0]).toMatchObject({
 		driver: 'supabase',
-		options: { url: 'postgresql://postgres:secret@127.0.0.1:5432/app' },
+		options: { url: 'postgresql://postgres:secret@127.0.0.1:5432/app', label: 'default' },
 	});
 
 	expect(useDatabase().instantiated().size).toBe(0);

@@ -82,6 +82,10 @@ And at deploy time, or at start-up, the migrations `drizzle-kit generate` wrote 
 await useDatabase().location().migrate({ migrationsFolder: './drizzle' });
 ```
 
+The `web` app shows the whole loop: `db/schema.ts`, `drizzle.config.ts`, the committed `drizzle/` folder,
+`pnpm --filter web db:generate` / `db:migrate` (`scripts/migrate.ts`) and `DATABASE_MIGRATE=true` for a start-up that
+migrates first.
+
 `registerLocation()` checks that the driver exists and keeps the options; the first `location(name)` builds the driver,
 so an unused location never opens a pool. `location(name)` throws for a name nobody registered; `hasLocation(name)` and
 `locationNames()` inspect the registry, `instantiated()` lists what was built so far, `close()` releases the drivers
@@ -89,14 +93,30 @@ built so far at shutdown — the pools, the file handles — and keeps the regis
 
 ## The contract
 
-Every driver exposes the same four members:
+Every driver exposes the same five members:
 
 | Member             | What it does                                                                                  |
 | ------------------ | --------------------------------------------------------------------------------------------- |
 | `db`               | The Drizzle database of the dialect: `NodePgDatabase` or `BetterSQLite3Database`.             |
-| `ping()`           | One `select 1`, so a bootstrap or a health check can prove the location is reachable.         |
+| `capabilities`     | `{ transactions }`: whether `db.transaction()` works — not over `neon-http`, not on `d1`.     |
+| `ping()`           | One `select 1`; throws `DatabaseUnavailableError` (`DATABASE_UNAVAILABLE`, 503) otherwise.    |
 | `migrate(options)` | Drizzle's migrator over a drizzle-kit folder; `migrationsTable`, `migrationsSchema` optional. |
 | `close()`          | Ends the pool or closes the file; a pool the application handed in stays the application's.   |
+
+`capabilities.transactions` is what an application reads before choosing between `db.transaction()` and `db.batch()`,
+rather than the driver's name. `ping()` wraps whatever the backend raised — refused connection, timeout, an instance
+that never came up — so a health check tells an unreachable database from a failing query:
+
+```ts
+import { DatabaseUnavailableError, useDatabase } from '@novastarter/database';
+
+try {
+	await useDatabase().location().ping();
+} catch (error) {
+	if (error instanceof DatabaseUnavailableError) return { status: 503, reason: error.extensions.reason };
+	throw error;
+}
+```
 
 A Drizzle schema is bound to its dialect — `pgTable` against PostgreSQL, `mysqlTable` against MySQL, `sqliteTable`
 against SQLite — so a location cannot switch dialects the way a queue switches from Redis to in-process. The Postgres
@@ -106,7 +126,9 @@ share the schema but not the API — `BetterSQLite3Database` is synchronous, `Li
 asynchronous.
 
 Every driver takes, next to its connection options, `schema`, `casing` (`snake_case` or `camelCase`), `logger` (the kit
-logger, the process one unless given) and `queryLogging` (every query with its parameters at `debug`).
+logger, the process one unless given), `queryLogging` (every query with its parameters at `debug`) and `label` — the
+location's name, which `registerLocation()` fills in, so every log line of the driver carries `database: "<name>"` and
+`DatabaseUnavailableError` says which location is down.
 
 A driver refuses a missing option at construction with a plain `Error` naming it:
 `The postgres database driver needs a "connection"`.
@@ -115,9 +137,12 @@ A driver refuses a missing option at construction with a plain `Error` naming it
 
 A driver is a class taking its options in the constructor and implementing `DatabaseDriver<Db>` from this package, with
 `Db` the Drizzle database type of its dialect; see `@novastarter/database-driver-sqlite` for the smallest one.
+`resolveLogger(config)` gives the logger to report through, bound to the location's label;
 `toDrizzleOptions(config, logger)` turns the shared options into what `drizzle()` takes — without the `undefined` keys
-Drizzle's types refuse — and `toMigrationConfig(options)` does the same for the migrator. The package registers its
-options in the driver map, so a location naming it is type-checked:
+Drizzle's types refuse — and `toMigrationConfig(options)` does the same for the migrator; `ensureDirectory(path)`
+creates a data directory with its parents; `toUnavailableError(error, label)` is what `ping()` throws; `hasMethods` of
+`@novastarter/utils` tells a client the application handed in from its options. The package registers its options in the
+driver map, so a location naming it is type-checked:
 
 ```ts
 declare module '@novastarter/database' {
