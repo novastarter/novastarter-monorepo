@@ -3,6 +3,7 @@
  * on the real managers and a job goes through the real queue. No service is needed — every driver is the in-process
  * one — so the suite always runs.
  */
+import { useAuth } from '@novastarter/auth';
 import { useDatabase } from '@novastarter/database';
 import { useMail } from '@novastarter/mail';
 import { useBus, useCache, useKv, useLimiter } from '@novastarter/memory';
@@ -27,6 +28,7 @@ afterEach(() => {
 	useDatabase.reset();
 	useMail.reset();
 	useSms.reset();
+	useAuth.reset();
 	_handlers.clear();
 	useKv.reset();
 	useCache.reset();
@@ -71,6 +73,16 @@ test('Registers every subsystem in-process without a Redis and runs a job end to
 	expect(useMail().routes().from).toBe('no-reply@acme.test');
 	expect(useSms().hasLocation('default')).toBe(true);
 	expect(useSms().routes().from).toBe('Acme');
+
+	// Auth: credentials only without provider keys, the limiters resolved into the settings, the public development
+	// secrets outside production — and no database built, since the package keeps no records of its own
+	expect(useAuth().locationNames()).toEqual(['credentials']);
+	expect(useAuth().settings().limiters?.signIn).toBe(useLimiter().location('auth-sign-in'));
+	expect(useAuth().settings().limiters?.mfa).toBe(useLimiter().location('auth-mfa'));
+	expect(useAuth().settings().limiters?.code).toBe(useLimiter().location('auth-code'));
+	expect(useAuth().settings().jwt?.secret).toMatch(/^development-only/);
+	expect(useAuth().settings().oauth?.secret).toMatch(/^development-only/);
+	expect(useDatabase().instantiated().size).toBe(0);
 
 	const sent = await enqueue('mail.send', { to: 'ada@example.com', subject: 'Boot', text: 'Hello' });
 
