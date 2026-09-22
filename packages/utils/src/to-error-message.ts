@@ -20,19 +20,24 @@
  * ```
  */
 export const toErrorMessage = (error: unknown): string => {
-	// 1. An `Error` says what went wrong in its `message`; the stack is not part of the answer, and the class name
-	//    only stands in when the message is empty, so the line never ends in nothing
-	if (error instanceof Error) {
-		return error.message || error.name;
-	}
-
-	// 2. Anything else is written as text with `String()`, so a thrown `undefined` reads as `'undefined'` — the
-	//    word says more in a log line than an empty message would
 	try {
+		// 1. An `Error` says what went wrong in its `message`; the stack is not part of the answer, and the class name
+		//    only stands in when the message is empty, so the line never ends in nothing
+		if (error instanceof Error) {
+			return error.message || error.name;
+		}
+
+		// 2. Anything else is written as text with `String()`, so a thrown `undefined` reads as `'undefined'` — the
+		//    word says more in a log line than an empty message would
 		return String(error);
 	} catch {
-		// 3. `String()` calls `toString()`, which an object without a prototype does not have; a description of an
-		//    error must never throw itself, so the generic tag stands in
-		return Object.prototype.toString.call(error);
+		// 3. `String()` calls `toString()`, which an object without a prototype does not have, and a revoked `Proxy`
+		//    fails even the `instanceof` above; a description of an error must never throw itself, so the generic
+		//    tag stands in, and when even that fails — a `Proxy` with a throwing trap — a fixed word does
+		try {
+			return Object.prototype.toString.call(error);
+		} catch {
+			return '[unreadable value]';
+		}
 	}
 };

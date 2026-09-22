@@ -3,7 +3,7 @@
  */
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { DEFAULT_RETRY_OPTIONS, retry } from './retry.js';
-import { sleep } from './sleep.js';
+import { MAX_TIMER_DELAY, sleep } from './sleep.js';
 
 vi.mock('./sleep.js', { spy: true });
 
@@ -170,12 +170,67 @@ test('Rejects at once with a signal already aborted, without running the operati
 	expect(sleep).not.toHaveBeenCalled();
 });
 
+test('Refuses a retries budget that is not a whole number of zero or more', async () => {
+	// 1. `attempt > NaN` never holds, so a NaN budget would retry forever; a fraction or a negative is a mistake too
+	const fn = failing(0);
+
+	await expect(retry(fn, { retries: Number.NaN })).rejects.toThrow(RangeError);
+	await expect(retry(fn, { retries: 1.5 })).rejects.toThrow(RangeError);
+	await expect(retry(fn, { retries: -1 })).rejects.toThrow(RangeError);
+	expect(fn).not.toHaveBeenCalled();
+	expect(sleep).not.toHaveBeenCalled();
+});
+
+test('Refuses a negative or NaN pause as a misconfiguration, keeping the attempt error as cause', async () => {
+	// 1. A `delay` function that answers below zero: the RangeError names the options, not `sleep`, and no pause runs
+	const fn = failing(2);
+	const error: unknown = await retry(fn, { retries: 2, delay: () => -1 }).catch((thrown: unknown) => thrown);
+
+	expect(error).toBeInstanceOf(RangeError);
+	expect((error as RangeError).message).toMatch(/"delay", "factor" and "maxDelay"/);
+	expect((error as RangeError).cause).toBeInstanceOf(Error);
+	expect(fn).toHaveBeenCalledOnce();
+	expect(sleep).not.toHaveBeenCalled();
+
+	// 2. A `NaN` pause — a `NaN` base, here — is refused the same way
+	await expect(retry(failing(1), { delay: Number.NaN })).rejects.toThrow(RangeError);
+});
+
+test('Never asks for a pause longer than a timer can hold', async () => {
+	// 1. An uncapped `maxDelay` used to let an overgrown pause reach `sleep`, which Node would arm as 1 ms: the base
+	//    pause here is already past the limit, and the second one ten times so
+	const fn = failing(2);
+	const run = retry(fn, { delay: MAX_TIMER_DELAY + 1, factor: 10, maxDelay: Number.POSITIVE_INFINITY });
+
+	await vi.runAllTimersAsync();
+	await run;
+
+	expect(vi.mocked(sleep).mock.calls.map(([ms]) => ms)).toEqual([MAX_TIMER_DELAY, MAX_TIMER_DELAY]);
+});
+
+test('Ends with the abort reason, without calling onRetry, when the signal aborted during a failing attempt', async () => {
+	// 1. The attempt runs to its failure; by then the signal is gone, so no pause is reported and none is slept
+	const controller = new AbortController();
+	const onRetry = vi.fn();
+
+	const fn = vi.fn(async () => {
+		controller.abort(new Error('shutting down'));
+		throw new Error('attempt failed');
+	});
+
+	await expect(retry(fn, { signal: controller.signal, onRetry })).rejects.toThrow('shutting down');
+	expect(fn).toHaveBeenCalledOnce();
+	expect(onRetry).not.toHaveBeenCalled();
+	expect(sleep).not.toHaveBeenCalled();
+});
+
 test('Refuses a jitter outside 0 to 1 before running the operation', async () => {
 	// 1. A jitter above one could turn a pause negative; the misconfiguration is a RangeError, not a busy loop
 	const fn = failing(0);
 
 	await expect(retry(fn, { jitter: 1.5 })).rejects.toThrow(RangeError);
 	await expect(retry(fn, { jitter: -0.1 })).rejects.toThrow(RangeError);
+	await expect(retry(fn, { jitter: Number.NaN })).rejects.toThrow(RangeError);
 	expect(fn).not.toHaveBeenCalled();
 	expect(sleep).not.toHaveBeenCalled();
 });

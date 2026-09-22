@@ -1,5 +1,7 @@
+import { deserialize, serialize } from '../../../utils/index.js';
 import type { BusDriver } from '../../driver.js';
 import type { MessageHandler } from '../../types.js';
+import { dispatch } from '../../utils/dispatch.js';
 
 /**
  * Options of {@link BusDriverLocal}, the `local` driver; it has none.
@@ -10,7 +12,8 @@ export type BusDriverLocalConfig = Record<string, never>;
  * In-process bus: publishing calls the subscribers registered in this process, nothing more.
  *
  * It exists so code written against the `BusDriver` interface runs unchanged in a single-process setup; it adds no
- * cross-process delivery.
+ * cross-process delivery. What a subscriber receives is a serialised copy of the payload, as it would be from the
+ * Redis bus, so code does not come to rely on sharing an object with the publisher.
  *
  * @example
  * ```ts
@@ -22,11 +25,12 @@ export type BusDriverLocalConfig = Record<string, never>;
  */
 export class BusDriverLocal implements BusDriver {
 	/**
-	 * Subscribers per channel; a `Set` so the same callback is never registered twice.
+	 * Subscribers per channel; a `Set` so the same callback is never registered twice, in a `Map` so a channel named
+	 * like an `Object.prototype` member — `toString`, `constructor` — is a channel and not an inherited function.
 	 *
 	 * @internal
 	 */
-	private readonly handlers: Record<string, Set<MessageHandler<any>>>;
+	private readonly handlers: Map<string, Set<MessageHandler<any>>>;
 
 	/**
 	 * Create an empty bus.
@@ -35,7 +39,7 @@ export class BusDriverLocal implements BusDriver {
 	 */
 	constructor(_config: BusDriverLocalConfig = {}) {
 		// 1. Start without subscribers
-		this.handlers = {};
+		this.handlers = new Map();
 	}
 
 	/**
@@ -46,15 +50,21 @@ export class BusDriverLocal implements BusDriver {
 	 * @param payload - Value handed to every subscriber.
 	 */
 	async publish<T = unknown>(channel: string, payload: T): Promise<void> {
-		// 1. Call every subscriber, swallowing errors: a failing handler must not stop delivery to the others nor
-		//    crash the publisher, which matches how the Redis bus and event listeners in general behave
-		this.handlers[channel]?.forEach((callback) => {
-			try {
-				callback(payload);
-			} catch {
-				// Do nothing..
-			}
-		});
+		// 1. Nobody listening, nothing to copy or deliver
+		const handlers = this.handlers.get(channel);
+
+		if (handlers === undefined || handlers.size === 0) {
+			return;
+		}
+
+		// 2. Subscribers get what they would get from the Redis bus: a copy that went through the same serialisation,
+		//    so a handler mutating its payload never reaches into the publisher's object, and a value the wire would
+		//    not carry — a `Date`, an `undefined` field — arrives the same way on both backends
+		const copy = deserialize<T>(serialize(payload));
+
+		// 3. Every subscriber runs on its own and a failing one is logged, the same way the Redis bus fans out: a
+		//    broken handler neither stops delivery to the others nor fails the publisher
+		dispatch(channel, handlers, copy);
 	}
 
 	/**
@@ -66,11 +76,11 @@ export class BusDriverLocal implements BusDriver {
 	 */
 	async subscribe<T = unknown>(channel: string, callback: MessageHandler<T>): Promise<void> {
 		// 1. Create the channel's set on first use
-		const set = this.handlers[channel] ?? new Set();
+		const set = this.handlers.get(channel) ?? new Set();
 
 		set.add(callback);
 
-		this.handlers[channel] = set;
+		this.handlers.set(channel, set);
 	}
 
 	/**
@@ -82,6 +92,6 @@ export class BusDriverLocal implements BusDriver {
 	 */
 	async unsubscribe<T = unknown>(channel: string, callback: MessageHandler<T>): Promise<void> {
 		// 1. Unknown channels and callbacks are ignored rather than treated as errors
-		this.handlers[channel]?.delete(callback);
+		this.handlers.get(channel)?.delete(callback);
 	}
 }

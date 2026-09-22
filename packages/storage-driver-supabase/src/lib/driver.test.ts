@@ -237,6 +237,27 @@ describe('#fullPath', () => {
 		const result = driver['fullPath'](sample.path.input);
 		expect(result).toBe(`${sample.config.root}/${sample.path.input}`);
 	});
+
+	test('Keeps a caller path under the root and drops a leading slash, like every other driver', () => {
+		const rooted = new StorageDriverSupabase({
+			serviceRole: sample.config.serviceRole,
+			bucket: sample.config.bucket,
+			endpoint: sample.config.endpoint,
+			root: 'media',
+		});
+
+		const unrooted = new StorageDriverSupabase({
+			serviceRole: sample.config.serviceRole,
+			bucket: sample.config.bucket,
+			endpoint: sample.config.endpoint,
+		});
+
+		// `..` used to climb out of the root and a leading slash used to stay in the object name
+		expect(rooted['fullPath']('../other/secret')).toBe('media/other/secret');
+		expect(unrooted['fullPath']('../x')).toBe('x');
+		expect(unrooted['fullPath']('/x')).toBe('x');
+		expect(unrooted['fullPath']('')).toBe('');
+	});
 });
 
 describe('#getAuthenticatedUrl', () => {
@@ -321,13 +342,13 @@ describe('#read', () => {
 	});
 
 	test('Optionally allows setting end range offset', async () => {
-		// 1. An open start must produce `bytes=-N`, which the server reads as the last N bytes
+		// 1. An open start means the first bytes up to `end`, `bytes=0-N`; `bytes=-N` would ask for the last N bytes
 		await driver.read(sample.path.input, { range: { end: sample.range.end } } as any);
 
 		expect(fetch).toHaveBeenCalledWith(endpoint, {
 			headers: {
 				Authorization: `Bearer ${sample.config.serviceRole}`,
-				Range: `bytes=-${sample.range.end}`,
+				Range: `bytes=0-${sample.range.end}`,
 			},
 			method: 'GET',
 		});
@@ -357,10 +378,19 @@ describe('#read', () => {
 		}
 	});
 
+	test('Throws StorageFileNotFoundError when the object is missing', async () => {
+		// A 404 is the error every backend shares; any other error status stays the generic one
+		const cancel = vi.fn(async () => {});
+		vi.mocked(fetch).mockReturnValue({ status: 404, body: { cancel } } as unknown as Promise<Response>);
+
+		await expect(driver.read(sample.path.input)).rejects.toBeInstanceOf(StorageFileNotFoundError);
+		expect(cancel).toHaveBeenCalledOnce();
+	});
+
 	test('Throws an error when returned stream is not a readable stream', async () => {
 		vi.mocked(fetch).mockReturnValue({ status: 200, body: undefined } as unknown as Promise<Response>);
 
-		expect(driver.read(sample.path.input, { range: sample.range })).rejects.toThrowError(
+		await expect(driver.read(sample.path.input, { range: sample.range })).rejects.toThrowError(
 			new Error(`No stream returned for file "${sample.path.input}"`),
 		);
 	});
@@ -538,22 +568,43 @@ describe('#exists', () => {
 describe('#move', () => {
 	test('passes arguments to move', async () => {
 		driver['bucket'] = {
-			move: vi.fn(),
+			move: vi.fn(async () => ({ data: null, error: null })),
 		} as any;
 
 		await driver.move(sample.path.input, 'new/path');
 		expect(driver['bucket'].move).toHaveBeenCalledWith(sample.path.input, 'new/path');
+	});
+
+	test('Throws when the client reports the move failed instead of resolving', async () => {
+		// storage-js answers a failure as `{ error }`; a move that did not happen must not read as done
+		const cause = new Error('Object not found');
+		driver['bucket'] = { move: vi.fn(async () => ({ data: null, error: cause })) } as any;
+
+		await expect(driver.move('a.png', 'b.png')).rejects.toMatchObject({
+			message: 'Error moving file "a.png" to "b.png"',
+			cause,
+		});
 	});
 });
 
 describe('#copy', () => {
 	test('passes arguments to copy', async () => {
 		driver['bucket'] = {
-			copy: vi.fn(),
+			copy: vi.fn(async () => ({ data: null, error: null })),
 		} as any;
 
 		await driver.copy(sample.path.input, 'new/path');
 		expect(driver['bucket'].copy).toHaveBeenCalledWith(sample.path.input, 'new/path');
+	});
+
+	test('Throws when the client reports the copy failed instead of resolving', async () => {
+		const cause = new Error('Object not found');
+		driver['bucket'] = { copy: vi.fn(async () => ({ data: null, error: cause })) } as any;
+
+		await expect(driver.copy('a.png', 'b.png')).rejects.toMatchObject({
+			message: 'Error copying file "a.png" to "b.png"',
+			cause,
+		});
 	});
 });
 
@@ -612,13 +663,23 @@ describe('#write', () => {
 describe('#delete', () => {
 	test('Ensures input is passed to fullPath', async () => {
 		driver['bucket'] = {
-			remove: vi.fn(),
+			remove: vi.fn(async () => ({ data: [], error: null })),
 		} as any;
 
 		driver['fullPath'] = vi.fn();
 
 		await driver.delete(sample.path.input);
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
+	});
+
+	test('Throws when the client reports the removal failed instead of resolving', async () => {
+		const cause = new Error('jwt expired');
+		driver['bucket'] = { remove: vi.fn(async () => ({ data: null, error: cause })) } as any;
+
+		await expect(driver.delete('a.png')).rejects.toMatchObject({
+			message: 'Error deleting file "a.png"',
+			cause,
+		});
 	});
 });
 
@@ -634,14 +695,33 @@ describe('#list', () => {
 			list: vi.fn().mockReturnValue({ data: [], error: null }),
 		} as any;
 
-		// 2. Pull one item to trigger the first request; the generator is lazy until iterated
+		// 2. Pull one item to trigger the first request; the generator is lazy until iterated. The prefix goes through
+		//    `fullPath`, which confines it under the root, so a leading slash of the sample directory is gone
 		await driver.list(fullSample)[Symbol.asyncIterator]().next();
 
-		expect(driver['bucket'].list).toHaveBeenCalledWith(sampleDirectory, {
+		expect(driver['bucket'].list).toHaveBeenCalledWith(sampleDirectory.replace(/^\/+/, ''), {
 			search: sampleFile,
 			limit: 1000,
 			offset: 0,
 		});
+	});
+
+	test('Lists the whole root as a folder, not as a search for names starting with it', async () => {
+		// `media` as a search term would match `media-archive` too; the folder itself is what an empty prefix means
+		const rooted = new StorageDriverSupabase({
+			serviceRole: sample.config.serviceRole,
+			bucket: sample.config.bucket,
+			endpoint: sample.config.endpoint,
+			root: 'media',
+		});
+
+		rooted['bucket'] = { list: vi.fn().mockResolvedValue({ data: [], error: null }) } as any;
+
+		await rooted.list('')[Symbol.asyncIterator]().next();
+		expect(rooted['bucket'].list).toHaveBeenCalledWith('media/', { search: '', limit: 1000, offset: 0 });
+
+		await rooted.list('avatars/')[Symbol.asyncIterator]().next();
+		expect(rooted['bucket'].list).toHaveBeenCalledWith('media/avatars/', { search: '', limit: 1000, offset: 0 });
 	});
 
 	test('Yields file name omitting root if prefix is the full file path', async () => {

@@ -1,5 +1,6 @@
 import type { Logger } from '@novastarter/logger';
 import type { KvDriver } from '@novastarter/memory';
+import { toError } from '@novastarter/utils';
 import { getSchedules, type ResolvedSchedule } from '../schedules.js';
 import type { EnqueuedJob, JobName, ScheduleEnv } from '../types.js';
 import { type ScheduledJob, scheduleSynchronizedJob } from './schedule-synchronized-job.js';
@@ -72,7 +73,7 @@ export const startSchedules = (options: StartSchedulesOptions): RunningSchedules
 				{
 					kv,
 					timezone: options.timezone,
-					onError: (error) => logger.error(error, `Schedule of "${schedule.job}" failed to enqueue`),
+					onError: (error) => logger.error(toError(error), `Schedule of "${schedule.job}" failed to enqueue`),
 				},
 			),
 		);

@@ -98,7 +98,7 @@ export class CacheDriverLocal implements CacheDriver {
 	}
 
 	/**
-	 * Acquire a lock on the given key; a no-op handle for the local backend.
+	 * Acquire a lock on the given key, waiting for the holders of this process before it.
 	 *
 	 * @param key - Key to lock.
 	 * @returns Handle to release or extend the lock.

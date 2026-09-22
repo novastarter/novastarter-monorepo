@@ -15,7 +15,7 @@ declare function clearTimeout(handle: unknown): void;
 
 interface AbortSignal {
 	readonly aborted: boolean;
-	readonly reason: any;
+	readonly reason: unknown;
 	addEventListener(type: 'abort', listener: () => void, options?: { once?: boolean }): void;
 	removeEventListener(type: 'abort', listener: () => void): void;
 }

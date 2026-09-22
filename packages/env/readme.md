@@ -29,6 +29,9 @@ export const envSchema = z.object({
 export const env = envSchema.parse(useEnv({ fileVariables: Object.keys(envSchema.shape) }));
 ```
 
+The options belong to this first call; `useEnv()` anywhere else answers with the same object, and a later call that
+passes options is refused rather than having them ignored. `useEnv.reset()` drops the configuration, for tests.
+
 Anywhere later — typed, no casts:
 
 ```ts
@@ -55,4 +58,6 @@ if (env.REDIS) useRedis().registerLocation('default', env.REDIS);
 | `<NAME>_FILE` | —       | Path to read `<NAME>` from, for the names passed in `fileVariables`, e.g. `DB_PASSWORD_FILE`. |
 
 A value may carry a cast prefix: `string:`, `number:`, `boolean:`, `array:`, `json:`, `regex:`. `array:` takes a comma
-separated list whose items may carry prefixes of their own: `array:string:a,number:1` gives `['a', 1]`.
+separated list whose items may carry prefixes of their own: `array:string:a,number:1` gives `['a', 1]`. A payload the
+prefix cannot read — `number:80O0`, `regex:(` — is refused at start-up with an error naming the value, rather than
+turned into a missing variable a schema default would cover.

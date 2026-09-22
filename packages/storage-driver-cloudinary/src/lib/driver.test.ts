@@ -23,7 +23,7 @@ import {
 	randWord,
 } from '@ngneat/falso';
 import { StorageFileNotFoundError } from '@novastarter/storage';
-import { joinPath, normalizePath } from '@novastarter/utils';
+import { confinePath, joinPath, normalizePath } from '@novastarter/utils';
 import type { Response } from 'undici';
 import { fetch, FormData } from 'undici';
 import type { Mock } from 'vitest';
@@ -253,7 +253,7 @@ describe('#constructor', () => {
 			accessMode: sample.config.accessMode,
 		});
 
-		expect(normalizePath).toHaveBeenCalledWith(sample.config.root, { removeLeading: true });
+		expect(confinePath).toHaveBeenCalledWith(sample.config.root);
 	});
 });
 
@@ -261,6 +261,7 @@ describe('#fullPath', () => {
 	test('Returns normalized joined path', () => {
 		// 1. Both helpers are auto-mocked; fixed return values let the assertions check the wiring, not real path logic
 		vi.mocked(joinPath).mockReturnValue(sample.path.inputFull);
+		vi.mocked(confinePath).mockReturnValue(sample.path.input);
 		vi.mocked(normalizePath).mockReturnValue(sample.path.inputFull);
 
 		const driver = new StorageDriverCloudinary({
@@ -272,11 +273,12 @@ describe('#fullPath', () => {
 
 		driver['root'] = sample.config.root;
 
-		// 2. `joinPath` must get root and path in that order, and its result must lose its leading slash
+		// 2. `joinPath` must get root and confined path in that order, and its result is the public id
 		const result = driver['fullPath'](sample.path.input);
 
+		// The caller path is confined first, so a leading `..` is dropped before the root is joined
+		expect(confinePath).toHaveBeenCalledWith(sample.path.input);
 		expect(joinPath).toHaveBeenCalledWith(sample.config.root, sample.path.input);
-		expect(normalizePath).toHaveBeenCalledWith(sample.path.inputFull, { removeLeading: true });
 		expect(result).toBe(sample.path.inputFull);
 	});
 });
@@ -575,6 +577,14 @@ describe('#read', () => {
 		vi.spyOn(Readable, 'fromWeb').mockReturnValue(sample.stream);
 	});
 
+	test('Throws StorageFileNotFoundError when Cloudinary answers 404', async () => {
+		// A 404 is the error every backend shares; any other error status stays the generic one
+		mockResponse.status = 404;
+		mockResponse.body = { cancel: vi.fn(async () => {}) } as unknown as ReadableStream;
+
+		await expect(driver.read(sample.path.input)).rejects.toBeInstanceOf(StorageFileNotFoundError);
+	});
+
 	test('Gets resource type for extension of given filepath', async () => {
 		await driver.read(sample.path.input);
 		expect(driver['getResourceType']).toHaveBeenCalledWith(sample.path.input);
@@ -610,7 +620,7 @@ describe('#read', () => {
 
 		expect(fetch).toHaveBeenCalledWith(
 			`https://res.cloudinary.com/${sample.config.cloudName}/${sample.resourceType}/upload/${sample.parameterSignature}/${sample.path.inputFull}`,
-			{ method: 'GET', headers: { Range: `bytes=-${sample.range.end}` } },
+			{ method: 'GET', headers: { Range: `bytes=0-${sample.range.end}` } },
 		);
 	});
 
@@ -1175,8 +1185,23 @@ describe('#delete', () => {
 		// 1. Real joining here, because the public id assertion rebuilds `folder/id` the same way the driver does
 		vi.mocked(joinPath).mockImplementation(joinPathActual);
 
-		// 2. One call up front; every test below asserts a different helper or request the call made
+		// 2. Cloudinary answers a destroy with 200, `result: 'ok'` or `'not found'` alike; a missing asset is deleted
+		vi.mocked(fetch).mockResolvedValue({ status: 200, json: async () => ({ result: 'ok' }) } as unknown as Response);
+
+		// 3. One call up front; every test below asserts a different helper or request the call made
 		await driver.delete(sample.path.input);
+	});
+
+	test('Throws when Cloudinary answers with an error status instead of resolving', async () => {
+		// A rotated secret, a rate limit or a 5xx is a delete that did not happen
+		vi.mocked(fetch).mockResolvedValue({
+			status: 401,
+			json: async () => ({ error: { message: 'Invalid Signature' } }),
+		} as unknown as Response);
+
+		await expect(driver.delete(sample.path.input)).rejects.toThrow(
+			`Error deleting file "${sample.path.input}": Invalid Signature`,
+		);
 	});
 
 	test('Gets full path', () => {
@@ -1317,35 +1342,32 @@ describe('#list', () => {
 	test('Throws error if search api fails', async () => {
 		mockResponse.status = randNumber({ min: 400, max: 599 });
 
-		try {
-			await driver.list(sample.path.input).next();
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe(`Can't list for prefix "${sample.path.input}": Unknown`);
-		}
+		await expect(driver.list(sample.path.input).next()).rejects.toThrow(
+			`Can't list for prefix "${sample.path.input}": Unknown`,
+		);
 	});
 
 	test('Defaults to Unknown error if the error response does not contain a message', async () => {
 		mockResponse.status = randNumber({ min: 400, max: 599 });
 		mockResponseBody.error = {};
 
-		try {
-			await driver.list(sample.path.input).next();
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe(`Can't list for prefix "${sample.path.input}": Unknown`);
-		}
+		await expect(driver.list(sample.path.input).next()).rejects.toThrow(
+			`Can't list for prefix "${sample.path.input}": Unknown`,
+		);
 	});
 
-	test('Provides Cloudinary error message', async () => {
+	test('Provides Cloudinary error message, read from the body once', async () => {
+		// A body can be read once: a second `json()` on a real response rejects with "Body is unusable"
 		mockResponse.status = randNumber({ min: 400, max: 599 });
 		mockResponseBody.error = { message: randText() };
 
-		try {
-			await driver.list(sample.path.input).next();
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe(`Can't list for prefix "${sample.path.input}": ${mockResponseBody.error.message}`);
-		}
+		mockResponse.json
+			.mockReset()
+			.mockResolvedValueOnce(mockResponseBody)
+			.mockRejectedValue(new TypeError('Body is unusable: Body has already been read'));
+
+		await expect(driver.list(sample.path.input).next()).rejects.toThrow(
+			`Can't list for prefix "${sample.path.input}": ${mockResponseBody.error.message}`,
+		);
 	});
 });

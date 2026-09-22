@@ -60,8 +60,12 @@ export interface KvDriver {
 	/**
 	 * Acquire a lock on the given key, waiting for it to become free.
 	 *
+	 * A lock is a name, not the key of a stored value: locking `user:1` and storing a value under `user:1` do not
+	 * touch each other on any backend.
+	 *
 	 * @param key - Key to lock.
 	 * @returns Handle to release or extend the lock.
+	 * @throws When the lock is still held once the driver's wait budget — its `lockTimeout` — is spent.
 	 */
 	acquireLock(key: string): MaybePromise<Lock>;
 
@@ -72,6 +76,8 @@ export interface KvDriver {
 	 * @param key - Key to lock.
 	 * @param callback - Work to run under the lock.
 	 * @returns Whatever the callback resolves to.
+	 * @throws When the lock is still held once the driver's wait budget — its `lockTimeout` — is spent; whatever the
+	 * callback throws.
 	 */
 	usingLock<T>(key: string, callback: () => Promise<T>): MaybePromise<T>;
 

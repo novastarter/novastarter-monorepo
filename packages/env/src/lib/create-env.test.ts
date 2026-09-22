@@ -59,6 +59,18 @@ test('Takes the defaults as they are, casting the sources only', () => {
 	expect(cast).toHaveBeenCalledWith('test-file');
 });
 
+test('Names the variable when a cast prefix cannot read its value', () => {
+	// 1. The cast knows the value only; the variable is what the reader of the error has to fix
+	const cause = new Error('Cannot cast "number:80O0" to a number');
+
+	vi.mocked(cast).mockImplementation((value) => {
+		if (value === 'test-process') throw cause;
+		return value;
+	});
+
+	expect(() => createEnv()).toThrow('Environment variable "PROCESS": Cannot cast "number:80O0" to a number');
+});
+
 test('Combines process/file based config with defaults', () => {
 	const env = createEnv();
 

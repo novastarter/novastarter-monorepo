@@ -12,6 +12,7 @@ import {
 } from '../../../utils/index.js';
 import type { BusDriver } from '../../driver.js';
 import type { MessageHandler } from '../../types.js';
+import { dispatch, reportUnreadable } from '../../utils/dispatch.js';
 
 /**
  * Options of {@link BusDriverRedis}, the `redis` driver.
@@ -105,6 +106,25 @@ export class BusDriverRedis implements BusDriver {
 	private handlers: Record<string, Set<MessageHandler<any>>>;
 
 	/**
+	 * The Redis `SUBSCRIBE` under way per namespaced channel, while it is; every `subscribe()` of that channel waits
+	 * for the same one, so all of them learn whether Redis took it.
+	 *
+	 * @internal
+	 */
+	private pending: Record<string, Promise<void>> = {};
+
+	/**
+	 * The handling of the messages received so far, one after the other.
+	 *
+	 * Decompressing is asynchronous, so a small plain message arriving right after a gzipped one would otherwise be
+	 * handed to the subscribers first; chaining every message onto the previous one keeps the order Redis sent them
+	 * in, which is what a subscriber to a stream of invalidations or log lines relies on.
+	 *
+	 * @internal
+	 */
+	private inbox: Promise<void> = Promise.resolve();
+
+	/**
 	 * Create the bus on top of an existing Redis connection.
 	 *
 	 * @param config - Redis configuration.
@@ -116,8 +136,13 @@ export class BusDriverRedis implements BusDriver {
 		this.pub = config.redis;
 		this.sub = config.redis.duplicate();
 
-		// 2. One listener for every channel; the binary event keeps compressed payloads intact
-		this.sub.on('messageBuffer', (channel, message) => this.messageBufferHandler(channel, message));
+		// 2. One listener for every channel; the binary event keeps compressed payloads intact, and every message is
+		//    handled after the one before it, so an asynchronous decompression cannot reorder the stream
+		this.sub.on('messageBuffer', (channel, message) => {
+			// 1. The handler never rejects, so the chain never breaks; the chain is kept, the promise of this message
+			//    is not needed by anyone
+			this.inbox = this.inbox.then(() => this.messageBufferHandler(channel, message));
+		});
 
 		// 3. Apply the documented defaults: compress, but only from 1 kB up
 		this.compression = config.compression ?? true;
@@ -157,15 +182,45 @@ export class BusDriverRedis implements BusDriver {
 
 		const existingSet = this.handlers[namespaced];
 
-		// 2. Only the first callback triggers a Redis `SUBSCRIBE`; later ones join the existing set
-		if (existingSet === undefined) {
-			const set = new Set<MessageHandler<T>>();
-			set.add(callback);
-			this.handlers[namespaced] = set;
-
-			await this.sub.subscribe(namespaced);
-		} else {
+		// 2. Only the first callback triggers a Redis `SUBSCRIBE`; later ones join the existing set — and wait for the
+		//    `SUBSCRIBE` still under way, if any, so a caller that joined while Redis was being asked learns of a
+		//    failure too instead of being told its handler is in place when the set is about to go
+		if (existingSet !== undefined) {
 			existingSet.add(callback);
+			await this.pending[namespaced];
+
+			return;
+		}
+
+		const set = new Set<MessageHandler<T>>();
+		set.add(callback);
+		this.handlers[namespaced] = set;
+
+		// 3. A `SUBSCRIBE` that fails leaves no set behind: with one in place, a retry would take the branch above and
+		//    add its callback without ever asking Redis again, so the channel would stay silent for good. The promise
+		//    is shared with the callers that join meanwhile and forgotten once settled. Both removals check identity:
+		//    an `unsubscribe` and a fresh `subscribe` may have replaced the set and the promise while this one was in
+		//    flight, and a stale failure must not wipe out that newer subscription
+		const subscription = this.sub.subscribe(namespaced).then(
+			() => {},
+			(error: unknown) => {
+				// 1. Only this call's own set goes; the error still reaches every caller awaiting this subscription
+				if (this.handlers[namespaced] === set) {
+					delete this.handlers[namespaced];
+				}
+
+				throw error;
+			},
+		);
+
+		this.pending[namespaced] = subscription;
+
+		try {
+			await subscription;
+		} finally {
+			if (this.pending[namespaced] === subscription) {
+				delete this.pending[namespaced];
+			}
 		}
 	}
 
@@ -205,8 +260,10 @@ export class BusDriverRedis implements BusDriver {
 	 * @returns Once the server acknowledged the quit.
 	 */
 	async close(): Promise<void> {
-		// 1. Only the duplicate is the driver's own; its subscriptions end with it, so the handlers can go too
+		// 1. Only the duplicate is the driver's own; its subscriptions end with it, so the handlers and any `SUBSCRIBE`
+		//    still under way can go too
 		this.handlers = {};
+		this.pending = {};
 		await this.sub.quit();
 	}
 
@@ -220,24 +277,36 @@ export class BusDriverRedis implements BusDriver {
 	 * @param message - Raw payload bytes.
 	 * @internal
 	 */
-	private async messageBufferHandler(channel: Buffer, message: Buffer) {
+	private async messageBufferHandler(channel: Buffer, message: Buffer): Promise<void> {
 		// 1. Redis reports the channel as bytes; decode it to look the handlers up
 		const namespaced = uint8ArrayToString(bufferToUint8Array(channel));
 
-		if (namespaced in this.handlers === false) {
+		if (!(namespaced in this.handlers)) {
 			return;
 		}
 
-		// 2. Compression is decided per payload on publish, so detect it from the gzip header
-		let binaryArray = bufferToUint8Array(message);
+		// 2. Decode the payload — compression is decided per payload on publish, so it is detected from the gzip
+		//    header. A payload this bus did not write, a foreign client's plain text or a truncated gzip, fails here;
+		//    the listener is fire-and-forget, so the failure is logged rather than left as an unhandled rejection
+		//    that would end the process
+		let payload: unknown;
 
-		if (this.compression === true && isCompressed(binaryArray)) {
-			binaryArray = await decompress(binaryArray);
+		try {
+			let binaryArray = bufferToUint8Array(message);
+
+			if (this.compression === true && isCompressed(binaryArray)) {
+				binaryArray = await decompress(binaryArray);
+			}
+
+			payload = deserialize(binaryArray);
+		} catch (error) {
+			reportUnreadable(namespaced, error);
+
+			return;
 		}
 
-		// 3. Deserialize once and hand the same value to every callback
-		const deserialized = deserialize(binaryArray);
-
-		this.handlers[namespaced]?.forEach((callback) => callback(deserialized));
+		// 3. Hand the same value to every callback, each on its own: a failing subscriber is logged and the others
+		//    still run
+		dispatch(namespaced, this.handlers[namespaced], payload);
 	}
 }

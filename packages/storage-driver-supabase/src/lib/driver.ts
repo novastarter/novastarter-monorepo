@@ -6,9 +6,11 @@ import {
 	type ReadOptions,
 	type Stat,
 	StorageFileNotFoundError,
+	toListPrefix,
+	toRelativePath,
 	type TusDriver,
 } from '@novastarter/storage';
-import { normalizePath } from '@novastarter/utils';
+import { confinePath, joinPath, normalizePath } from '@novastarter/utils';
 import { StorageClient } from '@supabase/storage-js';
 import * as tus from 'tus-js-client';
 import type { RequestInit } from 'undici';
@@ -119,7 +121,7 @@ export class StorageDriverSupabase implements TusDriver {
 		//    would become part of the name and produce objects nobody can find by the expected key
 		this.config = {
 			...config,
-			root: normalizePath(config.root ?? '', { removeLeading: true }),
+			root: confinePath(config.root ?? ''),
 		};
 
 		this.preferredChunkSize = this.config.tus?.chunkSize ?? DEFAULT_CHUNK_SIZE;
@@ -190,14 +192,11 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @internal
 	 */
 	private fullPath(filepath: string) {
-		const path = join(this.config.root, filepath);
-
-		// 1. With no root and an empty path `join` yields `.`, but Supabase expects an empty string for the current
-		//    directory and would otherwise look for a literal `.` object
-		if (path === '.') return '';
-
-		// 2. Normalising turns the platform separators `join` may produce into the forward slashes object names use
-		return normalizePath(path);
+		// 1. Confine the caller path under the root before joining, as every other driver does: a leading `..` is
+		//    dropped, so `../other/secret` cannot address an object outside the location, and a leading slash goes,
+		//    so an empty root leaves a clean object name. `joinPath` answers `''` for no root and no path, which is
+		//    what Supabase expects for the top of the bucket
+		return joinPath(this.config.root, confinePath(filepath));
 	}
 
 	/**
@@ -234,6 +233,8 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @param options - Optional byte range; `version` is not supported by this driver and is ignored.
 	 * @returns The response body as a Node stream.
 	 * @throws Error when the response is an error status or carries no body.
+	 * @throws StorageFileNotFoundError when Supabase answers 404.
+	 * @throws Error for any other error status or a missing body.
 	 */
 	async read(filepath: string, options?: ReadOptions): Promise<Readable> {
 		const { range } = options || {};
@@ -245,18 +246,23 @@ export class StorageDriverSupabase implements TusDriver {
 			Authorization: `Bearer ${this.config.serviceRole}`,
 		};
 
-		// 2. Translate the range into the HTTP header form: an omitted bound becomes an empty side, so `end` alone
-		//    yields `bytes=-N`, which the server reads as the last N bytes rather than the first
+		// 2. Translate the range into the HTTP header form: an omitted start is `0` — `{ end }` alone asks for the
+		//    first bytes up to `end`, where `bytes=-N` would mean the last N bytes — and an omitted end is left open
 		if (range) {
-			requestInit.headers['Range'] = `bytes=${range.start ?? ''}-${range.end ?? ''}`;
+			requestInit.headers['Range'] = `bytes=${range.start ?? 0}-${range.end ?? ''}`;
 		}
 
 		const response = await fetch(this.getAuthenticatedUrl(filepath), requestInit);
 
 		// 3. An error status or a missing body means there is nothing to stream; the body is cancelled first because
-		//    an unread body holds its connection open
+		//    an unread body holds its connection open. A 404 becomes the error every backend shares, so a caller tells
+		//    a missing object from a denied or failed read
 		if (response.status >= 400 || !response.body) {
 			await response.body?.cancel();
+
+			if (response.status === 404) {
+				throw new StorageFileNotFoundError({ filepath });
+			}
 
 			throw new Error(`No stream returned for file "${filepath}"`);
 		}
@@ -277,18 +283,15 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @internal
 	 */
 	private async find(filepath: string) {
-		let rootPath = join(this.config.root, dirname(filepath));
-
-		// 1. With no root and a bare file name `join` yields `.`, but Supabase expects an empty string for the current
-		//    directory
-		if (rootPath === '.') rootPath = '';
-
-		const rootFolder = normalizePath(rootPath);
+		// 1. The folder is the full object name without its last segment, confined under the root like the name
+		//    itself; `joinPath` with `..` drops that segment and answers `''` at the top of the bucket
+		const name = this.fullPath(filepath);
+		const rootFolder = joinPath(name, '..');
 
 		// 2. Search by the base name only: the API filters within the given folder, so the folder part goes into the
 		//    prefix and the name into `search`
 		const { data, error } = await this.bucket.list(rootFolder, {
-			search: basename(filepath),
+			search: basename(name),
 			limit: 1,
 		});
 
@@ -339,10 +342,16 @@ export class StorageDriverSupabase implements TusDriver {
 	 *
 	 * @param src - Current object path.
 	 * @param dest - Path to move the object to.
+	 * @throws Error wrapping the storage error when the move fails.
 	 */
 	async move(src: string, dest: string): Promise<void> {
-		// 1. Supabase offers a native move, so unlike S3 this is a single request
-		await this.bucket.move(this.fullPath(src), this.fullPath(dest));
+		// 1. Supabase offers a native move, so unlike S3 this is a single request; the client reports a failure as a
+		//    return value rather than throwing, so it is thrown here — a move that did not happen must not read as done
+		const { error } = await this.bucket.move(this.fullPath(src), this.fullPath(dest));
+
+		if (error) {
+			throw new Error(`Error moving file "${src}" to "${dest}"`, { cause: error });
+		}
 	}
 
 	/**
@@ -350,10 +359,16 @@ export class StorageDriverSupabase implements TusDriver {
 	 *
 	 * @param src - Object to copy.
 	 * @param dest - Path of the copy.
+	 * @throws Error wrapping the storage error when the copy fails.
 	 */
 	async copy(src: string, dest: string): Promise<void> {
-		// 1. The bucket API copies server-side, so the object never passes through this process
-		await this.bucket.copy(this.fullPath(src), this.fullPath(dest));
+		// 1. The bucket API copies server-side, so the object never passes through this process; a failure comes back
+		//    as a return value and is thrown, so a copy that did not happen does not read as done
+		const { error } = await this.bucket.copy(this.fullPath(src), this.fullPath(dest));
+
+		if (error) {
+			throw new Error(`Error copying file "${src}" to "${dest}"`, { cause: error });
+		}
 	}
 
 	/**
@@ -384,10 +399,16 @@ export class StorageDriverSupabase implements TusDriver {
 	 * Remove an object.
 	 *
 	 * @param filepath - Object path relative to the root.
+	 * @throws Error wrapping the storage error when the removal fails.
 	 */
 	async delete(filepath: string): Promise<void> {
-		// 1. `remove` is a batch API; a one-element list is the single-object form
-		await this.bucket.remove([this.fullPath(filepath)]);
+		// 1. `remove` is a batch API; a one-element list is the single-object form. A failure comes back as a return
+		//    value and is thrown, so an object that is still there does not read as deleted
+		const { error } = await this.bucket.remove([this.fullPath(filepath)]);
+
+		if (error) {
+			throw new Error(`Error deleting file "${filepath}"`, { cause: error });
+		}
 	}
 
 	/**
@@ -397,9 +418,10 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @returns Object paths relative to the root, folders descended recursively.
 	 */
 	list(prefix = ''): AsyncIterable<string> {
-		// 1. Resolve the prefix once against the root; the generator works with full object names from here on
-		const fullPrefix = this.fullPath(prefix);
-		return this.listGenerator(fullPrefix);
+		// 1. Resolve the prefix once against the root; the generator works with full object names from here on. The
+		//    whole root, or a caller folder, keeps its trailing slash, so the generator lists that folder rather than
+		//    searching its parent for names starting with it — `media` would match `media-archive` too
+		return this.listGenerator(toListPrefix(this.fullPath(prefix), prefix));
 	}
 
 	/**
@@ -465,7 +487,7 @@ export class StorageDriverSupabase implements TusDriver {
 
 				if (item.id !== null) {
 					// 5. A file: strip the root (and its trailing slash) so callers get paths in the form they pass in
-					yield filePath.substring(this.config.root ? this.config.root.length + 1 : 0);
+					yield toRelativePath(this.config.root, filePath);
 				} else {
 					// 6. A folder has no id; descend with a trailing slash so the recursive call lists its contents
 					yield* this.listGenerator(`${filePath}/`);

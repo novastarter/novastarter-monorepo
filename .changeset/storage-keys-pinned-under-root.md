@@ -1,0 +1,10 @@
+---
+'@novastarter/storage-driver-s3': patch
+'@novastarter/storage-driver-gcs': patch
+'@novastarter/storage-driver-azure': patch
+'@novastarter/storage-driver-cloudinary': patch
+'@novastarter/storage-driver-supabase': patch
+'@novastarter/storage': patch
+---
+
+`@novastarter/storage` gains `toListPrefix` and `toRelativePath` for the drivers' listings. A caller path goes through `confinePath` of `@novastarter/utils` before the object key is built, the way the local driver already pins paths under its directory: `../other/secret` used to resolve above `root` and address an object outside the location, and now names `root/other/secret`; with an empty root a leading slash is dropped from the key (`/x` → `x`), as the Cloudinary driver already did. The Supabase driver confines its paths the same way, and the location root itself is confined too, so a root of `./media` or `/` behaves like `media` or no root. `list()` queries the root and a caller folder with their trailing slash and yields root-relative paths without a leading slash, where a root of `media` used to match `media-archive/…` too and every yielded path started with `/`; `read()` throws `StorageFileNotFoundError` for a missing object on S3, Azure, Supabase and Cloudinary, and the GCS stream errors with it, as the `Driver` contract promises. The Supabase driver throws when `move`, `copy` or `delete` fail instead of resolving over the client's `{ error }`, the Cloudinary driver reports a failed listing instead of failing on a second read of the response body and throws when a delete is refused instead of resolving, the S3 driver URL-encodes the copy source so a key with `+`, `%` or `?` copies and moves, and `deleteChunkedUpload` on S3 reports a missing upload as the TUS not-found error as its contract says. The GCS read stream tears the SDK's stream down when the consumer destroys it, so a client gone mid-download frees the response, and `stat()` on GCS reports `size` as a number, as the contract says, where the JSON API sends a string.

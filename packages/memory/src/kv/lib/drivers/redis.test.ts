@@ -85,14 +85,12 @@ describe('constructor', () => {
 			lua: SET_MAX_SCRIPT,
 		});
 
-		expect(kv['redis'].defineCommand).toHaveBeenCalledWith('release', {
-			numberOfKeys: 1,
-			lua: expect.any(String),
-		});
+		// Locks go through Redlock, which ships its own release script; no command of the driver's own
+		expect(kv['redis'].defineCommand).toHaveBeenCalledOnce();
 	});
 
-	test('Skips defining commands if they already exist on redis', () => {
-		const mockRedis = { defineCommand: vi.fn(), setMax: vi.fn(), release: vi.fn() } as unknown as ExtendedRedis;
+	test('Skips defining the command if it already exists on redis', () => {
+		const mockRedis = { defineCommand: vi.fn(), setMax: vi.fn() } as unknown as ExtendedRedis;
 
 		new KvDriverRedis({ redis: mockRedis, namespace: mockNamespace, compression: false });
 
@@ -267,7 +265,7 @@ describe('has', () => {
 		expect(res).toBe(true);
 	});
 
-	test('Returns true for exists status 1', async () => {
+	test('Returns false for exists status 0', async () => {
 		vi.mocked(kv['redis'].exists).mockResolvedValueOnce(0);
 
 		const res = await kv.has(mockKey);
@@ -298,6 +296,41 @@ describe('increment', () => {
 
 		expect(res).toBe(mockResult);
 	});
+
+	test('Sets the expiry in the same transaction when a ttl is configured', async () => {
+		// A key created by `INCRBY` alone would live for good; the transaction pairs it with `PEXPIRE`
+		const withTtl = new KvDriverRedis({ namespace: mockNamespace, redis: mockRedis, ttl: 5000 });
+
+		const exec = vi.fn().mockResolvedValue([
+			[null, 42],
+			[null, 1],
+		]);
+
+		const pexpire = vi.fn(() => ({ exec }));
+		const incrby = vi.fn(() => ({ pexpire }));
+		vi.mocked(mockRedis.multi).mockReturnValue({ incrby } as any);
+
+		const res = await withTtl.increment(mockKey, 2);
+
+		expect(incrby).toHaveBeenCalledWith(mockNamespacedKey, 2);
+		expect(pexpire).toHaveBeenCalledWith(mockNamespacedKey, 5000);
+		expect(res).toBe(42);
+		expect(mockRedis.incrby).not.toHaveBeenCalled();
+	});
+
+	test('Throws the error of the INCRBY reply inside the transaction', async () => {
+		// A transaction resolves with the failure inside the reply; it must surface like a plain `incrby` rejection
+		const withTtl = new KvDriverRedis({ namespace: mockNamespace, redis: mockRedis, ttl: 5000 });
+
+		const exec = vi.fn().mockResolvedValue([
+			[new Error('ERR value is not an integer or out of range'), null],
+			[null, 1],
+		]);
+
+		vi.mocked(mockRedis.multi).mockReturnValue({ incrby: () => ({ pexpire: () => ({ exec }) }) } as any);
+
+		await expect(withTtl.increment(mockKey)).rejects.toThrow('ERR value is not an integer or out of range');
+	});
 });
 
 describe('setMax', () => {
@@ -324,7 +357,7 @@ describe('setMax', () => {
 		expect(res).toBe(true);
 	});
 
-	test('Returns false if setMax returns 1', async () => {
+	test('Returns false if setMax returns 0', async () => {
 		// ioredis makes custom functions available as methods, but those aren't typeable
 		(kv['redis'] as any).setMax = vi.fn().mockResolvedValue(0);
 
@@ -334,13 +367,33 @@ describe('setMax', () => {
 
 		expect(res).toBe(false);
 	});
+
+	test('Hands the ttl to the script when one is configured', async () => {
+		const withTtl = new KvDriverRedis({ namespace: mockNamespace, redis: mockRedis, ttl: 5000 });
+		(withTtl['redis'] as any).setMax = vi.fn().mockResolvedValue(1);
+
+		await withTtl.setMax(mockKey, 15);
+
+		expect((withTtl['redis'] as any).setMax).toHaveBeenCalledWith(mockNamespacedKey, 15, 5000);
+	});
+
+	test('Returns false if setMax returns null', async () => {
+		// Redis answers a Lua `false` with nil, which ioredis reads as `null`: not stored either way
+		(kv['redis'] as any).setMax = vi.fn().mockResolvedValue(null);
+
+		const res = await kv.setMax(mockKey, 15);
+
+		expect(res).toBe(false);
+	});
 });
 
 describe('clear', () => {
-	test('Uses stream for iterating over keys, unlinks them in a pipeline', async () => {
+	test('Uses stream for iterating over keys, unlinks them in a pipeline, skips empty batches', async () => {
+		// A `SCAN` step may match nothing and still answer with an empty batch; `UNLINK` without keys is an error
 		kv['redis'].scanStream = vi.fn().mockReturnValue({
 			async *[Symbol.asyncIterator]() {
 				yield [mockKey];
+				yield [];
 				yield [mockKey];
 			},
 		});
@@ -357,7 +410,8 @@ describe('clear', () => {
 
 		expect(kv['redis'].pipeline).toHaveBeenCalledOnce();
 		expect(withNamespace).toHaveBeenCalledWith('*', mockNamespace);
-		expect(unlinkFn).toHaveBeenCalledTimes(2); // See the mocked key chunks from `scanStream`
+		// Two of the three mocked `scanStream` batches carry keys; the empty one is skipped
+		expect(unlinkFn).toHaveBeenCalledTimes(2);
 		expect(execFn).toHaveBeenCalledOnce();
 	});
 });
@@ -380,14 +434,44 @@ describe('acquireLock', () => {
 
 		kv['redlock'].acquire = vi.fn().mockResolvedValue(mockLock);
 
+		kv['redlock'].release = vi.fn(async (held: unknown) => {
+			await (held as { release: () => Promise<void> }).release();
+			return { attempts: [], start: 0 };
+		}) as never;
+
 		const lock = await kv.acquireLock(mockKey);
+		expect(withNamespace).toHaveBeenCalledWith(mockKey, `${mockNamespace}-locks`);
 		expect(kv['redlock'].acquire).toHaveBeenCalledWith([mockNamespacedKey], 5000);
 
+		// The release goes through Redlock without retries: a lock already gone must not be retried for 5 s; and it
+		// goes once, a second release of the handle is a no-op like the local store's
 		await lock.release();
+		await lock.release();
+		expect(kv['redlock'].release).toHaveBeenCalledExactlyOnceWith(mockLock, { retryCount: 0 });
 		expect(innerReleased).toBe(true);
 
 		await lock.extend(100);
 		expect(innerExtended).toBe(true);
+	});
+
+	test('Extends and releases through the lock redlock answered with, not the one it invalidated', async () => {
+		// Redlock's `extend()` returns a new lock and marks the old one expired; a second extend must go to the new one
+		const third = { release: vi.fn(async () => {}), extend: vi.fn(async () => third) };
+		const second = { release: vi.fn(async () => {}), extend: vi.fn(async () => third) };
+		const first = { release: vi.fn(async () => {}), extend: vi.fn(async () => second) };
+
+		kv['redlock'].acquire = vi.fn().mockResolvedValue(first);
+		kv['redlock'].release = vi.fn(async () => ({ attempts: [], start: 0 })) as never;
+
+		const lock = await kv.acquireLock(mockKey);
+
+		await lock.extend(100.7);
+		await lock.extend(200);
+		await lock.release();
+
+		expect(first.extend).toHaveBeenCalledExactlyOnceWith(100);
+		expect(second.extend).toHaveBeenCalledExactlyOnceWith(200);
+		expect(kv['redlock'].release).toHaveBeenCalledWith(third, { retryCount: 0 });
 	});
 });
 
@@ -397,6 +481,40 @@ describe('usingLock', () => {
 		kv['redlock'].using = vi.fn();
 
 		await kv.usingLock(mockKey, callback);
+		expect(withNamespace).toHaveBeenCalledWith(mockKey, `${mockNamespace}-locks`);
 		expect(kv['redlock'].using).toHaveBeenCalledWith([mockNamespacedKey], 5000, callback);
+	});
+});
+
+describe('redlock settings', () => {
+	test('Follows the client into its database and keeps the extension threshold below the lock timeout', () => {
+		// Redlock runs `SELECT` on the database it is told, 0 unless told; and `using` refuses a duration less than
+		// 100 ms above the auto-extension threshold, so a short lock timeout lowers the threshold
+		const inDb2 = new Redis();
+		(inDb2 as { options: { db?: number } }).options = { db: 2 };
+
+		const short = new KvDriverRedis({ namespace: mockNamespace, redis: inDb2, lockTimeout: 300 });
+
+		expect(short['redlock'].settings).toMatchObject({ db: 2, automaticExtensionThreshold: 200, retryCount: 6 });
+		expect(kv['redlock'].settings).toMatchObject({ db: 0, automaticExtensionThreshold: 500, retryCount: 100 });
+	});
+
+	test('Refuses a lock timeout under 200 ms or past a timer, and a client on a database Redlock cannot lock in', () => {
+		expect(() => new KvDriverRedis({ namespace: mockNamespace, redis: mockRedis, lockTimeout: 199 })).toThrow(
+			RangeError,
+		);
+
+		expect(() => new KvDriverRedis({ namespace: mockNamespace, redis: mockRedis, lockTimeout: Infinity })).toThrow(
+			RangeError,
+		);
+
+		expect(() => new KvDriverRedis({ namespace: mockNamespace, redis: mockRedis, lockTimeout: 200 })).not.toThrow();
+
+		const inDb16 = new Redis();
+		(inDb16 as { options: { db?: number } }).options = { db: 16 };
+
+		expect(() => new KvDriverRedis({ namespace: mockNamespace, redis: inDb16 })).toThrow(
+			'Redlock can only lock in databases 0 to 15',
+		);
 	});
 });

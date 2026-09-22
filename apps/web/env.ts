@@ -1,4 +1,5 @@
 import { useEnv } from '@novastarter/env';
+import { type Singleton, singleton } from '@novastarter/utils';
 import { z } from 'zod';
 
 /**
@@ -43,16 +44,23 @@ export const envSchema = z.object({
 export type AppEnv = z.infer<typeof envSchema>;
 
 /**
- * Parse the process configuration against {@link envSchema}.
+ * Parse the process configuration against {@link envSchema}, once per process.
  *
  * A function rather than a module-level constant, so the configuration is read when the app boots — not when the
- * module is first imported, which in Next.js may happen at build time.
+ * module is first imported, which in Next.js may happen at build time. Parsed on the first call and kept: `useEnv`
+ * takes its options from the call that builds it and refuses them afterwards, so this is the one call that passes
+ * them. `readEnv.reset()` drops the parsed variables, for tests; the raw ones of `useEnv` are read afresh with them,
+ * so a test stubbing the environment needs no second reset.
  *
- * @returns The typed variables.
+ * @returns The typed variables; the same object on every call.
  * @throws ZodError listing every variable that is missing or malformed.
  * @throws Error when a `<NAME>_FILE` points to a file that cannot be read.
  */
-export const readEnv = (): AppEnv => {
-	// 1. Every variable of the schema may come from a `<NAME>_FILE` — that is how the platform mounts secrets
+export const readEnv: Singleton<AppEnv> = singleton(() => {
+	// 1. The raw variables are rebuilt along with the parsed ones: `useEnv` refuses options once built, and a stale
+	//    raw configuration under a fresh parse would defeat a reset anyway. At boot nothing is built yet
+	useEnv.reset();
+
+	// 2. Every variable of the schema may come from a `<NAME>_FILE` — that is how the platform mounts secrets
 	return envSchema.parse(useEnv({ fileVariables: Object.keys(envSchema.shape) }));
-};
+});

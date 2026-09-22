@@ -23,6 +23,7 @@ import {
 	DeleteObjectCommand,
 	DeleteObjectsCommand,
 	GetObjectCommand,
+	type GetObjectCommandOutput,
 	HeadObjectCommand,
 	ListObjectsV2Command,
 	ListPartsCommand,
@@ -37,9 +38,11 @@ import {
 	type ReadOptions,
 	type Stat,
 	StorageFileNotFoundError,
+	toListPrefix,
+	toRelativePath,
 	type TusDriver,
 } from '@novastarter/storage';
-import { joinPath, normalizePath, retry } from '@novastarter/utils';
+import { confinePath, joinPath, retry } from '@novastarter/utils';
 import { isReadableStream } from '@novastarter/utils/node';
 import { Permit, Semaphore } from '@shopify/semaphore';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
@@ -127,10 +130,13 @@ declare module '@novastarter/storage' {
  */
 class PartsMissingError extends Error {
 	/**
+	 * Create the error for a listing that is short of parts.
+	 *
 	 * @param listed - Parts the listing showed.
 	 * @param expected - Parts that were sent.
 	 */
 	constructor(listed: number, expected: number) {
+		// 1. Named, so `shouldRetry` and the `catch` of `finishChunkedUpload` tell it from a failing `ListParts` call
 		super(`S3 lists ${listed} of ${expected} parts`);
 		this.name = 'PartsMissingError';
 	}
@@ -238,7 +244,9 @@ export class StorageDriverS3 implements TusDriver {
 
 		// 3. Store the root without a leading slash: S3 keys are not paths, and a leading `/` would become part of
 		//    the key and produce objects nobody can find by the expected name
-		this.root = this.config.root ? normalizePath(this.config.root, { removeLeading: true }) : '';
+		//    `confinePath` also resolves `.` and `..` in the root, the way every key is resolved, so a root of `./media`
+		//    strips from listed keys as `media` does, and a root of `/` means the top of the bucket
+		this.root = this.config.root ? confinePath(this.config.root) : '';
 
 		// 4. Sixty concurrent part uploads is the tus-node-server default, a balance between throughput and the
 		//    number of open sockets and temp files
@@ -329,9 +337,10 @@ export class StorageDriverS3 implements TusDriver {
 	 * @internal
 	 */
 	private fullPath(filepath: string) {
-		// 1. `joinPath` copes with an empty root and doubled slashes and always produces the forward slashes S3 keys
-		//    use, whatever the platform's separator
-		return joinPath(this.root, filepath);
+		// 1. Pin the caller path under the root before joining: resolved against `/` first, a leading `..` has nothing
+		//    to climb and is dropped by `confinePath`, so `../other/secret` cannot address a key outside the location. `joinPath`
+		//    copes with an empty root and doubled slashes and always produces the forward slashes S3 keys use
+		return joinPath(this.root, confinePath(filepath));
 	}
 
 	/**
@@ -341,6 +350,8 @@ export class StorageDriverS3 implements TusDriver {
 	 * @param options - Optional byte range; `version` is not supported by this driver and is ignored.
 	 * @returns The response body as a Node stream.
 	 * @throws Error when S3 returns no body, or a body that is not a Node readable.
+	 * @throws StorageFileNotFoundError when S3 answers 404.
+	 * @throws The SDK error for any other failure, or an `Error` when the SDK hands back no Node stream.
 	 */
 	async read(filepath: string, options?: ReadOptions): Promise<Readable> {
 		const { range } = options ?? {};
@@ -350,15 +361,27 @@ export class StorageDriverS3 implements TusDriver {
 			Bucket: this.config.bucket,
 		};
 
-		// 1. Translate the range into the HTTP header form: an omitted bound becomes an empty side, so `end` alone
-		//    yields `bytes=-N`, which S3 reads as the last N bytes rather than the first
+		// 1. Translate the range into the HTTP header form: an omitted start is `0` — `{ end }` alone asks for the
+		//    first bytes up to `end`, where `bytes=-N` would mean the last N bytes — and an omitted end is left open
 		if (range) {
-			commandInput.Range = `bytes=${range.start ?? ''}-${range.end ?? ''}`;
+			commandInput.Range = `bytes=${range.start ?? 0}-${range.end ?? ''}`;
 		}
 
-		const { Body: stream } = await this.client.send(new GetObjectCommand(commandInput));
+		// 2. A 404 — `NoSuchKey` — is the error every backend shares, so a caller tells a missing object from a denied
+		//    or failed read; anything else says nothing about the object and is rethrown
+		let stream: GetObjectCommandOutput['Body'];
 
-		// 2. The SDK types the body as a union of Node, Web and blob streams; only a Node readable is usable by the
+		try {
+			({ Body: stream } = await this.client.send(new GetObjectCommand(commandInput)));
+		} catch (error) {
+			if ((error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode === 404) {
+				throw new StorageFileNotFoundError({ filepath }, { cause: error });
+			}
+
+			throw error;
+		}
+
+		// 3. The SDK types the body as a union of Node, Web and blob streams; only a Node readable is usable by the
 		//    rest of the storage layer, so anything else counts as a failed read
 		if (!stream || !isReadableStream(stream)) {
 			throw new Error(`No stream returned for file "${filepath}"`);
@@ -446,11 +469,13 @@ export class StorageDriverS3 implements TusDriver {
 	 * @param dest - Path of the copy.
 	 */
 	async copy(src: string, dest: string): Promise<void> {
-		// 1. `CopySource` is a URL-style `/bucket/key` reference, unlike the plain `Key` used for the target
+		// 1. `CopySource` is a URL-style `/bucket/key` reference, unlike the plain `Key` used for the target, and S3
+		//    reads it URL-encoded: a `+` would be taken for a space, a `%` for an escape, a `?` for the version query,
+		//    so every segment of the key is encoded — the slashes between them stay
 		const params: CopyObjectCommandInput = {
 			Key: this.fullPath(dest),
 			Bucket: this.config.bucket,
-			CopySource: `/${this.config.bucket}/${this.fullPath(src)}`,
+			CopySource: `/${this.config.bucket}/${this.fullPath(src).split('/').map(encodeURIComponent).join('/')}`,
 		};
 
 		// 2. S3 does not carry encryption or ACL over from the source object; both have to be restated on the copy
@@ -544,8 +569,9 @@ export class StorageDriverS3 implements TusDriver {
 	 * @returns Object paths relative to the root. Keys ending in `/` (folder placeholders) are skipped.
 	 */
 	async *list(prefix = ''): AsyncGenerator<string, void, unknown> {
-		// 1. With no root and no prefix `joinPath` yields an empty string, which lists the whole bucket
-		const Prefix = this.fullPath(prefix);
+		// 1. The whole root, or a caller folder, is asked for with its trailing slash, so `media` does not match
+		//    `media-archive/…`; no root and no prefix give an empty string, which lists the whole bucket
+		const Prefix = toListPrefix(this.fullPath(prefix), prefix);
 
 		let continuationToken: string | undefined = undefined;
 
@@ -575,7 +601,7 @@ export class StorageDriverS3 implements TusDriver {
 
 					if (isDir) continue;
 
-					yield object.Key.substring(this.root.length);
+					yield toRelativePath(this.root, object.Key);
 				}
 			}
 		} while (continuationToken);
@@ -661,9 +687,13 @@ export class StorageDriverS3 implements TusDriver {
 					}),
 				);
 			}
-		} catch (error: any) {
-			// 2. Map the S3 "missing" family of errors onto the TUS not-found error; anything else is a real failure
-			if (error?.code && ['NotFound', 'NoSuchKey', 'NoSuchUpload'].includes(error.Code)) {
+		} catch (error) {
+			// 2. Map the S3 "missing" family of errors onto the TUS not-found error; anything else is a real failure.
+			//    The SDK names the error in `name` — `NoSuchUpload`, `NoSuchKey`, or `NotFound` for a bodiless 404 —
+			//    and reports the status in `$metadata`; it never sets a lowercase `code`
+			const { name, $metadata } = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+
+			if ($metadata?.httpStatusCode === 404 || ['NotFound', 'NoSuchKey', 'NoSuchUpload'].includes(name ?? '')) {
 				throw ERRORS.FILE_NOT_FOUND;
 			}
 
@@ -706,6 +736,7 @@ export class StorageDriverS3 implements TusDriver {
 		try {
 			parts = await retry(
 				async () => {
+					// 1. A short listing is the one retryable outcome; `retrieveParts` failing is thrown as it came
 					const listed = await this.retrieveParts(key, uploadId);
 
 					if (listed.length !== expectedParts) {

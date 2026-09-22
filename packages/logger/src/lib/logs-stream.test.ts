@@ -14,8 +14,9 @@ vi.mock('nanoid', () => ({
 	},
 }));
 
+// The bus answers a promise; the stream chains on it, so the mock has to as well
 const messenger = {
-	publish: vi.fn(),
+	publish: vi.fn(async () => {}),
 } as unknown as LogsBus;
 
 afterEach(() => {
@@ -137,4 +138,26 @@ test('Escapes quotes in error messages', () => {
 	logStream._write(JSON.stringify(log), '', () => {});
 
 	expect(messenger.publish).toBeCalledWith('logs', JSON.stringify({ log, nodeId: 'a-nanoid' }));
+});
+
+test('Drops a line the bus refuses instead of failing the stream or the process', async () => {
+	// The bus mirrors the log: a Redis outage must not turn every line into an unhandled rejection. A plain function
+	// stands in for the bus here — a `vi.fn` would attach its own handler to the promise and hide an unhandled one
+	const unhandled = vi.fn();
+	process.on('unhandledRejection', unhandled);
+
+	try {
+		const refusing: LogsBus = { publish: () => Promise.reject(new Error('bus down')) };
+		const logStream = new LogsStream(false, refusing);
+
+		const callback = vi.fn();
+		expect(() => logStream._write(JSON.stringify(sample.log), '', callback)).not.toThrow();
+		expect(callback).toHaveBeenCalledWith();
+
+		// Unhandled rejections are reported on a later turn of the event loop
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		expect(unhandled).not.toHaveBeenCalled();
+	} finally {
+		process.off('unhandledRejection', unhandled);
+	}
 });

@@ -180,11 +180,13 @@ for (const queue of getQueueNames()) {
 `createWorker(queue, processor, options)` wraps BullMQ's `Worker`. Unless `options.connection` is given, the worker
 connects with the client of the queue's `bullmq` location in `useQueue()` — the same registration as the producer's,
 prefix and telemetry included — and refuses a queue on the `local` driver. The processor gets the parsed payload and a
-`JobContext` (`id`, full `name`, `attempt`, `enqueuedAt`), a job outliving its contract's `timeout` (or the worker's
-default) fails with `JobTimeoutError` and is retried by the contract's rules, `completed` / `failed` / `error` go to the
-logger, `close(force?)` drains gracefully. `telemetry` takes BullMQ's OpenTelemetry add-on (`bullmq-otel`), on the
-worker and on the `bullmq` location alike: every run becomes a span, and a producer enqueuing with the add-on hands its
-trace context over in the job's metadata, so the worker's span continues the request's trace.
+`JobContext` (`id`, full `name`, `attempt`, `enqueuedAt`, and `signal` when a timeout applies), a job outliving its
+contract's `timeout` (or the worker's default) fails with `JobTimeoutError` and is retried by the contract's rules — its
+`signal` aborts with that error, so a handler that passes it on to `fetch` or an SDK call stops instead of finishing in
+the background — `completed` / `failed` / `error` go to the logger, `close(force?)` drains gracefully. `telemetry` takes
+BullMQ's OpenTelemetry add-on (`bullmq-otel`), on the worker and on the `bullmq` location alike: every run becomes a
+span, and a producer enqueuing with the add-on hands its trace context over in the job's metadata, so the worker's span
+continues the request's trace.
 
 ## Schedules
 

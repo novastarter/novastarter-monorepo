@@ -1,13 +1,12 @@
 /**
- * Tests of `queue/lib/drivers/bullmq` and `create-worker` with `bullmq` and the Redis client of
- * `@novastarter/redis` mocked.
+ * Tests of `queue/lib/drivers/bullmq` with `bullmq` and the Redis client of `@novastarter/redis` mocked; the worker
+ * has its own tests in `create-worker.test.ts`.
  */
 import { EventEmitter } from 'node:events';
 import { createRedis } from '@novastarter/redis';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { z } from 'zod';
 import { _contracts, registerJob } from '../../contracts/index.js';
-import { createWorker, JobTimeoutError } from '../create-worker.js';
 import { defineJob } from '../define-job.js';
 import { useQueue } from '../use-queue.js';
 import { DEFAULT_REMOVE_ON_FAIL, QueueDriverBullmq, toJobsOptions } from './bullmq.js';
@@ -37,25 +36,8 @@ class FakeQueue extends EventEmitter {
 	}
 }
 
-/**
- * Fake of BullMQ's `Worker`: keeps the processor so a test can run it.
- */
-class FakeWorker extends EventEmitter {
-	static instances: FakeWorker[] = [];
-
-	close = vi.fn(async () => {});
-
-	constructor(
-		public name: string,
-		public processor: (job: unknown) => Promise<void>,
-		public opts: unknown,
-	) {
-		super();
-		FakeWorker.instances.push(this);
-	}
-}
-
-vi.mock('bullmq', () => ({ Queue: FakeQueue, Worker: FakeWorker }));
+// The driver never opens a worker; `createWorker` does, and is tested with a worker fake of its own
+vi.mock('bullmq', () => ({ Queue: FakeQueue, Worker: vi.fn() }));
 
 // No Redis is opened in unit tests; the client is a stand-in that remembers what it was opened with
 vi.mock('@novastarter/redis', () => ({
@@ -73,7 +55,6 @@ afterEach(() => {
 	_contracts.delete('test.echo');
 	useQueue.reset();
 	FakeQueue.instances = [];
-	FakeWorker.instances = [];
 	vi.clearAllMocks();
 });
 
@@ -102,6 +83,19 @@ describe('toJobsOptions', () => {
 });
 
 describe('QueueDriverBullmq', () => {
+	test('close() waits for a queue still opening, so it is closed rather than left behind', async () => {
+		// The first use awaits the `bullmq` import; a close racing it must not resolve before that queue exists
+		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as any });
+
+		const enqueued = driver.enqueue(contract, { value: 'a' }, contract.options, 'id-1');
+		await driver.close();
+		await enqueued;
+
+		expect(FakeQueue.instances).toHaveLength(1);
+		expect(FakeQueue.instances[0]!.close).toHaveBeenCalledOnce();
+		expect(driver['queues'].size).toBe(0);
+	});
+
 	test('Opens one queue per name, adds the job under its action and closes them all', async () => {
 		const telemetry = { tracer: {}, contextManager: {} };
 
@@ -116,8 +110,11 @@ describe('QueueDriverBullmq', () => {
 		expect(createRedis).toHaveBeenCalledWith({ host: 'redis' }, { maxRetriesPerRequest: null });
 		expect(driver.connection).toMatchObject({ config: { host: 'redis' } });
 
-		const first = await driver.enqueue(contract, { value: 'a' }, contract.options, 'id-1');
-		const second = await driver.enqueue(contract, { value: 'b' }, { ...contract.options, delay: 50 });
+		// 2. Two first uses in the same tick share one opening: BullMQ's `Queue` is built once, not once per call
+		const [first, second] = await Promise.all([
+			driver.enqueue(contract, { value: 'a' }, contract.options, 'id-1'),
+			driver.enqueue(contract, { value: 'b' }, { ...contract.options, delay: 50 }),
+		]);
 
 		expect(first).toStrictEqual({ id: 'id-1', name: 'test.echo', queue: 'test' });
 		expect(second).toStrictEqual({ id: 'generated', name: 'test.echo', queue: 'test' });
@@ -183,138 +180,5 @@ describe('QueueDriverBullmq', () => {
 		);
 
 		await driver.close();
-	});
-});
-
-describe('createWorker', () => {
-	test('Connects with the queue location of the process when no connection is given, refusing a local one', async () => {
-		const telemetry = { tracer: {}, contextManager: {} };
-
-		useQueue().registerLocation('default', {
-			driver: 'local',
-			options: {
-				logger: logger as any,
-			},
-		});
-
-		useQueue().registerLocation('test', {
-			driver: 'bullmq',
-			options: {
-				connection: 'redis://jobs',
-				prefix: 'acme',
-				telemetry: telemetry as never,
-				logger: logger as any,
-			},
-		});
-
-		await createWorker(
-			'test',
-			vi.fn(async () => {}),
-			{ logger: logger as any },
-		);
-
-		// 1. The worker shares the location's client, prefix and telemetry with the producer of the process
-		expect(FakeWorker.instances[0]).toMatchObject({
-			name: 'test',
-			opts: { connection: (useQueue().location('test') as QueueDriverBullmq).connection, prefix: 'acme', telemetry },
-		});
-
-		await expect(
-			createWorker(
-				'other',
-				vi.fn(async () => {}),
-				{ logger: logger as any },
-			),
-		).rejects.toThrow('Queue "other" is not on a "bullmq" location; a worker needs one');
-	});
-
-	test('Runs the processor with the rebuilt name and context, logging completions and failures', async () => {
-		const processor = vi.fn(async () => {});
-
-		const telemetry = { tracer: {}, contextManager: {} };
-
-		const running = await createWorker('test', processor, {
-			connection: { host: 'redis' },
-			concurrency: 3,
-			telemetry: telemetry as never,
-			logger: logger as any,
-		});
-
-		expect(running.queue).toBe('test');
-
-		// 1. The worker opens with the telemetry add-on, so its runs continue the producer's trace
-		expect(FakeWorker.instances[0]).toMatchObject({
-			name: 'test',
-			opts: { connection: { host: 'redis' }, concurrency: 3, telemetry },
-		});
-
-		await FakeWorker.instances[0]!.processor({
-			id: '7',
-			name: 'echo',
-			data: { value: 'a' },
-			attemptsMade: 1,
-			timestamp: 1_000,
-		});
-
-		expect(processor).toHaveBeenCalledWith(
-			{ value: 'a' },
-			{ id: '7', name: 'test.echo', attempt: 2, enqueuedAt: new Date(1_000) },
-		);
-
-		FakeWorker.instances[0]!.emit('completed', { id: '7', name: 'echo' });
-		FakeWorker.instances[0]!.emit('failed', { id: '8', name: 'echo', attemptsMade: 2 }, new Error('boom'));
-		FakeWorker.instances[0]!.emit('failed', undefined, new Error('lost'));
-
-		expect(logger.info).toHaveBeenCalledWith('Job "test.echo" (7) completed');
-		expect(logger.error).toHaveBeenCalledWith(expect.any(Error), 'Job "test.echo" (8) failed on attempt 2');
-
-		expect(logger.error).toHaveBeenCalledWith(
-			expect.any(Error),
-			'A job of queue "test" failed before it could be read',
-		);
-
-		await running.close(true);
-		expect(FakeWorker.instances[0]!.close).toHaveBeenCalledWith(true);
-	});
-
-	test('Fails a job that outlives the contract timeout, or the worker default', async () => {
-		vi.useFakeTimers();
-
-		const slow = defineJob({ name: 'test.slow', schema: z.object({}), options: { timeout: 100 } });
-		registerJob(slow);
-
-		const processor = vi.fn(() => new Promise<void>(() => {}));
-		await createWorker('test', processor, { connection: {}, timeout: 5_000, logger: logger as any });
-
-		const run = FakeWorker.instances[0]!.processor({ id: '1', name: 'slow', data: {}, attemptsMade: 0, timestamp: 0 });
-		const settled = run.catch((error: unknown) => error);
-
-		await vi.advanceTimersByTimeAsync(100);
-		expect(await settled).toBeInstanceOf(JobTimeoutError);
-
-		// The contract of `test.echo` sets no timeout, so the worker's default applies
-		const fallback = FakeWorker.instances[0]!.processor({
-			id: '2',
-			name: 'echo',
-			data: { value: 'x' },
-			attemptsMade: 0,
-			timestamp: 0,
-		});
-
-		const fallbackSettled = fallback.catch((error: unknown) => error);
-
-		await vi.advanceTimersByTimeAsync(5_000);
-		expect(await fallbackSettled).toMatchObject({ message: 'Job "test.echo" timed out after 5000 ms' });
-
-		_contracts.delete('test.slow');
-		vi.useRealTimers();
-	});
-
-	test('Refuses a job whose contract the worker does not know', async () => {
-		await createWorker('test', vi.fn(), { connection: {}, logger: logger as any });
-
-		await expect(
-			FakeWorker.instances[0]!.processor({ id: '1', name: 'unknown', data: {}, attemptsMade: 0, timestamp: 0 }),
-		).rejects.toThrow('Job "test.unknown" is not registered');
 	});
 });

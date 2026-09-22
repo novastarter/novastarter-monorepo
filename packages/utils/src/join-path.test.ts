@@ -2,7 +2,7 @@
  * Tests of `utils/joinPath`: forward-slash joining with `.`/`..` resolution, independent of the platform.
  */
 import { expect, test } from 'vitest';
-import { joinPath } from './join-path.js';
+import { confinePath, joinPath } from './join-path.js';
 
 test('Joins segments with a single forward slash', () => {
 	expect(joinPath('uploads', 'avatars', 'me.png')).toBe('uploads/avatars/me.png');
@@ -70,4 +70,37 @@ test('Treats a Windows drive as an ordinary segment', () => {
 	// 1. Only a leading `/` is a root: the drive is popped like any segment, which is the documented limit for keys
 	expect(joinPath('C:\\a', '..', 'b')).toBe('C:/b');
 	expect(joinPath('C:\\a', '..', '..', 'b')).toBe('b');
+});
+
+test('Answers with the root for segments that are nothing but separators, like path.posix.join', () => {
+	// 1. `normalizePath` collapses `//` to nothing; the root is read from the raw join, so it is not lost with it
+	expect(joinPath('/', '/')).toBe('/');
+	expect(joinPath('//')).toBe('/');
+	expect(joinPath('///', '.')).toBe('/');
+	expect(joinPath('\\', '/')).toBe('/');
+});
+
+test('confinePath keeps a caller path under the root it is joined to', () => {
+	// 1. A leading `..` has nothing to climb once rooted, so it is dropped; the rest resolves as usual
+	expect(confinePath('../other/secret.txt')).toBe('other/secret.txt');
+	expect(confinePath('a/../../b')).toBe('b');
+	expect(confinePath('/avatars/../me.png')).toBe('me.png');
+	expect(confinePath('avatars/me.png')).toBe('avatars/me.png');
+
+	// 2. Empty and dot-only paths stay empty, so a `list('')` still means the whole root
+	expect(confinePath('')).toBe('');
+	expect(confinePath('.')).toBe('');
+	expect(confinePath('/')).toBe('');
+
+	// 3. Joined under a root, the result never leaves it
+	expect(joinPath('media', confinePath('../../etc/passwd'))).toBe('media/etc/passwd');
+	expect(joinPath('', confinePath('/x'))).toBe('x');
+});
+
+test('Refuses a segment that is not a string instead of dropping or spelling it out', () => {
+	// 1. A missing caller path must not quietly name the root — the storage drivers build their keys with this
+	expect(() => joinPath('uploads', undefined as unknown as string)).toThrow(TypeError);
+	expect(() => joinPath('a', null as unknown as string)).toThrow(TypeError);
+	expect(() => joinPath('a', 123 as unknown as string)).toThrow(TypeError);
+	expect(() => confinePath(undefined as unknown as string)).toThrow(TypeError);
 });

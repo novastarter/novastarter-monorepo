@@ -40,9 +40,70 @@ class TestManager extends LocationManager<Handle, [config: string, extra?: numbe
 	 *
 	 * @param handle - A handle made by {@link TestManager.build}.
 	 */
-	protected async release(handle: Handle): Promise<void> {
+	protected release(handle: Handle): Promise<void> {
+		// 1. A handle whose config says so throws before returning a promise, for the test of a synchronous failure
+		if (handle.config.endsWith('/throws')) {
+			throw new Error(`${handle.config} throws on close`);
+		}
+
+		return this.releaseAsync(handle);
+	}
+
+	/**
+	 * The asynchronous part of {@link TestManager.release}.
+	 *
+	 * @param handle - A handle made by {@link TestManager.build}.
+	 */
+	private async releaseAsync(handle: Handle): Promise<void> {
+		// 1. A handle whose config says so refuses to close at once, for the tests of a failing shutdown
+		if (handle.config.endsWith('/refuses') && !handle.config.includes('/slow')) {
+			throw new Error(`${handle.config} refuses to close`);
+		}
+
+		// 2. A handle whose config says so waits for the test to let it go, for the tests of a concurrent `location()`;
+		//    one that says both waits, then refuses
+		if (handle.config.includes('/slow')) {
+			await this.slowRelease;
+		}
+
+		if (handle.config.endsWith('/refuses')) {
+			throw new Error(`${handle.config} refuses to close`);
+		}
+
 		handle.released = true;
 	}
+
+	/**
+	 * What a `/slow` handle's release waits for; the test resolves it.
+	 */
+	slowRelease: Promise<void> = Promise.resolve();
+}
+
+/**
+ * Subclass whose instances are falsy, to check presence is not decided by truthiness.
+ */
+class ZeroManager extends LocationManager<number, [start: number]> {
+	/**
+	 * Every build so far, for the assertions.
+	 */
+	readonly builds = vi.fn();
+
+	/**
+	 * Answer with the registered number, `0` included, recording the call.
+	 *
+	 * @param start - The registered number.
+	 * @returns That number.
+	 */
+	protected build(start: number): number {
+		this.builds(start);
+
+		return start;
+	}
+
+	/**
+	 * Nothing to release for a number.
+	 */
+	protected async release(): Promise<void> {}
 }
 
 describe('#registerLocation', () => {
@@ -110,6 +171,17 @@ describe('#location', () => {
 		expect(manager.builds).toHaveBeenCalledOnce();
 		expect([...manager.instantiated().keys()]).toEqual(['main']);
 	});
+
+	test('Keeps a falsy instance rather than rebuilding it on every call', () => {
+		// 1. `0` is an instance like any other: built once, answered with on every later call
+		const manager = new ZeroManager();
+
+		manager.registerLocation('counter', 0);
+
+		expect(manager.location('counter')).toBe(0);
+		expect(manager.location('counter')).toBe(0);
+		expect(manager.builds).toHaveBeenCalledOnce();
+	});
 });
 
 describe('#close', () => {
@@ -134,5 +206,151 @@ describe('#close', () => {
 		expect(manager.locationNames()).toEqual(['a', 'b', 'never-used']);
 		expect(manager.instantiated().size).toBe(0);
 		expect(manager.location('a')).not.toBe(a);
+	});
+
+	test('Releases every other instance and drops them all when one refuses to close, then throws that error', async () => {
+		const manager = new TestManager();
+
+		manager.registerLocation('ok', 'redis://ok');
+		manager.registerLocation('bad', 'redis://bad/refuses');
+
+		const ok = manager.location('ok');
+		manager.location('bad');
+
+		// 1. The one failure is thrown as it came, once every release settled
+		await expect(manager.close()).rejects.toThrow('redis://bad/refuses refuses to close');
+
+		// 2. The other instance was released all the same, and nothing is left for a second `close()` to touch
+		expect(ok.released).toBe(true);
+		expect(manager.instantiated().size).toBe(0);
+		await expect(manager.close()).resolves.toBeUndefined();
+	});
+
+	test('Builds afresh for a location asked for while its instance is being released, and keeps it for the next close()', async () => {
+		const manager = new TestManager();
+		let letGo!: () => void;
+
+		manager.slowRelease = new Promise<void>((resolve) => {
+			letGo = resolve;
+		});
+
+		manager.registerLocation('slow', 'redis://a/slow');
+		manager.registerLocation('late', 'redis://b');
+		const slow = manager.location('slow');
+
+		// 1. `close()` is releasing `slow` when both locations are asked for: neither caller gets the instance under
+		//    release, and what they get is not dropped unreleased when the run ends
+		const closing = manager.close();
+		const slowAgain = manager.location('slow');
+		const late = manager.location('late');
+
+		expect(slowAgain).not.toBe(slow);
+
+		letGo();
+		await closing;
+
+		expect(slow.released).toBe(true);
+		expect(slowAgain.released).toBe(false);
+		expect(late.released).toBe(false);
+		expect([...manager.instantiated().keys()]).toEqual(['slow', 'late']);
+
+		// 2. The next `close()` releases what the first one could not know about
+		await manager.close();
+		expect(slowAgain.released).toBe(true);
+		expect(late.released).toBe(true);
+		expect(manager.instantiated().size).toBe(0);
+	});
+
+	test('Waits for a close() already under way instead of releasing twice, then releases what was built meanwhile', async () => {
+		const manager = new TestManager();
+		const releases = vi.spyOn(manager as never, 'release' as never);
+		let letGo!: () => void;
+
+		manager.slowRelease = new Promise<void>((resolve) => {
+			letGo = resolve;
+		});
+
+		manager.registerLocation('slow', 'redis://a/slow');
+		manager.registerLocation('late', 'redis://b');
+		const slow = manager.location('slow');
+
+		// 1. Two overlapping calls: `slow` is released once, and `late`, built before the second call, is released
+		//    by that second call rather than left for a third. The second call settles only once the first run is done
+		const first = manager.close();
+		const late = manager.location('late');
+		const second = manager.close();
+		const secondSettled = vi.fn();
+		void second.then(secondSettled);
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(secondSettled).not.toHaveBeenCalled();
+		expect(late.released).toBe(false);
+
+		letGo();
+		await Promise.all([first, second]);
+
+		expect(releases).toHaveBeenCalledTimes(2);
+		expect(slow.released).toBe(true);
+		expect(late.released).toBe(true);
+		expect(manager.instantiated().size).toBe(0);
+	});
+
+	test('Reports both failures when the joined run and its own run fail', async () => {
+		const manager = new TestManager();
+		let letGo!: () => void;
+
+		manager.slowRelease = new Promise<void>((resolve) => {
+			letGo = resolve;
+		});
+
+		// 1. `slow` refuses after waiting, `late` refuses at once; the second call sees both failures
+		manager.registerLocation('slow', 'redis://a/slow/refuses');
+		manager.registerLocation('late', 'redis://b/refuses');
+		manager.location('slow');
+
+		const first = manager.close();
+		manager.location('late');
+		const second = manager.close();
+
+		letGo();
+		await expect(first).rejects.toThrow('redis://a/slow/refuses refuses to close');
+
+		const error: unknown = await second.catch((thrown: unknown) => thrown);
+		expect(error).toBeInstanceOf(AggregateError);
+
+		expect((error as AggregateError).errors.map((e: Error) => e.message)).toEqual([
+			'redis://a/slow/refuses refuses to close',
+			'redis://b/refuses refuses to close',
+		]);
+	});
+
+	test('Releases every other instance when one release() throws before returning a promise', async () => {
+		const manager = new TestManager();
+
+		manager.registerLocation('ok', 'redis://ok');
+		manager.registerLocation('bad', 'redis://bad/throws');
+		const ok = manager.location('ok');
+		manager.location('bad');
+
+		// 1. The synchronous throw is a failure like a rejection: reported at the end, after `ok` was released
+		await expect(manager.close()).rejects.toThrow('redis://bad/throws throws on close');
+		expect(ok.released).toBe(true);
+		expect(manager.instantiated().size).toBe(0);
+	});
+
+	test('Throws an AggregateError when several instances refuse to close', async () => {
+		const manager = new TestManager();
+
+		manager.registerLocation('a', 'redis://a/refuses');
+		manager.registerLocation('b', 'redis://b/refuses');
+		manager.location('a');
+		manager.location('b');
+
+		// 1. Two failures are reported together, naming how many of the built instances failed
+		const error: unknown = await manager.close().catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(AggregateError);
+		expect((error as AggregateError).errors).toHaveLength(2);
+		expect((error as AggregateError).message).toBe('2 of 2 locations failed to close');
 	});
 });

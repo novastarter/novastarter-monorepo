@@ -153,15 +153,17 @@ describe('setMax', () => {
 		);
 	});
 
-	test('Defaults to 0 if current value does not exist', async () => {
+	test('Stores any number, zero or negative included, when the key does not exist', async () => {
+		// A missing key has nothing to beat; the Redis script behaves the same, so the two backends agree
 		const mockKey = 'kv-key';
-		const mockValue = 42;
 
 		kv.set = vi.fn();
 
-		await kv.setMax(mockKey, mockValue);
+		expect(kv.setMax(mockKey, -5)).toBe(true);
+		expect(kv.set).toHaveBeenCalledWith(mockKey, -5);
 
-		expect(kv.set).toHaveBeenCalledWith(mockKey, mockValue);
+		expect(kv.setMax(mockKey, 0)).toBe(true);
+		expect(kv.set).toHaveBeenCalledWith(mockKey, 0);
 	});
 
 	test('Returns false if existing value is bigger than passed value', async () => {
@@ -240,21 +242,124 @@ describe('has', () => {
 });
 
 describe('acquireLock', () => {
-	test('Returns no-op lock', async () => {
-		const lock = await kv.acquireLock('key');
-		expect(lock).toHaveProperty('release');
-		expect(lock).toHaveProperty('extend');
-		await expect(lock.release()).resolves.toBeUndefined();
+	test('Hands the lock to one holder at a time, in order of asking', async () => {
+		// 1. The first caller holds the lock at once; the second waits until the first releases
+		const first = await kv.acquireLock('key');
+		const secondSettled = vi.fn();
+
+		const second = kv.acquireLock('key').then((lock) => {
+			secondSettled();
+			return lock;
+		});
+
+		await Promise.resolve();
+		expect(secondSettled).not.toHaveBeenCalled();
+
+		await first.release();
+		const lock = await second;
+		expect(secondSettled).toHaveBeenCalledOnce();
+
+		// 2. `extend` has nothing to do locally; releasing the last holder forgets the key
 		await expect(lock.extend(100)).resolves.toBeUndefined();
+		await lock.release();
+		expect(kv['locks'].has('key')).toBe(false);
+	});
+
+	test('Gives up after lockTimeout and lets the callers behind it through', async () => {
+		vi.useFakeTimers();
+
+		try {
+			// 1. A holder that never releases: the next caller fails after the budget, with the key in the message
+			const impatient = new KvDriverLocal({ lockTimeout: 1000 });
+			const holder = await impatient.acquireLock('key');
+
+			const waiting = impatient.acquireLock('key');
+			const settled = waiting.catch((error: unknown) => error);
+
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(await settled).toMatchObject({ message: 'Lock "key" was not acquired within 1000 ms' });
+
+			// 2. A caller behind the one that gave up still waits for the holder, and gets in as soon as it releases —
+			//    the abandoned slot does not hold it up
+			const behind = impatient.acquireLock('key');
+			const behindSettled = vi.fn();
+			void behind.then(behindSettled);
+
+			await vi.advanceTimersByTimeAsync(0);
+			expect(behindSettled).not.toHaveBeenCalled();
+
+			await holder.release();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(behindSettled).toHaveBeenCalledOnce();
+			await (await behind).release();
+
+			// 3. Waiters that gave up, in whatever number and order, leave no entry behind once the holder releases
+			const again = await impatient.acquireLock('key');
+			const quitters = [impatient.acquireLock('key').catch(() => {}), impatient.acquireLock('key').catch(() => {})];
+			await vi.advanceTimersByTimeAsync(1000);
+			await Promise.all(quitters);
+			expect(impatient['locks'].has('key')).toBe(true);
+			await again.release();
+			expect(impatient['locks'].has('key')).toBe(false);
+
+			// 4. A second release of the same handle changes nothing
+			await again.release();
+			expect(impatient['locks'].has('key')).toBe(false);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	test('Refuses a lock timeout a timer cannot hold', () => {
+		expect(() => new KvDriverLocal({ lockTimeout: Number.NaN })).toThrow(RangeError);
+		expect(() => new KvDriverLocal({ lockTimeout: -1 })).toThrow(RangeError);
+		expect(() => new KvDriverLocal({ lockTimeout: Number.POSITIVE_INFINITY })).toThrow(RangeError);
+	});
+
+	test('Keeps locks of different keys independent', async () => {
+		const a = await kv.acquireLock('a');
+		const b = await kv.acquireLock('b');
+
+		await a.release();
+		await b.release();
 	});
 });
 
 describe('usingLock', () => {
-	test('Executes callback directly', async () => {
+	test('Runs the callback under the lock and answers with its result', async () => {
 		const callback = vi.fn().mockResolvedValue('result');
 		const result = await kv.usingLock('key', callback);
 		expect(callback).toHaveBeenCalled();
 		expect(result).toBe('result');
+		expect(kv['locks'].has('key')).toBe(false);
+	});
+
+	test('Serialises callbacks on the same key and releases after a throwing one', async () => {
+		// 1. Two callbacks race for the key; the second starts only once the first is done
+		const order: string[] = [];
+
+		await Promise.all([
+			kv.usingLock('key', async () => {
+				order.push('a:in');
+				await new Promise((resolve) => setTimeout(resolve, 10));
+				order.push('a:out');
+			}),
+			kv.usingLock('key', async () => {
+				order.push('b:in');
+				order.push('b:out');
+			}),
+		]);
+
+		expect(order).toStrictEqual(['a:in', 'a:out', 'b:in', 'b:out']);
+
+		// 2. A callback that throws still lets the next one in
+		await expect(
+			kv.usingLock('key', async () => {
+				throw new Error('boom');
+			}),
+		).rejects.toThrow('boom');
+
+		await expect(kv.usingLock('key', async () => 'after')).resolves.toBe('after');
 	});
 });
 

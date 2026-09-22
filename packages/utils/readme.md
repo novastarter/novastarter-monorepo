@@ -15,28 +15,29 @@ import { defaults, formatTitle, joinPath, retry, sleep, toNumber, tryParseJSON }
 import { isReadableStream, processId, requireYaml } from '@novastarter/utils/node';
 ```
 
-| Helper                          | Entry  | What it does                                                                                 |
-| ------------------------------- | ------ | -------------------------------------------------------------------------------------------- |
-| `defaults(obj, def)`            | shared | Fill the missing optional keys of an options object from a defaults object.                  |
-| `formatTitle(str, separator?)`  | shared | Turn any string into Title Case; see below.                                                  |
-| `getSimpleHash(str)`            | shared | Short, stable hex digest of a string for keys and ids — not cryptographic.                   |
-| `isIn(value, tuple)`            | shared | Whether a string is a member of a readonly tuple, narrowing its type.                        |
-| `joinPath(...segments)`         | shared | `path.posix.join` without Node: forward slashes, `.` and `..` resolved; see below.           |
-| `normalizePath(path)`           | shared | Forward-slash form of a path, repeated separators collapsed, trailing one dropped.           |
-| `parseJSON(text)`               | shared | `JSON.parse` that drops `__proto__` keys, so untrusted input cannot pollute prototypes.      |
-| `retry(fn, options?)`           | shared | Run an operation again with a pause between attempts until it succeeds; see below.           |
-| `sleep(ms, signal?)`            | shared | Promise that resolves after `ms`, or rejects early when the signal aborts.                   |
-| `toArray(value)`                | shared | Wrap a value in an array, splitting a string on commas.                                      |
-| `toBoolean(value)`              | shared | `true` for `'true'`, `true`, `'1'`, `1`; `false` for everything else.                        |
-| `toError(value)`                | shared | The value when it is an `Error`, otherwise an `Error` wrapping it with the value as `cause`. |
-| `toErrorMessage(error)`         | shared | The `message` of an `Error`, anything else thrown written as text.                           |
-| `toNumber(value)`               | shared | A finite number from a number or numeric string; `undefined` for anything else.              |
-| `tryParseJSON(text, fallback?)` | shared | `parseJSON` that answers with `fallback` instead of throwing when `text` is not JSON.        |
-| `withTimeout(op, ms, options?)` | shared | Wait for a promise, or run a function with a signal, and give up once `ms` pass; see below.  |
-| `DriverManager`                 | shared | Registry of driver classes and named locations; see below.                                   |
-| `isReadableStream(value)`       | node   | Structural check for a Node `Readable`, across copies of the `stream` module.                |
-| `processId()`                   | node   | Id unique to the current process on the current machine.                                     |
-| `requireYaml(path)`             | node   | Read and parse a YAML file synchronously.                                                    |
+| Helper                          | Entry  | What it does                                                                                                          |
+| ------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------- |
+| `defaults(obj, def)`            | shared | Fill the missing optional keys of an options object from a defaults object.                                           |
+| `formatTitle(str, separator?)`  | shared | Turn any string into Title Case; see below.                                                                           |
+| `getSimpleHash(str)`            | shared | Short, stable hex digest of a string for keys and ids — not cryptographic.                                            |
+| `isIn(value, tuple)`            | shared | Whether a string is a member of a readonly tuple, narrowing its type.                                                 |
+| `joinPath(...segments)`         | shared | `path.posix.join` without Node: forward slashes, `.` and `..` resolved; see below.                                    |
+| `confinePath(path)`             | shared | A caller path resolved as if rooted and made relative, so `..` cannot climb above the root it joins.                  |
+| `normalizePath(path)`           | shared | Forward-slash form of a path, repeated separators collapsed, trailing one dropped.                                    |
+| `parseJSON(text)`               | shared | `JSON.parse` that drops `__proto__` keys, so untrusted input cannot pollute prototypes.                               |
+| `retry(fn, options?)`           | shared | Run an operation again with a pause between attempts until it succeeds; see below.                                    |
+| `sleep(ms, signal?)`            | shared | Promise that resolves after `ms` (up to `MAX_TIMER_DELAY`), or rejects early when the signal aborts.                  |
+| `toArray(value)`                | shared | Wrap a value in an array, splitting a string on commas.                                                               |
+| `toBoolean(value)`              | shared | `true` for `'true'`, `true`, `'1'`, `1`; `false` for everything else.                                                 |
+| `toError(value)`                | shared | The value when it is an `Error`, otherwise an `Error` wrapping it with the value as `cause`.                          |
+| `toErrorMessage(error)`         | shared | The `message` of an `Error`, anything else thrown written as text.                                                    |
+| `toNumber(value)`               | shared | A finite number from a number or numeric string; `undefined` for anything else.                                       |
+| `tryParseJSON(text, fallback?)` | shared | `parseJSON` that answers with `fallback` instead of throwing when `text` is not JSON.                                 |
+| `withTimeout(op, ms, options?)` | shared | Wait for a promise, or run a function with a signal, and give up once `ms` (up to `MAX_TIMER_DELAY`) pass; see below. |
+| `DriverManager`                 | shared | Registry of driver classes and named locations; see below.                                                            |
+| `isReadableStream(value)`       | node   | Structural check for a Node `Readable`, across copies of the `stream` module.                                         |
+| `processId()`                   | node   | Id unique to the current process on the current machine.                                                              |
+| `requireYaml(path)`             | node   | Read and parse a YAML file synchronously.                                                                             |
 
 ## `DriverManager`
 
@@ -97,7 +98,7 @@ class RedisManager extends LocationManager<Redis, [config: RedisConfig, override
 The `use*()` accessor of every manager: the builder runs on the first call, every later call answers with the same
 instance, `replace()` swaps in an instance the application built itself — what `registerLogger()` does — and `reset()`
 drops it for a test that needs a clean slate. A builder may take arguments; those of the first call are what the
-instance is built from, later calls answer with it whatever they are given.
+instance is built from, and a later call passes none — one that passes arguments throws, since they would have no say.
 
 ```ts
 import { type Singleton, singleton } from '@novastarter/utils';
@@ -118,8 +119,9 @@ useEnv(); // the same object
 
 Runs an operation again until it succeeds, pausing between attempts, and throws the error of the last attempt as it came
 once the budget is spent. The operation receives the attempt number, `1` for the first call. Options, each with its
-default in `DEFAULT_RETRY_OPTIONS`: `retries` (3, attempts after the first), `delay` (100 ms; a number grown by `factor`
-on each retry, or a function of the retry number), `factor` (2; `1` keeps the pause constant), `maxDelay` (none),
+default in `DEFAULT_RETRY_OPTIONS`: `retries` (3, attempts after the first; a whole number, anything else is a
+`RangeError`), `delay` (100 ms; a number grown by `factor` on each retry, or a function of the retry number), `factor`
+(2; `1` keeps the pause constant), `maxDelay` (30 s; never above `MAX_TIMER_DELAY`, the 2^31 - 1 ms a timer can hold),
 `jitter` (0; a fraction of the pause between 0 and 1, anything else is a `RangeError`: each pause is multiplied by a
 factor drawn evenly between `1 - jitter` and `1 + jitter`, so workers that failed together do not retry together),
 `shouldRetry(error, attempt)` (every error), `onRetry(error, attempt, delay)` (called before each pause, for a log

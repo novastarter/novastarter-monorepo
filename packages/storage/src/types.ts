@@ -1,11 +1,12 @@
 /**
  * Byte range requested from a stored object.
  *
- * Both bounds are inclusive and optional. Drivers forward the pair to their backend as-is, so an omitted `start`
- * follows the backend's convention: the HTTP `Range` header S3 receives treats `end` alone as a suffix range.
+ * Both bounds are inclusive and optional, and mean the same on every driver: an omitted `start` is the first byte,
+ * an omitted `end` the last, so `{ end: 99 }` reads the first hundred bytes on S3 as on the local disk — never a
+ * suffix range.
  */
 export interface Range {
-	/** Zero-based offset of the first byte to read; omitted, the start follows the backend's convention. */
+	/** Zero-based offset of the first byte to read; omitted, the read starts at the first byte. */
 	start?: number | undefined;
 	/** Zero-based offset of the last byte to read; omitted, the read goes until the end. */
 	end?: number | undefined;

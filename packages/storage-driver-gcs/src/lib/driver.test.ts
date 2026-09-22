@@ -16,7 +16,7 @@ import {
 	randUrl,
 } from '@ngneat/falso';
 import { StorageFileNotFoundError } from '@novastarter/storage';
-import { joinPath, normalizePath } from '@novastarter/utils';
+import { confinePath, joinPath } from '@novastarter/utils';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { StorageDriverGcsConfig } from './driver.js';
@@ -135,8 +135,8 @@ describe('#constructor', () => {
 			root: sample.config.root,
 		});
 
-		// 1. `removeLeading` is what keeps a leading slash out of object names
-		expect(normalizePath).toHaveBeenCalledWith(sample.config.root, { removeLeading: true });
+		// 1. The root is confined like every key: no leading slash, `.` and `..` resolved
+		expect(confinePath).toHaveBeenCalledWith(sample.config.root);
 	});
 
 	test('Instantiates Storage object with config options', () => {
@@ -174,12 +174,15 @@ describe('#fullPath', () => {
 		driver['root'] = sample.config.root;
 
 		vi.mocked(joinPath).mockReturnValue(sample.path.inputFull);
+		vi.mocked(confinePath).mockReturnValue(sample.path.input);
 	});
 
 	test('Returns the joined path', () => {
 		const result = driver['fullPath'](sample.path.input);
 
 		// 1. Root and input are joined in that order, and the joined result is the object name
+		// The caller path is confined first, so a leading `..` is dropped before the root is joined
+		expect(confinePath).toHaveBeenCalledWith(sample.path.input);
 		expect(joinPath).toHaveBeenCalledWith(sample.config.root, sample.path.input);
 		expect(result).toBe(sample.path.inputFull);
 	});
@@ -220,13 +223,56 @@ describe('#read', () => {
 		expect(driver['file']).toHaveBeenCalledWith(sample.path.inputFull);
 	});
 
-	test('Returns stream from createReadStream', async () => {
+	test('Streams the SDK stream through, whole object without a range', async () => {
 		const stream = await driver.read(sample.path.input);
 
-		// 1. Without a range the options object stays empty, so the SDK streams the whole object
-		expect(stream).toBe(sample.stream);
+		// 1. Without a range the options object stays empty, so the SDK streams the whole object; the SDK's stream is
+		//    piped into the one handed out, so its data arrives as is
 		expect(mockFile.createReadStream).toHaveBeenCalledOnce();
 		expect(mockFile.createReadStream).toHaveBeenCalledWith({});
+
+		const chunks: Buffer[] = [];
+		const done = new Promise<void>((resolve) => stream.on('end', resolve));
+		stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+		sample.stream.end('body');
+		await done;
+		expect(Buffer.concat(chunks).toString()).toBe('body');
+	});
+
+	test('Destroying the handed-out stream destroys the SDK stream too, so a gone client frees the response', async () => {
+		// `pipe` would only pause the SDK stream and leave its HTTP response open; `pipeline` tears it down
+		const source = new PassThrough();
+		mockFile.createReadStream.mockReturnValueOnce(source);
+
+		const stream = await driver.read(sample.path.input);
+		const closed = new Promise<void>((resolve) => source.on('close', () => resolve()));
+
+		stream.destroy();
+		await closed;
+
+		expect(source.destroyed).toBe(true);
+	});
+
+	test('Turns a 404 of the SDK stream into StorageFileNotFoundError, other errors pass as they are', async () => {
+		// The SDK opens the object lazily, so a missing object surfaces on the stream, not on the `read()` call
+		const missing = new PassThrough();
+		mockFile.createReadStream.mockReturnValueOnce(missing);
+
+		const stream = await driver.read(sample.path.input);
+		const failed = new Promise<unknown>((resolve) => stream.on('error', resolve));
+		missing.emit('error', Object.assign(new Error('Not Found'), { code: 404 }));
+
+		expect(await failed).toBeInstanceOf(StorageFileNotFoundError);
+
+		const denied = new PassThrough();
+		mockFile.createReadStream.mockReturnValueOnce(denied);
+
+		const other = await driver.read(sample.path.input);
+		const otherFailed = new Promise<unknown>((resolve) => other.on('error', resolve));
+		const forbidden = Object.assign(new Error('Forbidden'), { code: 403 });
+		denied.emit('error', forbidden);
+
+		expect(await otherFailed).toBe(forbidden);
 	});
 
 	test('Passes optional range to createReadStream', async () => {
@@ -239,6 +285,10 @@ describe('#read', () => {
 
 		await driver.read('/path/to/file', { range: { start: undefined, end: sample.range.end } });
 		expect(mockFile.createReadStream).toHaveBeenCalledWith({ start: undefined, end: sample.range.end });
+
+		// 2. `end: 0` is a bound like any other — the first byte — not an absent one
+		await driver.read('/path/to/file', { range: { start: 0, end: 0 } });
+		expect(mockFile.createReadStream).toHaveBeenCalledWith({ start: 0, end: 0 });
 	});
 });
 
@@ -313,7 +363,8 @@ describe('#stat', () => {
 
 	beforeEach(() => {
 		mockFile = {
-			getMetadata: vi.fn().mockResolvedValue([{ size: sample.file.size, updated: sample.file.modified }]),
+			// The JSON API reports the size as a string; the driver has to hand out a number
+			getMetadata: vi.fn().mockResolvedValue([{ size: String(sample.file.size), updated: sample.file.modified }]),
 		};
 
 		driver['file'] = vi.fn().mockReturnValue(mockFile);

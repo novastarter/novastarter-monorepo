@@ -32,7 +32,7 @@ import {
 	randWord,
 } from '@ngneat/falso';
 import { StorageFileNotFoundError } from '@novastarter/storage';
-import { joinPath, normalizePath, retry } from '@novastarter/utils';
+import { confinePath, joinPath, retry } from '@novastarter/utils';
 import { isReadableStream } from '@novastarter/utils/node';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -174,10 +174,10 @@ describe('#constructor', () => {
 	});
 
 	test('Normalizes config path when root is given', () => {
-		// 1. `normalizePath` is auto-mocked; a fixed return value shows the driver stores the normalised result, not the raw root
+		// 1. `confinePath` is auto-mocked; a fixed return value shows the driver stores the confined result, not the raw root
 		const mockRoot = randDirectoryPath();
 
-		vi.mocked(normalizePath).mockReturnValue(mockRoot);
+		vi.mocked(confinePath).mockReturnValue(mockRoot);
 
 		const driver = new StorageDriverS3({
 			key: sample.config.key,
@@ -186,11 +186,8 @@ describe('#constructor', () => {
 			root: sample.config.root,
 		});
 
-		// 2. `removeLeading` must be requested: a key with a leading slash would never match the expected object names
-		expect(normalizePath).toHaveBeenCalledWith(sample.config.root, {
-			removeLeading: true,
-		});
-
+		// 2. The root is confined like every key: no leading slash, `.` and `..` resolved
+		expect(confinePath).toHaveBeenCalledWith(sample.config.root);
 		expect(driver['root']).toBe(mockRoot);
 	});
 });
@@ -376,6 +373,7 @@ describe('#fullPath', () => {
 
 		// 2. `joinPath` is auto-mocked; a fixed return value lets the assertions check the wiring, not real path logic
 		vi.mocked(joinPath).mockReturnValue(sample.path.inputFull);
+		vi.mocked(confinePath).mockReturnValue(sample.path.input);
 
 		// 3. Point the driver at a root, since the shared config leaves it empty
 		// @ts-expect-error - mutating private attribute
@@ -384,6 +382,8 @@ describe('#fullPath', () => {
 		// 4. `joinPath` must get root and path in that order, and its result is the key
 		const result = driver['fullPath'](sample.path.input);
 
+		// The caller path is confined first, so a leading `..` is dropped before the root is joined
+		expect(confinePath).toHaveBeenCalledWith(sample.path.input);
 		expect(joinPath).toHaveBeenCalledWith(sample.config.root, sample.path.input);
 		expect(result).toBe(sample.path.inputFull);
 	});
@@ -397,6 +397,20 @@ describe('#read', () => {
 		} as unknown as void);
 
 		vi.mocked(isReadableStream).mockReturnValue(true);
+	});
+
+	test('Throws StorageFileNotFoundError when S3 answers 404, rethrows anything else', async () => {
+		// `NoSuchKey` is the error every backend shares; a denied read says nothing about the object
+		vi.mocked(driver['client'].send).mockRejectedValueOnce(
+			Object.assign(new Error('NoSuchKey'), { $metadata: { httpStatusCode: 404 } }) as never,
+		);
+
+		await expect(driver.read(sample.path.input)).rejects.toBeInstanceOf(StorageFileNotFoundError);
+
+		const denied = Object.assign(new Error('AccessDenied'), { $metadata: { httpStatusCode: 403 } });
+		vi.mocked(driver['client'].send).mockRejectedValueOnce(denied as never);
+
+		await expect(driver.read(sample.path.input)).rejects.toBe(denied);
 	});
 
 	test('Uses fullPath key / bucket in command input', async () => {
@@ -425,13 +439,14 @@ describe('#read', () => {
 	});
 
 	test('Optionally allows setting end range offset', async () => {
-		// 1. Only `end` set: the header becomes `bytes=-end`, which S3 reads as a suffix range (the last N bytes)
+		// 1. Only `end` set: the header becomes `bytes=0-end`, the first bytes up to `end`; `bytes=-end` would be a
+		//    suffix range, the last N bytes, which is not what an `end` offset means
 		await driver.read(sample.path.input, { range: { end: sample.range.end } });
 
 		expect(GetObjectCommand).toHaveBeenCalledWith({
 			Key: sample.path.inputFull,
 			Bucket: sample.config.bucket,
-			Range: `bytes=-${sample.range.end}`,
+			Range: `bytes=0-${sample.range.end}`,
 		});
 	});
 
@@ -620,7 +635,28 @@ describe('#move', () => {
 	});
 });
 
+/**
+ * The copy source the driver sends for a key: every segment URL-encoded, the slashes between them kept.
+ *
+ * @param key - The full key.
+ * @returns The encoded key.
+ */
+const encodedKey = (key: string): string => key.split('/').map(encodeURIComponent).join('/');
+
 describe('#copy', () => {
+	test('URL-encodes the reserved characters of the source key, segment by segment', async () => {
+		// S3 reads `x-amz-copy-source` URL-encoded: a raw `+` is a space, a raw `?` starts the version query
+		driver['fullPath'] = vi.fn((input: string) =>
+			input === 'a+b/c?d%e.png' ? 'media/a+b/c?d%e.png' : sample.path.destFull,
+		);
+
+		await driver.copy('a+b/c?d%e.png', sample.path.dest);
+
+		expect(CopyObjectCommand).toHaveBeenCalledWith(
+			expect.objectContaining({ CopySource: `/${sample.config.bucket}/media/a%2Bb/c%3Fd%25e.png` }),
+		);
+	});
+
 	test('Constructs params object based on config', async () => {
 		// 1. With the minimal config the request must carry no ACL or encryption headers, only the source and target keys
 		await driver.copy(sample.path.src, sample.path.dest);
@@ -628,7 +664,7 @@ describe('#copy', () => {
 		expect(CopyObjectCommand).toHaveBeenCalledWith({
 			Key: sample.path.destFull,
 			Bucket: sample.config.bucket,
-			CopySource: `/${sample.config.bucket}/${sample.path.srcFull}`,
+			CopySource: `/${sample.config.bucket}/${encodedKey(sample.path.srcFull)}`,
 		});
 	});
 
@@ -641,7 +677,7 @@ describe('#copy', () => {
 		expect(CopyObjectCommand).toHaveBeenCalledWith({
 			Key: sample.path.destFull,
 			Bucket: sample.config.bucket,
-			CopySource: `/${sample.config.bucket}/${sample.path.srcFull}`,
+			CopySource: `/${sample.config.bucket}/${encodedKey(sample.path.srcFull)}`,
 			ServerSideEncryption: sample.config.serverSideEncryption,
 		});
 	});
@@ -658,7 +694,7 @@ describe('#copy', () => {
 			expect(CopyObjectCommand).toHaveBeenCalledWith({
 				Key: sample.path.destFull,
 				Bucket: sample.config.bucket,
-				CopySource: `/${sample.config.bucket}/${sample.path.srcFull}`,
+				CopySource: `/${sample.config.bucket}/${encodedKey(sample.path.srcFull)}`,
 				ServerSideEncryption: sse,
 				SSEKMSKeyId: sample.config.serverSideEncryptionKmsKeyId,
 			});
@@ -677,7 +713,7 @@ describe('#copy', () => {
 			expect(CopyObjectCommand).toHaveBeenCalledWith({
 				Key: sample.path.destFull,
 				Bucket: sample.config.bucket,
-				CopySource: `/${sample.config.bucket}/${sample.path.srcFull}`,
+				CopySource: `/${sample.config.bucket}/${encodedKey(sample.path.srcFull)}`,
 				ServerSideEncryption: sse,
 				SSEKMSKeyId: undefined,
 			});
@@ -693,7 +729,7 @@ describe('#copy', () => {
 		expect(CopyObjectCommand).toHaveBeenCalledWith({
 			Key: sample.path.destFull,
 			Bucket: sample.config.bucket,
-			CopySource: `/${sample.config.bucket}/${sample.path.srcFull}`,
+			CopySource: `/${sample.config.bucket}/${encodedKey(sample.path.srcFull)}`,
 			ACL: sample.config.acl,
 		});
 	});
@@ -886,10 +922,11 @@ describe('#list', () => {
 	});
 
 	test('Yields file Key omitting root', async () => {
-		// 1. Build the key as `root + file`, so stripping the root must yield exactly `file`
+		// 1. Build the key as `root/file`, so stripping the root and its slash must yield exactly `file`; a leading
+		//    slash on the yielded path would not be the form a caller passes in
 		const sampleRoot = randDirectoryPath();
-		const sampleFile = randFilePath();
-		const sampleFull = `${sampleRoot}${sampleFile}`;
+		const sampleFile = randFilePath().replace(/^\/+/, '');
+		const sampleFull = `${sampleRoot}/${sampleFile}`;
 
 		vi.mocked(driver['client'].send).mockResolvedValue({
 			Contents: [

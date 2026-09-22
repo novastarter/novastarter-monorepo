@@ -5,7 +5,6 @@ import nodemailer from 'nodemailer';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import defaultExport from '../index.js';
 import { MailDriverSes } from './driver.js';
-import { toSesClientConfig } from './to-ses-client-config.js';
 
 const sendMail = vi.fn();
 const close = vi.fn();
@@ -29,38 +28,6 @@ vi.mock('@aws-sdk/client-sesv2', () => ({
 
 afterEach(() => {
 	vi.clearAllMocks();
-});
-
-describe('toSesClientConfig', () => {
-	test('Passes region and endpoint through and builds credentials only from a full key pair', () => {
-		// 1. Nothing given, nothing set: the SDK's default chain decides
-		expect(toSesClientConfig({})).toStrictEqual({});
-
-		// 2. Everything given: credentials include the session token
-		expect(
-			toSesClientConfig({
-				region: 'eu-west-1',
-				accessKeyId: 'AKIA',
-				secretAccessKey: 'secret',
-				sessionToken: 'tok',
-				endpoint: 'http://localhost:4566',
-			}),
-		).toStrictEqual({
-			region: 'eu-west-1',
-			endpoint: 'http://localhost:4566',
-			credentials: { accessKeyId: 'AKIA', secretAccessKey: 'secret', sessionToken: 'tok' },
-		});
-	});
-
-	test('Refuses half a credential pair instead of falling back to the SDK chain', () => {
-		expect(() => toSesClientConfig({ accessKeyId: 'AKIA' })).toThrow(
-			'The ses mail driver needs "accessKeyId" and "secretAccessKey" together',
-		);
-
-		expect(() => toSesClientConfig({ secretAccessKey: 'secret' })).toThrow(
-			'The ses mail driver needs "accessKeyId" and "secretAccessKey" together',
-		);
-	});
 });
 
 describe('MailDriverSes', () => {

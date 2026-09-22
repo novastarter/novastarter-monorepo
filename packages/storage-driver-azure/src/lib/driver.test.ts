@@ -18,7 +18,7 @@ import {
 	randWord,
 } from '@ngneat/falso';
 import { StorageFileNotFoundError } from '@novastarter/storage';
-import { joinPath, normalizePath } from '@novastarter/utils';
+import { confinePath, joinPath, normalizePath } from '@novastarter/utils';
 import { isReadableStream } from '@novastarter/utils/node';
 import { afterEach, beforeEach, describe, expect, type Mock, test, vi } from 'vitest';
 import { StorageDriverAzure, type StorageDriverAzureConfig } from './driver.js';
@@ -218,7 +218,7 @@ describe('#constructor', () => {
 			root: sample.path.input,
 		});
 
-		expect(normalizePath).toHaveBeenCalledWith(sample.path.input, { removeLeading: true });
+		expect(confinePath).toHaveBeenCalledWith(sample.path.input);
 	});
 });
 
@@ -226,6 +226,7 @@ describe('#fullPath', () => {
 	test('Returns the joined path', () => {
 		// 1. `joinPath` is auto-mocked; a fixed return value lets the assertions check the wiring, not real path logic
 		vi.mocked(joinPath).mockReturnValue(sample.path.inputFull);
+		vi.mocked(confinePath).mockReturnValue(sample.path.input);
 
 		const driver = new StorageDriverAzure({
 			containerName: sample.config.containerName,
@@ -238,6 +239,8 @@ describe('#fullPath', () => {
 		// 2. `joinPath` must get root and path in that order, and its result is the blob name
 		const result = driver['fullPath'](sample.path.input);
 
+		// The caller path is confined first, so a leading `..` is dropped before the root is joined
+		expect(confinePath).toHaveBeenCalledWith(sample.path.input);
 		expect(joinPath).toHaveBeenCalledWith(sample.config.root, sample.path.input);
 		expect(result).toBe(sample.path.inputFull);
 	});
@@ -256,6 +259,16 @@ describe('#read', () => {
 		driver['containerClient'] = {
 			getBlobClient: mockBlobClient,
 		} as unknown as ContainerClient;
+	});
+
+	test('Throws StorageFileNotFoundError when the blob is missing, rethrows anything else', async () => {
+		// A 404 is the error every backend shares; a denied read says nothing about the blob
+		mockDownload.mockRejectedValueOnce(Object.assign(new Error('BlobNotFound'), { statusCode: 404 }));
+		await expect(driver.read(sample.path.input)).rejects.toBeInstanceOf(StorageFileNotFoundError);
+
+		const denied = Object.assign(new Error('AuthorizationFailure'), { statusCode: 403 });
+		mockDownload.mockRejectedValueOnce(denied);
+		await expect(driver.read(sample.path.input)).rejects.toBe(denied);
 	});
 
 	test('Uses blobClient at full path', async () => {
@@ -287,6 +300,13 @@ describe('#read', () => {
 		await driver.read(sample.path.input, { range: sample.range });
 
 		expect(mockDownload).toHaveBeenCalledWith(sample.range.start, sample.range.end - sample.range.start + 1);
+	});
+
+	test('Turns a zero end into a count of one, the first byte', async () => {
+		// `end: 0` is a bound like any other; dropped by a truthiness check it would download the whole blob
+		await driver.read(sample.path.input, { range: { start: 0, end: 0 } });
+
+		expect(mockDownload).toHaveBeenCalledWith(0, 1);
 	});
 
 	test('Throws error when no readable stream is returned', async () => {

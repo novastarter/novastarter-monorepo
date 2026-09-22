@@ -100,6 +100,14 @@ export class QueueDriverBullmq implements QueueDriver {
 	/** One BullMQ `Queue` per queue name, opened on the first job for that name. */
 	private readonly queues: Map<string, Queue> = new Map();
 
+	/**
+	 * The queue being opened per name, while it is: concurrent first uses of one name share it instead of each
+	 * opening a BullMQ `Queue` of which only the last would be kept and closed.
+	 *
+	 * @internal
+	 */
+	private readonly opening: Map<string, Promise<Queue>> = new Map();
+
 	/** The module, loaded once on first use. */
 	private bullmq: Promise<typeof import('bullmq')> | undefined;
 
@@ -147,14 +155,28 @@ export class QueueDriverBullmq implements QueueDriver {
 
 	/**
 	 * Close every queue opened so far, and the connection when the driver opened it.
+	 * @throws What the first queue that refused to close threw, after every other queue and the client closed.
 	 */
 	async close(): Promise<void> {
-		await Promise.all([...this.queues.values()].map((queue) => queue.close()));
+		// 1. A queue still opening — its first use awaiting the `bullmq` import — would land in the map after the
+		//    close and never be closed, over a client already quit; the openings are waited for first, failed or not
+		await Promise.allSettled([...this.opening.values()]);
+
+		// 2. Every queue closes before the client does: a queue on a shared client that closed after it would fail
+		//    its last commands. Every outcome is waited for, so one refusing queue does not leave the others open
+		const outcomes = await Promise.allSettled([...this.queues.values()].map((queue) => queue.close()));
 		this.queues.clear();
 
-		// 1. A client the caller handed in is theirs to close; one opened here would otherwise keep the process alive
+		// 3. A client the caller handed in is theirs to close; one opened here would otherwise keep the process alive
 		if (this.ownsConnection) {
 			await this.connection.quit();
+		}
+
+		// 4. A queue that refused to close is reported once everything else is down
+		const failure = outcomes.find((outcome) => outcome.status === 'rejected');
+
+		if (failure) {
+			throw failure.reason;
 		}
 	}
 
@@ -191,24 +213,50 @@ export class QueueDriverBullmq implements QueueDriver {
 	 * @param name - Queue name.
 	 * @returns The queue.
 	 */
-	private async getQueue(name: string): Promise<Queue> {
+	private getQueue(name: string): Promise<Queue> {
+		// 1. Open at most once per name: an open queue is answered with, an opening one is joined, so two `enqueue()`
+		//    calls in the same tick do not each build a `Queue` and leak the one the map forgets
 		const existing = this.queues.get(name);
 
-		if (existing) return existing;
+		if (existing) return Promise.resolve(existing);
 
+		const opening = this.opening.get(name);
+
+		if (opening) return opening;
+
+		const promise = this.openQueue(name).finally(() => {
+			this.opening.delete(name);
+		});
+
+		this.opening.set(name, promise);
+
+		return promise;
+	}
+
+	/**
+	 * Open the BullMQ queue of a name and keep it.
+	 *
+	 * @param name - The queue name.
+	 * @returns The queue, wired to the logger.
+	 * @internal
+	 */
+	private async openQueue(name: string): Promise<Queue> {
+		// 1. `bullmq` is loaded on first use, so a process that never opens a queue never pays for it
 		const { Queue } = await this.load();
 
+		// 2. Prefix and telemetry are only set when given: BullMQ would take an explicit `undefined` literally
 		const queue = new Queue(name, {
 			connection: this.connection,
 			...(this.prefix ? { prefix: this.prefix } : {}),
 			...(this.telemetry ? { telemetry: this.telemetry } : {}),
 		});
 
-		// 1. A queue's connection errors would otherwise crash the process as unhandled events
+		// 3. A queue's connection errors would otherwise crash the process as unhandled events
 		queue.on('error', (error) => {
 			this.logger.error(error, `Queue "${name}" connection error`);
 		});
 
+		// 4. Kept for every later use of the name, and for `close()`
 		this.queues.set(name, queue);
 
 		return queue;

@@ -16,13 +16,15 @@ import { createMailSendHandler } from './jobs/mail-send';
 import { createSystemPingHandler } from './jobs/system-ping';
 
 /**
- * Whether {@link bootstrap} ran already in this process.
+ * Whether {@link bootstrap} ran already in this process, and whether the job handlers are registered.
  *
- * Wrapped in an object rather than exported as a bare binding, so tests can reset it in place.
+ * Two flags, since {@link shutdown} clears only the first: the handlers hold no connection, and the queue package
+ * refuses a second registration of a job, so a boot after a shutdown leaves them as they are. Wrapped in an object
+ * rather than exported as bare bindings, so tests can reset it in place.
  *
  * @internal
  */
-export const _state: { booted: boolean } = { booted: false };
+export const _state: { booted: boolean; handlers: boolean } = { booted: false, handlers: false };
 
 /**
  * Wire every subsystem of the kit from the app's configuration, once per process.
@@ -76,11 +78,16 @@ export const bootstrap = (): AppEnv => {
 	useMail().registerLocation('default', mail.location);
 	useMail().registerRoutes(mail.routes);
 
-	// 8. Jobs: the handlers of the contracts under `jobs/`, so a worker or the local queue can run them
-	registerJobHandlers({
-		'mail.send': createMailSendHandler(),
-		'system.ping': createSystemPingHandler(),
-	});
+	// 8. Jobs: the handlers of the contracts under `jobs/`, so a worker or the local queue can run them — once per
+	//    process, since a handler holds nothing a shutdown would release and the queue refuses a second registration
+	if (!_state.handlers) {
+		registerJobHandlers({
+			'mail.send': createMailSendHandler(),
+			'system.ping': createSystemPingHandler(),
+		});
+
+		_state.handlers = true;
+	}
 
 	_state.booted = true;
 	useLogger().debug({ redis: Boolean(redis) }, 'Application bootstrapped');
@@ -91,14 +98,19 @@ export const bootstrap = (): AppEnv => {
 /**
  * Release what the subsystems hold — queues, SDK clients, subscriptions, Redis clients — for a clean shutdown.
  *
- * Every manager keeps its locations, so a later `bootstrap()` in the same process (a test suite) finds them again.
+ * Every manager keeps its locations, and the process is marked as not booted: a later `bootstrap()` in the same
+ * process (a test suite, a dev server reloading) registers everything again, so the memory locations get a fresh
+ * Redis client instead of the one this call quit.
  *
  * @returns Once every connection has closed.
+ * @throws What the one manager that refused to close threw, or an `AggregateError` of all of them — after every other
+ * manager and the Redis clients closed all the same.
  */
 export const shutdown = async (): Promise<void> => {
 	// 1. Every manager whose drivers hold connections of their own, or sit on the shared Redis client, closes first,
-	//    in parallel — each releases only what it built
-	await Promise.all([
+	//    in parallel — each releases only what it built. Every outcome is waited for: one manager refusing to close
+	//    must not leave the others, or the Redis client below them, open
+	const outcomes = await Promise.allSettled([
 		useQueue().close(),
 		useMail().close(),
 		useStorage().close(),
@@ -108,6 +120,23 @@ export const shutdown = async (): Promise<void> => {
 		useLimiter().close(),
 	]);
 
-	// 2. The shared Redis clients last, once nothing uses them any more
-	await useRedis().close();
+	// 2. The shared Redis clients last, once nothing uses them any more; a failure here joins the others
+	const redis = await Promise.allSettled([useRedis().close()]);
+
+	// 3. Booted no more: the memory locations were registered with the very client that was just quit, so the next
+	//    `bootstrap()` has to register everything afresh, on a fresh client, rather than being a no-op
+	_state.booted = false;
+
+	// 4. Report what refused to close, once everything else is down
+	const failures = [...outcomes, ...redis]
+		.filter((outcome) => outcome.status === 'rejected')
+		.map((outcome) => outcome.reason);
+
+	if (failures.length === 1) {
+		throw failures[0];
+	}
+
+	if (failures.length > 1) {
+		throw new AggregateError(failures, `${failures.length} managers failed to close`);
+	}
 };
