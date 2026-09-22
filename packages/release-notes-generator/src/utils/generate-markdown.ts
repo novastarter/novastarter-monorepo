@@ -95,12 +95,22 @@ function formatSections(sections: Section[]): string {
 /**
  * Render notices as a bold one-line change title followed by the notice body.
  *
+ * A changeset that consists of a notice block alone has no summary left; its notice is then rendered without a
+ * title (or with the bare commit link when one is known) instead of an empty bold span.
+ *
  * @param notices - Notices to render.
  * @returns Markdown of the notices.
  */
 function formatNotices(notices: Notice[]): string {
-	// 1. The short change form keeps the title on one line, so the bold heading never spans multiple lines
-	const output = notices.map((notice) => `**${formatChange(notice.change, true)}**\n${notice.notice}`);
+	const output = notices.map((notice) => {
+		// 1. The short change form keeps the title on one line, so the bold heading never spans multiple lines;
+		//    trimming drops the space the commit link is joined with when there is no summary in front of it
+		const title = formatChange(notice.change, true).trim();
+
+		// 2. `**` around nothing is not emphasis in CommonMark and would be printed literally, so the wrapper is
+		//    left out when there is nothing to wrap
+		return title ? `**${title}**\n${notice.notice}` : notice.notice;
+	});
 
 	return output.join('\n\n');
 }

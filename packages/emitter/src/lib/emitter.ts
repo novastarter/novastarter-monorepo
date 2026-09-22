@@ -17,7 +17,7 @@ import ee2 from 'eventemitter2';
  * ```ts
  * const emitter = useEmitter();
  *
- * emitter.onFilter('user.create', (payload) => ({ ...payload, source: 'api' }));
+ * emitter.onFilter<{ name: string }>('user.create', (payload) => ({ ...payload, source: 'api' }));
  * emitter.onAction('user.create', ({ key }) => audit(key));
  *
  * const payload = await emitter.emitFilter('user.create', input, { collection: 'users' });
@@ -67,15 +67,18 @@ export class Emitter {
 	 * Create the three channels with identical settings.
 	 */
 	constructor() {
+		// 1. One set of options for every channel: dotted names with wildcards, so a single subscription covers a whole
+		//    family of events, and `ignoreErrors`, because event names come from application modules and one named
+		//    `error` with no listener would otherwise make eventemitter2 throw "Uncaught, unspecified 'error' event"
 		const emitterOptions = {
 			wildcard: true,
 			verboseMemoryLeak: true,
 			delimiter: '.',
-
-			// This will ignore the "unspecified event" error
 			ignoreErrors: true,
 		};
 
+		// 2. Three separate channels rather than one with prefixed names, so a filter and an action of the same event
+		//    never fire each other and a wildcard subscription cannot cross from one kind of hook into another
 		this.filterEmitter = new ee2.EventEmitter2(emitterOptions);
 		this.actionEmitter = new ee2.EventEmitter2(emitterOptions);
 		this.initEmitter = new ee2.EventEmitter2(emitterOptions);
@@ -88,8 +91,10 @@ export class Emitter {
 	 * package free of database types.
 	 *
 	 * @returns An anonymous context.
+	 * @internal
 	 */
 	private getDefaultContext(): EventContext {
+		// 1. A fresh object per call, so a handler that mutates its context cannot leak the change into the next emit
 		return {
 			accountability: null,
 		};
@@ -193,6 +198,8 @@ export class Emitter {
 	 * @param handler - Handler that may replace the payload.
 	 */
 	public onFilter<T = unknown>(event: string, handler: FilterHandler<T>): void {
+		// 1. Registered as is, unlike action and init handlers: a filter's failure must reach the emitting code, since
+		//    the operation cannot go on with a payload the filter did not finish, so there is nothing to wrap
 		this.filterEmitter.on(event, handler);
 	}
 
@@ -266,6 +273,7 @@ export class Emitter {
 	 * @returns Number of registered filters matching the given event.
 	 */
 	public countFilterListeners(event: string): number {
+		// 1. Only the filter channel is asked, so a hook of another kind on the same name is not counted
 		return this.filterEmitter.listenerCount(event);
 	}
 
@@ -276,6 +284,7 @@ export class Emitter {
 	 * @returns Number of registered action handlers matching the given event.
 	 */
 	public countActionListeners(event: string): number {
+		// 1. Only the action channel is asked, so a hook of another kind on the same name is not counted
 		return this.actionEmitter.listenerCount(event);
 	}
 
@@ -286,6 +295,7 @@ export class Emitter {
 	 * @returns Number of registered init handlers matching the given event.
 	 */
 	public countInitListeners(event: string): number {
+		// 1. Only the init channel is asked, so a hook of another kind on the same name is not counted
 		return this.initEmitter.listenerCount(event);
 	}
 
@@ -297,6 +307,7 @@ export class Emitter {
 	 * @param handler - The very function that was registered.
 	 */
 	public offFilter<T = unknown>(event: string, handler: FilterHandler<T>): void {
+		// 1. Filters are registered unwrapped, so the handler itself is what eventemitter2 removes; no lookup needed
 		this.filterEmitter.off(event, handler);
 	}
 
@@ -338,6 +349,8 @@ export class Emitter {
 	 * Used when hooks are reloaded, so the old generation does not keep running next to the new one.
 	 */
 	public offAll(): void {
+		// 1. Every channel is cleared, not only one, because hooks of one generation register on all three; the wrapper
+		//    maps are weak and need no clearing, a handler nobody holds any more is collected together with its wrapper
 		this.filterEmitter.removeAllListeners();
 		this.actionEmitter.removeAllListeners();
 		this.initEmitter.removeAllListeners();

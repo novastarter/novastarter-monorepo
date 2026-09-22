@@ -1,13 +1,16 @@
 /**
  * Tests of `storage-driver-s3/lib/driver`.
  */
+import fs, { promises as fsPromises } from 'node:fs';
 import { PassThrough, Readable } from 'node:stream';
 import type { HeadObjectCommandOutput } from '@aws-sdk/client-s3';
 import {
+	AbortMultipartUploadCommand,
 	CompleteMultipartUploadCommand,
 	CopyObjectCommand,
 	CreateMultipartUploadCommand,
 	DeleteObjectCommand,
+	DeleteObjectsCommand,
 	GetObjectCommand,
 	HeadObjectCommand,
 	ListObjectsV2Command,
@@ -34,7 +37,9 @@ import {
 import { StorageFileNotFoundError } from '@novastarter/storage';
 import { confinePath, joinPath, retry } from '@novastarter/utils';
 import { isReadableStream } from '@novastarter/utils/node';
+import { Semaphore } from '@shopify/semaphore';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
+import { ERRORS } from '@tus/utils';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { StorageDriverS3Config } from './driver.js';
 import { StorageDriverS3 } from './driver.js';
@@ -170,6 +175,7 @@ describe('#constructor', () => {
 	});
 
 	test('Defaults root to empty string', () => {
+		// 1. No root given: keys are placed at the top of the bucket, so the prefix must be empty rather than `/`
 		expect(driver['root']).toBe('');
 	});
 
@@ -190,13 +196,41 @@ describe('#constructor', () => {
 		expect(confinePath).toHaveBeenCalledWith(sample.config.root);
 		expect(driver['root']).toBe(mockRoot);
 	});
+
+	test.each([[1024], [5_242_879], [Number.NaN]])('Refuses a tus.chunkSize of %s, below the S3 minimum', (chunkSize) => {
+		// 1. Every part but the last has to reach the S3 minimum, so a smaller preferred size could never advance an
+		//    upload; it is refused at construction with the minimum named rather than on the first PATCH
+		expect(
+			() =>
+				new StorageDriverS3({
+					key: sample.config.key,
+					secret: sample.config.secret,
+					bucket: sample.config.bucket,
+					tus: { chunkSize },
+				}),
+		).toThrowError('The s3 storage driver needs a "tus.chunkSize" of at least 5242880 bytes');
+	});
+
+	test('Takes a tus.chunkSize at the S3 minimum or above as the preferred part size', () => {
+		// 1. The minimum itself is allowed: it is the smallest part S3 accepts, and the default when nothing is given
+		const chunkSize = rand([5_242_880, 16 * 1024 * 1024]);
+
+		const driver = new StorageDriverS3({
+			key: sample.config.key,
+			secret: sample.config.secret,
+			bucket: sample.config.bucket,
+			tus: { chunkSize },
+		});
+
+		expect(driver['preferredPartSize']).toBe(chunkSize);
+	});
 });
 
 describe('#getClient', () => {
-	// The constructor calls getClient(), so we don't have to call it separately
-
 	test('Throws error if bucket missing', () => {
-		// 1. Every command targets the bucket, so its absence is refused at construction rather than on the first request
+		// 1. The constructor calls `getClient` itself, so every case here is driven through `new` rather than a direct
+		//    call. Every command targets the bucket, so its absence is refused at construction rather than on the first
+		//    request
 		expect(() => new StorageDriverS3({ bucket: '' })).toThrowErrorMatchingInlineSnapshot(
 			`[Error: The s3 storage driver needs a "bucket"]`,
 		);
@@ -382,7 +416,7 @@ describe('#fullPath', () => {
 		// 4. `joinPath` must get root and path in that order, and its result is the key
 		const result = driver['fullPath'](sample.path.input);
 
-		// The caller path is confined first, so a leading `..` is dropped before the root is joined
+		// 5. The caller path is confined first, so a leading `..` is dropped before the root is joined
 		expect(confinePath).toHaveBeenCalledWith(sample.path.input);
 		expect(joinPath).toHaveBeenCalledWith(sample.config.root, sample.path.input);
 		expect(result).toBe(sample.path.inputFull);
@@ -400,7 +434,7 @@ describe('#read', () => {
 	});
 
 	test('Throws StorageFileNotFoundError when S3 answers 404, rethrows anything else', async () => {
-		// `NoSuchKey` is the error every backend shares; a denied read says nothing about the object
+		// 1. `NoSuchKey` is the error every backend shares; a denied read says nothing about the object
 		vi.mocked(driver['client'].send).mockRejectedValueOnce(
 			Object.assign(new Error('NoSuchKey'), { $metadata: { httpStatusCode: 404 } }) as never,
 		);
@@ -627,10 +661,12 @@ describe('#move', () => {
 	});
 
 	test('Calls copy with given src and dest', async () => {
+		// 1. The copy is the half that carries the data, so it must get both paths untouched
 		expect(driver.copy).toHaveBeenCalledWith(sample.path.src, sample.path.dest);
 	});
 
 	test('Calls delete on successful copy', async () => {
+		// 1. Only the source goes: deleting the destination would undo the copy
 		expect(driver.delete).toHaveBeenCalledWith(sample.path.src);
 	});
 });
@@ -645,7 +681,7 @@ const encodedKey = (key: string): string => key.split('/').map(encodeURIComponen
 
 describe('#copy', () => {
 	test('URL-encodes the reserved characters of the source key, segment by segment', async () => {
-		// S3 reads `x-amz-copy-source` URL-encoded: a raw `+` is a space, a raw `?` starts the version query
+		// 1. S3 reads `x-amz-copy-source` URL-encoded: a raw `+` is a space, a raw `?` starts the version query
 		driver['fullPath'] = vi.fn((input: string) =>
 			input === 'a+b/c?d%e.png' ? 'media/a+b/c?d%e.png' : sample.path.destFull,
 		);
@@ -1005,6 +1041,41 @@ describe('#createChunkedUpload', () => {
 		} as unknown as void);
 	});
 
+	test('Creates the metadata map when the context has none and keeps the upload id in it', async () => {
+		// 1. A POST without `Upload-Metadata` hands over no map; the id must still be stored, or the upload S3 just
+		//    opened could never be continued or aborted
+		const context = { metadata: undefined };
+
+		const result = await driver.createChunkedUpload(sample.path.input, context);
+
+		expect(result).toBe(context);
+		expect(result.metadata).toStrictEqual({ 'upload-id': 'test-upload-id' });
+
+		expect(CreateMultipartUploadCommand).toHaveBeenCalledWith({
+			Bucket: sample.config.bucket,
+			Key: sample.path.inputFull,
+			Metadata: { 'tus-version': '1.0.0' },
+		});
+	});
+
+	test('Forwards the content headers from the metadata and adds the upload id next to them', async () => {
+		// 1. S3 only takes `ContentType` and `CacheControl` when the upload is created, so both must travel with the
+		//    create request; the id is added to the same map the client keys live in
+		const context = { metadata: { contentType: sample.file.type, cacheControl: 'max-age=60' } };
+
+		await driver.createChunkedUpload(sample.path.input, context);
+
+		expect(CreateMultipartUploadCommand).toHaveBeenCalledWith({
+			Bucket: sample.config.bucket,
+			Key: sample.path.inputFull,
+			Metadata: { 'tus-version': '1.0.0' },
+			ContentType: sample.file.type,
+			CacheControl: 'max-age=60',
+		});
+
+		expect(context.metadata).toMatchObject({ 'upload-id': 'test-upload-id' });
+	});
+
 	test.each([[ServerSideEncryption.aws_kms], [ServerSideEncryption.aws_kms_dsse]])(
 		'Optionally sets ServerSideEncryptionKMSKeyId ',
 		async (sse) => {
@@ -1044,19 +1115,105 @@ describe('#createChunkedUpload', () => {
 	);
 });
 
-describe('#finishChunkedUpload', () => {
+describe('#deleteChunkedUpload', () => {
 	const uploadId = 'test-upload-id';
-	const chunkSize = 1000;
-	const context = { metadata: { 'upload-id': uploadId }, size: 3 * chunkSize };
+	const context = { metadata: { 'upload-id': uploadId } };
 
 	/**
-	 * `ListParts` response with the given number of parts, numbered from one.
+	 * Abort failure shaped the way the SDK reports an upload S3 no longer knows.
 	 *
-	 * @param count - Parts to list.
+	 * @returns The error to reject the abort with.
+	 */
+	const noSuchUpload = () =>
+		Object.assign(new Error('NoSuchUpload'), { name: 'NoSuchUpload', $metadata: { httpStatusCode: 404 } });
+
+	beforeEach(() => {
+		// 1. The lookup is stubbed, so each test states whether an object sits under the key without a HEAD round trip
+		driver.exists = vi.fn().mockResolvedValue(true);
+		vi.mocked(driver['client'].send).mockResolvedValue({} as unknown as void);
+	});
+
+	test('Aborts the upload, then removes the object under the key', async () => {
+		// 1. A live upload: the abort answers, so no lookup is needed before the delete that catches a completed file
+		await driver.deleteChunkedUpload(sample.path.input, context);
+
+		expect(AbortMultipartUploadCommand).toHaveBeenCalledWith({
+			Bucket: sample.config.bucket,
+			Key: sample.path.inputFull,
+			UploadId: uploadId,
+		});
+
+		expect(driver.exists).not.toHaveBeenCalled();
+
+		expect(DeleteObjectsCommand).toHaveBeenCalledWith({
+			Bucket: sample.config.bucket,
+			Delete: { Objects: [{ Key: sample.path.inputFull }] },
+		});
+	});
+
+	test('Still removes the object when the upload was completed before', async () => {
+		// 1. After completion S3 answers the abort with `NoSuchUpload`, yet the assembled object is there: a termination
+		//    must remove it instead of answering 404 and leaving the file behind
+		vi.mocked(driver['client'].send).mockRejectedValueOnce(noSuchUpload() as never);
+
+		await driver.deleteChunkedUpload(sample.path.input, context);
+
+		expect(driver.exists).toHaveBeenCalledWith(sample.path.input);
+
+		expect(DeleteObjectsCommand).toHaveBeenCalledWith({
+			Bucket: sample.config.bucket,
+			Delete: { Objects: [{ Key: sample.path.inputFull }] },
+		});
+	});
+
+	test('Throws the TUS not-found error when neither the upload nor an object exists', async () => {
+		// 1. Nothing to abort and nothing under the key: the TUS server answers 404, and no delete is sent for nothing
+		vi.mocked(driver['client'].send).mockRejectedValueOnce(noSuchUpload() as never);
+		vi.mocked(driver.exists).mockResolvedValue(false);
+
+		await expect(driver.deleteChunkedUpload(sample.path.input, context)).rejects.toBe(ERRORS.FILE_NOT_FOUND);
+		expect(DeleteObjectsCommand).not.toHaveBeenCalled();
+	});
+
+	test('Checks for the object when no upload id was ever recorded', async () => {
+		// 1. Without an id there is nothing to abort, so the object is what decides between a delete and a 404
+		vi.mocked(driver.exists).mockResolvedValue(false);
+
+		await expect(driver.deleteChunkedUpload(sample.path.input, { metadata: undefined })).rejects.toBe(
+			ERRORS.FILE_NOT_FOUND,
+		);
+
+		expect(AbortMultipartUploadCommand).not.toHaveBeenCalled();
+	});
+
+	test('Rethrows any other abort failure without touching the object', async () => {
+		// 1. A denied abort says nothing about the upload; deleting the object on top of it would destroy data the
+		//    caller was not allowed to touch
+		const denied = Object.assign(new Error('AccessDenied'), {
+			name: 'AccessDenied',
+			$metadata: { httpStatusCode: 403 },
+		});
+
+		vi.mocked(driver['client'].send).mockRejectedValueOnce(denied as never);
+
+		await expect(driver.deleteChunkedUpload(sample.path.input, context)).rejects.toBe(denied);
+		expect(DeleteObjectsCommand).not.toHaveBeenCalled();
+	});
+});
+
+describe('#finishChunkedUpload', () => {
+	const uploadId = 'test-upload-id';
+	const partSize = 1000;
+	const context = { metadata: { 'upload-id': uploadId }, size: 3 * partSize };
+
+	/**
+	 * `ListParts` response with one part per given size, numbered from one.
+	 *
+	 * @param sizes - Size of each listed part.
 	 * @returns What the mocked `send` resolves to for the listing.
 	 */
-	const listing = (count: number) => ({
-		Parts: Array.from({ length: count }, (_, index) => ({ PartNumber: index + 1, ETag: `etag-${index + 1}` })),
+	const listing = (...sizes: number[]) => ({
+		Parts: sizes.map((size, index) => ({ PartNumber: index + 1, ETag: `etag-${index + 1}`, Size: size })),
 		IsTruncated: false,
 	});
 
@@ -1065,9 +1222,6 @@ describe('#finishChunkedUpload', () => {
 
 		// 1. `retry` is auto-mocked with the rest of utils; the real one runs here, since its pacing is what is tested
 		vi.mocked(retry).mockImplementation(retryActual);
-
-		// 2. A fixed part size, so the context's size means exactly three parts
-		driver['calcOptimalPartSize'] = vi.fn().mockReturnValue(chunkSize);
 	});
 
 	afterEach(() => {
@@ -1075,7 +1229,8 @@ describe('#finishChunkedUpload', () => {
 	});
 
 	test('Completes the upload once the listing shows every part', async () => {
-		vi.mocked(driver['client'].send).mockResolvedValue(listing(3) as unknown as void);
+		// 1. A full listing on the first call: no pause, one listing, and every part handed to the completion in order
+		vi.mocked(driver['client'].send).mockResolvedValue(listing(partSize, partSize, partSize) as unknown as void);
 
 		await driver.finishChunkedUpload(sample.path.input, context);
 
@@ -1095,12 +1250,53 @@ describe('#finishChunkedUpload', () => {
 		});
 	});
 
+	test('Completes an upload of uneven parts once their bytes add up to the size', async () => {
+		// 1. A client whose requests do not line up with the part size leaves more, smaller parts than the size divided
+		//    by the part size predicts; the bytes are what count, so four parts summing to the size complete at once
+		vi.mocked(driver['client'].send).mockResolvedValue(
+			listing(partSize, partSize, partSize / 2, partSize / 2) as unknown as void,
+		);
+
+		await driver.finishChunkedUpload(sample.path.input, context);
+
+		expect(ListPartsCommand).toHaveBeenCalledTimes(1);
+
+		expect(CompleteMultipartUploadCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				MultipartUpload: {
+					Parts: [
+						{ ETag: 'etag-1', PartNumber: 1 },
+						{ ETag: 'etag-2', PartNumber: 2 },
+						{ ETag: 'etag-3', PartNumber: 3 },
+						{ ETag: 'etag-4', PartNumber: 4 },
+					],
+				},
+			}),
+		);
+	});
+
+	test('Keeps polling while the bytes fall short even when the part count would match', async () => {
+		// 1. Three parts that are still a half part short must not pass for complete; the fourth part shows up on the
+		//    second listing and only then is the completion sent
+		vi.mocked(driver['client'].send)
+			.mockResolvedValueOnce(listing(partSize, partSize, partSize / 2) as unknown as void)
+			.mockResolvedValue(listing(partSize, partSize, partSize / 2, partSize / 2) as unknown as void);
+
+		const run = driver.finishChunkedUpload(sample.path.input, context);
+
+		await vi.advanceTimersByTimeAsync(500);
+		await run;
+
+		expect(ListPartsCommand).toHaveBeenCalledTimes(2);
+		expect(CompleteMultipartUploadCommand).toHaveBeenCalledTimes(1);
+	});
+
 	test('Polls the listing with growing pauses until every part shows', async () => {
 		// 1. Two short listings, then a full one: the completion goes out after 0.5 s + 1 s of waiting
 		vi.mocked(driver['client'].send)
-			.mockResolvedValueOnce(listing(2) as unknown as void)
-			.mockResolvedValueOnce(listing(2) as unknown as void)
-			.mockResolvedValue(listing(3) as unknown as void);
+			.mockResolvedValueOnce(listing(partSize, partSize) as unknown as void)
+			.mockResolvedValueOnce(listing(partSize, partSize) as unknown as void)
+			.mockResolvedValue(listing(partSize, partSize, partSize) as unknown as void);
 
 		const run = driver.finishChunkedUpload(sample.path.input, context);
 
@@ -1113,7 +1309,7 @@ describe('#finishChunkedUpload', () => {
 
 	test('Refuses with the TUS error object when parts are still missing after three retries', async () => {
 		// 1. Four short listings — the first attempt and three retries — and nothing is completed
-		vi.mocked(driver['client'].send).mockResolvedValue(listing(2) as unknown as void);
+		vi.mocked(driver['client'].send).mockResolvedValue(listing(partSize, partSize) as unknown as void);
 
 		const run = driver.finishChunkedUpload(sample.path.input, context);
 		const outcome = run.catch((error: unknown) => error);
@@ -1134,5 +1330,139 @@ describe('#finishChunkedUpload', () => {
 		await expect(driver.finishChunkedUpload(sample.path.input, context)).rejects.toBe(failure);
 		expect(ListPartsCommand).toHaveBeenCalledTimes(1);
 		expect(CompleteMultipartUploadCommand).not.toHaveBeenCalled();
+	});
+});
+
+describe('#writeChunk', () => {
+	const uploadId = 'test-upload-id';
+	const context = { metadata: { 'upload-id': uploadId }, size: 100 };
+
+	beforeEach(() => {
+		// 1. Both halves are stubbed: the listing decides the next part number, the part upload reports the bytes
+		driver['retrieveParts'] = vi.fn().mockResolvedValue([
+			{ PartNumber: 1, Size: 5 },
+			{ PartNumber: 2, Size: 5 },
+		]);
+
+		driver['uploadParts'] = vi.fn().mockResolvedValue(7);
+	});
+
+	test('Continues after the highest listed part and reports the bytes S3 accepted', async () => {
+		// 1. S3 is the record of which parts exist, so the next number follows the last listed one; the new offset is
+		//    the requested one plus what the upload accepted, not the chunk length
+		await expect(driver.writeChunk(sample.path.input, sample.stream, 10, context)).resolves.toBe(17);
+
+		expect(driver['retrieveParts']).toHaveBeenCalledWith(sample.path.inputFull, uploadId);
+		expect(driver['uploadParts']).toHaveBeenCalledWith(sample.path.inputFull, uploadId, 100, sample.stream, 3, 10);
+	});
+
+	test('Lets a failure of the part upload through unchanged', async () => {
+		// 1. The TUS-shaped refusal of a chunk that could not be stored has to reach the server as it is, so it becomes
+		//    the HTTP response
+		const refusal = { status_code: 400, body: 'too short' };
+		vi.mocked(driver['uploadParts']).mockRejectedValue(refusal);
+
+		await expect(driver.writeChunk(sample.path.input, sample.stream, 10, context)).rejects.toBe(refusal);
+	});
+});
+
+describe('#uploadParts', () => {
+	const uploadId = 'test-upload-id';
+	const key = 'uploads/file.bin';
+	const partSize = 10;
+
+	/**
+	 * Let the event loop turn, so stream and semaphore callbacks queued so far run.
+	 *
+	 * @returns Once pending callbacks had their turn.
+	 */
+	const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+	beforeEach(() => {
+		// 1. Tiny parts, so the real splitter cuts a few bytes the way it cuts megabytes; the part upload is stubbed,
+		//    since only the bookkeeping around it is under test
+		driver['calcOptimalPartSize'] = vi.fn().mockReturnValue(partSize);
+		driver['uploadPart'] = vi.fn().mockResolvedValue('etag');
+
+		// @ts-expect-error - the minimum is typed as the S3 constant; lowered to match the tiny parts
+		driver['minPartSize'] = partSize;
+	});
+
+	test('Sends the full parts and skips a short trailing one without opening its file', async () => {
+		// 1. Seventeen bytes cut at ten: the first part is sent, the seven-byte remainder is not final and too short,
+		//    so it is left out of the count and no read stream is ever opened over its file
+		const createReadStream = vi.spyOn(fs, 'createReadStream');
+		const source = Readable.from([Buffer.alloc(17, 'a')]);
+
+		const bytes = await driver['uploadParts'](key, uploadId, 100, source, 1, 0);
+
+		expect(bytes).toBe(10);
+		expect(driver['uploadPart']).toHaveBeenCalledTimes(1);
+		expect(driver['uploadPart']).toHaveBeenCalledWith(key, uploadId, expect.any(fs.ReadStream), 1);
+		expect(createReadStream).toHaveBeenCalledTimes(1);
+	});
+
+	test('Sends a short part when it is the last one of the upload', async () => {
+		// 1. The last part may be smaller than the minimum: seven bytes at offset 93 of a 100-byte upload go out
+		const source = Readable.from([Buffer.alloc(7, 'a')]);
+
+		const bytes = await driver['uploadParts'](key, uploadId, 100, source, 4, 93);
+
+		expect(bytes).toBe(7);
+		expect(driver['uploadPart']).toHaveBeenCalledWith(key, uploadId, expect.any(fs.ReadStream), 4);
+	});
+
+	test('Destroys the read stream when the part upload rejects', async () => {
+		// 1. A rejected `UploadPart` leaves the file half-read; the stream must be destroyed so the descriptor is
+		//    closed, or every failed part would hold one open until the process exits
+		const failure = new Error('RequestTimeout');
+		vi.mocked(driver['uploadPart']).mockRejectedValue(failure);
+
+		const source = Readable.from([Buffer.alloc(10, 'a')]);
+
+		await expect(driver['uploadParts'](key, uploadId, 100, source, 1, 0)).rejects.toBe(failure);
+
+		const readable = vi.mocked(driver['uploadPart']).mock.calls[0]![2] as fs.ReadStream;
+
+		expect(readable.destroyed).toBe(true);
+	});
+
+	test('Refuses a chunk that finished with every byte unsent', async () => {
+		// 1. Seven bytes that are not the last of the upload: nothing can be sent, and returning the unchanged offset
+		//    would make the client resend the same chunk forever, so the chunk is refused in the TUS shape
+		const source = Readable.from([Buffer.alloc(7, 'a')]);
+
+		await expect(driver['uploadParts'](key, uploadId, 100, source, 1, 0)).rejects.toEqual({
+			status_code: 400,
+			body: `A chunk of 7 bytes cannot be stored: every request but the last has to carry at least ${partSize} bytes.`,
+		});
+
+		expect(driver['uploadPart']).not.toHaveBeenCalled();
+	});
+
+	test('Turns back a permit granted after the pipeline failed and opens no part file for it', async () => {
+		// 1. One permit, already taken: the first part of the chunk has to wait for it
+		const semaphore = new Semaphore(1);
+		const held = await semaphore.acquire();
+		driver['partUploadSemaphore'] = semaphore;
+
+		const open = vi.spyOn(fsPromises, 'open');
+		const source = new PassThrough();
+		const run = driver['uploadParts'](key, uploadId, 100, source, 1, 0);
+
+		// 2. The stream dies while the part is still waiting; the pipeline error is what the caller gets
+		source.write(Buffer.alloc(4, 'a'));
+		await tick();
+		source.destroy(new Error('connection reset'));
+
+		await expect(run).rejects.toThrow('connection reset');
+
+		// 3. The permit is granted only now, to a part nobody will consume: it must go straight back and no temp
+		//    file may be opened, or sixty such events would stall every later upload on this driver
+		await held.release();
+		await tick();
+
+		expect(semaphore['availablePermits']).toBe(1);
+		expect(open).not.toHaveBeenCalled();
 	});
 });

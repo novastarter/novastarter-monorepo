@@ -1,4 +1,5 @@
 import { InvalidPayloadError } from '@novastarter/errors';
+import { MAX_TIMER_DELAY } from '@novastarter/utils';
 import { zodErrorToErrorExtensions } from '@novastarter/validation';
 import { z } from 'zod';
 import type { JobContract, JobOptions } from '../types.js';
@@ -44,7 +45,9 @@ export interface DefineJobOptions<Name extends string, Schema extends z.ZodType>
  * @typeParam Schema - Zod schema of the payload.
  * @param definition - Name, schema and options.
  * @returns The contract.
- * @throws TypeError for a name that is not `<queue>.<action>`.
+ * @throws TypeError for a name that is not `<queue>.<action>`; `RangeError` for a `timeout` that is negative, `NaN`
+ * or above `MAX_TIMER_DELAY` — refused here, where the contract is written, rather than failing every run of the
+ * job in the worker.
  *
  * @example
  * ```ts
@@ -68,6 +71,17 @@ export const defineJob = <Name extends string, Schema extends z.ZodType>(
 		throw new TypeError(`Job name "${name}" must look like <queue>.<action>: lower-case words, one dot`);
 	}
 
+	// 2. The caller's options win over the defaults; a timeout no timer can hold is refused now, since the worker
+	//    would otherwise fail every run of the job with a `RangeError` and retry it for nothing
+	const options = { ...DEFAULT_JOB_OPTIONS, ...definition.options };
+
+	if (options.timeout !== undefined && !(options.timeout >= 0 && options.timeout <= MAX_TIMER_DELAY)) {
+		throw new RangeError(
+			`Job "${name}" has a "timeout" of ${options.timeout}; it must be between 0 and ${MAX_TIMER_DELAY} ms`,
+		);
+	}
+
+	// 3. The queue is everything before the dot, the action the rest; the pattern guaranteed exactly one dot
 	const [queue, action] = name.split('.') as [string, string];
 
 	return {
@@ -75,8 +89,9 @@ export const defineJob = <Name extends string, Schema extends z.ZodType>(
 		queue,
 		action,
 		schema,
-		options: { ...DEFAULT_JOB_OPTIONS, ...definition.options },
+		options,
 		parse: (payload) => {
+			// 1. `safeParse` rather than `parse`, so the issues are reported in the package's own error, not zod's
 			const result = schema.safeParse(payload);
 
 			if (result.success) return result.data;

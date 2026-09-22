@@ -20,6 +20,7 @@ describe('#registerDriver', () => {
 
 describe('#registerLocation', () => {
 	test('Throws error when registering location with missing driver', () => {
+		// 1. The driver name is checked at registration, so a typo in a location config fails at startup, not on first use
 		const manager = new DriverManager();
 
 		expect(() =>
@@ -31,6 +32,7 @@ describe('#registerLocation', () => {
 	});
 
 	test('Keeps the configuration without instantiating the driver', () => {
+		// 1. Registration is lazy: the registry knows the name, but the driver is built on first use, not here
 		const mockDriver = vi.fn();
 		const manager = new DriverManager();
 
@@ -43,6 +45,7 @@ describe('#registerLocation', () => {
 			},
 		});
 
+		// 2. The public accessors see the location while the instance map stays empty
 		expect(mockDriver).not.toHaveBeenCalled();
 		expect(manager.hasLocation('test-location')).toBe(true);
 		expect(manager.locationNames()).toEqual(['test-location']);
@@ -50,6 +53,7 @@ describe('#registerLocation', () => {
 	});
 
 	test('Drops the instance of a location registered again', () => {
+		// 1. Build an instance from the first registration, so there is something the second one has to replace
 		const mockDriver = vi.fn();
 		const manager = new DriverManager();
 
@@ -64,6 +68,7 @@ describe('#registerLocation', () => {
 
 		const first = manager.location('test-location');
 
+		// 2. Re-registering replaces the configuration, so the next use builds afresh from the new options
 		manager.registerLocation('test-location', {
 			driver: 'test-driver',
 			options: {
@@ -78,6 +83,7 @@ describe('#registerLocation', () => {
 
 describe('#location', () => {
 	test('Throws error when the location does not exist', () => {
+		// 1. A missing name is a configuration bug and is reported as such rather than answered with `undefined`
 		const manager = new DriverManager();
 
 		expect(() => manager.location('test-location')).toThrowErrorMatchingInlineSnapshot(
@@ -86,6 +92,7 @@ describe('#location', () => {
 	});
 
 	test('Instantiates the driver with the options alone on first use, then reuses it', () => {
+		// 1. The first `location()` call is what builds: the constructor receives the options object and nothing else
 		const mockDriver = vi.fn();
 		const manager = new DriverManager();
 
@@ -100,6 +107,7 @@ describe('#location', () => {
 
 		const first = manager.location('test-location');
 
+		// 2. Every later call answers with the same instance without building again
 		expect(mockDriver).toHaveBeenCalledOnce();
 		expect(mockDriver).toHaveBeenCalledWith({ foo: 'bar' });
 		expect(first).toBe(mockDriver.mock.instances[0]);
@@ -123,13 +131,17 @@ describe('#close', () => {
 			 * Record the construction, so the test can tell a rebuilt location from a reused one.
 			 */
 			constructor() {
+				// 1. A shared spy rather than a field: the manager owns the instances, the test only sees the counts
 				built();
 			}
 
 			/**
 			 * Record the shutdown.
+			 *
+			 * @returns Once the shutdown is recorded.
 			 */
 			async close(): Promise<void> {
+				// 1. The same spy pattern as the constructor, so a close on a never-built location would show up as a call
 				closed();
 			}
 		}

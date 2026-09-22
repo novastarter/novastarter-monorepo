@@ -47,9 +47,10 @@ queue.registerLocation('reports', {
 });
 ```
 
-The `bullmq` options: `connection` — a Redis URL, ioredis options (a client of the driver's own is opened, with the
-`maxRetriesPerRequest: null` BullMQ requires) or a ready ioredis client (used as is; `useRedis().location(…)` of
-`@novastarter/redis` is one); `prefix` of the Redis keys, so several projects share one server; `telemetry`, BullMQ's
+The `bullmq` options: `connection` — required; a Redis URL, ioredis options (a client of the driver's own is opened,
+with the `maxRetriesPerRequest: null` BullMQ requires) or a ready ioredis client (used as is; `useRedis().location(…)`
+of `@novastarter/redis` is one); a location without one is refused when it is first used, rather than left to ioredis's
+default of `localhost:6379`. `prefix` of the Redis keys, so several projects share one server; `telemetry`, BullMQ's
 OpenTelemetry add-on. The `local` options: none. Both take a `logger`; the process logger unless given.
 
 Anywhere later, nothing knows about servers:
@@ -103,11 +104,16 @@ declare module '@novastarter/queue' {
 
 A job name is `<queue>.<action>`; the queue is everything before the dot and is what a location and a worker are named
 after. Options: `attempts`, `backoff`, `priority`, `removeOnComplete`, `timeout`, `unique` — the subset of BullMQ's
-`JobsOptions` every driver honours (`local` ignores retries).
+`JobsOptions` every driver honours (`local` ignores retries). `timeout` is milliseconds from `0` to `MAX_TIMER_DELAY` of
+`@novastarter/utils` (about 24.8 days); `defineJob()` throws a `RangeError` for anything else, so a limit no timer can
+hold fails where the contract is written and not every run in the worker. `unique` collapses a second enqueue of the
+same work while the first is queued, retrying or running — the call answers the queued job's identity — and lets the
+work run again once that job completed or failed for good.
 
 `contract.parse(payload)` is what `enqueue()` runs: an invalid payload throws `InvalidPayloadError` of
 `@novastarter/errors` naming every issue, with the `FailedValidationError` extensions of `@novastarter/validation` as
-`cause`.
+`cause`. The driver gets the payload as passed; it is parsed once more, with defaults and transforms applied, where the
+job runs (`runJob()`), so a schema transform is applied exactly once whichever driver carries the job.
 
 ## Configuration
 
@@ -148,20 +154,26 @@ await enqueue('mail.send', {
 ```
 
 `enqueue(name, payload, options)` parses the payload, derives the id (`options.jobId`, else
-`<name>_<hash of the payload>` or `<name>_<unique(payload)>` for `unique` contracts, else random — never with a `:`,
-which BullMQ reserves), hands the job to `useQueue().location(queue)` and emits the `queue.enqueued` action with the
-parsed payload. Per-call `options` override the contract's: `delay`, `priority`, `attempts`, `jobId`.
+`<name>_<SHA-256 of the payload, 32 hex characters>` or `<name>_<unique(payload)>` for `unique` contracts, else random —
+never with a `:`, which BullMQ reserves), hands the job to `useQueue().location(queue)` and emits the `queue.enqueued`
+action with the parsed payload. Per-call `options` override the contract's: `delay`, `priority`, `attempts`, `jobId`. On
+the `bullmq` driver a derived `unique` id is BullMQ's deduplication key, and the record — whose id `enqueue()` answers —
+gets an id of BullMQ's own; an explicit `jobId` names the record, and a completed or failed record still kept under it
+is dropped before the add, so `jobId: 'nightly'` runs again the night after a failure.
 
 ## Drivers
 
 - `local` — runs the handler in the enqueuing process: without a delay before `enqueue()` resolves, with one on a timer
-  that does not keep the process alive. A failing handler is logged and not retried; a job without a handler is refused.
-  The zero-config mode and what tests run on.
+  that does not keep the process alive — a delay past what one timer holds (about 24.8 days) is waited out in slices, as
+  BullMQ would wait it; a negative or `NaN` delay throws a `RangeError`. A failing handler is logged and not retried; a
+  job without a handler is refused. The zero-config mode and what tests run on.
 - `bullmq` — one BullMQ `Queue` per queue name on Redis, consumed by a worker. `bullmq` is imported on the first job.
-  `location(name).stats()` reports the counts per state for an admin's read-only view.
+  `location(name).stats()` reports the counts per state for an admin's read-only view; `waiting` includes prioritised
+  jobs and parents waiting for their children, which BullMQ keeps apart from its plain waiting list.
 
 `useQueue().close()` closes every location built so far at shutdown: the queues and the clients the drivers opened
-themselves.
+themselves. A driver refuses `enqueue()` (and `stats()`) after its `close()` with `The <name> queue driver is closed`,
+rather than arming a timer or opening a queue the shutdown will never release.
 
 ## Worker
 
@@ -179,14 +191,14 @@ for (const queue of getQueueNames()) {
 
 `createWorker(queue, processor, options)` wraps BullMQ's `Worker`. Unless `options.connection` is given, the worker
 connects with the client of the queue's `bullmq` location in `useQueue()` — the same registration as the producer's,
-prefix and telemetry included — and refuses a queue on the `local` driver. The processor gets the parsed payload and a
-`JobContext` (`id`, full `name`, `attempt`, `enqueuedAt`, and `signal` when a timeout applies), a job outliving its
-contract's `timeout` (or the worker's default) fails with `JobTimeoutError` and is retried by the contract's rules — its
-`signal` aborts with that error, so a handler that passes it on to `fetch` or an SDK call stops instead of finishing in
-the background — `completed` / `failed` / `error` go to the logger, `close(force?)` drains gracefully. `telemetry` takes
-BullMQ's OpenTelemetry add-on (`bullmq-otel`), on the worker and on the `bullmq` location alike: every run becomes a
-span, and a producer enqueuing with the add-on hands its trace context over in the job's metadata, so the worker's span
-continues the request's trace.
+prefix and telemetry included — and refuses a queue on the `local` driver. The processor gets the payload as enqueued
+and a `JobContext` (`id`, full `name`, `attempt`, `enqueuedAt`, and `signal` when a timeout applies), a job outliving
+its contract's `timeout` (or the worker's default `timeout`, range-checked like the contract's when the worker is
+created) fails with `JobTimeoutError` and is retried by the contract's rules — its `signal` aborts with that error, so a
+handler that passes it on to `fetch` or an SDK call stops instead of finishing in the background — `completed` /
+`failed` / `error` go to the logger, `close(force?)` drains gracefully. `telemetry` takes BullMQ's OpenTelemetry add-on
+(`bullmq-otel`), on the worker and on the `bullmq` location alike: every run becomes a span, and a producer enqueuing
+with the add-on hands its trace context over in the job's metadata, so the worker's span continues the request's trace.
 
 ## Schedules
 
@@ -221,4 +233,6 @@ random phase, so many deployments do not fire together.
 
 `registerSchedule({ job, cron, payload, enabled })` — in the app's module at startup. `cron` may be a function of the
 environment (`(env) => String(env['REPORTS_BUILD_SCHEDULE'])`) and `enabled` a switch; the job should be `unique` if a
-tick could overlap a run still in progress. Nothing else: `startSchedules()` picks it up.
+tick could overlap a run still in progress. Nothing else: `startSchedules()` picks it up. One job on one rule is one
+schedule: `registerSchedule()` refuses the same rule twice, and a rule only known once resolved — a function equal to a
+string — is caught by `startSchedules()`, which logs the second schedule and skips it, as it does an invalid rule.

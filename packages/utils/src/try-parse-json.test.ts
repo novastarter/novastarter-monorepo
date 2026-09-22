@@ -8,6 +8,7 @@ import { tryParseJSON } from './try-parse-json.js';
 vi.mock('./parse-json.js', { spy: true });
 
 test('Parses valid JSON', () => {
+	// 1. Every JSON value kind parses as it would with `parseJSON`; the fallback plays no part
 	expect(tryParseJSON('{"a":1}')).toEqual({ a: 1 });
 	expect(tryParseJSON('[1,2]')).toEqual([1, 2]);
 	expect(tryParseJSON('null')).toBeNull();
@@ -21,6 +22,7 @@ test('Answers with the fallback when the text is not JSON', () => {
 });
 
 test('Answers undefined without a fallback', () => {
+	// 1. No fallback means `undefined`, for text that is not JSON and for empty text alike
 	expect(tryParseJSON('nope')).toBeUndefined();
 	expect(tryParseJSON('')).toBeUndefined();
 });

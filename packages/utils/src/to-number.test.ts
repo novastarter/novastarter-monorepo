@@ -15,6 +15,7 @@ test('Parses numeric strings, trimming whitespace', () => {
 });
 
 test('Passes finite numbers through', () => {
+	// 1. A number is already what the caller wants; zero and negatives must not be mistaken for missing
 	expect(toNumber(42)).toBe(42);
 	expect(toNumber(0)).toBe(0);
 	expect(toNumber(-0.5)).toBe(-0.5);
@@ -31,6 +32,7 @@ test('Answers undefined for strings that are not a number', () => {
 });
 
 test('Answers undefined for non-finite numbers', () => {
+	// 1. `NaN` and the infinities are numbers to `typeof`, but no config value; they are refused like bad text
 	expect(toNumber(Number.NaN)).toBeUndefined();
 	expect(toNumber(Number.POSITIVE_INFINITY)).toBeUndefined();
 	expect(toNumber(Number.NEGATIVE_INFINITY)).toBeUndefined();

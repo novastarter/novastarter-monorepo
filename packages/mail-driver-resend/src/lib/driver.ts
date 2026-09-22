@@ -74,17 +74,23 @@ export class MailDriverResend implements MailDriver {
 	 *
 	 * @param message - Rendered message.
 	 * @returns Resend's message id; every recipient as accepted, since the API takes all or nothing.
-	 * @throws Error carrying Resend's error name and message when the API refuses.
+	 * @throws Error carrying Resend's error name and message when the API refuses, the SDK's error value as the
+	 * cause.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
-		const { data, error } = await this.client.emails.send(toResendEmail(message));
+		// 1. The SDK answers `{ data, error }` instead of throwing, so a refusal has to be read off the value;
+		//    attachments are read into the payload before the request goes out
+		const { data, error } = await this.client.emails.send(await toResendEmail(message));
 
-		// 1. The SDK reports failures as a value; they are turned into the throw the fallback of `sendMail()` expects
+		// 2. A failure becomes the throw the fallback of `sendMail()` expects, the original kept as the cause so the
+		//    caller can still read its status code
 		if (error || !data) {
-			throw new Error(`Resend: ${error?.name ?? 'unknown_error'}: ${error?.message ?? 'no data returned'}`);
+			throw new Error(`Resend: ${error?.name ?? 'unknown_error'}: ${error?.message ?? 'no data returned'}`, {
+				cause: error,
+			});
 		}
 
-		// 2. Resend takes a message whole or refuses it, so every recipient counts as accepted
+		// 3. Resend takes a message whole or refuses it, so every recipient counts as accepted
 		return {
 			messageId: data.id,
 			accepted: toMailAddressList(message.to).map(bareMailAddress),

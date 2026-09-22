@@ -60,9 +60,9 @@ export const normalizePath = (
 
 	const normalizedPath = prefix + segments.join('/');
 
-	// 7. Strip the leading slash on request. The check looks at the input path, so only a forward-slash-rooted path
-	//    loses its slash; a backslash-rooted one keeps it
-	if (removeLeading && path.startsWith('/')) {
+	// 7. Strip the leading slash on request. The check looks at the normalised path, so a backslash-rooted input loses
+	//    its slash the same as a forward-slash-rooted one; the `//?/` prefix is not a root and is left alone
+	if (removeLeading && prefix === '' && normalizedPath.startsWith('/')) {
 		return normalizedPath.substring(1);
 	}
 

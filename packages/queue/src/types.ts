@@ -14,11 +14,17 @@ export interface JobOptions {
 	priority?: number;
 	/** Drop the record once done: always, or keep the last N. */
 	removeOnComplete?: boolean | number;
-	/** Milliseconds a run may take before the worker gives up on it. */
+	/**
+	 * Milliseconds a run may take before the worker gives up on it, from `0` to `MAX_TIMER_DELAY` of
+	 * `@novastarter/utils` (about 24.8 days); `defineJob()` refuses anything else, since a timer could not hold it.
+	 */
 	timeout?: number;
 	/**
 	 * Collapse duplicates: `true` derives the job id from the payload, a function computes it — a second enqueue with
-	 * the same id while the first is still queued is a no-op. The value must not contain `:`, which BullMQ reserves.
+	 * the same id while the first is still queued, retrying or running is a no-op that answers the queued job's
+	 * identity; once that job completed or failed for good, the next enqueue runs again. The value must not contain
+	 * `:`, which BullMQ reserves. On the `bullmq` driver the derived id is the deduplication key and the record gets
+	 * an id of BullMQ's own, which is what `enqueue()` answers.
 	 */
 	unique?: boolean | ((payload: any) => string);
 }
@@ -135,7 +141,11 @@ export interface EnqueueOptions {
 	priority?: number;
 	/** Total tries, overriding the contract. */
 	attempts?: number;
-	/** Explicit job id; overrides what `unique` would derive. */
+	/**
+	 * Explicit job id; overrides what `unique` would derive and names the record in the driver. Like a `unique` id it
+	 * collapses a second enqueue while the job is queued, retrying or running, and runs again once it finished: the
+	 * `bullmq` driver drops a completed or failed record under the id before adding.
+	 */
 	jobId?: string;
 }
 
@@ -156,7 +166,8 @@ export interface QueueStats {
 	name: string;
 	/**
 	 * Jobs by state; a driver reports the states it has. A paused queue keeps its jobs in `waiting` — BullMQ 6 has no
-	 * separate state for them.
+	 * separate state for them — and so do prioritised jobs and parents waiting for their children, which BullMQ
+	 * keeps apart from its plain waiting list.
 	 */
 	counts: {
 		waiting: number;

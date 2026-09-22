@@ -65,6 +65,29 @@ describe('enqueue', () => {
 		expect(jobs.enqueue).toBe(enqueue);
 	});
 
+	test('Hands the driver the payload as passed, so a schema transform runs once, at the run', async () => {
+		// 1. Parsed twice, a doubling transform would double twice and a type-changing one would fail the second parse
+		registerJob(
+			defineJob({
+				name: 'test.shape',
+				schema: z.object({ n: z.number().transform((n) => n * 2), s: z.string().transform((s) => s.length) }),
+			}),
+		);
+
+		const handler = vi.fn(async () => {});
+		registerJobHandlers({ 'test.shape': handler } as never);
+
+		const job = await enqueue('test.shape' as never, { n: 1, s: 'abc' } as never);
+
+		// 2. The handler sees the output of one parse; listeners see the same, since the id and the event are built
+		//    from it
+		expect(handler).toHaveBeenCalledWith({ n: 2, s: 3 }, expect.objectContaining({ id: job.id }));
+		expect(emitter.emitAction).toHaveBeenCalledWith(QUEUE_ENQUEUED_EVENT, { ...job, payload: { n: 2, s: 3 } });
+		expect(vi.mocked(useLogger)().error).not.toHaveBeenCalled();
+
+		_contracts.delete('test.shape');
+	});
+
 	test('Refuses an invalid payload before anything is queued', async () => {
 		const handler = vi.fn(async () => {});
 		registerJobHandlers({ 'test.ping': handler } as never);

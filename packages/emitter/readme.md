@@ -15,7 +15,7 @@ import { useEmitter } from '@novastarter/emitter';
 
 const emitter = useEmitter();
 
-emitter.onFilter('user.create', (payload) => ({ ...payload, source: 'api' }));
+emitter.onFilter<{ name: string }>('user.create', (payload) => ({ ...payload, source: 'api' }));
 emitter.onAction('user.create', ({ key }) => audit(key));
 emitter.onInit('routes.after', ({ app }) => app.use(customRouter));
 

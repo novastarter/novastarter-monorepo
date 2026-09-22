@@ -1,12 +1,21 @@
 import type { FieldFilter } from '@novastarter/types';
-import type { AnySchema, StringSchema as BaseStringSchema, DateSchema, NumberSchema } from 'joi';
+import type {
+	AnySchema,
+	StringSchema as BaseStringSchema,
+	DateSchema,
+	ExtensionRule,
+	NumberSchema,
+	SchemaInternals,
+} from 'joi';
 import BaseJoi from 'joi';
-import { escapeRegExp, merge } from 'lodash-es';
+import { merge } from 'lodash-es';
 
 /**
  * Joi string schema with the substring rules added by {@link Joi}.
  *
- * Joi's own string schema has no "contains" rule, so the three are registered as an extension and typed here.
+ * Joi's own string schema has no "contains" or "starts with" rule, so the eleven are registered as an extension and
+ * typed here. The names are the filter operators without the underscore, which is what the error converter maps
+ * them back to.
  */
 export interface StringSchema extends BaseStringSchema {
 	/** Require the string to contain `substring`, case-sensitive. */
@@ -15,14 +24,93 @@ export interface StringSchema extends BaseStringSchema {
 	icontains(substring: string): this;
 	/** Forbid the string from containing `substring`, case-sensitive. */
 	ncontains(substring: string): this;
+	/** Require the string to start with `substring`, case-sensitive. */
+	starts_with(substring: string): this;
+	/** Forbid the string from starting with `substring`, case-sensitive. */
+	nstarts_with(substring: string): this;
+	/** Require the string to start with `substring`, ignoring case. */
+	istarts_with(substring: string): this;
+	/** Forbid the string from starting with `substring`, ignoring case. */
+	nistarts_with(substring: string): this;
+	/** Require the string to end with `substring`, case-sensitive. */
+	ends_with(substring: string): this;
+	/** Forbid the string from ending with `substring`, case-sensitive. */
+	nends_with(substring: string): this;
+	/** Require the string to end with `substring`, ignoring case. */
+	iends_with(substring: string): this;
+	/** Forbid the string from ending with `substring`, ignoring case. */
+	niends_with(substring: string): this;
 }
 
 /**
- * Joi instance used by the package: the stock one with `contains`, `icontains` and `ncontains` string rules.
+ * Build one substring rule of the extended {@link Joi} string type.
  *
- * The rule names surface in `ValidationErrorItem.type` as `string.contains` etc., which is what
- * `joiValidationErrorItemToErrorExtensions` matches on. Use this instance, not `joi` directly, when composing with
- * schemas from {@link generateJoi}.
+ * The eleven rules differ only in their name and in the check itself, so the argument validation, the registration
+ * and the error report are shared. The substring goes into the error context under `substring`, so the error
+ * converter can name what the value had to contain, start with or end with without reverse-engineering it.
+ *
+ * @param name - Rule name; surfaces as `string.<name>` in `ValidationErrorItem.type`.
+ * @param passes - Check of the value against the substring; `false` reports the rule's error.
+ * @returns Rule definition for `Joi.extend`.
+ * @internal
+ */
+const substringRule = (
+	name: string,
+	passes: (value: string, substring: string) => boolean,
+): ExtensionRule & ThisType<SchemaInternals> => ({
+	args: [
+		{
+			name: 'substring',
+			ref: true,
+			assert: (val) => typeof val === 'string',
+			message: 'must be a string',
+		},
+	],
+	/**
+	 * Register the rule with its substring.
+	 *
+	 * @param substring - Text the check compares the value against.
+	 * @returns The schema with the rule added.
+	 */
+	method(substring: string) {
+		return this.$_addRule({ name, args: { substring } });
+	},
+	/**
+	 * Check the value.
+	 *
+	 * @param value - String under validation.
+	 * @param helpers - Joi rule helpers, used to report the error.
+	 * @param args - Rule arguments; only `substring`.
+	 * @returns The value when it passes, otherwise a Joi error report.
+	 */
+	validate(value: string, helpers, { substring }) {
+		// 1. Report with the substring in context, so the error can name what was expected
+		if (!passes(value, substring)) {
+			return helpers.error(`string.${name}`, { substring });
+		}
+
+		return value;
+	},
+});
+
+/**
+ * Joi instance used by the package: the stock one with the `contains` and `starts_with` / `ends_with` families
+ * registered as string rules.
+ *
+ * The rule names surface in `ValidationErrorItem.type` as `string.contains`, `string.starts_with` etc., which is
+ * what `joiValidationErrorItemToErrorExtensions` matches on. Use this instance, not `joi` directly, when composing
+ * with schemas from {@link generateJoi}; the case-insensitive rules lower-case both sides, the negated ones flip the
+ * check.
+ *
+ * @example
+ * ```ts
+ * const schema = generateJoi({ age: { _gte: 18 } }).concat(
+ * 	Joi.object({ email: (Joi.string() as StringSchema).contains('@') }),
+ * );
+ *
+ * schema.validate({ age: 3, email: 'nope' }, { abortEarly: false }).error?.details.map((detail) => detail.type);
+ * // => ['number.min', 'string.contains']
+ * ```
  */
 export const Joi: typeof BaseJoi = BaseJoi.extend({
 	type: 'string',
@@ -31,113 +119,37 @@ export const Joi: typeof BaseJoi = BaseJoi.extend({
 		'string.contains': '{{#label}} must contain [{{#substring}}]',
 		'string.icontains': '{{#label}} must contain case insensitive [{{#substring}}]',
 		'string.ncontains': "{{#label}} can't contain [{{#substring}}]",
+		'string.starts_with': '{{#label}} must start with [{{#substring}}]',
+		'string.nstarts_with': "{{#label}} can't start with [{{#substring}}]",
+		'string.istarts_with': '{{#label}} must start with case insensitive [{{#substring}}]',
+		'string.nistarts_with': "{{#label}} can't start with case insensitive [{{#substring}}]",
+		'string.ends_with': '{{#label}} must end with [{{#substring}}]',
+		'string.nends_with': "{{#label}} can't end with [{{#substring}}]",
+		'string.iends_with': '{{#label}} must end with case insensitive [{{#substring}}]',
+		'string.niends_with': "{{#label}} can't end with case insensitive [{{#substring}}]",
 	},
 	rules: {
-		contains: {
-			args: [
-				{
-					name: 'substring',
-					ref: true,
-					assert: (val) => typeof val === 'string',
-					message: 'must be a string',
-				},
-			],
-			/**
-			 * Register the rule with its substring.
-			 *
-			 * @param substring - Text the value must contain.
-			 * @returns The schema with the rule added.
-			 */
-			method(substring) {
-				return this.$_addRule({ name: 'contains', args: { substring } });
-			},
-			/**
-			 * Check the value.
-			 *
-			 * @param value - String under validation.
-			 * @param helpers - Joi rule helpers, used to report the error.
-			 * @param args - Rule arguments; only `substring`.
-			 * @returns The value when it passes, otherwise a Joi error report.
-			 */
-			validate(value, helpers, { substring }) {
-				// 1. Report with the substring in context, so the error can name what was missing
-				if (value.includes(substring) === false) {
-					return helpers.error('string.contains', { substring });
-				}
-
-				return value;
-			},
-		},
-		icontains: {
-			args: [
-				{
-					name: 'substring',
-					ref: true,
-					assert: (val) => typeof val === 'string',
-					message: 'must be a string',
-				},
-			],
-			/**
-			 * Register the rule with its substring.
-			 *
-			 * @param substring - Text the value must contain, in any case.
-			 * @returns The schema with the rule added.
-			 */
-			method(substring) {
-				return this.$_addRule({ name: 'icontains', args: { substring } });
-			},
-			/**
-			 * Check the value.
-			 *
-			 * @param value - String under validation.
-			 * @param helpers - Joi rule helpers, used to report the error.
-			 * @param args - Rule arguments; only `substring`.
-			 * @returns The value when it passes, otherwise a Joi error report.
-			 */
-			validate(value: string, helpers, { substring }) {
-				// 1. Lower-case both sides; the original substring is kept for the error context
-				if (value.toLowerCase().includes(substring.toLowerCase()) === false) {
-					return helpers.error('string.icontains', { substring });
-				}
-
-				return value;
-			},
-		},
-		ncontains: {
-			args: [
-				{
-					name: 'substring',
-					ref: true,
-					assert: (val) => typeof val === 'string',
-					message: 'must be a string',
-				},
-			],
-			/**
-			 * Register the rule with its substring.
-			 *
-			 * @param substring - Text the value must not contain.
-			 * @returns The schema with the rule added.
-			 */
-			method(substring) {
-				return this.$_addRule({ name: 'ncontains', args: { substring } });
-			},
-			/**
-			 * Check the value.
-			 *
-			 * @param value - String under validation.
-			 * @param helpers - Joi rule helpers, used to report the error.
-			 * @param args - Rule arguments; only `substring`.
-			 * @returns The value when it passes, otherwise a Joi error report.
-			 */
-			validate(value, helpers, { substring }) {
-				// 1. The presence of the substring is the failure here
-				if (value.includes(substring) === true) {
-					return helpers.error('string.ncontains', { substring });
-				}
-
-				return value;
-			},
-		},
+		contains: substringRule('contains', (value, substring) => value.includes(substring)),
+		icontains: substringRule('icontains', (value, substring) => value.toLowerCase().includes(substring.toLowerCase())),
+		ncontains: substringRule('ncontains', (value, substring) => !value.includes(substring)),
+		starts_with: substringRule('starts_with', (value, substring) => value.startsWith(substring)),
+		nstarts_with: substringRule('nstarts_with', (value, substring) => !value.startsWith(substring)),
+		istarts_with: substringRule('istarts_with', (value, substring) =>
+			value.toLowerCase().startsWith(substring.toLowerCase()),
+		),
+		nistarts_with: substringRule(
+			'nistarts_with',
+			(value, substring) => !value.toLowerCase().startsWith(substring.toLowerCase()),
+		),
+		ends_with: substringRule('ends_with', (value, substring) => value.endsWith(substring)),
+		nends_with: substringRule('nends_with', (value, substring) => !value.endsWith(substring)),
+		iends_with: substringRule('iends_with', (value, substring) =>
+			value.toLowerCase().endsWith(substring.toLowerCase()),
+		),
+		niends_with: substringRule(
+			'niends_with',
+			(value, substring) => !value.toLowerCase().endsWith(substring.toLowerCase()),
+		),
 	},
 });
 
@@ -153,6 +165,7 @@ export type JoiOptions = {
  * Options applied when the caller passes none.
  *
  * @defaultValue Fields are optional; a missing field passes.
+ * @internal
  */
 const defaults: JoiOptions = {
 	requireAll: false,
@@ -206,9 +219,11 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 		const operator = Object.keys(value)[0];
 		const compareValue = Object.values(value)[0];
 
-		// 5. Lazily pick the base schema per type, so a previously built schema for the key is extended, not replaced
+		// 5. Lazily pick the base schema per type, so a previously built schema for the key is extended, not replaced.
+		//    The string base gets `min(0)`, because Joi's stock string rejects `''` with `string.empty` before any rule
+		//    runs; a form field left blank must reach the substring rule and fail (or pass) on that rule instead
 		const getAnySchema = () => schema[key] ?? Joi.any();
-		const getStringSchema = () => (schema[key] ?? Joi.string()) as StringSchema;
+		const getStringSchema = () => (schema[key] ?? Joi.string().min(0)) as StringSchema;
 		const getNumberSchema = () => (schema[key] ?? Joi.number()) as NumberSchema;
 		const getDateSchema = () => (schema[key] ?? Joi.date()) as DateSchema;
 
@@ -283,15 +298,13 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			}
 		}
 
-		// 9. Prefix / suffix operators become named patterns; the name is what the error converter reads back as the
-		//    operator, `invert` flips the match for the negated forms and the `i` flag handles the case-insensitive ones
+		// 9. Prefix / suffix operators are rules of the extended Joi named after the operator, so the error carries the
+		//    operator and the original substring; a non-string compare value cannot match anything, as in step 8
 		if (operator === '_starts_with') {
 			if (compareValue === null || compareValue === undefined || typeof compareValue !== 'string') {
 				schema[key] = Joi.any().equal(true);
 			} else {
-				schema[key] = getStringSchema().pattern(new RegExp(`^${escapeRegExp(compareValue)}.*`), {
-					name: 'starts_with',
-				});
+				schema[key] = getStringSchema().starts_with(compareValue);
 			}
 		}
 
@@ -299,10 +312,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			if (compareValue === null || compareValue === undefined || typeof compareValue !== 'string') {
 				schema[key] = Joi.any().equal(true);
 			} else {
-				schema[key] = getStringSchema().pattern(new RegExp(`^${escapeRegExp(compareValue)}.*`), {
-					name: 'nstarts_with',
-					invert: true,
-				});
+				schema[key] = getStringSchema().nstarts_with(compareValue);
 			}
 		}
 
@@ -310,9 +320,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			if (compareValue === null || compareValue === undefined || typeof compareValue !== 'string') {
 				schema[key] = Joi.any().equal(true);
 			} else {
-				schema[key] = getStringSchema().pattern(new RegExp(`^${escapeRegExp(compareValue)}.*`, 'i'), {
-					name: 'istarts_with',
-				});
+				schema[key] = getStringSchema().istarts_with(compareValue);
 			}
 		}
 
@@ -320,10 +328,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			if (compareValue === null || compareValue === undefined || typeof compareValue !== 'string') {
 				schema[key] = Joi.any().equal(true);
 			} else {
-				schema[key] = getStringSchema().pattern(new RegExp(`^${escapeRegExp(compareValue)}.*`, 'i'), {
-					name: 'nistarts_with',
-					invert: true,
-				});
+				schema[key] = getStringSchema().nistarts_with(compareValue);
 			}
 		}
 
@@ -331,9 +336,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			if (compareValue === null || compareValue === undefined || typeof compareValue !== 'string') {
 				schema[key] = Joi.any().equal(true);
 			} else {
-				schema[key] = getStringSchema().pattern(new RegExp(`.*${escapeRegExp(compareValue)}$`), {
-					name: 'ends_with',
-				});
+				schema[key] = getStringSchema().ends_with(compareValue);
 			}
 		}
 
@@ -341,10 +344,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			if (compareValue === null || compareValue === undefined || typeof compareValue !== 'string') {
 				schema[key] = Joi.any().equal(true);
 			} else {
-				schema[key] = getStringSchema().pattern(new RegExp(`.*${escapeRegExp(compareValue)}$`), {
-					name: 'nends_with',
-					invert: true,
-				});
+				schema[key] = getStringSchema().nends_with(compareValue);
 			}
 		}
 
@@ -352,9 +352,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			if (compareValue === null || compareValue === undefined || typeof compareValue !== 'string') {
 				schema[key] = Joi.any().equal(true);
 			} else {
-				schema[key] = getStringSchema().pattern(new RegExp(`.*${escapeRegExp(compareValue)}$`, 'i'), {
-					name: 'iends_with',
-				});
+				schema[key] = getStringSchema().iends_with(compareValue);
 			}
 		}
 
@@ -362,10 +360,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			if (compareValue === null || compareValue === undefined || typeof compareValue !== 'string') {
 				schema[key] = Joi.any().equal(true);
 			} else {
-				schema[key] = getStringSchema().pattern(new RegExp(`.*${escapeRegExp(compareValue)}$`, 'i'), {
-					name: 'niends_with',
-					invert: true,
-				});
+				schema[key] = getStringSchema().niends_with(compareValue);
 			}
 		}
 
@@ -466,8 +461,8 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			schema[key] = getAnySchema().required();
 		}
 
-		// 15. `_regex` accepts the pattern bare or wrapped in slashes; `min(0)` lets an empty string reach the pattern
-		//     instead of failing Joi's default non-empty string rule
+		// 15. `_regex` accepts the pattern bare or wrapped in slashes; the string base of step 5 already lets an empty
+		//     string reach the pattern
 		if (operator === '_regex') {
 			if (compareValue === null || compareValue === undefined) {
 				schema[key] = Joi.any().equal(true);
@@ -475,9 +470,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 				const wrapped =
 					typeof compareValue === 'string' ? compareValue.startsWith('/') && compareValue.endsWith('/') : false;
 
-				schema[key] = getStringSchema()
-					.min(0)
-					.regex(new RegExp(wrapped ? (compareValue as any).slice(1, -1) : compareValue));
+				schema[key] = getStringSchema().regex(new RegExp(wrapped ? (compareValue as any).slice(1, -1) : compareValue));
 			}
 		}
 	}

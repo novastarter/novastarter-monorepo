@@ -3,7 +3,7 @@ import type { Lock } from '../../../kv/types.js';
 import type { CacheDriver } from '../../driver.js';
 
 /**
- * Options of {@link CacheDriverLocal}, the `local` driver.
+ * Options of {@link CacheDriverLocal}, the `local` driver: those of `KvDriverLocal`, which does the work.
  */
 export type CacheDriverLocalConfig = {
 	/**
@@ -15,6 +15,14 @@ export type CacheDriverLocalConfig = {
 	 * Time-to-live: keys expire after this many milliseconds.
 	 */
 	ttl?: number | undefined;
+
+	/**
+	 * How long `acquireLock` waits for a busy key before giving up, in milliseconds. From `0` to what a timer can hold
+	 * (`MAX_TIMER_DELAY` of `@novastarter/utils`); anything else is refused at construction.
+	 *
+	 * @defaultValue 5000
+	 */
+	lockTimeout?: number | undefined;
 };
 
 /**
@@ -39,6 +47,7 @@ export class CacheDriverLocal implements CacheDriver {
 	 * Create the cache with optional size and time limits.
 	 *
 	 * @param config - Local configuration.
+	 * @throws RangeError when `lockTimeout` is not between `0` and what a timer can hold.
 	 */
 	constructor(config: CacheDriverLocalConfig = {}) {
 		// 1. The cache reuses the Kv store instead of holding its own map, so both share one implementation
@@ -64,7 +73,8 @@ export class CacheDriverLocal implements CacheDriver {
 	 * @param value - Value to save. Can be any JavaScript primitive, plain object or array.
 	 */
 	async set(key: string, value: unknown): Promise<void> {
-		// 1. Delegate to the store
+		// 1. The store serializes the value to bytes, so the cache hands the object over as is and no caller can change
+		//    a cached entry through the reference it kept
 		return await this.store.set(key, value);
 	}
 
@@ -74,7 +84,7 @@ export class CacheDriverLocal implements CacheDriver {
 	 * @param key - Key to remove.
 	 */
 	async delete(key: string): Promise<void> {
-		// 1. Delegate to the store
+		// 1. Nothing to add over the store: a single process holds no second copy of the key that would need dropping
 		await this.store.delete(key);
 	}
 
@@ -85,7 +95,7 @@ export class CacheDriverLocal implements CacheDriver {
 	 * @returns `true` when the key exists.
 	 */
 	async has(key: string): Promise<boolean> {
-		// 1. Delegate to the store
+		// 1. The store's probe does not refresh recency, so asking does not keep a key alive in the LRU
 		return await this.store.has(key);
 	}
 
@@ -93,7 +103,7 @@ export class CacheDriverLocal implements CacheDriver {
 	 * Remove all keys from the cache.
 	 */
 	async clear(): Promise<void> {
-		// 1. Delegate to the store
+		// 1. The store owns the LRU, so emptying it is the whole operation; no other process holds a copy to tell
 		await this.store.clear();
 	}
 
@@ -102,9 +112,11 @@ export class CacheDriverLocal implements CacheDriver {
 	 *
 	 * @param key - Key to lock.
 	 * @returns Handle to release or extend the lock.
+	 * @throws Error when the key is still held once `lockTimeout` passed.
 	 */
 	async acquireLock(key: string): Promise<Lock> {
-		// 1. Delegate to the store
+		// 1. The lock is the store's in-process one: one holder per key of this process, the others waiting their turn
+		//    for `lockTimeout`; there is no other process a cache in memory would have to protect against
 		return await this.store.acquireLock(key);
 	}
 
@@ -115,9 +127,11 @@ export class CacheDriverLocal implements CacheDriver {
 	 * @param key - Key to lock.
 	 * @param callback - Work to run under the lock.
 	 * @returns Whatever the callback resolves to.
+	 * @throws Error when the key is still held once `lockTimeout` passed; whatever the callback throws.
 	 */
 	async usingLock<T>(key: string, callback: () => Promise<T>): Promise<T> {
-		// 1. Delegate to the store
+		// 1. The store takes, holds and releases the lock around the callback, throwing or not, so the cache needs no
+		//    try/finally of its own
 		return await this.store.usingLock(key, callback);
 	}
 }

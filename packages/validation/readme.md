@@ -55,9 +55,13 @@ validatePayload({ author: { name: { _eq: 'Ada' } } }, { author: { name: 'Bob' } 
 `_nbetween`, `_contains`, `_ncontains`, `_icontains`, `_starts_with`, `_nstarts_with`, `_istarts_with`,
 `_nistarts_with`, `_ends_with`, `_nends_with`, `_iends_with`, `_niends_with`, `_regex`, `_submitted`.
 
-Range operators compare as numbers when the compared value parses as one and as dates otherwise. `_regex` takes the
-pattern bare (`^[a-z]+$`) or wrapped in slashes (`/^[a-z]+$/`). The `_contains` family also accepts an array value and
-checks its items.
+Range operators compare as numbers when the compared value parses as one and as dates otherwise; an infinite number is
+reported as `unsafe`, like one outside the safe integer range. `_eq` and `_neq` match a number and its string form alike
+(`_eq: 18` accepts `'18'`) and report the compared value as the scalar `valid` / `invalid`. `_regex` takes the pattern
+bare (`^[a-z]+$`) or wrapped in slashes (`/^[a-z]+$/`). The `_contains` family also accepts an array value and checks
+its items. An empty string reaches the string operators like any other value: `_contains: '@'` fails it with
+`type: 'contains'`, `_ncontains: '@'` passes it. The `_starts_with` / `_ends_with` families report the substring as
+written in the rule.
 
 ### Building errors by hand
 
@@ -80,8 +84,11 @@ if (error) {
 }
 ```
 
-`generateJoi()` and the extended `Joi` instance (with `contains`, `icontains`, `ncontains` string rules) are exported
-for composing schemas of your own.
+`generateJoi()` and the extended `Joi` instance are exported for composing schemas of your own. The instance adds the
+substring operators as string rules named after them: `contains`, `icontains`, `ncontains`, `starts_with`,
+`nstarts_with`, `istarts_with`, `nistarts_with`, `ends_with`, `nends_with`, `iends_with` and `niends_with`, each taking
+the substring. These rules are what `joiValidationErrorItemToErrorExtensions` maps back to operators; a named
+`pattern()` is not recognised.
 
 ## zod
 

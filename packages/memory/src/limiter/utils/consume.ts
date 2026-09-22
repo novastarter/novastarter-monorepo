@@ -6,7 +6,8 @@ import type { IRateLimiterRes, RateLimiterAbstract } from 'rate-limiter-flexible
  *
  * `rate-limiter-flexible` rejects with a plain result object (not an `Error`) when the budget is exhausted, and with
  * a real `Error` when something else went wrong, for example a lost Redis connection. Only the former is a rate-limit
- * hit; the latter is passed through untouched.
+ * hit; the latter is passed through untouched. The `reset` of the error is never in the past: a key the library
+ * reports no expiry for is answered with "now".
  *
  * @param limiter - Memory or Redis limiter instance.
  * @param key - Key to consume a point for.
@@ -25,12 +26,14 @@ export const consume = async (limiter: RateLimiterAbstract, key: string, availab
 		}
 
 		// 3. The rejection value is the limiter result; `msBeforeNext` is always set on it despite the optional
-		//    type, so the non-null assertion is safe
+		//    type, so the non-null assertion is safe. The library reports `-1` for a key without expiry — one written
+		//    under an older configuration, say — which must not become a reset in the past and a "retry after -1ms":
+		//    the earliest the caller may try again is now
 		const { msBeforeNext } = error as IRateLimiterRes;
 
 		throw new HitRateLimitError({
 			limit: availablePoints,
-			reset: new Date(Date.now() + msBeforeNext!),
+			reset: new Date(Date.now() + Math.max(0, msBeforeNext!)),
 		});
 	}
 };

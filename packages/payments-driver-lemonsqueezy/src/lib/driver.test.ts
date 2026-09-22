@@ -1,20 +1,15 @@
 /**
  * Tests of the Lemon Squeezy driver on a fake fetch — the JSON:API requests recorded, the responses queued — and
  * webhooks signed the way Lemon Squeezy signs them (hex HMAC-SHA256 of the body), read from fixtures in the shape of
- * its documented payloads.
+ * its documented payloads. The client, the signature check and the mappings have their own test files next to them.
  */
 import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
 import { describe, expect, test } from 'vitest';
 import type { LsSubscriptionAttributes, LsSubscriptionInvoiceAttributes, LsWebhookPayload } from '../types.js';
-import { type ApiFetch, LemonSqueezyApi, LemonSqueezyApiError } from './api.js';
+import type { ApiFetch } from './api.js';
 import { PaymentsDriverLemonSqueezy } from './driver.js';
-import { deliveryIdOf, toEvent } from './to-event.js';
-import { toInvoice } from './to-invoice.js';
-import { toMetadata } from './to-metadata.js';
-import { toSubscription } from './to-subscription.js';
-import { verifySignature } from './verify-signature.js';
 
 /** The secret the fixtures are signed with. */
 const WEBHOOK_SECRET = 'lemon-signing-secret';
@@ -31,6 +26,7 @@ const fixtureText = (name: string): string =>
 /**
  * A fixture, parsed.
  *
+ * @typeParam A - The attributes of the resource the fixture carries.
  * @param name - The fixture.
  * @returns The delivery.
  */
@@ -63,9 +59,11 @@ interface Call {
  * @returns The fetch and the calls it saw.
  */
 const fakeFetch = (responses: { status?: number; body?: unknown }[]) => {
+	// 1. The calls are kept outside the fetch, so a test reads them after the driver has sent
 	const calls: Call[] = [];
 
 	const fetch: ApiFetch = async (url, init) => {
+		// 1. The body is recorded parsed, so a test matches objects rather than JSON text
 		calls.push({
 			method: init.method,
 			url,
@@ -73,9 +71,11 @@ const fakeFetch = (responses: { status?: number; body?: unknown }[]) => {
 			headers: init.headers,
 		});
 
+		// 2. Past the queue the API answers an empty success, so a test only queues what it asserts on
 		const next = responses.shift() ?? { status: 200, body: {} };
 		const status = next.status ?? 200;
 
+		// 3. `ok` follows the status the way the platform's response does; no body reads as empty text, like a 204
 		return {
 			status,
 			ok: status >= 200 && status < 300,
@@ -113,12 +113,25 @@ const customer = {
 };
 
 /**
+ * The subscriptions list of the customer's email, as `GET /subscriptions?…&page[number]=n` answers.
+ *
+ * @param data - The subscriptions on the page.
+ * @param page - Which page this is and how many there are.
+ * @returns The list document.
+ */
+const subscriptionsPage = (data: unknown[], page: { currentPage: number; lastPage: number }) => ({
+	data,
+	meta: { page: { ...page, total: data.length } },
+});
+
+/**
  * A driver on a fake fetch.
  *
  * @param responses - The responses the API will give, in order.
  * @returns The driver and the recorded calls.
  */
 const setup = (responses: { status?: number; body?: unknown }[]) => {
+	// 1. The same store and secret as the fixtures, so a signed fixture verifies and the store id matches
 	const { fetch, calls } = fakeFetch(responses);
 
 	const driver = new PaymentsDriverLemonSqueezy({
@@ -131,50 +144,9 @@ const setup = (responses: { status?: number; body?: unknown }[]) => {
 	return { driver, calls };
 };
 
-describe('LemonSqueezyApi', () => {
-	test('Sends the JSON:API headers and the bearer, reads a refusal into an error', async () => {
-		const { fetch, calls } = fakeFetch([
-			{ status: 200, body: { data: { id: '1' } } },
-			{ status: 401, body: { errors: [{ status: '401', title: 'Unauthenticated', detail: 'Bad key' }] } },
-			{ status: 500, body: undefined },
-		]);
-
-		const api = new LemonSqueezyApi({ apiKey: 'k', fetch, apiUrl: 'https://stand-in.test/v1/' });
-
-		await expect(api.request('GET', '/users/me')).resolves.toStrictEqual({ data: { id: '1' } });
-
-		expect(calls[0]).toMatchObject({
-			method: 'GET',
-			url: 'https://stand-in.test/v1/users/me',
-			headers: {
-				Authorization: 'Bearer k',
-				Accept: 'application/vnd.api+json',
-				'Content-Type': 'application/vnd.api+json',
-			},
-		});
-
-		const refusal = await api.request('GET', '/users/me').catch((error: unknown) => error);
-
-		expect(refusal).toBeInstanceOf(LemonSqueezyApiError);
-		expect((refusal as LemonSqueezyApiError).message).toBe('Lemon Squeezy 401: Bad key');
-		expect((refusal as LemonSqueezyApiError).status).toBe(401);
-
-		await expect(api.request('GET', '/users/me')).rejects.toThrow('Lemon Squeezy 500: request failed');
-	});
-});
-
-describe('verifySignature', () => {
-	test('Accepts the body’s digest under the secret, refuses anything else without throwing', () => {
-		const body = '{"a":1}';
-
-		expect(verifySignature(body, sign(body), WEBHOOK_SECRET)).toBe(true);
-		expect(verifySignature(body, sign(body, 'other'), WEBHOOK_SECRET)).toBe(false);
-		expect(verifySignature(body, 'short', WEBHOOK_SECRET)).toBe(false);
-	});
-});
-
 describe('PaymentsDriverLemonSqueezy', () => {
 	test('Refuses to start without a key, a webhook secret or a store', () => {
+		// 1. Each missing value is named in the error, so a misconfigured location says what it lacks
 		expect(() => new PaymentsDriverLemonSqueezy({ apiKey: '', webhookSecret: 's', storeId: 1 })).toThrow('"apiKey"');
 
 		expect(() => new PaymentsDriverLemonSqueezy({ apiKey: 'k', webhookSecret: '', storeId: 1 })).toThrow(
@@ -184,13 +156,26 @@ describe('PaymentsDriverLemonSqueezy', () => {
 		expect(() => new PaymentsDriverLemonSqueezy({ apiKey: 'k', webhookSecret: 's', storeId: '' })).toThrow('"storeId"');
 	});
 
+	test('Refuses a timeout the request signal cannot hold, at registration', () => {
+		// 1. A misconfigured timeout fails the location now, not every request later with an out-of-range error
+		expect(() => new PaymentsDriverLemonSqueezy({ apiKey: 'k', webhookSecret: 's', storeId: 1, timeout: -1 })).toThrow(
+			RangeError,
+		);
+
+		expect(
+			() => new PaymentsDriverLemonSqueezy({ apiKey: 'k', webhookSecret: 's', storeId: 1, timeout: 2 ** 31 }),
+		).toThrow('"timeout"');
+	});
+
 	test('Creates a customer in the store', async () => {
 		const { driver, calls } = setup([{ body: customer }]);
 
+		// 1. The metadata given is dropped: Lemon Squeezy keeps custom data on checkouts, not on customers
 		await expect(
 			driver.createCustomer({ email: 'ada@example.com', name: 'Ada Lovelace', metadata: { organizationId: 'org_42' } }),
 		).resolves.toStrictEqual({ id: '987', email: 'ada@example.com', name: 'Ada Lovelace', metadata: {} });
 
+		// 2. The customer is tied to the configured store through the relationship, its id as a string
 		expect(calls[0]).toMatchObject({
 			method: 'POST',
 			url: 'https://api.lemonsqueezy.com/v1/customers',
@@ -205,6 +190,7 @@ describe('PaymentsDriverLemonSqueezy', () => {
 	});
 
 	test('Starts a checkout for the variant, prefilled with the customer, with the seats and the custom data', async () => {
+		// 1. The customer is read first for its email, then the checkout is created
 		const { driver, calls } = setup([
 			{ body: customer },
 			{
@@ -224,6 +210,7 @@ describe('PaymentsDriverLemonSqueezy', () => {
 			},
 		]);
 
+		// 2. The cancel URL has no place on Lemon Squeezy and is dropped; the expiry comes back as a date
 		await expect(
 			driver.createCheckoutSession({
 				customerId: '987',
@@ -242,6 +229,8 @@ describe('PaymentsDriverLemonSqueezy', () => {
 
 		expect(calls[0]).toMatchObject({ method: 'GET', url: 'https://api.lemonsqueezy.com/v1/customers/987' });
 
+		// 3. The variant id is numeric in the quantities and the enabled list, a string in the relationship; the
+		//    metadata travels as custom data, the discount flag as a checkout option
 		expect(calls[1]).toMatchObject({
 			method: 'POST',
 			url: 'https://api.lemonsqueezy.com/v1/checkouts',
@@ -268,6 +257,7 @@ describe('PaymentsDriverLemonSqueezy', () => {
 	});
 
 	test('Opens the customer portal from the customer’s signed link, or says there is none', async () => {
+		// 1. The same customer twice: once with the signed link, once before any order, without one
 		const { driver } = setup([
 			{ body: customer },
 			{
@@ -277,10 +267,12 @@ describe('PaymentsDriverLemonSqueezy', () => {
 			},
 		]);
 
+		// 2. There is no session resource: the link on the customer is the portal, `returnUrl` has no effect
 		await expect(driver.createPortalSession({ customerId: '987', returnUrl: 'https://app' })).resolves.toStrictEqual({
 			url: 'https://acme.lemonsqueezy.com/billing?expires=1&signature=y',
 		});
 
+		// 3. Without a link there is nothing to open; the error says why rather than answering an empty URL
 		await expect(driver.createPortalSession({ customerId: '987', returnUrl: 'https://app' })).rejects.toThrow(
 			'no customer portal yet',
 		);
@@ -290,6 +282,7 @@ describe('PaymentsDriverLemonSqueezy', () => {
 		const subscription = { data: fixture('subscription_created').data };
 		const { driver, calls } = setup([{ body: subscription }, { body: variant }, { body: subscription }]);
 
+		// 1. The subscription does not carry its interval; the variant does
 		await expect(driver.getSubscription('3001')).resolves.toMatchObject({
 			id: '3001',
 			status: 'active',
@@ -299,6 +292,7 @@ describe('PaymentsDriverLemonSqueezy', () => {
 			metadata: {},
 		});
 
+		// 2. A second read of the same variant is served from the cache: three calls, not four
 		await driver.getSubscription('3001');
 
 		expect(calls.map((call) => call.url)).toStrictEqual([
@@ -311,6 +305,7 @@ describe('PaymentsDriverLemonSqueezy', () => {
 	test('Changes the variant on the subscription and the seats on its item, then reads it back', async () => {
 		const subscription = { data: fixture('subscription_created').data };
 
+		// 1. The variant PATCH, the subscription read for its item, the item PATCH, then the read-back with its variant
 		const { driver, calls } = setup([
 			{ body: subscription },
 			{ body: subscription },
@@ -321,6 +316,7 @@ describe('PaymentsDriverLemonSqueezy', () => {
 
 		await driver.updateSubscription({ subscriptionId: '3001', priceId: '333', quantity: 5, proration: 'invoice' });
 
+		// 2. `'invoice'` charges the difference now on both requests, and prorations stay on
 		expect(calls[0]).toMatchObject({
 			method: 'PATCH',
 			url: 'https://api.lemonsqueezy.com/v1/subscriptions/3001',
@@ -337,16 +333,44 @@ describe('PaymentsDriverLemonSqueezy', () => {
 			method: 'PATCH',
 			url: 'https://api.lemonsqueezy.com/v1/subscription-items/7001',
 			body: {
-				data: { type: 'subscription-items', id: '7001', attributes: { quantity: 5, invoice_immediately: true } },
+				data: {
+					type: 'subscription-items',
+					id: '7001',
+					attributes: { quantity: 5, invoice_immediately: true, disable_prorations: false },
+				},
 			},
 		});
 
+		// 3. An update with nothing to change is refused before any request
 		await expect(driver.updateSubscription({ subscriptionId: '3001' })).rejects.toThrow('Nothing to update');
+	});
+
+	test('Skips the proration on a seat change alone when asked not to prorate', async () => {
+		const subscription = { data: fixture('subscription_created').data };
+
+		// 1. No variant change: the subscription read for its item, the item PATCH, then the read-back
+		const { driver, calls } = setup([{ body: subscription }, { body: {} }, { body: subscription }, { body: variant }]);
+
+		await driver.updateSubscription({ subscriptionId: '3001', quantity: 10, proration: 'none' });
+
+		// 2. The item update carries the flag too; without it Lemon Squeezy would prorate the seats at the next renewal
+		expect(calls[1]).toMatchObject({
+			method: 'PATCH',
+			url: 'https://api.lemonsqueezy.com/v1/subscription-items/7001',
+			body: {
+				data: {
+					type: 'subscription-items',
+					id: '7001',
+					attributes: { quantity: 10, invoice_immediately: false, disable_prorations: true },
+				},
+			},
+		});
 	});
 
 	test('Cancels at the end of the period', async () => {
 		const { driver, calls } = setup([{ body: { data: fixture('subscription_cancelled').data } }, { body: variant }]);
 
+		// 1. `immediately` has no counterpart: the subscription stays active on its grace period, cancelled at its end
 		await expect(driver.cancelSubscription({ subscriptionId: '3001', immediately: true })).resolves.toMatchObject({
 			status: 'active',
 			cancelAtPeriodEnd: true,
@@ -360,8 +384,11 @@ describe('PaymentsDriverLemonSqueezy', () => {
 		const paid = fixture<LsSubscriptionInvoiceAttributes>('subscription_payment_success').data;
 		const pending = fixture<LsSubscriptionInvoiceAttributes>('subscription_payment_failed').data;
 		const mine = fixture<LsSubscriptionAttributes>('subscription_created').data;
+
+		// 1. Another customer of the store shares the email: the filter by email finds both subscriptions
 		const other = { ...mine, id: '3002', attributes: { ...mine.attributes, customer_id: 1 } };
 
+		// 2. A later invoice of the same subscription, to prove the order is by date and not by the API's
 		const later = {
 			...pending,
 			id: '9002',
@@ -370,30 +397,71 @@ describe('PaymentsDriverLemonSqueezy', () => {
 
 		const { driver, calls } = setup([
 			{ body: customer },
-			{ body: { data: [mine, other] } },
+			{ body: subscriptionsPage([mine, other], { currentPage: 1, lastPage: 1 }) },
 			{ body: { data: [paid, later] } },
 		]);
 
 		const invoices = await driver.listInvoices({ customerId: '987', limit: 10 });
 
+		// 3. Subscriptions are filtered by store and email, the largest page the API allows
 		expect(calls[1]?.url).toBe(
-			'https://api.lemonsqueezy.com/v1/subscriptions?filter[store_id]=12345&filter[user_email]=ada%40example.com',
+			'https://api.lemonsqueezy.com/v1/subscriptions?filter[store_id]=12345&filter[user_email]=ada%40example.com&page[size]=100&page[number]=1',
 		);
 
-		// 1. The other customer's subscription with the same email is left out: one invoices read
+		// 4. The other customer's subscription with the same email is left out: one invoices read, capped to the limit
 		expect(calls).toHaveLength(3);
 
 		expect(calls[2]?.url).toBe(
 			'https://api.lemonsqueezy.com/v1/subscription-invoices?filter[subscription_id]=3001&page[size]=10',
 		);
 
+		// 5. Newest first, whatever order the API answered in
 		expect(invoices.map((invoice) => invoice.id)).toStrictEqual(['9002', '9001']);
+	});
+
+	test('Collects every page of the customer’s subscriptions before reading the invoices', async () => {
+		const paid = fixture<LsSubscriptionInvoiceAttributes>('subscription_payment_success').data;
+		const mine = fixture<LsSubscriptionAttributes>('subscription_created').data;
+
+		// 1. The customer's second subscription sits on the second page; an invoice of it is the most recent one
+		const second = { ...mine, id: '3003' };
+
+		const latest = {
+			...paid,
+			id: '9003',
+			attributes: { ...paid.attributes, subscription_id: 3003, created_at: '2026-12-01T10:00:00.000000Z' },
+		};
+
+		const { driver, calls } = setup([
+			{ body: customer },
+			{ body: subscriptionsPage([mine], { currentPage: 1, lastPage: 2 }) },
+			{ body: subscriptionsPage([second], { currentPage: 2, lastPage: 2 }) },
+			{ body: { data: [paid] } },
+			{ body: { data: [latest] } },
+		]);
+
+		const invoices = await driver.listInvoices({ customerId: '987', limit: 10 });
+
+		// 2. Both pages are read, in order, before any invoices — a subscription on a later page counts too
+		expect(calls.slice(1, 3).map((call) => call.url)).toStrictEqual([
+			'https://api.lemonsqueezy.com/v1/subscriptions?filter[store_id]=12345&filter[user_email]=ada%40example.com&page[size]=100&page[number]=1',
+			'https://api.lemonsqueezy.com/v1/subscriptions?filter[store_id]=12345&filter[user_email]=ada%40example.com&page[size]=100&page[number]=2',
+		]);
+
+		expect(calls.slice(3).map((call) => call.url)).toStrictEqual([
+			'https://api.lemonsqueezy.com/v1/subscription-invoices?filter[subscription_id]=3001&page[size]=10',
+			'https://api.lemonsqueezy.com/v1/subscription-invoices?filter[subscription_id]=3003&page[size]=10',
+		]);
+
+		// 3. The invoice of the second-page subscription is there, and first
+		expect(invoices.map((invoice) => invoice.id)).toStrictEqual(['9003', '9001']);
 	});
 
 	test('Verifies a webhook and refuses a bad or missing signature, or a body that is not an event', async () => {
 		const { driver } = setup([{ body: variant }]);
 		const body = fixtureText('subscription_created');
 
+		// 1. A signed fixture verifies and maps, the interval read from the variant
 		await expect(driver.parseWebhook(body, { 'x-signature': sign(body) })).resolves.toMatchObject({
 			id: 'wh_2',
 			type: 'subscription.created',
@@ -401,12 +469,14 @@ describe('PaymentsDriverLemonSqueezy', () => {
 			subscription: { id: '3001', interval: 'month', metadata: { organizationId: 'org_123' } },
 		});
 
+		// 2. No header is a malformed delivery (400), a wrong signature a forged one (401)
 		await expect(driver.parseWebhook(body, {})).rejects.toBeInstanceOf(InvalidPayloadError);
 
 		await expect(driver.parseWebhook(body, { 'x-signature': sign(body, 'other') })).rejects.toBeInstanceOf(
 			InvalidCredentialsError,
 		);
 
+		// 3. A signed body that is not a delivery — JSON without `meta` and `data`, or no JSON at all — is a 400
 		const junk = '{"hello":1}';
 
 		await expect(driver.parseWebhook(junk, { 'x-signature': sign(junk) })).rejects.toBeInstanceOf(InvalidPayloadError);
@@ -416,152 +486,36 @@ describe('PaymentsDriverLemonSqueezy', () => {
 		);
 	});
 
+	test('Refuses a signed body whose resource has no attributes as not an event', async () => {
+		const { driver } = setup([]);
+
+		// 1. An event name and a resource id, but nothing to map: refused as a 400 rather than crashing into a 500
+		//    that Lemon Squeezy would retry forever
+		const bare = '{"meta":{"event_name":"subscription_created"},"data":{"id":"1"}}';
+
+		await expect(driver.parseWebhook(bare, { 'x-signature': sign(bare) })).rejects.toBeInstanceOf(InvalidPayloadError);
+
+		// 2. `null` attributes are as empty as none
+		const nulled = '{"meta":{"event_name":"subscription_created"},"data":{"id":"1","attributes":null}}';
+
+		await expect(driver.parseWebhook(nulled, { 'x-signature': sign(nulled) })).rejects.toBeInstanceOf(
+			InvalidPayloadError,
+		);
+	});
+
 	test('Drops a verified event the kit does not act on', async () => {
 		const { driver } = setup([]);
 		const body = fixtureText('license_key_created');
 
+		// 1. Verified, then `null`: the route acknowledges it without anything to report
 		await expect(driver.parseWebhook(body, { 'x-signature': sign(body) })).resolves.toBeNull();
 	});
 
 	test('Verifies the key with the authenticated user', async () => {
 		const { driver, calls } = setup([{ body: { data: { id: '1' } } }]);
 
+		// 1. The cheapest read there is, the same for every store
 		await driver.verify();
 		expect(calls[0]).toMatchObject({ method: 'GET', url: 'https://api.lemonsqueezy.com/v1/users/me' });
-	});
-});
-
-describe('toSubscription', () => {
-	test('Maps a subscription: the variant as the price, the first item’s seats, the renewal as the period end', () => {
-		expect(
-			toSubscription(fixture('subscription_created').data as never, { interval: 'month', metadata: { a: 'b' } }),
-		).toStrictEqual({
-			id: '3001',
-			customerId: '987',
-			status: 'active',
-			priceId: '222',
-			productId: '111',
-			quantity: 3,
-			interval: 'month',
-			currentPeriodStart: null,
-			currentPeriodEnd: new Date('2026-10-01T10:00:00.000000Z'),
-			cancelAtPeriodEnd: false,
-			cancelAt: null,
-			canceledAt: null,
-			trialEnd: null,
-			endedAt: null,
-			metadata: { a: 'b' },
-		});
-	});
-
-	test('A cancelled subscription is active on its grace period; an expired one is over', () => {
-		expect(toSubscription(fixture('subscription_cancelled').data as never, { interval: 'month' })).toMatchObject({
-			status: 'active',
-			cancelAtPeriodEnd: true,
-			cancelAt: new Date('2026-10-01T10:00:00.000000Z'),
-			canceledAt: new Date('2026-09-15T12:00:00.000000Z'),
-			endedAt: null,
-		});
-
-		expect(toSubscription(fixture('subscription_expired').data as never, { interval: 'month' })).toMatchObject({
-			status: 'canceled',
-			cancelAtPeriodEnd: false,
-			endedAt: new Date('2026-10-01T10:00:00.000000Z'),
-		});
-	});
-
-	test('Refuses an unknown status', () => {
-		const data = fixture('subscription_created').data as { attributes: Record<string, unknown> };
-
-		expect(() =>
-			toSubscription({ ...data, attributes: { ...data.attributes, status: 'frozen' } } as never, { interval: 'month' }),
-		).toThrow('unknown status');
-	});
-});
-
-describe('toInvoice', () => {
-	test('A paid subscription invoice, with its hosted link', () => {
-		expect(toInvoice(fixture('subscription_payment_success').data as never)).toStrictEqual({
-			id: '9001',
-			number: null,
-			customerId: '987',
-			subscriptionId: '3001',
-			status: 'paid',
-			total: { amount: 10440, currency: 'USD' },
-			amountPaid: 10440,
-			amountDue: 0,
-			createdAt: new Date('2026-10-01T10:00:00.000000Z'),
-			dueAt: null,
-			paidAt: new Date('2026-10-01T10:00:00.000000Z'),
-			hostedUrl: 'https://app.lemonsqueezy.com/my-orders/x/subscription-invoice/9001?signature=s',
-			pdfUrl: null,
-		});
-
-		expect(toInvoice(fixture('subscription_payment_failed').data as never)).toMatchObject({
-			status: 'open',
-			amountPaid: 0,
-			amountDue: 10440,
-			paidAt: null,
-		});
-	});
-});
-
-describe('toEvent', () => {
-	const intervalOf = async () => 'month' as const;
-
-	test('Maps the order, subscription and payment events, drops the rest', async () => {
-		await expect(toEvent(fixture('order_created'), intervalOf)).resolves.toMatchObject({
-			id: 'wh_1',
-			type: 'checkout.completed',
-			provider: 'lemonsqueezy',
-			occurredAt: new Date('2026-09-01T10:00:00.000000Z'),
-			checkout: { id: '5001', customerId: '987', subscriptionId: null, metadata: { organizationId: 'org_123' } },
-		});
-
-		await expect(toEvent(fixture('subscription_created'), intervalOf)).resolves.toMatchObject({
-			type: 'subscription.created',
-			subscription: { id: '3001', status: 'active', metadata: { organizationId: 'org_123', planId: 'pro' } },
-		});
-
-		await expect(toEvent(fixture('subscription_cancelled'), intervalOf)).resolves.toMatchObject({
-			// 1. No `webhook_id` in this fixture: the id is derived from the event, the resource and its update time
-			id: 'subscription_cancelled:3001:2026-09-15T12:00:00.000000Z',
-			type: 'subscription.updated',
-			subscription: { cancelAtPeriodEnd: true },
-		});
-
-		await expect(toEvent(fixture('subscription_expired'), intervalOf)).resolves.toMatchObject({
-			type: 'subscription.deleted',
-			subscription: { status: 'canceled' },
-		});
-
-		await expect(toEvent(fixture('subscription_payment_success'), intervalOf)).resolves.toMatchObject({
-			type: 'invoice.paid',
-			invoice: { id: '9001', status: 'paid' },
-		});
-
-		await expect(toEvent(fixture('subscription_payment_failed'), intervalOf)).resolves.toMatchObject({
-			type: 'invoice.failed',
-			invoice: { id: '9001', status: 'open' },
-		});
-
-		await expect(toEvent(fixture('license_key_created'), intervalOf)).resolves.toBeNull();
-	});
-
-	test('deliveryIdOf prefers the webhook id', () => {
-		expect(deliveryIdOf(fixture('subscription_created'))).toBe('wh_2');
-	});
-});
-
-describe('toMetadata', () => {
-	test('Strings stay, scalars are written out, nested values become JSON', () => {
-		expect(toMetadata({ a: 'x', b: 2, c: false, d: { e: 1 } })).toStrictEqual({
-			a: 'x',
-			b: '2',
-			c: 'false',
-			d: '{"e":1}',
-		});
-
-		expect(toMetadata(undefined)).toStrictEqual({});
 	});
 });

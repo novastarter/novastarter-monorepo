@@ -122,23 +122,23 @@ declare module '@novastarter/storage' {
 }
 
 /**
- * The part listing shows fewer parts than were sent: the one failure {@link StorageDriverS3.finishChunkedUpload}
+ * The parts S3 lists do not add up to the upload size: the one failure {@link StorageDriverS3.finishChunkedUpload}
  * retries, since the listing may simply lag behind the last write. Never leaves the driver; it becomes the TUS error
  * object once the retries are spent.
  *
  * @internal
  */
-class PartsMissingError extends Error {
+class PartsMismatchError extends Error {
 	/**
-	 * Create the error for a listing that is short of parts.
+	 * Create the error for a listing whose bytes do not add up to the upload size.
 	 *
-	 * @param listed - Parts the listing showed.
-	 * @param expected - Parts that were sent.
+	 * @param listed - Bytes the listed parts add up to.
+	 * @param expected - Total size of the upload.
 	 */
 	constructor(listed: number, expected: number) {
 		// 1. Named, so `shouldRetry` and the `catch` of `finishChunkedUpload` tell it from a failing `ListParts` call
-		super(`S3 lists ${listed} of ${expected} parts`);
-		this.name = 'PartsMissingError';
+		super(`S3 lists ${listed} of ${expected} bytes`);
+		this.name = 'PartsMismatchError';
 	}
 }
 
@@ -229,7 +229,8 @@ export class StorageDriverS3 implements TusDriver {
 	 * Create a driver and its SDK client.
 	 *
 	 * @param config - Connection and behaviour options.
-	 * @throws Error when `bucket` is missing, or when only one of `key` and `secret` is given.
+	 * @throws Error when `bucket` is missing, when only one of `key` and `secret` is given, or when `tus.chunkSize` is
+	 * below {@link StorageDriverS3.minPartSize}.
 	 */
 	constructor(config: StorageDriverS3Config) {
 		// 1. Every command targets the bucket, so a missing one would only fail on the first request, with an SDK
@@ -248,9 +249,18 @@ export class StorageDriverS3 implements TusDriver {
 		//    strips from listed keys as `media` does, and a root of `/` means the top of the bucket
 		this.root = this.config.root ? confinePath(this.config.root) : '';
 
-		// 4. Sixty concurrent part uploads is the tus-node-server default, a balance between throughput and the
+		// 4. A preferred part size below the S3 minimum would make the splitter cut every part but the last too small
+		//    to be sent, so no upload could ever advance; refused here, with the minimum named, rather than on the
+		//    first PATCH. Written so that `NaN` fails the check too
+		const chunkSize = config.tus?.chunkSize;
+
+		if (chunkSize !== undefined && !(chunkSize >= this.minPartSize)) {
+			throw new Error(`The s3 storage driver needs a "tus.chunkSize" of at least ${this.minPartSize} bytes`);
+		}
+
+		// 5. Sixty concurrent part uploads is the tus-node-server default, a balance between throughput and the
 		//    number of open sockets and temp files
-		this.preferredPartSize = config.tus?.chunkSize ?? this.minPartSize;
+		this.preferredPartSize = chunkSize ?? this.minPartSize;
 		this.partUploadSemaphore = new Semaphore(60);
 	}
 
@@ -620,28 +630,26 @@ export class StorageDriverS3 implements TusDriver {
 	 * @param filepath - Final object path relative to the root.
 	 * @param context - Client-supplied size and metadata; the `contentType` and `cacheControl` keys are forwarded to
 	 * S3.
-	 * @returns The same context with the multipart `upload-id` stored in its metadata for the following calls.
+	 * @returns The same context with the multipart `upload-id` stored in its metadata for the following calls; the
+	 * metadata map is created when the context has none.
+	 * @throws The SDK error when S3 refuses to create the multipart upload.
 	 */
 	async createChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<ChunkedUploadContext> {
-		// 1. Tag the object with the TUS version and copy the client's content headers into the create request: S3
+		// 1. A POST without `Upload-Metadata` arrives with no map at all; it is created before the request, so the
+		//    upload id always has a place to go and an upload S3 already opened is never lost to a `TypeError`
+		const metadata = (context.metadata ??= {});
+
+		// 2. Tag the object with the TUS version and copy the client's content headers into the create request: S3
 		//    only accepts them when the multipart upload is created, not when it is completed
 		const params: CreateMultipartUploadCommandInput = {
 			Bucket: this.config.bucket,
 			Key: this.fullPath(filepath),
 			Metadata: { 'tus-version': TUS_RESUMABLE },
-			...(context.metadata?.['contentType']
-				? {
-						ContentType: context.metadata['contentType'],
-					}
-				: {}),
-			...(context.metadata?.['cacheControl']
-				? {
-						CacheControl: context.metadata['cacheControl'],
-					}
-				: {}),
+			...(metadata['contentType'] ? { ContentType: metadata['contentType'] } : {}),
+			...(metadata['cacheControl'] ? { CacheControl: metadata['cacheControl'] } : {}),
 		};
 
-		// 2. Same encryption rules as a plain write; the KMS key id is only valid for the KMS modes
+		// 3. Same encryption rules as a plain write; the KMS key id is only valid for the KMS modes
 		if (this.config.serverSideEncryption) {
 			params.ServerSideEncryption = this.config.serverSideEncryption;
 
@@ -650,13 +658,13 @@ export class StorageDriverS3 implements TusDriver {
 			}
 		}
 
-		const command = new CreateMultipartUploadCommand(params);
+		// 4. Open the multipart upload now: S3 assigns the id every later part refers to, so nothing can be sent
+		//    before it exists
+		const res = await this.client.send(new CreateMultipartUploadCommand(params));
 
-		const res = await this.client.send(command);
-
-		// 3. Keep the upload id in the context: it is the only handle S3 gives for adding parts, and the context is
+		// 5. Keep the upload id in the context: it is the only handle S3 gives for adding parts, and the context is
 		//    what the TUS server hands back on every later call
-		context.metadata!['upload-id'] = res.UploadId!;
+		metadata['upload-id'] = res.UploadId!;
 
 		return context;
 	}
@@ -664,21 +672,25 @@ export class StorageDriverS3 implements TusDriver {
 	/**
 	 * Abort a resumable upload and remove whatever sits under its key.
 	 *
+	 * An upload that was completed or aborted before no longer exists for S3, while the object assembled from it does,
+	 * so a termination after completion still removes the file.
+	 *
 	 * @param filepath - Final object path relative to the root.
 	 * @param context - Context carrying the multipart `upload-id`.
-	 * @throws `ERRORS.FILE_NOT_FOUND` from `@tus/utils` when S3 reports the upload or key as missing, so the TUS
-	 * server answers 404 instead of 500.
+	 * @throws `ERRORS.FILE_NOT_FOUND` from `@tus/utils` when neither the upload nor an object under the key exists, so
+	 * the TUS server answers 404 instead of 500.
+	 * @throws The SDK error when the abort, the lookup or the delete fails for any other reason.
 	 */
 	async deleteChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<void> {
 		const key = this.fullPath(filepath);
+		const uploadId = context.metadata?.['upload-id'];
+
+		let aborted = false;
 
 		// 1. Abort the multipart upload first: S3 keeps (and bills for) uploaded parts until the upload is completed
 		//    or aborted. Skipped when no upload id was ever recorded
-		try {
-			// @ts-expect-error metadata is typed as possibly undefined; a missing object throws inside the try and is rethrown as a real failure
-			const { 'upload-id': uploadId } = context.metadata;
-
-			if (uploadId) {
+		if (uploadId) {
+			try {
 				await this.client.send(
 					new AbortMultipartUploadCommand({
 						Bucket: this.config.bucket,
@@ -686,21 +698,28 @@ export class StorageDriverS3 implements TusDriver {
 						UploadId: uploadId,
 					}),
 				);
-			}
-		} catch (error) {
-			// 2. Map the S3 "missing" family of errors onto the TUS not-found error; anything else is a real failure.
-			//    The SDK names the error in `name` — `NoSuchUpload`, `NoSuchKey`, or `NotFound` for a bodiless 404 —
-			//    and reports the status in `$metadata`; it never sets a lowercase `code`
-			const { name, $metadata } = error as { name?: string; $metadata?: { httpStatusCode?: number } };
 
-			if ($metadata?.httpStatusCode === 404 || ['NotFound', 'NoSuchKey', 'NoSuchUpload'].includes(name ?? '')) {
-				throw ERRORS.FILE_NOT_FOUND;
-			}
+				aborted = true;
+			} catch (error) {
+				// 2. The S3 "missing" family of errors means the upload was completed or aborted before, which leaves
+				//    only the object to remove; anything else is a real failure. The SDK names the error in `name` —
+				//    `NoSuchUpload`, `NoSuchKey`, or `NotFound` for a bodiless 404 — and reports the status in
+				//    `$metadata`; it never sets a lowercase `code`
+				const { name, $metadata } = error as { name?: string; $metadata?: { httpStatusCode?: number } };
 
-			throw error;
+				if ($metadata?.httpStatusCode !== 404 && !['NotFound', 'NoSuchKey', 'NoSuchUpload'].includes(name ?? '')) {
+					throw error;
+				}
+			}
 		}
 
-		// 3. Remove the object under the key as well, so a termination after a completed upload does not leave the
+		// 3. With no upload to abort, the object under the key is all that can be left; when that is missing too,
+		//    the TUS server answers 404. The delete cannot tell, since S3 reports a missing key as deleted
+		if (!aborted && !(await this.exists(filepath))) {
+			throw ERRORS.FILE_NOT_FOUND;
+		}
+
+		// 4. Remove the object under the key as well, so a termination after a completed upload does not leave the
 		//    file behind
 		await this.client.send(
 			new DeleteObjectsCommand({
@@ -717,30 +736,30 @@ export class StorageDriverS3 implements TusDriver {
 	 *
 	 * @param filepath - Final object path relative to the root.
 	 * @param context - Context carrying the multipart `upload-id` and the total `size`.
-	 * @throws An object with `status_code: 500` when S3 still reports fewer parts than expected after three retries,
-	 * in the shape the TUS server turns into an HTTP response.
+	 * @throws An object with `status_code: 500` when the parts S3 lists still do not add up to the upload size after
+	 * three retries, in the shape the TUS server turns into an HTTP response.
+	 * @throws The SDK error when the listing or the completion request fails.
 	 */
 	async finishChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<void> {
 		const key = this.fullPath(filepath);
 		const uploadId = context.metadata!['upload-id'] as string;
-
-		// 1. Recompute the part size the same way `uploadParts` did, so the expected part count matches what was sent
 		const size = context.size!;
-		const chunkSize = this.calcOptimalPartSize(size);
-		const expectedParts = Math.ceil(size / chunkSize);
 
-		// 2. The listing may not yet show the last parts; poll with growing pauses (0.5 s, 1 s, 1.5 s) before giving up.
-		//    Only a short listing is retried: a failing `ListParts` call is a real error and goes out at once
+		// 1. The listing may not yet show the last parts; poll with growing pauses (0.5 s, 1 s, 1.5 s) before giving up.
+		//    Only a listing that does not add up is retried: a failing `ListParts` call is a real error and goes out at
+		//    once
 		let parts: Part[];
 
 		try {
 			parts = await retry(
 				async () => {
-					// 1. A short listing is the one retryable outcome; `retrieveParts` failing is thrown as it came
+					// 1. Parts are checked by their bytes, not their count: a client whose requests do not line up with
+					//    the part size leaves parts of uneven sizes, so only the byte total says whether every part is in
 					const listed = await this.retrieveParts(key, uploadId);
+					const listedBytes = listed.reduce((total, part) => total + (part.Size ?? 0), 0);
 
-					if (listed.length !== expectedParts) {
-						throw new PartsMissingError(listed.length, expectedParts);
+					if (listedBytes !== size) {
+						throw new PartsMismatchError(listedBytes, size);
 					}
 
 					return listed;
@@ -748,13 +767,13 @@ export class StorageDriverS3 implements TusDriver {
 				{
 					retries: 3,
 					delay: (attempt) => 500 * attempt,
-					shouldRetry: (error) => error instanceof PartsMissingError,
+					shouldRetry: (error) => error instanceof PartsMismatchError,
 				},
 			);
 		} catch (error) {
-			// 3. Completing with a part missing would produce a truncated object, so refuse in the shape the TUS server
+			// 2. Completing with a part missing would produce a truncated object, so refuse in the shape the TUS server
 			//    turns into an HTTP response and let the client retry
-			if (error instanceof PartsMissingError) {
+			if (error instanceof PartsMismatchError) {
 				throw {
 					status_code: 500,
 					body: 'Failed to upload all parts to S3.',
@@ -764,6 +783,7 @@ export class StorageDriverS3 implements TusDriver {
 			throw error;
 		}
 
+		// 3. Every byte is accounted for, so S3 can assemble the object from the parts in the order of the listing
 		await this.finishMultipartUpload(key, uploadId, parts);
 	}
 
@@ -775,6 +795,11 @@ export class StorageDriverS3 implements TusDriver {
 	 * @param offset - Byte offset within the whole upload where this chunk starts.
 	 * @param context - Context carrying the multipart `upload-id` and the total `size`.
 	 * @returns The new upload offset: `offset` plus the bytes that reached S3.
+	 * @throws An object with `status_code: 400`, in the shape the TUS server turns into an HTTP response, when the
+	 * chunk carried bytes but not one of them could be sent: every part but the last has to reach
+	 * {@link StorageDriverS3.minPartSize}, so a client sending less per request would never advance.
+	 * @throws The SDK error from the part listing, or the first error raised by the splitter pipeline or a part
+	 * upload, as raised by {@link StorageDriverS3.uploadParts}.
 	 */
 	async writeChunk(
 		filepath: string,
@@ -846,6 +871,9 @@ export class StorageDriverS3 implements TusDriver {
 	 * @param currentPartNumber - Part number assigned to the first part produced.
 	 * @param offset - Upload offset at the start of the chunk.
 	 * @returns Bytes accepted by S3 from this chunk.
+	 * @throws An object with `status_code: 400`, in the shape the TUS server turns into an HTTP response, when the
+	 * chunk carried bytes but not one of them could be sent: the offset would not move, and the client would resend
+	 * the same too-short chunk forever.
 	 * @throws The first error raised by the splitter pipeline or by a part upload.
 	 * @internal
 	 */
@@ -859,8 +887,10 @@ export class StorageDriverS3 implements TusDriver {
 	): Promise<number> {
 		const promises: Promise<void>[] = [];
 		let pendingChunkFilepath: string | null = null;
+		let bytesReceived = 0;
 		let bytesUploaded = 0;
 		let permit: Permit | undefined = undefined;
+		let aborted = false;
 
 		// 1. The splitter emits an event per part; the handlers below upload each part as soon as it is on disk, while
 		//    later parts are still being written
@@ -871,7 +901,18 @@ export class StorageDriverS3 implements TusDriver {
 			.on('beforeChunkStarted', async () => {
 				// 1. Take a semaphore permit before a part is buffered, so disk usage stays bounded along with the
 				//    number of in-flight uploads
-				permit = await this.partUploadSemaphore.acquire();
+				const granted = await this.partUploadSemaphore.acquire();
+
+				// 2. The pipeline may have failed while the permit was pending: no handler will ever consume this
+				//    part, so the permit goes straight back and the splitter is stopped here, before it opens a temp
+				//    file nobody would close or remove. The error only reaches a stream that is already destroyed
+				if (aborted) {
+					await granted.release();
+
+					throw new Error('The upload failed while a part waited for a permit');
+				}
+
+				permit = granted;
 			})
 			.on('chunkStarted', (filepath) => {
 				// 1. Remember the file being written, so it can be removed if the pipeline fails mid-part
@@ -887,36 +928,37 @@ export class StorageDriverS3 implements TusDriver {
 				const acquiredPermit = permit;
 
 				offset += partSize;
+				bytesReceived += partSize;
 
 				const isFinalPart = size === offset;
 
 				// 3. Upload in the background and collect the promise; awaiting here would serialise the parts
 				// eslint-disable-next-line no-async-promise-executor
 				const deferred = new Promise<void>(async (resolve, reject) => {
-					try {
-						const readable = fs.createReadStream(path);
-						readable.on('error', reject);
+					let readable: fs.ReadStream | undefined;
 
+					try {
 						// 1. S3 rejects a part under the minimum size unless it is the last one, so a short trailing
-						//    part is skipped and left uncounted: the returned offset then makes the client resend it
+						//    part is skipped and left uncounted: the returned offset then makes the client resend it.
+						//    The file is opened only for a part that is sent, since a stream nobody reads would hold
+						//    its descriptor until the process exits
 						if (partSize >= this.minPartSize || isFinalPart) {
+							readable = fs.createReadStream(path);
+							readable.on('error', reject);
+
 							await this.uploadPart(key, uploadId, readable, partNumber);
 							bytesUploaded += partSize;
-						} else {
-							// This can happen if the upload is aborted by the user mid chunk or a network issue happens
-							// await this.uploadIncompletePart(metadata.file.id, readable);
 						}
 
 						resolve();
 					} catch (error) {
 						reject(error);
 					} finally {
-						// 2. The temp file is spent either way, and a failed removal is not worth failing the upload
-						//    over. Releasing the permit lets the next part start
-						fsProm.rm(path).catch(() => {
-							/* ignore */
-						});
-
+						// 2. A rejected `UploadPart` leaves the body half-read, so the stream is destroyed to close its
+						//    descriptor before the file goes; a failed removal is not worth failing the upload over.
+						//    Releasing the permit lets the next part start
+						readable?.destroy();
+						fsProm.rm(path).catch(() => {});
 						acquiredPermit?.release();
 					}
 				});
@@ -924,7 +966,9 @@ export class StorageDriverS3 implements TusDriver {
 				promises.push(deferred);
 			})
 			.on('chunkError', () => {
-				// 1. A splitter failure never reaches `chunkFinished`, so the permit taken for that part is freed here
+				// 1. A splitter failure never reaches `chunkFinished`, so the permit taken for that part is freed here;
+				//    one still pending is turned back by `beforeChunkStarted` once it is granted
+				aborted = true;
 				permit?.release();
 			});
 
@@ -932,20 +976,33 @@ export class StorageDriverS3 implements TusDriver {
 		try {
 			await streamProm.pipeline(readStream, splitterStream);
 		} catch (error) {
-			// 3. Clean up the half-written part file, then surface the pipeline error together with the upload results
+			// 3. Stop any part still waiting for a permit and clean up the half-written part file, then surface the
+			//    pipeline error together with the upload results
+			aborted = true;
+
 			if (pendingChunkFilepath !== null) {
 				try {
 					await fsProm.rm(pendingChunkFilepath);
 				} catch (cleanupError) {
-					// 1. The pipeline error is the one worth throwing; a temp file left behind is only worth a warning
+					// 4. The pipeline error is the one worth throwing; a temp file left behind is only worth a warning
 					useLogger().warn(cleanupError, `Failed to remove chunk "${pendingChunkFilepath}" after an upload error`);
 				}
 			}
 
 			promises.push(Promise.reject(error));
 		} finally {
-			// 4. Wait for every queued upload, so the returned byte count reflects what actually reached S3
+			// 5. Wait for every queued upload, so the returned byte count reflects what actually reached S3
 			await Promise.all(promises);
+		}
+
+		// 6. A chunk that finished cleanly with every byte left unsent would come back unchanged, since the offset
+		//    does not move; refuse it in the shape the TUS server turns into an HTTP response, naming the size a
+		//    request has to reach
+		if (bytesReceived > 0 && bytesUploaded === 0) {
+			throw {
+				status_code: 400,
+				body: `A chunk of ${bytesReceived} bytes cannot be stored: every request but the last has to carry at least ${this.minPartSize} bytes.`,
+			};
 		}
 
 		return bytesUploaded;
@@ -961,6 +1018,8 @@ export class StorageDriverS3 implements TusDriver {
 	 * @internal
 	 */
 	private async retrieveParts(key: string, uploadId: string, partNumberMarker?: string): Promise<Part[]> {
+		// 1. Ask S3 for the page after the marker; S3 is the only record of which parts exist, since the driver keeps
+		//    no counter of its own between calls
 		const data = await this.client.send(
 			new ListPartsCommand({
 				Bucket: this.config.bucket,
@@ -972,13 +1031,13 @@ export class StorageDriverS3 implements TusDriver {
 
 		let parts = data.Parts ?? [];
 
-		// 1. S3 pages the listing; recurse with the marker so callers always see the complete set
+		// 2. S3 pages the listing; recurse with the marker so callers always see the complete set
 		if (data.IsTruncated) {
 			const rest = await this.retrieveParts(key, uploadId, data.NextPartNumberMarker);
 			parts = [...parts, ...rest];
 		}
 
-		// 2. Sort once at the outermost call: `CompleteMultipartUpload` requires ascending part numbers, and
+		// 3. Sort once at the outermost call: `CompleteMultipartUpload` requires ascending part numbers, and
 		//    `writeChunk` reads the highest number from the last element
 		if (!partNumberMarker) {
 			parts.sort((a, b) => a.PartNumber! - b.PartNumber!);

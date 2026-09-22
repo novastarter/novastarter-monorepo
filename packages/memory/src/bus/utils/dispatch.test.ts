@@ -6,7 +6,9 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { dispatch, reportUnreadable } from './dispatch.js';
 
 vi.mock('@novastarter/logger', () => {
+	// 1. One logger object for the whole file, so the assertions can read the calls `dispatch` made on it
 	const logger = { warn: vi.fn() };
+
 	return { useLogger: () => logger };
 });
 
@@ -15,11 +17,13 @@ afterEach(() => {
 });
 
 test('Does nothing without handlers', () => {
+	// 1. A channel nobody subscribed to: no call, no log line
 	expect(() => dispatch('channel', undefined, 'payload')).not.toThrow();
 	expect(useLogger().warn).not.toHaveBeenCalled();
 });
 
 test('Calls every handler with the payload, even after one throws', () => {
+	// 1. The first handler throws synchronously; the second one must still run
 	const failing = vi.fn(() => {
 		throw new Error('boom');
 	});
@@ -28,6 +32,7 @@ test('Calls every handler with the payload, even after one throws', () => {
 
 	dispatch('channel', new Set([failing, fine]), { a: 1 });
 
+	// 2. The failure is a log line, not an exception of the caller
 	expect(fine).toHaveBeenCalledWith({ a: 1 });
 
 	expect(useLogger().warn).toHaveBeenCalledWith(
@@ -37,8 +42,10 @@ test('Calls every handler with the payload, even after one throws', () => {
 });
 
 test('Logs an async rejection instead of leaving it unhandled, wrapping a thrown string', async () => {
+	// 1. A rejection with a bare string: nobody awaits a subscriber, so it is caught here or nowhere
 	dispatch('channel', [async () => Promise.reject('nope')], 'payload');
 
+	// 2. `toError` wraps the string so the log line still carries an `Error`
 	await vi.waitFor(() =>
 		expect(useLogger().warn).toHaveBeenCalledWith(
 			expect.objectContaining({ message: 'nope', cause: 'nope' }),
@@ -92,7 +99,48 @@ test('Tracks failures per subscriber and per channel', async () => {
 	expect(useLogger().warn).toHaveBeenLastCalledWith(expect.anything(), 'A subscriber of bus channel "other" failed');
 });
 
+test('Fans out over a snapshot, so a handler added during delivery does not receive the current message', () => {
+	// 1. The drivers hand in their live `Set`; a handler that subscribes another one from inside adds to it while it
+	//    is being walked, and a `Set` visits entries added during iteration
+	const handlers = new Set<() => void>();
+	const late = vi.fn();
+
+	const early = vi.fn(() => {
+		handlers.add(late);
+	});
+
+	handlers.add(early);
+	dispatch('channel', handlers, 'payload');
+
+	// 2. The newcomer is in the set for the next message, but was not called for this one
+	expect(early).toHaveBeenCalledOnce();
+	expect(late).not.toHaveBeenCalled();
+	expect(handlers.has(late)).toBe(true);
+});
+
+test('Calls a handler that removes and re-adds itself once, not without end', () => {
+	// 1. Deleting and re-adding an entry during iteration makes a `Set` visit it again, so a handler re-arming itself
+	//    would be called for the same message for ever; the guard turns that into a failed assertion instead of a hang
+	const handlers = new Set<() => void>();
+
+	const rearming = vi.fn(() => {
+		if (rearming.mock.calls.length > 5) {
+			throw new Error('called again for the same message');
+		}
+
+		handlers.delete(rearming);
+		handlers.add(rearming);
+	});
+
+	handlers.add(rearming);
+	dispatch('channel', handlers, 'payload');
+
+	expect(rearming).toHaveBeenCalledOnce();
+	expect(useLogger().warn).not.toHaveBeenCalled();
+});
+
 test('reportUnreadable logs every unreadable message', () => {
+	// 1. Not a subscriber's fault, so the once-per-failure rule does not apply: two messages, two lines
 	reportUnreadable('channel', new Error('not gzip'));
 	reportUnreadable('channel', new Error('not gzip'));
 

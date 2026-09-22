@@ -147,6 +147,7 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 *
 	 * @param input - Email, name, metadata.
 	 * @returns The customer.
+	 * @throws Stripe's `StripeError` when the request is refused or Stripe cannot be reached.
 	 */
 	async createCustomer(input: CreateCustomerInput): Promise<PaymentsCustomer> {
 		// 1. Optional fields are only sent when given, so Stripe keeps its defaults otherwise
@@ -173,6 +174,8 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 *
 	 * @param input - Customer, price, seats, redirects, trial, metadata.
 	 * @returns The session and its page.
+	 * @throws Stripe's `StripeError` when the request is refused — an unknown price or customer — or Stripe cannot be
+	 * reached.
 	 * @throws Error when Stripe answers a session without a URL — a session made for an embedded UI, not a redirect.
 	 */
 	async createCheckoutSession(input: CreateCheckoutSessionInput): Promise<CheckoutSession> {
@@ -204,6 +207,7 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 *
 	 * @param input - Customer and return URL.
 	 * @returns The portal page.
+	 * @throws Stripe's `StripeError` when the request is refused — an unknown customer — or Stripe cannot be reached.
 	 */
 	async createPortalSession(input: CreatePortalSessionInput): Promise<PortalSession> {
 		// 1. A portal session is short-lived; the URL is all the caller needs
@@ -220,6 +224,7 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 *
 	 * @param subscriptionId - Stripe's id.
 	 * @returns The subscription, normalised.
+	 * @throws Stripe's `StripeError` when there is no such subscription or Stripe cannot be reached.
 	 */
 	async getSubscription(subscriptionId: string): Promise<Subscription> {
 		// 1. The default expansion carries the items with their prices, which is all the mapping reads
@@ -234,6 +239,8 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 *
 	 * @param input - Subscription, new price and/or seats, proration.
 	 * @returns The subscription after the change.
+	 * @throws Stripe's `StripeError` when the request is refused — no such subscription, an unknown price — or Stripe
+	 * cannot be reached.
 	 * @throws Error for a subscription without items.
 	 */
 	async updateSubscription(input: UpdateSubscriptionInput): Promise<Subscription> {
@@ -265,6 +272,7 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 *
 	 * @param input - Subscription, when, why.
 	 * @returns The subscription after the request.
+	 * @throws Stripe's `StripeError` when there is no such subscription or Stripe cannot be reached.
 	 */
 	async cancelSubscription(input: CancelSubscriptionInput): Promise<Subscription> {
 		// 1. The reason is recorded on Stripe's side either way, as the cancellation's comment
@@ -283,6 +291,7 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 *
 	 * @param input - Customer and how many.
 	 * @returns The invoices, normalised.
+	 * @throws Stripe's `StripeError` when the request is refused or Stripe cannot be reached.
 	 */
 	async listInvoices(input: ListInvoicesInput): Promise<Invoice[]> {
 		// 1. Stripe lists most recent first already; the limit is passed through when given
@@ -300,7 +309,8 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 * @param rawBody - The body byte for byte.
 	 * @param headers - The request headers, lower-cased.
 	 * @returns The event, or `null` for one the kit does not act on.
-	 * @throws InvalidPayloadError without the `stripe-signature` header, or for a body Stripe cannot read.
+	 * @throws InvalidPayloadError without the `stripe-signature` header, or for a body that is not a Stripe event —
+	 * not JSON, or JSON without an event's `id`, `type` and `data.object`.
 	 * @throws InvalidCredentialsError when the signature does not verify, or the timestamp is outside the tolerance.
 	 */
 	async parseWebhook(rawBody: string, headers: WebhookHeaders): Promise<PaymentsEvent | null> {
@@ -311,8 +321,9 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 			throw new InvalidPayloadError({ reason: `The delivery carries no ${SIGNATURE_HEADER} header` });
 		}
 
-		// 2. The SDK verifies the signature and the timestamp, then parses the body — in that order
-		let event: Stripe.Event;
+		// 2. The SDK verifies the signature and the timestamp, then parses the body — in that order. It types the result
+		//    as an event but checks no shape, so it is held as unknown until the shape is checked here
+		let event: unknown;
 
 		try {
 			event = await this.client.webhooks.constructEventAsync(
@@ -331,7 +342,13 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 			throw new InvalidPayloadError({ reason: error instanceof Error ? error.message : 'Unreadable Stripe event' });
 		}
 
-		// 4. The mapping decides which Stripe events the kit acts on
+		// 4. A signed body that parses but is not an event is the sender's problem: refused as such, rather than
+		//    dropped as an event of no interest, which would acknowledge it and log nothing
+		if (!isStripeEvent(event)) {
+			throw new InvalidPayloadError({ reason: 'The body is not a Stripe event' });
+		}
+
+		// 5. The mapping decides which Stripe events the kit acts on
 		return toEvent(event);
 	}
 
@@ -345,3 +362,30 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 		await this.client.customers.list({ limit: 1 });
 	}
 }
+
+/**
+ * Whether what the SDK parsed is shaped like a Stripe event: an object with a string `id` and `type` and an object
+ * under `data.object`.
+ *
+ * `constructEventAsync` verifies the signature and `JSON.parse`s the body, nothing more — a signed `{"hello":1}` comes
+ * back as is, and a signed `null` or `"text"` as well. The three fields are what {@link toEvent} reads of every event.
+ *
+ * @param event - What `constructEventAsync` handed back.
+ * @returns `true` for an event-shaped value.
+ */
+const isStripeEvent = (event: unknown): event is Stripe.Event => {
+	// 1. JSON parses to any value; only an object can be an event
+	if (typeof event !== 'object' || event === null) return false;
+
+	// 2. The id keys the idempotency guard, the type picks the mapping, the object is what the mapping reads
+	const { id, type, data } = event as { id?: unknown; type?: unknown; data?: { object?: unknown } | null };
+
+	return (
+		typeof id === 'string' &&
+		typeof type === 'string' &&
+		typeof data === 'object' &&
+		data !== null &&
+		typeof data.object === 'object' &&
+		data.object !== null
+	);
+};

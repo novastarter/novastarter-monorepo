@@ -55,6 +55,28 @@ let sample: {
  */
 let driver: StorageDriverSupabase;
 
+/**
+ * Build the listing entry Supabase returns for a file, with the metadata `stat` reads.
+ *
+ * @param name - Entry name relative to the listed folder.
+ * @param size - Reported size in bytes.
+ * @param modified - Reported modification date.
+ * @returns A file entry with a non-null id, which is how the driver tells files from folders.
+ */
+function fileEntry(name: string, size: number, modified: Date) {
+	return { name, id: randUnique(), metadata: { contentLength: size, lastModified: modified } };
+}
+
+/**
+ * Build the listing entry Supabase returns for a folder: no id and no metadata.
+ *
+ * @param name - Folder name relative to the listed folder.
+ * @returns A folder entry.
+ */
+function folderEntry(name: string) {
+	return { name, id: null, metadata: null };
+}
+
 beforeEach(() => {
 	// 1. Fresh random values per test; falso keeps them realistic enough to catch accidental string handling
 	sample = {
@@ -117,13 +139,15 @@ describe('#constructor', () => {
 	});
 
 	afterEach(() => {
+		// 1. Put the real builders back, so the driver created in the outer `beforeEach` keeps calling the mocked
+		//    `StorageClient` rather than the stubs of this block
 		StorageDriverSupabase.prototype['getClient'] = getClientBackup;
 		StorageDriverSupabase.prototype['getBucket'] = getBucketBackup;
 	});
 
 	test('Saves passed config to local property', () => {
-		// 1. The config is copied with a normalised root; `normalizePath` leaves this sample root untouched, so the
-		//    copy must equal the input field by field
+		// 1. The config is copied with a confined root; `confinePath` leaves this sample root untouched because it has
+		//    no leading slash and no `..`, so the copy must equal the input field by field
 		const driver = new StorageDriverSupabase(sample.config);
 
 		expect(driver['config']).toStrictEqual(sample.config);
@@ -137,15 +161,16 @@ describe('#constructor', () => {
 	});
 
 	test('Defaults root to empty string', () => {
+		// 1. An absent root must become the empty string, which is what Supabase expects for the top of the bucket,
+		//    not `undefined` that would end up in joined object names
 		expect(driver['config'].root).toBe('');
 	});
 });
 
 describe('#getClient', () => {
-	// The constructor calls getClient(), so we don't have to call it separately
-
 	test('Throws error if serviceRole is missing', () => {
-		// 1. The project/endpoint check runs first, so a config with neither reports that error before the missing key
+		// 1. The constructor calls `getClient`, so constructing is enough to exercise it. The project/endpoint check
+		//    runs first, so a config with neither reports that error before the missing key
 		try {
 			new StorageDriverSupabase({ bucket: 'bucket' } as any);
 		} catch (err: any) {
@@ -165,6 +190,7 @@ describe('#getClient', () => {
 	});
 
 	test('Throws error if projectId and endpoint are both missing', () => {
+		// 1. Without either the endpoint would read `https://undefined.supabase.co`, so the constructor has to refuse
 		try {
 			new StorageDriverSupabase({ serviceRole: 'secret', bucket: 'bucket' });
 		} catch (err: any) {
@@ -216,6 +242,7 @@ describe('#getClient', () => {
 
 describe('#fullPath', () => {
 	test('Returns the input value if no root is given', () => {
+		// 1. Without a root there is nothing to prefix, so the caller path is the object name as it is
 		const driver = new StorageDriverSupabase({
 			serviceRole: sample.config.serviceRole,
 			bucket: sample.config.bucket,
@@ -227,6 +254,7 @@ describe('#fullPath', () => {
 	});
 
 	test('Returns normalized joined path', () => {
+		// 1. The root is joined with a single slash, so a caller path never gets a double separator in its name
 		const driver = new StorageDriverSupabase({
 			serviceRole: sample.config.serviceRole,
 			bucket: sample.config.bucket,
@@ -239,6 +267,7 @@ describe('#fullPath', () => {
 	});
 
 	test('Keeps a caller path under the root and drops a leading slash, like every other driver', () => {
+		// 1. One driver with a root and one without, since confinement has to hold in both cases
 		const rooted = new StorageDriverSupabase({
 			serviceRole: sample.config.serviceRole,
 			bucket: sample.config.bucket,
@@ -252,7 +281,7 @@ describe('#fullPath', () => {
 			endpoint: sample.config.endpoint,
 		});
 
-		// `..` used to climb out of the root and a leading slash used to stay in the object name
+		// 2. `..` used to climb out of the root and a leading slash used to stay in the object name
 		expect(rooted['fullPath']('../other/secret')).toBe('media/other/secret');
 		expect(unrooted['fullPath']('../x')).toBe('x');
 		expect(unrooted['fullPath']('/x')).toBe('x');
@@ -262,6 +291,7 @@ describe('#fullPath', () => {
 
 describe('#getAuthenticatedUrl', () => {
 	test('Returns the url for an object with no root that requires authentication', () => {
+		// 1. The URL goes through `object/authenticated`, which serves private objects to a bearer-authenticated request
 		const driver = new StorageDriverSupabase({
 			serviceRole: 'serviceRole',
 			bucket: 'bucket',
@@ -274,6 +304,7 @@ describe('#getAuthenticatedUrl', () => {
 	});
 
 	test('Returns the url for an object that requires authentication', () => {
+		// 1. The root sits between the bucket and the object name, since it is part of the object name in Supabase
 		const driver = new StorageDriverSupabase({
 			serviceRole: 'serviceRole',
 			bucket: 'bucket',
@@ -301,6 +332,7 @@ describe('#read', () => {
 	});
 
 	test('Uses getAuthenticatedUrl to get endpoint when no root is set', async () => {
+		// 1. The request must carry the bearer token and nothing else: no range header when none was asked for
 		await driver.read(sample.path.input);
 
 		expect(driver['getAuthenticatedUrl']).toHaveBeenCalledWith(sample.path.input);
@@ -314,6 +346,7 @@ describe('#read', () => {
 	});
 
 	test('Uses getAuthenticatedUrl to get endpoint when a root is set', async () => {
+		// 1. The root only changes the URL the builder answers with; the request itself stays the same
 		driver['getAuthenticatedUrl'] = vi.fn().mockReturnValue(rootEndpoint);
 
 		await driver.read(sample.path.input);
@@ -355,6 +388,7 @@ describe('#read', () => {
 	});
 
 	test('Optionally allows setting start and end range offset', async () => {
+		// 1. Both bounds given go out as `bytes=start-end`, the inclusive form HTTP expects
 		await driver.read(sample.path.input, { range: sample.range });
 
 		expect(fetch).toHaveBeenCalledWith(endpoint, {
@@ -366,20 +400,58 @@ describe('#read', () => {
 		});
 	});
 
-	test('Throws an error when no stream is returned', async () => {
-		// 1. An error status with a body still counts as "no stream": the body is an error page, not the object
-		vi.mocked(fetch).mockReturnValue({ status: 400, body: new ReadableStream() } as unknown as Promise<Response>);
+	test('Throws an error naming the status and the reason for an error status', async () => {
+		// 1. A 403 with a JSON body: the status must survive in the message, so a denied read is not mistaken for a
+		//    missing stream, and the body, which is Supabase's own explanation, must come along as the cause
+		const reason = '{"statusCode":"403","error":"Unauthorized","message":"invalid signature"}';
+		const text = vi.fn().mockResolvedValue(reason);
 
-		try {
-			await driver.read(sample.path.input, { range: sample.range });
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe(`No stream returned for file "${sample.path.input}"`);
-		}
+		vi.mocked(fetch).mockReturnValue({
+			status: 403,
+			body: new ReadableStream(),
+			text,
+		} as unknown as Promise<Response>);
+
+		await expect(driver.read(sample.path.input, { range: sample.range })).rejects.toMatchObject({
+			message: `Couldn't read file "${sample.path.input}" (403)`,
+			cause: reason,
+		});
+
+		// 2. Reading the body is what releases the connection, so it has to be read rather than left dangling
+		expect(text).toHaveBeenCalledOnce();
+	});
+
+	test('Throws an error naming the status without a cause when the error response has no body', async () => {
+		// 1. An empty body must not become an empty-string cause; the status alone is the whole story
+		vi.mocked(fetch).mockReturnValue({
+			status: 500,
+			body: null,
+			text: vi.fn().mockResolvedValue(''),
+		} as unknown as Promise<Response>);
+
+		const error: unknown = await driver.read(sample.path.input).catch((error: unknown) => error);
+
+		expect(error).toBeInstanceOf(Error);
+		expect((error as Error).message).toBe(`Couldn't read file "${sample.path.input}" (500)`);
+		expect((error as Error).cause).toBeUndefined();
+	});
+
+	test('Throws an error naming the status when the error body cannot be read', async () => {
+		// 1. A body that fails to read must not replace the read error with a body error; the status still reports
+		vi.mocked(fetch).mockReturnValue({
+			status: 502,
+			body: new ReadableStream(),
+			text: vi.fn().mockRejectedValue(new Error('aborted')),
+		} as unknown as Promise<Response>);
+
+		await expect(driver.read(sample.path.input)).rejects.toThrowError(
+			`Couldn't read file "${sample.path.input}" (502)`,
+		);
 	});
 
 	test('Throws StorageFileNotFoundError when the object is missing', async () => {
-		// A 404 is the error every backend shares; any other error status stays the generic one
+		// 1. A 404 is the error every backend shares; any other error status stays the generic one. The body is
+		//    cancelled rather than read, since an unread body holds its connection open
 		const cancel = vi.fn(async () => {});
 		vi.mocked(fetch).mockReturnValue({ status: 404, body: { cancel } } as unknown as Promise<Response>);
 
@@ -388,24 +460,13 @@ describe('#read', () => {
 	});
 
 	test('Throws an error when returned stream is not a readable stream', async () => {
+		// 1. A successful status without a body is the one case that keeps the "no stream" wording: nothing failed,
+		//    there is just nothing to stream
 		vi.mocked(fetch).mockReturnValue({ status: 200, body: undefined } as unknown as Promise<Response>);
 
 		await expect(driver.read(sample.path.input, { range: sample.range })).rejects.toThrowError(
 			new Error(`No stream returned for file "${sample.path.input}"`),
 		);
-	});
-
-	/** An unread response body holds its connection open */
-	test('Cancels the response body it never reads', async () => {
-		const cancel = vi.fn().mockResolvedValue(undefined);
-
-		vi.mocked(fetch).mockReturnValue({ status: 400, body: { cancel } } as unknown as Promise<Response>);
-
-		await expect(driver.read(sample.path.input)).rejects.toThrowError(
-			new Error(`No stream returned for file "${sample.path.input}"`),
-		);
-
-		expect(cancel).toHaveBeenCalled();
 	});
 
 	test('Returns stream', async () => {
@@ -429,7 +490,7 @@ describe('#stat', () => {
 		// 1. The bucket handle is replaced per test: only `list` is needed, and its answer is the whole fixture
 		driver['bucket'] = {
 			list: vi.fn().mockReturnValue({
-				data: [{ metadata: { contentLength: sample.file.size, lastModified: sample.file.modified } }],
+				data: [fileEntry(basename(sample.path.input), sample.file.size, sample.file.modified)],
 				error: null,
 			}),
 		} as any;
@@ -441,19 +502,23 @@ describe('#stat', () => {
 			modified: sample.file.modified,
 		});
 
-		// 2. The lookup must query the parent folder and search for the base name, not list the whole bucket
+		// 2. The lookup must query the parent folder and search for the base name, not list the whole bucket; the
+		//    page is the API default rather than one entry, since the search is a prefix filter and the exact entry
+		//    need not come first
 		expect(driver['bucket'].list).toHaveBeenCalledWith(dirname(sample.path.input), {
-			limit: 1,
+			limit: 100,
+			offset: 0,
 			search: basename(sample.path.input),
 		});
 	});
 
 	test('Uses the configured root directory', async () => {
+		// 1. The root becomes part of the queried folder, since it is part of the object name in Supabase
 		driver['config'].root = 'root';
 
 		driver['bucket'] = {
 			list: vi.fn().mockReturnValue({
-				data: [{ metadata: { contentLength: sample.file.size, lastModified: sample.file.modified } }],
+				data: [fileEntry(basename(sample.path.input), sample.file.size, sample.file.modified)],
 				error: null,
 			}),
 		} as any;
@@ -466,7 +531,8 @@ describe('#stat', () => {
 		});
 
 		expect(driver['bucket'].list).toHaveBeenCalledWith(join('root', dirname(sample.path.input)), {
-			limit: 1,
+			limit: 100,
+			offset: 0,
 			search: basename(sample.path.input),
 		});
 	});
@@ -477,7 +543,7 @@ describe('#stat', () => {
 
 		driver['bucket'] = {
 			list: vi.fn().mockReturnValue({
-				data: [{ metadata: { contentLength: sample.file.size, lastModified: sample.file.modified } }],
+				data: [fileEntry(filename, sample.file.size, sample.file.modified)],
 				error: null,
 			}),
 		} as any;
@@ -485,9 +551,85 @@ describe('#stat', () => {
 		await driver.stat(filename);
 
 		expect(driver['bucket'].list).toHaveBeenCalledWith('', {
-			limit: 1,
+			limit: 100,
+			offset: 0,
 			search: filename,
 		});
+	});
+
+	test('Picks the entry with exactly the requested name over folders and longer names listed before it', async () => {
+		// 1. Supabase's search is a prefix filter and lists folders first, so a folder `report.pdf.versions` and a
+		//    file `report.pdf.bak` come back ahead of `report.pdf`; the exact file is the one whose size must be
+		//    reported
+		const other = randNumber();
+
+		driver['bucket'] = {
+			list: vi.fn().mockResolvedValue({
+				data: [
+					folderEntry('report.pdf.versions'),
+					folderEntry('report.pdf'),
+					fileEntry('report.pdf.bak', other, randPastDate()),
+					fileEntry('report.pdf', sample.file.size, sample.file.modified),
+				],
+				error: null,
+			}),
+		} as any;
+
+		const stat = await driver.stat('report.pdf');
+
+		expect(stat).toEqual({ size: sample.file.size, modified: sample.file.modified });
+	});
+
+	test('Throws the kit error when only longer names or a folder of that name match', async () => {
+		// 1. `report.pdf.bak` and a folder `report.pdf` both satisfy the search filter, yet neither is the object;
+		//    answering with the folder's zero size or the other file's size would report a missing object as present
+		driver['bucket'] = {
+			list: vi.fn().mockResolvedValue({
+				data: [folderEntry('report.pdf'), fileEntry('report.pdf.bak', sample.file.size, sample.file.modified)],
+				error: null,
+			}),
+		} as any;
+
+		const error: unknown = await driver.stat('report.pdf').catch((error: unknown) => error);
+
+		expect(error).toBeInstanceOf(StorageFileNotFoundError);
+		expect(error).toMatchObject({ extensions: { filepath: 'report.pdf' } });
+	});
+
+	test('Throws the kit error when only a name differing in case matches', async () => {
+		// 1. The search filter is case-insensitive while object names are not: `A.PNG` is not `a.png`
+		driver['bucket'] = {
+			list: vi.fn().mockResolvedValue({
+				data: [fileEntry('A.PNG', sample.file.size, sample.file.modified)],
+				error: null,
+			}),
+		} as any;
+
+		await expect(driver.stat('a.png')).rejects.toBeInstanceOf(StorageFileNotFoundError);
+	});
+
+	test('Walks the following page when a full page holds only other matches', async () => {
+		// 1. A hundred files whose names start with the requested one fill the first page; the exact entry is on the
+		//    second, so a lookup that stopped at one page would report it missing
+		const filler = Array.from({ length: 100 }, (_, i) => fileEntry(`a.png.${i}`, randNumber(), randPastDate()));
+
+		driver['bucket'] = {
+			list: vi
+				.fn()
+				.mockResolvedValueOnce({ data: filler, error: null })
+				.mockResolvedValueOnce({
+					data: [fileEntry('a.png', sample.file.size, sample.file.modified)],
+					error: null,
+				}),
+		} as any;
+
+		const stat = await driver.stat('a.png');
+
+		expect(stat).toEqual({ size: sample.file.size, modified: sample.file.modified });
+
+		// 2. The second request continues where the first ended, so no entry is skipped or listed twice
+		expect(driver['bucket'].list).toHaveBeenCalledTimes(2);
+		expect(driver['bucket'].list).toHaveBeenLastCalledWith('', { limit: 100, offset: 100, search: 'a.png' });
 	});
 
 	test('Throws the kit error when no file is returned by list', async () => {
@@ -505,29 +647,31 @@ describe('#stat', () => {
 		expect(error).toMatchObject({ extensions: { filepath: sample.path.input } });
 	});
 
-	/**
-	 * A failed lookup is not the same answer as an empty one, so the storage error has to reach the
-	 * caller instead of being reported as a missing file.
-	 */
-	test('Throws the storage error if the lookup failed', async () => {
-		const error = new Error('Service unavailable');
+	test('Throws an error wrapping the storage error if the lookup failed', async () => {
+		// 1. A failed lookup is not the same answer as an empty one, so the failure has to reach the caller instead of
+		//    being reported as a missing file; it is wrapped with the path like every other failure of this driver
+		const cause = new Error('Service unavailable');
 
 		driver['bucket'] = {
 			list: vi.fn().mockReturnValue({
 				data: null,
-				error,
+				error: cause,
 			}),
 		} as any;
 
-		await expect(driver.stat(sample.path.input)).rejects.toThrowError(error);
+		await expect(driver.stat(sample.path.input)).rejects.toMatchObject({
+			message: `Error looking up file "${sample.path.input}"`,
+			cause,
+		});
 	});
 });
 
 describe('#exists', () => {
 	test('Returns true if the file is returned by list', async () => {
+		// 1. An entry with exactly the requested name and a non-null id is proof of existence
 		driver['bucket'] = {
 			list: vi.fn().mockReturnValue({
-				data: [{ metadata: { contentLength: sample.file.size, lastModified: sample.file.modified } }],
+				data: [fileEntry(basename(sample.path.input), sample.file.size, sample.file.modified)],
 				error: null,
 			}),
 		} as any;
@@ -538,6 +682,7 @@ describe('#exists', () => {
 	});
 
 	test('Returns false if no file is returned by list', async () => {
+		// 1. An empty listing is how Supabase says "missing"
 		driver['bucket'] = {
 			list: vi.fn().mockReturnValue({
 				data: [],
@@ -550,23 +695,44 @@ describe('#exists', () => {
 		expect(exists).toBe(false);
 	});
 
-	test('Throws the storage error if the lookup failed', async () => {
+	test('Returns false when only longer names, a folder of that name or another case match', async () => {
+		// 1. Every entry here satisfies Supabase's prefix search, none is the object: a `true` would make a caller
+		//    skip an upload or serve a link to nothing
+		driver['bucket'] = {
+			list: vi.fn().mockResolvedValue({
+				data: [
+					folderEntry('report.pdf'),
+					fileEntry('report.pdf.bak', sample.file.size, sample.file.modified),
+					fileEntry('REPORT.PDF', sample.file.size, sample.file.modified),
+				],
+				error: null,
+			}),
+		} as any;
+
+		await expect(driver.exists('report.pdf')).resolves.toBe(false);
+	});
+
+	test('Throws an error wrapping the storage error if the lookup failed', async () => {
 		// 1. Reporting a failed request as "not found" would make callers act on a wrong answer
-		const error = new Error('Service unavailable');
+		const cause = new Error('Service unavailable');
 
 		driver['bucket'] = {
 			list: vi.fn().mockReturnValue({
 				data: null,
-				error,
+				error: cause,
 			}),
 		} as any;
 
-		await expect(driver.exists(sample.path.input)).rejects.toThrowError(error);
+		await expect(driver.exists(sample.path.input)).rejects.toMatchObject({
+			message: `Error looking up file "${sample.path.input}"`,
+			cause,
+		});
 	});
 });
 
 describe('#move', () => {
 	test('passes arguments to move', async () => {
+		// 1. Both names go through `fullPath`, which is the identity without a root, so the client sees them as given
 		driver['bucket'] = {
 			move: vi.fn(async () => ({ data: null, error: null })),
 		} as any;
@@ -576,7 +742,7 @@ describe('#move', () => {
 	});
 
 	test('Throws when the client reports the move failed instead of resolving', async () => {
-		// storage-js answers a failure as `{ error }`; a move that did not happen must not read as done
+		// 1. storage-js answers a failure as `{ error }`; a move that did not happen must not read as done
 		const cause = new Error('Object not found');
 		driver['bucket'] = { move: vi.fn(async () => ({ data: null, error: cause })) } as any;
 
@@ -589,6 +755,7 @@ describe('#move', () => {
 
 describe('#copy', () => {
 	test('passes arguments to copy', async () => {
+		// 1. Both names go through `fullPath`, which is the identity without a root, so the client sees them as given
 		driver['bucket'] = {
 			copy: vi.fn(async () => ({ data: null, error: null })),
 		} as any;
@@ -598,6 +765,7 @@ describe('#copy', () => {
 	});
 
 	test('Throws when the client reports the copy failed instead of resolving', async () => {
+		// 1. storage-js answers a failure as `{ error }`; a copy that did not happen must not read as done
 		const cause = new Error('Object not found');
 		driver['bucket'] = { copy: vi.fn(async () => ({ data: null, error: cause })) } as any;
 
@@ -629,6 +797,7 @@ describe('#write', () => {
 	});
 
 	test('Ensures input is passed to fullPath', async () => {
+		// 1. Stubbing `fullPath` shows the caller path reaches it unchanged, so the root is applied on every write
 		driver['fullPath'] = vi.fn();
 
 		await driver.write(sample.path.input, sample.stream);
@@ -636,6 +805,7 @@ describe('#write', () => {
 	});
 
 	test('Optionally sets ContentType', async () => {
+		// 1. A given type is stored as the object's content type, so downloads are served with it
 		await driver.write(sample.path.input, sample.stream, sample.file.type);
 
 		expect(driver['bucket'].upload).toHaveBeenCalledWith(sample.path.input, sample.stream, {
@@ -662,6 +832,7 @@ describe('#write', () => {
 
 describe('#delete', () => {
 	test('Ensures input is passed to fullPath', async () => {
+		// 1. Stubbing `fullPath` shows the caller path reaches it unchanged, so the root is applied on every removal
 		driver['bucket'] = {
 			remove: vi.fn(async () => ({ data: [], error: null })),
 		} as any;
@@ -673,6 +844,7 @@ describe('#delete', () => {
 	});
 
 	test('Throws when the client reports the removal failed instead of resolving', async () => {
+		// 1. storage-js answers a failure as `{ error }`; an object that is still there must not read as deleted
 		const cause = new Error('jwt expired');
 		driver['bucket'] = { remove: vi.fn(async () => ({ data: null, error: cause })) } as any;
 
@@ -690,12 +862,12 @@ describe('#list', () => {
 		const sampleDirectory = randDirectoryPath();
 		const fullSample = `${sampleDirectory}/${sampleFile}`;
 
-		// TODO: Probably a better way to do this?
+		// 2. The bucket handle is replaced inline: only `list` is needed, and an empty page ends the walk at once
 		driver['bucket'] = {
 			list: vi.fn().mockReturnValue({ data: [], error: null }),
 		} as any;
 
-		// 2. Pull one item to trigger the first request; the generator is lazy until iterated. The prefix goes through
+		// 3. Pull one item to trigger the first request; the generator is lazy until iterated. The prefix goes through
 		//    `fullPath`, which confines it under the root, so a leading slash of the sample directory is gone
 		await driver.list(fullSample)[Symbol.asyncIterator]().next();
 
@@ -707,7 +879,7 @@ describe('#list', () => {
 	});
 
 	test('Lists the whole root as a folder, not as a search for names starting with it', async () => {
-		// `media` as a search term would match `media-archive` too; the folder itself is what an empty prefix means
+		// 1. `media` as a search term would match `media-archive` too; the folder itself is what an empty prefix means
 		const rooted = new StorageDriverSupabase({
 			serviceRole: sample.config.serviceRole,
 			bucket: sample.config.bucket,
@@ -717,6 +889,7 @@ describe('#list', () => {
 
 		rooted['bucket'] = { list: vi.fn().mockResolvedValue({ data: [], error: null }) } as any;
 
+		// 2. Both the empty prefix and a caller folder must be queried with their trailing slash and no search term
 		await rooted.list('')[Symbol.asyncIterator]().next();
 		expect(rooted['bucket'].list).toHaveBeenCalledWith('media/', { search: '', limit: 1000, offset: 0 });
 
@@ -744,6 +917,7 @@ describe('#list', () => {
 
 		driver['config'].root = sampleRoot;
 
+		// 2. Drain the generator, since a listing is only observable through what it yields
 		const iterator = driver.list(sampleFull);
 		const output: string[] = [];
 
@@ -787,6 +961,7 @@ describe('#list', () => {
 
 		driver['config'].root = sampleRoot;
 
+		// 2. Drain the generator; the folder entry itself must not be yielded, only the file found by descending
 		const iterator = driver.list(sampleInput);
 		const output: string[] = [];
 
@@ -818,6 +993,7 @@ describe('#list', () => {
 
 		driver['config'].root = sampleRoot;
 
+		// 2. Drain the generator; the matches must come out in listing order with the root stripped
 		const iterator = driver.list(sampleInput);
 		const output: string[] = [];
 
@@ -829,16 +1005,13 @@ describe('#list', () => {
 	});
 
 	test('Recursively fetches all nested directories and yields only the files', async () => {
+		// 1. Fixture layout: the prefix folder holds one file and one folder with a nested file, so the listing has to
+		//    descend exactly once and yield two files
 		const sampleRoot = randUnique() + randDirectoryPath();
 		const samplePrefixBase = randUnique() + randDirectoryPath();
 		const samplePrefixLastDir = randUnique();
 		const samplePrefix = `${samplePrefixBase}/${samplePrefixLastDir}`;
 
-		/*
-		sampleFile
-		sampleDirectory/
-		├─ sampleFileNested
-		 */
 		const sampleDirectory = randUnique();
 		const sampleFile = randFileName();
 		const sampleFileNested = randFileName();
@@ -847,14 +1020,15 @@ describe('#list', () => {
 		const fullSampleFile = `${samplePrefix}/${sampleFile}`;
 		const fullSampleFileNested = `${fullSampleDirectory}/${sampleFileNested}`;
 
-		// 1. Route each listing call by the exact folder and search the driver is expected to send; any other call is
+		// 2. Route each listing call by the exact folder and search the driver is expected to send; any other call is
 		//    a wrong query and fails the test by throwing
 		driver['bucket'] = {
 			list: vi.fn(async (path, options): Promise<any> => {
-				// query for parent dir, return the contained dir
+				// 1. The parent is queried with the last segment as the search term and answers with the folder itself
 				if (path === `${sampleRoot}/${samplePrefixBase}` && options?.search === samplePrefixLastDir)
 					return { data: [{ name: samplePrefixLastDir, id: null }], error: null };
-				// query for the contents of the samplePrefix, return file and directory
+
+				// 2. The prefix folder is then listed whole and answers with its file and its sub-folder
 				if (path === `${sampleRoot}/${samplePrefix}/` && options?.search === '')
 					return {
 						data: [
@@ -863,18 +1037,21 @@ describe('#list', () => {
 						],
 						error: null,
 					};
-				// query for the contents of the sampleDirectory, return the nested file
+
+				// 3. The sub-folder is listed whole in turn and answers with the nested file
 				if (path === `${sampleRoot}/${fullSampleDirectory}/` && options?.search === '')
 					return {
 						data: [{ name: sampleFileNested, id: randUnique() }],
 						error: null,
 					};
+
 				throw Error();
 			}),
 		} as any;
 
 		driver['config'].root = sampleRoot;
 
+		// 3. Drain the generator, since a listing is only observable through what it yields
 		const iterator = driver.list(samplePrefix);
 		const output: string[] = [];
 
@@ -882,7 +1059,7 @@ describe('#list', () => {
 			output.push(filepath);
 		}
 
-		// 2. Three queries: the parent, the prefix folder and the nested folder; folders are descended in listing
+		// 4. Three queries: the parent, the prefix folder and the nested folder; folders are descended in listing
 		//    order, so the nested file comes out before the sibling file
 		expect(driver['bucket'].list).toHaveBeenCalledTimes(3);
 		expect(output).toStrictEqual([fullSampleFileNested, fullSampleFile]);
@@ -893,7 +1070,7 @@ describe('#list', () => {
 		const firstContents = Array.from({ length: 1000 }, () => ({ name: randFilePath() }));
 		const secondContents = Array.from({ length: 256 }, () => ({ name: randFilePath() }));
 
-		// TODO: Probably a better way to do this?
+		// 2. The bucket handle is replaced inline with a `list` that answers the two pages in order
 		driver['bucket'] = {
 			list: vi
 				.fn()
@@ -907,6 +1084,7 @@ describe('#list', () => {
 				}),
 		} as any;
 
+		// 3. Drain the generator; every entry of both pages must come out
 		const iterator = driver.list(sample.path.input);
 
 		const output: string[] = [];
@@ -916,5 +1094,74 @@ describe('#list', () => {
 		}
 
 		expect(output.length).toBe(1256);
+	});
+
+	test('Throws when the first page fails instead of ending the listing as empty', async () => {
+		// 1. storage-js reports a rotated key or an outage as `{ data: null, error }`; a listing that ends quietly
+		//    would let a cleanup job conclude the prefix is empty
+		const cause = new Error('Invalid JWT');
+
+		driver['bucket'] = { list: vi.fn().mockResolvedValue({ data: null, error: cause }) } as any;
+
+		const output: string[] = [];
+
+		// 2. Draining has to reject with the full prefix that was queried and the storage error as the cause, and
+		//    nothing may have been yielded before that
+		await expect(async () => {
+			// 1. Collect everything, so a yield before the failure would show up
+			for await (const filepath of driver.list(sample.path.input)) {
+				output.push(filepath);
+			}
+		}).rejects.toMatchObject({
+			message: `Error listing prefix "${sample.path.input}"`,
+			cause,
+		});
+
+		expect(output).toStrictEqual([]);
+	});
+
+	test('Throws when a later page fails instead of ending the listing early', async () => {
+		// 1. A full first page followed by a failed second one: what was yielded stays yielded, the failure must still
+		//    reach the caller rather than pass for the end of the listing
+		const firstContents = Array.from({ length: 1000 }, () => ({ name: randFilePath() }));
+		const cause = new Error('Service unavailable');
+
+		driver['bucket'] = {
+			list: vi
+				.fn()
+				.mockResolvedValueOnce({ data: firstContents, error: null })
+				.mockResolvedValueOnce({ data: null, error: cause }),
+		} as any;
+
+		const output: string[] = [];
+
+		// 2. Collect what comes through before the failure, so the truncation point is observable
+		await expect(async () => {
+			// 1. Every yield lands in the outer array, which survives the rejection
+			for await (const filepath of driver.list(sample.path.input)) {
+				output.push(filepath);
+			}
+		}).rejects.toMatchObject({
+			message: `Error listing prefix "${sample.path.input}"`,
+			cause,
+		});
+
+		expect(output.length).toBe(1000);
+	});
+
+	test('Throws when a page carries neither data nor an error', async () => {
+		// 1. An answer without data and without an error breaks the client's contract; it must not pass for an empty
+		//    prefix, and without a storage error there is no cause to attach
+		driver['bucket'] = { list: vi.fn().mockResolvedValue({ data: null, error: null }) } as any;
+
+		const error: unknown = await driver
+			.list(sample.path.input)
+			[Symbol.asyncIterator]()
+			.next()
+			.catch((error: unknown) => error);
+
+		expect(error).toBeInstanceOf(Error);
+		expect((error as Error).message).toBe(`Error listing prefix "${sample.path.input}"`);
+		expect((error as Error).cause).toBeUndefined();
 	});
 });

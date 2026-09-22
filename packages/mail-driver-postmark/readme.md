@@ -35,8 +35,9 @@ Anywhere later: `sendMail(message)` routes through the location, or `useMail().l
 routes.
 
 Through the official `postmark` SDK. Postmark takes one tag per message — the first of ours; the category and the
-remaining tags go to `Metadata`. `marketing` mail goes to `broadcastStream` when there is one. `verify()` reads the
-server the token belongs to.
+remaining tags go to `Metadata`, the tags comma-joined and spread over `tags`, `tags2`, … so no value passes Postmark's
+80-character limit (a longer tag is cut to it; tags past the nine fields left are dropped). `marketing` mail goes to
+`broadcastStream` when there is one. `verify()` reads the server the token belongs to.
 
 ## Options
 

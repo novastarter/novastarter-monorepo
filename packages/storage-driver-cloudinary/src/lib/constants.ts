@@ -38,7 +38,6 @@ export const IMAGE_EXTENSIONS: string[] = [
 	'.obj',
 	'.pdf',
 	'.ply',
-	'.png',
 	'.psd',
 	'.arw',
 	'.cr2',
@@ -48,7 +47,6 @@ export const IMAGE_EXTENSIONS: string[] = [
 	'.tiff',
 	'.u3ma',
 	'.usdz',
-	'.webp',
 ];
 
 /**

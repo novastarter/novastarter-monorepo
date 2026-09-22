@@ -5,6 +5,7 @@ import { expect, test } from 'vitest';
 import { confinePath, joinPath } from './join-path.js';
 
 test('Joins segments with a single forward slash', () => {
+	// 1. The plain case, relative and absolute: `/` between segments and nothing else changed
 	expect(joinPath('uploads', 'avatars', 'me.png')).toBe('uploads/avatars/me.png');
 	expect(joinPath('/root', 'file.txt')).toBe('/root/file.txt');
 });
@@ -17,31 +18,36 @@ test('Collapses repeated and mixed separators', () => {
 });
 
 test('Drops a trailing slash', () => {
+	// 1. `a/b/` and `a/b` are the same key, so the trailing separator never reaches the result
 	expect(joinPath('a', 'b/')).toBe('a/b');
 	expect(joinPath('a/b/')).toBe('a/b');
 });
 
 test('Skips empty segments', () => {
+	// 1. An empty segment adds no separator of its own, or `''` and `'a'` would join as `/a`
 	expect(joinPath('', 'a', '', 'b')).toBe('a/b');
 	expect(joinPath('a', '')).toBe('a');
 });
 
 test('Answers with an empty string for no segments', () => {
+	// 1. No segments, or only empty ones, is no path: not the root and not a single slash
 	expect(joinPath()).toBe('');
 	expect(joinPath('', '')).toBe('');
 
-	// 1. A `.` names the current place, which is no path either
+	// 2. A `.` names the current place, which is no path either
 	expect(joinPath('.')).toBe('');
 	expect(joinPath('.', '')).toBe('');
 });
 
 test('Resolves dot segments', () => {
+	// 1. `.` names the current place, so it vanishes from the middle and from the front alike
 	expect(joinPath('a', '.', 'b')).toBe('a/b');
 	expect(joinPath('./a', './b')).toBe('a/b');
 	expect(joinPath('.')).toBe('');
 });
 
 test('Resolves parent segments against the segments before them', () => {
+	// 1. Each `..` pops the segment before it, across argument boundaries, the way `path.posix.join` does
 	expect(joinPath('a', 'b', '..', 'c')).toBe('a/c');
 	expect(joinPath('/root', '../etc', './passwd')).toBe('/etc/passwd');
 	expect(joinPath('a/b/c', '../../d')).toBe('a/d');
@@ -61,6 +67,7 @@ test('Drops a parent segment that climbs above the root', () => {
 });
 
 test('Keeps the root of an absolute path', () => {
+	// 1. The leading `/` is not a segment to pop or collapse; it stays whatever follows it
 	expect(joinPath('/')).toBe('/');
 	expect(joinPath('/', 'a')).toBe('/a');
 	expect(joinPath('/a', '..')).toBe('/');

@@ -54,6 +54,8 @@ export interface CacheDriver {
 	 *
 	 * @param key - Key to lock.
 	 * @returns Handle to release or extend the lock.
+	 * @throws Error when the lock is still held once the driver's wait budget — its `lockTimeout` — is spent:
+	 * `Lock "k" was not acquired within N ms` on every backend.
 	 */
 	acquireLock(key: string): Promise<Lock>;
 
@@ -64,6 +66,8 @@ export interface CacheDriver {
 	 * @param key - Key to lock.
 	 * @param callback - Work to run under the lock.
 	 * @returns Whatever the callback resolves to.
+	 * @throws Error when the lock is still held once the driver's wait budget — its `lockTimeout` — is spent, with
+	 * the same message as `acquireLock`; whatever the callback throws.
 	 */
 	usingLock<T>(key: string, callback: () => Promise<T>): Promise<T>;
 

@@ -98,9 +98,10 @@ export class MailDriverPostmark implements MailDriver {
 	 * suppressed recipients) when the API refuses.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
+		// 1. Translate first, so a message Postmark cannot take fails before the request; the SDK throws on a refusal
 		const response = await this.client.sendEmail(await toPostmarkMessage(message, this.streams));
 
-		// 1. Postmark takes a message whole or refuses it, so every recipient counts as accepted
+		// 2. Postmark takes a message whole or refuses it, so every recipient counts as accepted
 		return {
 			messageId: response.MessageID,
 			accepted: toMailAddressList(message.to).map(bareMailAddress),

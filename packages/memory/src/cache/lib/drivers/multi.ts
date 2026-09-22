@@ -11,6 +11,9 @@ import { CacheDriverRedis, type CacheDriverRedisConfig } from './redis.js';
 export type CacheDriverMultiConfig = {
 	/**
 	 * Configuration of the L1 (in-memory) cache.
+	 *
+	 * Its `ttl` defaults to the L2 `ttl` and may not exceed it: a key L2 already let expire must not go on being
+	 * served from the memory of the process that wrote it.
 	 */
 	local: CacheDriverLocalConfig;
 
@@ -47,9 +50,12 @@ export type CacheMultiMessageClear = {
  * Two-level cache: local memory (L1) in front of Redis (L2), kept coherent across processes over the bus.
  *
  * Reads try L1 first and fall back to L2. Writes go to both levels and then publish an invalidation, so every other
- * process drops its stale L1 copy and re-reads from Redis on its next access. Locks always go through Redis, since a
- * local lock would not protect against other processes. The bus subscribes on a connection of its own, which
- * `close()` quits; the L2 connection belongs to the caller.
+ * process drops its stale L1 copy and re-reads from Redis on its next access; an invalidation that lands while this
+ * process's own write is still in flight keeps that write out of L1, so a concurrent writer elsewhere cannot leave a
+ * stale copy behind that nothing invalidates any more. L1 expires no later than L2, so a key Redis let go is not
+ * served from memory either. Locks always go through Redis, since a local lock would not protect against other
+ * processes. The bus subscribes on a connection of its own, which `close()` quits; the L2 connection belongs to the
+ * caller.
  *
  * @example
  * ```ts
@@ -114,17 +120,44 @@ export class CacheDriverMulti implements CacheDriver {
 	private closed = false;
 
 	/**
+	 * Per key with a write to L2 under way, how many such writes there are and whether another process invalidated
+	 * the key meanwhile.
+	 *
+	 * The invalidation of a concurrent writer elsewhere travels on the subscriber connection and may be handled before
+	 * the reply to this process's own L2 write arrives on the command connection. Dropping the key from L1 at that
+	 * moment removes nothing — the write has not reached L1 yet — and the write would then land in L1 as a copy L2
+	 * no longer holds, with no further invalidation coming. An entry here marks such a write as invalidated, so it
+	 * skips L1; the last write on a key to settle removes the entry, so the map never grows with keys nobody writes.
+	 *
+	 * @internal
+	 */
+	private readonly writing: Map<string, { count: number; invalidated: boolean }> = new Map();
+
+	/**
 	 * Create both cache levels and subscribe to invalidations from other processes.
 	 *
 	 * @param config - Options of both levels.
+	 * @throws RangeError when `local.ttl` exceeds `redis.ttl`, when `redis.lockTimeout` is under 200 ms or above what
+	 * a timer can hold, or when the client sits on a database above 15, where Redlock cannot lock.
 	 */
 	constructor(config: CacheDriverMultiConfig) {
-		// 1. Build the two levels and a bus over the same Redis connection and namespace as L2
-		this.local = new CacheDriverLocal(config.local);
+		// 1. L1 expires no later than L2: without a ttl of its own it takes the L2 one, and a longer one is refused,
+		//    since L2 expiry never reaches L1 — only writes publish invalidations — and the writing process would keep
+		//    serving from memory a key every other process already lost
+		const ttl = config.local.ttl ?? config.redis.ttl;
+
+		if (config.redis.ttl !== undefined && ttl !== undefined && ttl > config.redis.ttl) {
+			throw new RangeError(
+				`CacheDriverMulti: "local.ttl" (${ttl} ms) must not exceed "redis.ttl" (${config.redis.ttl} ms)`,
+			);
+		}
+
+		// 2. Build the two levels and a bus over the same Redis connection and namespace as L2
+		this.local = new CacheDriverLocal(ttl === undefined ? config.local : { ...config.local, ttl });
 		this.redis = new CacheDriverRedis(config.redis);
 		this.bus = new BusDriverRedis({ redis: config.redis.redis, namespace: config.redis.namespace });
 
-		// 2. Subscribe right away, so invalidations are received before the first write; the no-op `catch` only marks a
+		// 3. Subscribe right away, so invalidations are received before the first write; the no-op `catch` only marks a
 		//    failure as observed here, so it is reported where a write awaits it and not as an unhandled rejection
 		//    nobody can act on
 		this.subscribe().catch(() => {});
@@ -195,13 +228,36 @@ export class CacheDriverMulti implements CacheDriver {
 		// 1. Subscribed first: a key written into L1 by a process that receives no invalidations would go stale unseen
 		await this.subscribe();
 
-		// 2. L2 first, L1 only once L2 took the value: written the other way round, a Redis that refuses the write
-		//    (read-only replica, out of memory, timeout) would leave this process serving a value from L1 that L2 and
-		//    every other process lack, with no invalidation ever published for it
-		await this.redis.set(key, value);
-		await this.local.set(key, value);
+		// 2. Counted as under way before L2 takes the value, so an invalidation from another process that is handled
+		//    while the reply is still in flight is not lost on an L1 that does not hold the key yet
+		const writing = this.writing.get(key) ?? { count: 0, invalidated: false };
+		writing.count += 1;
+		this.writing.set(key, writing);
 
-		// 3. Tell other processes their L1 copy of this key is stale
+		// 3. L2 first, L1 only once L2 took the value: written the other way round, a Redis that refuses the write
+		//    (read-only replica, out of memory, timeout) would leave this process serving a value from L1 that L2 and
+		//    every other process lack, with no invalidation ever published for it. Settled either way, so a refused
+		//    write does not leave the key counted as under way for good
+		let invalidated: boolean;
+
+		try {
+			await this.redis.set(key, value);
+		} finally {
+			invalidated = writing.invalidated;
+			writing.count -= 1;
+
+			if (writing.count === 0) {
+				this.writing.delete(key);
+			}
+		}
+
+		// 4. Into L1 only when no other process wrote the key meanwhile: their invalidation already dropped whatever L1
+		//    held, and this value may be older than what L2 holds now, so the next read fetches it from L2 instead
+		if (!invalidated) {
+			await this.local.set(key, value);
+		}
+
+		// 5. Tell other processes their L1 copy of this key is stale
 		await this.clearOthers(key);
 	}
 
@@ -274,6 +330,7 @@ export class CacheDriverMulti implements CacheDriver {
 	 *
 	 * @param key - Key to lock.
 	 * @returns Handle to release or extend the lock.
+	 * @throws Error when the lock is still held once the L2 retry budget — about its `lockTimeout` — is spent.
 	 */
 	async acquireLock(key: string): Promise<Lock> {
 		// 1. Only the Redis lock is visible to other processes
@@ -287,6 +344,8 @@ export class CacheDriverMulti implements CacheDriver {
 	 * @param key - Key to lock.
 	 * @param callback - Work to run under the lock.
 	 * @returns Whatever the callback resolves to.
+	 * @throws Error when the lock is still held once the L2 retry budget — about its `lockTimeout` — is spent;
+	 * whatever the callback throws.
 	 */
 	async usingLock<T>(key: string, callback: () => Promise<T>): Promise<T> {
 		// 1. Only the Redis lock is visible to other processes
@@ -323,7 +382,21 @@ export class CacheDriverMulti implements CacheDriver {
 		//    dropping the key again would only throw away fresh data
 		if (payload.origin === this.processId) return;
 
-		// 2. Drop the one key, or everything when the message carries no key
+		// 2. A write of this process still waiting for its L2 reply may be older than the one this message announces,
+		//    so it is kept out of L1 once it lands; a message without a key concerns every such write
+		if (payload.key !== undefined) {
+			const writing = this.writing.get(payload.key);
+
+			if (writing) {
+				writing.invalidated = true;
+			}
+		} else {
+			for (const writing of this.writing.values()) {
+				writing.invalidated = true;
+			}
+		}
+
+		// 3. Drop the one key, or everything when the message carries no key
 		if (payload.key !== undefined) {
 			await this.local.delete(payload.key);
 		} else {

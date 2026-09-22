@@ -51,25 +51,30 @@ export const scheduleSynchronizedJob = (
 	callback: (fireDate: Date) => void | Promise<void>,
 	options: ScheduleSynchronizedJobOptions,
 ): ScheduledJob => {
+	// 1. The clock is keyed by id and rule, so every instance of the cluster running this schedule shares it and
+	//    two schedules of one job on different rules do not
 	const clock = new SynchronizedClock(`${id}:${rule}`, options.kv);
 
+	// 2. The croner job: unreferenced, so a schedule never keeps a process alive that is otherwise done; unprotected,
+	//    since overlapping runs are the callback's business (the queue dedupes) and croner would silently skip them;
+	//    a throwing callback is reported through `catch` rather than stopping the schedule
 	const job = new Cron(
 		rule,
 		{
 			mode: '5-or-6-parts',
 			...(options.timezone ? { timezone: options.timezone } : {}),
-			// 1. A schedule must not keep a process alive that is otherwise done
 			unref: true,
-			// 2. Overlapping runs are the callback's business (the queue dedupes); croner would silently skip them
 			protect: false,
 			catch: (error) => options.onError?.(error),
 		},
 		async (self: Cron) => {
-			// 3. The next fire time is the ticket: the instance that writes it first runs this tick
+			// 1. The next fire time is the ticket: the instance that writes it first runs this tick
 			const next = self.nextRun();
 
 			if (!next) return;
 
+			// 2. `setMax` on the shared store decides; a reading not greater than the stored one means another instance
+			//    already claimed this tick
 			const wasSet = await clock.set(next.getTime());
 
 			if (wasSet) {
@@ -78,6 +83,7 @@ export const scheduleSynchronizedJob = (
 		},
 	);
 
+	// 3. The handle: stopping ends the timer and forgets the clock, so the next instance to start begins afresh
 	return {
 		stop: async () => {
 			job.stop();

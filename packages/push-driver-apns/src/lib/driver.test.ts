@@ -1,150 +1,69 @@
 /**
- * Tests of the APNs driver with the client injected; the SDK's own classes (notifications, errors) are real.
+ * Tests of the APNs driver class with the client injected; the SDK's own classes (notifications, errors) are real.
+ * The key check, the error mapping and the message mapping are tested in `assert-signing-key.test.ts`,
+ * `describe-error.test.ts` and `to-apns-notification.test.ts`.
  */
 import { generateKeyPairSync } from 'node:crypto';
 import { PushTargetGoneError } from '@novastarter/push';
-import { ApnsClient, ApnsError, Host, Notification, Priority } from 'apns2';
+import { TimeoutError } from '@novastarter/utils';
+import { ApnsClient, ApnsError, Host, Notification } from 'apns2';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import defaultExport from '../index.js';
-import { assertSigningKey } from './assert-signing-key.js';
-import { APNS_COLLAPSE_ID_MAX_LENGTH } from './constants.js';
-import { describeError } from './describe-error.js';
 import { PushDriverApns } from './driver.js';
-import { toApnsNotification, toApnsPriority } from './to-apns-notification.js';
 
 /**
  * A fresh P-256 key in PEM, the shape of an APNs auth key.
+ *
+ * @returns The PEM.
  */
 const p256Pem = (): string =>
 	generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ type: 'pkcs8', format: 'pem' }) as string;
 
 /**
  * An RSA key in PEM — a private key APNs would refuse.
+ *
+ * @returns The PEM.
  */
 const rsaPem = (): string =>
 	generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' }) as string;
 
+/**
+ * A valid APNs auth key for the happy path, generated once: key generation is the slow part of these tests.
+ */
 const signingKey = p256Pem();
+
+/**
+ * The injected client's `send` spy; each test programs its answer.
+ */
 const send = vi.fn();
+
+/**
+ * The injected client's `close` spy.
+ */
 const close = vi.fn();
+
+/**
+ * The test double standing in for the SDK's client.
+ */
 const client = { send, close };
+
+/**
+ * A complete configuration with the double injected; a test overrides the option it is about.
+ */
 const credentials = { teamId: 'TEAM1', keyId: 'KEY1', signingKey, topic: 'com.example.app', client };
 
 /**
  * An `ApnsError` the way the client raises it for a refusal.
+ *
+ * @param statusCode - The HTTP status APNs answered with.
+ * @param reason - Apple's reason string.
+ * @returns The error.
  */
 const refusal = (statusCode: number, reason: string): ApnsError =>
 	new ApnsError({ statusCode, notification: new Notification('tok'), response: { reason, timestamp: Date.now() } });
 
 afterEach(() => {
 	vi.clearAllMocks();
-});
-
-describe('toApnsPriority', () => {
-	test('Maps the urgency onto 10 / 5 / 1', () => {
-		// 1. Four urgencies on our side, three priorities on Apple's: both low ones share the lowest
-		expect(toApnsPriority('high')).toBe(Priority.immediate);
-		expect(toApnsPriority('normal')).toBe(Priority.throttled);
-		expect(toApnsPriority(undefined)).toBe(Priority.throttled);
-		expect(toApnsPriority('low')).toBe(Priority.low);
-		expect(toApnsPriority('very-low')).toBe(Priority.low);
-	});
-});
-
-describe('toApnsNotification', () => {
-	test('Builds the alert with the data at the top level, the collapse id and the expiration', () => {
-		const now = new Date('2026-09-12T00:00:00Z');
-
-		// 1. Every field set: the message's ttl wins over the location's, the tag is cut to the collapse id limit
-		const notification = toApnsNotification(
-			{
-				token: 'tok',
-				title: 'Hi',
-				body: 'There',
-				url: '/dashboard',
-				image: 'https://cdn/img.png',
-				tag: 'x'.repeat(100),
-				data: { kind: 'invoice' },
-				ttl: 60,
-				urgency: 'high',
-			},
-			{ topic: 'com.example.app', ttl: 3600 },
-			now,
-		);
-
-		// 2. The token, the type and the priority are the client's own fields; the rest are its options
-		expect(notification.deviceToken).toBe('tok');
-		expect(notification.pushType).toBe('alert');
-		expect(notification.priority).toBe(Priority.immediate);
-
-		expect(notification.options).toMatchObject({
-			topic: 'com.example.app',
-			alert: { title: 'Hi', body: 'There' },
-			expiration: Math.floor(now.getTime() / 1000) + 60,
-			collapseId: 'x'.repeat(APNS_COLLAPSE_ID_MAX_LENGTH),
-			sound: 'default',
-			mutableContent: true,
-			data: { kind: 'invoice', url: '/dashboard', image: 'https://cdn/img.png' },
-		});
-
-		// 3. The payload APNs receives: the alert under `aps`, the custom pairs at the top level for the app
-		expect(notification.buildApnsOptions()).toStrictEqual({
-			aps: { alert: { title: 'Hi', body: 'There' }, sound: 'default', 'mutable-content': 1 },
-			kind: 'invoice',
-			url: '/dashboard',
-			image: 'https://cdn/img.png',
-		});
-	});
-
-	test('Takes the location ttl and sound, an empty body for a title alone, and no data block when empty', () => {
-		const now = new Date('2026-09-12T00:00:00Z');
-		const notification = toApnsNotification({ token: 'tok', title: 'Hi' }, { topic: 't', ttl: 0, sound: '' }, now);
-
-		// 1. The bare minimum: a ttl of 0 is "now or never", an empty sound is silence, no data key at all
-		expect(notification.options).toStrictEqual({
-			type: 'alert',
-			topic: 't',
-			alert: { title: 'Hi', body: '' },
-			priority: Priority.throttled,
-			expiration: 0,
-		});
-	});
-});
-
-describe('describeError', () => {
-	test('A dead token is a PushTargetGoneError, another refusal names the status and reason', () => {
-		// 1. The three reasons that mean the token is dead, whatever the status
-		const gone = describeError(refusal(410, 'Unregistered'));
-
-		expect(gone).toBeInstanceOf(PushTargetGoneError);
-
-		expect((gone as InstanceType<typeof PushTargetGoneError>).extensions).toStrictEqual({
-			platform: 'apns',
-			reason: 'Unregistered',
-		});
-
-		expect(describeError(refusal(400, 'BadDeviceToken'))).toBeInstanceOf(PushTargetGoneError);
-		expect(describeError(refusal(400, 'DeviceTokenNotForTopic'))).toBeInstanceOf(PushTargetGoneError);
-
-		// 2. Any other refusal names the status and the reason, the client's error as the cause
-		const other = describeError(refusal(403, 'InvalidProviderToken'));
-
-		expect(other).not.toBeInstanceOf(PushTargetGoneError);
-		expect(other.message).toBe('APNs 403 InvalidProviderToken');
-		expect(other.cause).toBeInstanceOf(ApnsError);
-
-		// 3. A network failure is prefixed and passed on
-		expect(describeError(new Error('socket hang up')).message).toBe('APNs: socket hang up');
-	});
-});
-
-describe('assertSigningKey', () => {
-	test('Accepts a P-256 key and refuses anything else', () => {
-		// 1. Only the curve ES256 signs with passes; an RSA key and a non-key are refused by name
-		expect(() => assertSigningKey(signingKey)).not.toThrow();
-		expect(() => assertSigningKey(rsaPem())).toThrow('P-256');
-		expect(() => assertSigningKey('not a key')).toThrow('not a PEM private key');
-	});
 });
 
 describe('PushDriverApns', () => {
@@ -178,16 +97,17 @@ describe('PushDriverApns', () => {
 
 		// 1. APNs hands out no id the client exposes, so the result is the status alone
 		const driver = new PushDriverApns(credentials);
-		const result = await driver.send({ token: 'tok', title: 'Hi', body: 'There', platform: 'apns' });
+		const result = await driver.send({ token: 'tok', title: 'Hi', body: 'There', tag: 'счёт-42', platform: 'apns' });
 
 		expect(result).toStrictEqual({ status: 'accepted' });
 		expect(send).toHaveBeenCalledTimes(1);
 
-		// 2. The notification carries the token and the location's topic
+		// 2. The notification carries the token, the location's topic and the tag in the form the header takes
 		const notification = send.mock.calls[0]?.[0] as Notification;
 
 		expect(notification.deviceToken).toBe('tok');
 		expect(notification.options.topic).toBe('com.example.app');
+		expect(notification.options.collapseId).toBe('____-42');
 	});
 
 	test('Refuses a subscription, passes a gone token on, names another refusal', async () => {
@@ -204,6 +124,42 @@ describe('PushDriverApns', () => {
 
 		send.mockRejectedValueOnce(refusal(429, 'TooManyRequests'));
 		await expect(driver.send({ token: 'tok', title: 'Hi' })).rejects.toThrow('APNs 429 TooManyRequests');
+	});
+
+	test('Fails a send that outlives requestTimeout, and waits without one', async () => {
+		// 1. The SDK never reads the timeout it is given, so the driver has to race it: a request APNs never answers
+		//    fails after the deadline, the timeout as the cause
+		send.mockReturnValueOnce(new Promise(() => {}));
+
+		const bounded = new PushDriverApns({ ...credentials, requestTimeout: 20 });
+		const failure: unknown = await bounded.send({ token: 'tok', title: 'Hi' }).catch((error: unknown) => error);
+
+		expect(failure).toBeInstanceOf(Error);
+		expect((failure as Error).message).toBe('APNs: Timed out after 20 ms');
+		expect((failure as Error).cause).toBeInstanceOf(TimeoutError);
+
+		// 2. An answer in time goes through unchanged, so the race costs a bounded send nothing
+		send.mockResolvedValueOnce(new Notification('tok'));
+		await expect(bounded.send({ token: 'tok', title: 'Hi' })).resolves.toStrictEqual({ status: 'accepted' });
+
+		// 3. Without a deadline the driver waits for the client, however long it takes
+		let settled = false;
+
+		send.mockReturnValueOnce(new Promise(() => {}));
+
+		const unbounded = new PushDriverApns(credentials);
+
+		void unbounded.send({ token: 'tok', title: 'Hi' }).then(
+			() => {
+				settled = true;
+			},
+			() => {
+				settled = true;
+			},
+		);
+
+		await new Promise((resolve) => setTimeout(resolve, 40));
+		expect(settled).toBe(false);
 	});
 
 	test('Verifies the key and closes the client', async () => {

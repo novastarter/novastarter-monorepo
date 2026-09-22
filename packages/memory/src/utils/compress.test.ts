@@ -4,6 +4,10 @@
 import { expect, test } from 'vitest';
 import { compress, decompress } from './compress.js';
 
+/**
+ * Serialized forms of every value kind the store writes — the UTF-8 bytes of their JSON — so the round trip is
+ * checked on the bytes gzip really sees, not on a value.
+ */
 const cases: [string, Uint8Array][] = [
 	['object', new Uint8Array([123, 34, 104, 101, 108, 108, 111, 34, 58, 34, 119, 111, 114, 108, 100, 34, 125])],
 	['string', new Uint8Array([34, 72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 34])],
@@ -19,10 +23,12 @@ const cases: [string, Uint8Array][] = [
 ];
 
 test.each(cases)('%s', async (_description, input) => {
+	// 1. Compressing answers with the package's array type, not with the buffer zlib produced
 	const compressed = await compress(input);
 
 	expect(compressed).toBeInstanceOf(Uint8Array);
 
+	// 2. Decompressing gives the original bytes back, so what was stored reads the same
 	const decompressed = await decompress(compressed);
 
 	expect(decompressed).toEqual(input);

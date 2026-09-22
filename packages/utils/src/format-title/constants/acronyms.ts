@@ -32,7 +32,6 @@ export default [
 	'EIN',
 	'ESPN',
 	'FAQ',
-	'FAQs',
 	'FBI',
 	'FORTRAN',
 	'FPS',

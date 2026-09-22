@@ -30,6 +30,7 @@ const closed = vi.fn();
  * A driver that holds connections, the way the FCM and APNs ones do.
  */
 class ClosableDriver implements PushDriver {
+	/** FCM only, so a webpush location cannot be routed to it. */
 	readonly platforms: readonly PushPlatform[] = ['fcm'];
 
 	/**
@@ -38,6 +39,7 @@ class ClosableDriver implements PushDriver {
 	 * @returns A fixed status.
 	 */
 	async send(): Promise<PushResult> {
+		// 1. Nothing is recorded: the tests here are about the registry, not about what was sent
 		return { status: 'accepted' };
 	}
 
@@ -45,6 +47,7 @@ class ClosableDriver implements PushDriver {
 	 * Record the shutdown.
 	 */
 	async close(): Promise<void> {
+		// 1. Counted through a module-level spy, since the manager drops the instance right after closing it
 		closed();
 	}
 }

@@ -22,7 +22,10 @@ export type PushDriverFcmConfig = {
 	clientEmail?: string | undefined;
 	/** The service account's PEM private key; `\n` escapes, as an env file carries them, are unescaped. */
 	privateKey?: string | undefined;
-	/** How long FCM keeps a message for an offline device, in seconds; FCM's four weeks unless given. */
+	/**
+	 * How long FCM keeps a message for an offline device, in seconds; `0` is "now or never". FCM's four weeks unless
+	 * given.
+	 */
 	ttl?: number | undefined;
 	/** Label the messages carry into the Firebase analytics, for the console's delivery reports. */
 	analyticsLabel?: string | undefined;

@@ -48,6 +48,7 @@ export const registerLogger = (logger: Logger<never>): void => {
  * @param pretty - `true` publishes level, time and message; `false` publishes the raw line.
  * @param messenger - Bus the lines are published on.
  * @returns The same stream on every call; `getLogsStream.reset()` drops it, for tests.
+ * @throws Error when the first call passes no bus, or a later call passes arguments.
  */
 export const getLogsStream: Singleton<LogsStream, [pretty: boolean, messenger: LogsBus]> = singleton(
 	(pretty?: boolean, messenger?: LogsBus) =>
@@ -62,6 +63,7 @@ export const getLogsStream: Singleton<LogsStream, [pretty: boolean, messenger: L
  * @param pretty - `true` folds the request into one message; `false` publishes the raw line.
  * @param messenger - Bus the lines are published on.
  * @returns The same stream on every call; `getHttpLogsStream.reset()` drops it, for tests.
+ * @throws Error when the first call passes no bus, or a later call passes arguments.
  */
 export const getHttpLogsStream: Singleton<LogsStream, [pretty: boolean, messenger: LogsBus]> = singleton(
 	(pretty?: boolean, messenger?: LogsBus) =>

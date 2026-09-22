@@ -8,7 +8,8 @@ import { load } from 'js-yaml';
  *
  * @param workspaceRoot - Directory holding `pnpm-workspace.yaml`.
  * @returns Every matched directory that holds a `package.json`, sorted by path.
- * @throws When a workspace pattern uses glob syntax this module does not support.
+ * @throws When `pnpm-workspace.yaml` cannot be read, when a workspace pattern uses glob syntax this module does not
+ * support, or when a matched manifest cannot be read or parsed.
  */
 export async function findWorkspacePackages(workspaceRoot: string): Promise<Project[]> {
 	// 1. Split the declared patterns into includes and excludes
@@ -45,6 +46,7 @@ export async function findWorkspacePackages(workspaceRoot: string): Promise<Proj
  *
  * @param workspaceRoot - Directory holding `pnpm-workspace.yaml`.
  * @returns Include patterns as written and exclude patterns with their leading `!` removed.
+ * @throws When `pnpm-workspace.yaml` cannot be read, including when it is missing.
  */
 export async function readWorkspacePatterns(workspaceRoot: string): Promise<{ include: string[]; exclude: string[] }> {
 	// 1. A missing `packages` key means no workspace packages at all, not an error
@@ -77,7 +79,8 @@ export async function readWorkspacePatterns(workspaceRoot: string): Promise<{ in
  * @param workspaceRoot - Directory the pattern is relative to.
  * @param pattern - Workspace pattern, e.g. `packages/*`.
  * @returns Matched directories relative to the workspace root, without a trailing slash.
- * @throws When a segment mixes `*` with literal text.
+ * @throws When a segment mixes `*` with literal text, or when listing a matched directory fails for a reason other
+ * than it being missing.
  */
 export async function expandPattern(workspaceRoot: string, pattern: string): Promise<string[]> {
 	// 1. Drop empty and `.` segments, so `./packages/*` and `packages/*` behave the same
@@ -110,6 +113,7 @@ export async function expandPattern(workspaceRoot: string, pattern: string): Pro
  * @param workspaceRoot - Directory the paths are relative to.
  * @param directory - Directory to list, relative to the workspace root; empty for the root itself.
  * @returns Subdirectories relative to the workspace root, or an empty list when the directory does not exist.
+ * @throws Any `readdir` error other than `ENOENT`, such as `ENOTDIR` when the path is a file.
  */
 export async function readSubdirectories(workspaceRoot: string, directory: string): Promise<string[]> {
 	let entries;
@@ -143,6 +147,7 @@ export async function readSubdirectories(workspaceRoot: string, directory: strin
  * @param workspaceRoot - Directory the paths are relative to.
  * @param directory - Directory to start from, relative to the workspace root.
  * @returns The directory itself followed by every nested directory.
+ * @throws Any `readdir` error other than `ENOENT` raised while walking the tree.
  */
 export async function collectDescendants(workspaceRoot: string, directory: string): Promise<string[]> {
 	// 1. The directory itself matches `**` too, which is why it leads the result
@@ -157,6 +162,7 @@ export async function collectDescendants(workspaceRoot: string, directory: strin
  *
  * @param manifestPath - Absolute path of the `package.json`.
  * @returns The project, or `null` when the file does not exist.
+ * @throws Any read error other than `ENOENT`, or a `SyntaxError` when the manifest is not valid JSON.
  */
 export async function readProject(manifestPath: string): Promise<Project | null> {
 	let raw: string;

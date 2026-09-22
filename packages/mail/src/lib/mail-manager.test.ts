@@ -1,5 +1,5 @@
 /**
- * Tests of `mail/lib/mail-manager` and `use-mail`.
+ * Tests of `mail/lib/mail-manager` on managers built by hand; the process-wide one is `use-mail.test.ts`'s.
  *
  * `@novastarter/logger` is mocked, since the console driver resolves the application logger when it is built.
  */
@@ -7,7 +7,6 @@ import { useLogger } from '@novastarter/logger';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { MailDriverConsole } from './drivers/console.js';
 import { MailManager } from './mail-manager.js';
-import { useMail } from './use-mail.js';
 
 vi.mock('@novastarter/logger');
 
@@ -23,7 +22,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	useMail.reset();
 	vi.clearAllMocks();
 });
 
@@ -75,36 +73,5 @@ describe('MailManager', () => {
 		manager.registerRoutes({ from: 'b@acme.test' });
 
 		expect(manager.routes()).toStrictEqual({ from: 'b@acme.test' });
-	});
-});
-
-describe('useMail', () => {
-	test('Keeps one manager per process and shares its registrations', () => {
-		// 1. Two calls, one instance
-		const first = useMail();
-		const second = useMail();
-
-		expect(first).toBe(second);
-		expect(first).toBeInstanceOf(MailManager);
-
-		// 2. A location registered through one handle is visible through the other
-		first.registerLocation('default', {
-			driver: 'console',
-			options: {},
-		});
-
-		expect(second.hasLocation('default')).toBe(true);
-	});
-
-	test('Starts over once the cache is reset', () => {
-		// 1. Tests reset the cache in place; the next call builds a fresh manager without the old locations
-		useMail().registerLocation('default', {
-			driver: 'console',
-			options: {},
-		});
-
-		useMail.reset();
-
-		expect(useMail().hasLocation('default')).toBe(false);
 	});
 });

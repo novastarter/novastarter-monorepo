@@ -142,6 +142,8 @@ export interface LsVariantAttributes {
 
 /**
  * A webhook delivery: the event name and the checkout's custom data under `meta`, the resource under `data`.
+ *
+ * @typeParam A - The attributes of the resource under `data`; `unknown` until the event name narrows it.
  */
 export interface LsWebhookPayload<A = unknown> {
 	meta: {

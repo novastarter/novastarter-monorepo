@@ -15,10 +15,18 @@ import { useQueue } from './use-queue.js';
  * Fake of BullMQ's `Queue`: the `bullmq` location the worker falls back to opens one.
  */
 class FakeQueue extends EventEmitter {
+	/** Every queue opened so far, in opening order. */
 	static instances: FakeQueue[] = [];
 
+	/** `Queue.close()`: records the call. */
 	close = vi.fn(async () => {});
 
+	/**
+	 * Open a queue, remembering the name and the options BullMQ was given.
+	 *
+	 * @param name - Queue name.
+	 * @param opts - BullMQ's `QueueOptions`.
+	 */
 	constructor(
 		public name: string,
 		public opts: unknown,
@@ -32,10 +40,19 @@ class FakeQueue extends EventEmitter {
  * Fake of BullMQ's `Worker`: keeps the processor so a test can run it.
  */
 class FakeWorker extends EventEmitter {
+	/** Every worker started so far, in starting order. */
 	static instances: FakeWorker[] = [];
 
+	/** `Worker.close()`: records the call and the `force` flag. */
 	close = vi.fn(async () => {});
 
+	/**
+	 * Start a worker, remembering the queue, the processor and the options BullMQ was given.
+	 *
+	 * @param name - Queue name.
+	 * @param processor - What BullMQ would call per job; a test calls it with a job of its own.
+	 * @param opts - BullMQ's `WorkerOptions`.
+	 */
 	constructor(
 		public name: string,
 		public processor: (job: unknown) => Promise<void>,
@@ -200,6 +217,18 @@ describe('createWorker', () => {
 
 		await vi.advanceTimersByTimeAsync(5_000);
 		expect(await fallbackSettled).toMatchObject({ message: 'Job "test.echo" timed out after 5000 ms' });
+	});
+
+	test('Refuses a fallback timeout a timer cannot hold, once, instead of failing every run', async () => {
+		await expect(createWorker('test', vi.fn(), { connection: {}, timeout: -1, logger: logger as any })).rejects.toThrow(
+			RangeError,
+		);
+
+		await expect(
+			createWorker('test', vi.fn(), { connection: {}, timeout: Number.NaN, logger: logger as any }),
+		).rejects.toThrow('The "timeout" of the worker of queue "test" is NaN');
+
+		expect(FakeWorker.instances).toHaveLength(0);
 	});
 
 	test('Refuses a job whose contract the worker does not know', async () => {

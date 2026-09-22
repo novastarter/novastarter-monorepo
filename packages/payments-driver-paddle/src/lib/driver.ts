@@ -161,6 +161,7 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	 *
 	 * @param input - Email, name, metadata.
 	 * @returns The customer.
+	 * @throws Paddle's `ApiError` when the request is refused, or the fetch error when Paddle cannot be reached.
 	 */
 	async createCustomer(input: CreateCustomerInput): Promise<PaymentsCustomer> {
 		// 1. Optional fields are only sent when given; the metadata becomes Paddle's custom data
@@ -181,6 +182,8 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	 *
 	 * @param input - Customer, price, seats, metadata (the redirects and the trial are Paddle's, see the class).
 	 * @returns The transaction and its payment link.
+	 * @throws Paddle's `ApiError` when the request is refused — an unknown price or customer — or the fetch error
+	 * when Paddle cannot be reached.
 	 * @throws Error when Paddle hands back no payment link — the account has no default payment link and the
 	 * location names no checkout page.
 	 */
@@ -209,6 +212,7 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	 *
 	 * @param input - Customer (the return URL is the portal's own "back" link, configured in Paddle).
 	 * @returns The portal page.
+	 * @throws Paddle's `ApiError` when there is no such customer, or the fetch error when Paddle cannot be reached.
 	 */
 	async createPortalSession(input: CreatePortalSessionInput): Promise<PortalSession> {
 		// 1. No subscription ids: the overview link covers every subscription of the customer
@@ -222,6 +226,8 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	 *
 	 * @param subscriptionId - Paddle's id.
 	 * @returns The subscription, normalised.
+	 * @throws Paddle's `ApiError` when there is no such subscription, or the fetch error when Paddle cannot be
+	 * reached.
 	 */
 	async getSubscription(subscriptionId: string): Promise<Subscription> {
 		// 1. The entity carries the items with their prices, which is all the mapping reads
@@ -237,6 +243,8 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	 * @param input - Subscription, new price and/or seats, proration.
 	 * @returns The subscription after the change.
 	 * @throws Error when neither a price nor a seat count is given.
+	 * @throws Paddle's `ApiError` when the request is refused — no such subscription, an unknown price, a quantity
+	 * outside the price's limits — or the fetch error when Paddle cannot be reached.
 	 */
 	async updateSubscription(input: UpdateSubscriptionInput): Promise<Subscription> {
 		// 1. An update with nothing to change is a caller's mistake, not a request to send
@@ -265,6 +273,8 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	 *
 	 * @param input - Subscription, when.
 	 * @returns The subscription after the request.
+	 * @throws Paddle's `ApiError` when there is no such subscription or it is already canceled, or the fetch error
+	 * when Paddle cannot be reached.
 	 */
 	async cancelSubscription(input: CancelSubscriptionInput): Promise<Subscription> {
 		// 1. One call either way: the effective date is what tells a scheduled cancellation from an immediate one
@@ -281,6 +291,7 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	 *
 	 * @param input - Customer and how many.
 	 * @returns The invoices, normalised.
+	 * @throws Paddle's `ApiError` when the request is refused, or the fetch error when Paddle cannot be reached.
 	 */
 	async listInvoices(input: ListInvoicesInput): Promise<Invoice[]> {
 		const limit = input.limit ?? 20;

@@ -1,7 +1,8 @@
-import { createReadStream, createWriteStream, type ReadStream } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { createReadStream, createWriteStream, type Dir } from 'node:fs';
 import { access, copyFile, mkdir, open, opendir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
-import stream, { type Readable } from 'node:stream';
+import stream, { PassThrough, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { useLogger } from '@novastarter/logger';
 import {
@@ -106,11 +107,15 @@ export class StorageDriverLocal implements TusDriver {
 	/**
 	 * Stream a file's contents.
 	 *
+	 * The file is opened lazily, so a missing file is not reported by this call but on the stream: it is destroyed with
+	 * the {@link StorageFileNotFoundError} the other drivers throw up front, carrying the `node:fs` error as `cause`.
+	 * Any other failure reaches the stream as `node:fs` reported it.
+	 *
 	 * @param filepath - File path relative to the root.
 	 * @param options - Optional byte range; `version` is not supported by this driver and is ignored.
-	 * @returns A read stream over the file, or over the requested range of it.
+	 * @returns A stream over the file, or over the requested range of it.
 	 */
-	async read(filepath: string, options?: ReadOptions): Promise<ReadStream> {
+	async read(filepath: string, options?: ReadOptions): Promise<Readable> {
 		const { range } = options || {};
 
 		const streamOptions: Parameters<typeof createReadStream>[1] = {};
@@ -126,7 +131,28 @@ export class StorageDriverLocal implements TusDriver {
 			streamOptions.end = range.end;
 		}
 
-		return createReadStream(this.fullPath(filepath), streamOptions);
+		// 2. The file stream reports a missing file as an error event once it tries to open the file; that event is
+		//    translated into the error every backend shares on the stream handed out, so a consumer tells a missing file
+		//    from a failed read the same way it does with the other drivers. The two are tied with `pipeline`, not
+		//    `pipe`: a consumer that destroys the stream it was handed — a client gone mid-download — then destroys the
+		//    file stream too and frees its descriptor, where `pipe` would only pause it and keep the file open
+		const source = createReadStream(this.fullPath(filepath), streamOptions);
+		const output = new PassThrough();
+
+		source.on('error', (error: NodeJS.ErrnoException) => {
+			// 1. Only the errors that prove the file cannot exist are translated: ENOENT is the plain case, ENOTDIR means
+			//    a parent of the path is a file. Registered before `pipeline` adds its own handler, so the translated
+			//    error is the one the consumer sees
+			const missing = error.code === 'ENOENT' || error.code === 'ENOTDIR';
+
+			output.destroy(missing ? new StorageFileNotFoundError({ filepath }, { cause: error }) : error);
+		});
+
+		stream.pipeline(source, output, () => {
+			// 1. The outcome already reached the consumer through `output`; nothing is left to report here
+		});
+
+		return output;
 	}
 
 	/**
@@ -224,8 +250,12 @@ export class StorageDriverLocal implements TusDriver {
 	/**
 	 * Write a stream to a file, replacing any existing content.
 	 *
+	 * The data goes to a temporary sibling first and is renamed over the target once the whole stream went through, so
+	 * a source that fails mid-way leaves the previous content in place instead of a truncated file under the final name.
+	 *
 	 * @param filepath - File path relative to the root.
 	 * @param content - Data to store.
+	 * @throws The error raised by the source or the write stream; the temporary file is removed before it is rethrown.
 	 */
 	async write(filepath: string, content: Readable): Promise<void> {
 		const fullPath = this.fullPath(filepath);
@@ -233,10 +263,29 @@ export class StorageDriverLocal implements TusDriver {
 		// 1. `createWriteStream` does not create parent directories, so the destination folder is made first
 		await this.ensureDir(dirname(fullPath));
 
-		// 2. `pipeline` handles backpressure and rejects on an error from either side, so a failed write surfaces to
+		// 2. A temporary sibling in the same directory keeps the final `rename` on one filesystem, which is what makes
+		//    it atomic; the random suffix keeps two concurrent writes of the same path from sharing one temporary file
+		const tempPath = `${fullPath}.${randomBytes(6).toString('hex')}.tmp`;
+
+		// 3. `pipeline` handles backpressure and rejects on an error from either side, so a failed write surfaces to
 		//    the caller instead of leaving a dangling stream
-		const writeStream = createWriteStream(fullPath);
-		await pipeline(content, writeStream);
+		try {
+			await pipeline(content, createWriteStream(tempPath));
+		} catch (error) {
+			// 4. The partial file is removed so nothing of the failed write stays on disk; a failure of the cleanup itself
+			//    is ignored, since the write error is the one the caller needs to see
+			try {
+				await unlink(tempPath);
+			} catch {
+				// 5. Nothing to do: the temporary file either is gone already or cannot be removed right now
+			}
+
+			throw error;
+		}
+
+		// 6. `rename` replaces the target in one step, so a concurrent reader sees either the old content or the new
+		//    one, never a mix, and the object-store rule "a failed write stores nothing" holds here too
+		await rename(tempPath, fullPath);
 	}
 
 	/**
@@ -258,7 +307,10 @@ export class StorageDriverLocal implements TusDriver {
 	 *
 	 * @param prefix - Path prefix relative to the root; the whole root when empty. A prefix may end mid-name, in which
 	 * case every entry whose path starts with it is returned.
-	 * @returns File paths relative to the root, produced lazily.
+	 * @returns File paths relative to the root, produced lazily; nothing when the directory the prefix points into does
+	 * not exist, the root included before the first write.
+	 * @throws The `node:fs` error when a directory cannot be read for a reason other than being absent, such as a
+	 * permission error.
 	 */
 	list(prefix = ''): AsyncGenerator<string> {
 		// 1. Resolve the prefix once and hand the recursion an absolute path, so every level compares against the same
@@ -279,21 +331,34 @@ export class StorageDriverLocal implements TusDriver {
 		//    the directory to scan is its parent; a trailing separator names the directory itself
 		const prefixDirectory = prefix.endsWith(sep) ? prefix : dirname(prefix);
 
-		const directory = await opendir(prefixDirectory);
+		let directory: Dir;
+
+		// 2. A directory that is not there — the root before the first write, a folder nobody wrote to — or a path
+		//    running through a file (ENOTDIR) holds no files, so the listing ends empty as it does on an object store
+		//    with no keys under the prefix. Anything else says nothing about the files and is rethrown
+		try {
+			directory = await opendir(prefixDirectory);
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException)?.code;
+
+			if (code === 'ENOENT' || code === 'ENOTDIR') return;
+
+			throw error;
+		}
 
 		for await (const file of directory) {
 			const fileName = join(prefixDirectory, file.name);
 
-			// 2. Case-insensitive comparison, so the result is the same on case-insensitive filesystems (macOS,
+			// 3. Case-insensitive comparison, so the result is the same on case-insensitive filesystems (macOS,
 			//    Windows) as on case-sensitive ones
 			if (fileName.toLowerCase().startsWith(prefix.toLowerCase()) === false) continue;
 
-			// 3. Only files are yielded, in the root-relative form callers pass in
+			// 4. Only files are yielded, in the root-relative form callers pass in
 			if (file.isFile()) {
 				yield relative(this.root, fileName);
 			}
 
-			// 4. Recurse with a trailing separator, so the nested call walks the whole directory rather than treating
+			// 5. Recurse with a trailing separator, so the nested call walks the whole directory rather than treating
 			//    its name as a partial prefix
 			if (file.isDirectory()) {
 				yield* this.listGenerator(join(fileName, sep));

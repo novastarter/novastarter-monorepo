@@ -11,7 +11,7 @@ export type MailDriverSmtpConfig = {
 	host: string;
 	/** 587 unless given (465 with `secure`). */
 	port?: number | undefined;
-	/** TLS from the first byte (port 465), as opposed to STARTTLS. */
+	/** TLS from the first byte, as opposed to STARTTLS; on unless given when the port is 465. */
 	secure?: boolean | undefined;
 	/** Do not upgrade to TLS even when the server offers it. */
 	ignoreTls?: boolean | undefined;
@@ -67,11 +67,12 @@ export class MailDriverSmtp implements MailDriver {
 		// 2. Credentials are optional: an authenticated relay needs both, an internal one none
 		const auth = config.user || config.password ? { user: config.user ?? '', pass: config.password ?? '' } : undefined;
 
-		// 3. Optional settings are only set when given, so nodemailer applies its own defaults for the rest
+		// 3. Optional settings are only set when given, so nodemailer applies its own defaults for the rest: `port` and
+		//    `secure` imply each other there (465 with `secure`, `secure` with 465), which a forced value would break
 		this.transporter = nodemailer.createTransport({
 			host: config.host,
-			port: config.port ?? 587,
-			secure: Boolean(config.secure),
+			...(config.port !== undefined ? { port: config.port } : {}),
+			...(config.secure !== undefined ? { secure: config.secure } : {}),
 			ignoreTLS: Boolean(config.ignoreTls),
 			...(auth ? { auth } : {}),
 			...(config.name ? { name: config.name } : {}),

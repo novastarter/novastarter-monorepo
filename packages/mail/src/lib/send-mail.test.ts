@@ -21,10 +21,18 @@ declare module './mail-manager.js' {
 	interface MailDrivers {
 		ok: Record<string, never>;
 		broken: Record<string, never>;
+		rude: Record<string, never>;
 	}
 }
 
+/**
+ * Logger double recording the warnings `sendMail()` writes.
+ */
 const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+/**
+ * Emitter double: the filter hands the message back unchanged unless a test says otherwise, the action only records.
+ */
 const emitter = { emitFilter: vi.fn(async (_event: string, payload: unknown) => payload), emitAction: vi.fn() };
 
 /**
@@ -60,7 +68,23 @@ class BrokenDriver implements MailDriver {
 	 * @throws Always.
 	 */
 	async send(): Promise<MailResult> {
+		// 1. An `Error` with a fixed message, so the tests can match it as the `cause` of the send failure
 		throw new Error('provider is down');
+	}
+}
+
+/**
+ * A driver whose SDK rejects with a string instead of an `Error`.
+ */
+class RudeDriver implements MailDriver {
+	/**
+	 * Refuse every message with a bare string.
+	 *
+	 * @throws Always, a string.
+	 */
+	async send(): Promise<MailResult> {
+		// 1. Not an `Error` on purpose: pino would take a string for the message and drop the location from the line
+		throw 'rate limited';
 	}
 }
 
@@ -69,12 +93,13 @@ class BrokenDriver implements MailDriver {
  *
  * @param locations - Location name to driver name.
  */
-const register = (locations: Record<string, 'ok' | 'broken'>): void => {
-	// 1. Both drivers are always known; the test decides which locations exist and in which order
+const register = (locations: Record<string, 'ok' | 'broken' | 'rude'>): void => {
+	// 1. Every fake driver is always known; the test decides which locations exist and in which order
 	const manager = useMail();
 
 	manager.registerDriver('ok', OkDriver);
 	manager.registerDriver('broken', BrokenDriver);
+	manager.registerDriver('rude', RudeDriver);
 
 	for (const [name, driver] of Object.entries(locations)) {
 		manager.registerLocation(name, {
@@ -84,6 +109,9 @@ const register = (locations: Record<string, 'ok' | 'broken'>): void => {
 	}
 };
 
+/**
+ * The message every test sends: no sender, so the routes have to fill it in.
+ */
 const message: MailMessage = { to: 'ada@example.com', subject: 'Hi', text: 'Hello' };
 
 beforeEach(() => {
@@ -166,6 +194,33 @@ describe('sendMail', () => {
 			MAIL_FAILED_EVENT,
 			expect.objectContaining({ locations: ['first'] }),
 		);
+	});
+
+	test('Logs a non-Error rejection as an Error, keeping the location in the line', async () => {
+		register({ first: 'rude', second: 'ok' });
+		useMail().registerRoutes({ from: 'no-reply@acme.test', transactional: ['first', 'second'] });
+
+		// 1. The string is wrapped, so pino keeps the kit's line and the location; the raw value stays as the cause
+		expect(await sendMail(message)).toMatchObject({ location: 'second' });
+
+		expect(logger.warn).toHaveBeenCalledWith(
+			expect.objectContaining({ message: 'rate limited', cause: 'rate limited' }),
+			'Mail location "first" failed to send "Hi"',
+		);
+
+		expect(logger.warn.mock.calls[0]?.[0]).toBeInstanceOf(Error);
+	});
+
+	test('Refuses an explicit location nobody registered before sending anything', async () => {
+		register({ main: 'ok' });
+		useMail().registerRoutes({ from: 'no-reply@acme.test' });
+
+		// 1. A typo in the location name is a configuration mistake, named as such: no warning, no `mail.failed`
+		await expect(sendMail(message, { location: 'mian' })).rejects.toThrow('Mail location "mian" doesn\'t exist.');
+
+		expect(sent).toHaveLength(0);
+		expect(logger.warn).not.toHaveBeenCalled();
+		expect(emitter.emitAction).not.toHaveBeenCalled();
 	});
 
 	test('Skips a location over its rate limit and rethrows the limit when every location is', async () => {

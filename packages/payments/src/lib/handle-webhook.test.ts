@@ -28,6 +28,7 @@ declare module './payments-manager.js' {
 		forged: Record<string, never>;
 		malformed: Record<string, never>;
 		broken: Record<string, never>;
+		shouting: Record<string, never>;
 	}
 }
 
@@ -118,11 +119,19 @@ beforeEach(() => {
 		}),
 	);
 
+	payments.registerDriver(
+		'shouting',
+		driverParsing(async () => {
+			throw 'SDK exploded';
+		}),
+	);
+
 	payments.registerLocation('default', { driver: 'ok', options: {} });
 	payments.registerLocation('untracked', { driver: 'untracked', options: {} });
 	payments.registerLocation('forged', { driver: 'forged', options: {} });
 	payments.registerLocation('malformed', { driver: 'malformed', options: {} });
 	payments.registerLocation('broken', { driver: 'broken', options: {} });
+	payments.registerLocation('shouting', { driver: 'shouting', options: {} });
 });
 
 afterEach(() => {
@@ -218,5 +227,23 @@ describe('handleWebhook', () => {
 		expect((error as Error).cause).toBeInstanceOf(Error);
 		expect(logger.warn).toHaveBeenCalledWith(expect.any(Error), 'Payments location "broken" failed to parse a webhook');
 		expect(emitter.emitAction).toHaveBeenCalledWith(PAYMENTS_FAILED_EVENT, { location: 'broken', reason: 'error' });
+	});
+
+	test('Logs a driver rejecting with a string as an error, keeping the location line', async () => {
+		// 1. Pino would take a bare string for the message and drop the line naming the location, so the rejection
+		//    is wrapped into an `Error` first; the string stays reachable as its cause
+		const error: unknown = await handleWebhook('{}', headers, { location: 'shouting' }).catch(
+			(error: unknown) => error,
+		);
+
+		expect((error as Error).cause).toBe('SDK exploded');
+
+		expect(logger.warn).toHaveBeenCalledWith(
+			expect.any(Error),
+			'Payments location "shouting" failed to parse a webhook',
+		);
+
+		expect((logger.warn.mock.calls[0]?.[0] as Error).cause).toBe('SDK exploded');
+		expect(emitter.emitAction).toHaveBeenCalledWith(PAYMENTS_FAILED_EVENT, { location: 'shouting', reason: 'error' });
 	});
 });

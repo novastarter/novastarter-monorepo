@@ -1,5 +1,5 @@
 import { Blob, Buffer } from 'node:buffer';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { extname, parse } from 'node:path';
 import { Readable } from 'node:stream';
 import {
@@ -222,6 +222,18 @@ export class StorageDriverCloudinary implements TusDriver {
 	}
 
 	/**
+	 * Fresh id that ties the chunks of one upload together on Cloudinary's side.
+	 *
+	 * @returns A random UUID.
+	 * @internal
+	 */
+	private getUploadId() {
+		// 1. A random id rather than the request timestamp: two uploads started in the same millisecond would share
+		//    a timestamp, and Cloudinary would then join their chunks into one asset or reject the overlapping ranges
+		return randomUUID();
+	}
+
+	/**
 	 * Guess the Cloudinary resource type for a path from its extension.
 	 *
 	 * @param filepath - Path or file name.
@@ -293,7 +305,6 @@ export class StorageDriverCloudinary implements TusDriver {
 	 * @param filepath - Asset path relative to the root.
 	 * @param options - Optional byte range and Cloudinary version number.
 	 * @returns The response body as a Node stream.
-	 * @throws Error when the response is an error status or carries no body.
 	 * @throws StorageFileNotFoundError when Cloudinary answers 404.
 	 * @throws Error for any other error status or a missing body.
 	 */
@@ -503,7 +514,7 @@ export class StorageDriverCloudinary implements TusDriver {
 	 * Upload a stream as an asset, replacing any existing content under the same public id.
 	 *
 	 * The stream is cut into chunks of about 5.5 MB and each chunk is sent as its own upload request, up to ten in
-	 * flight at once. Cloudinary joins the chunks by the shared upload id and the `Content-Range` headers.
+	 * flight at once. Cloudinary joins the chunks by an upload id unique to this call and the `Content-Range` headers.
 	 *
 	 * @param filepath - Asset path relative to the root.
 	 * @param content - Data to store.
@@ -514,8 +525,10 @@ export class StorageDriverCloudinary implements TusDriver {
 		const resourceType = this.getResourceType(fullPath);
 		const folderPath = this.getFolderPath(fullPath);
 
-		// 1. The same parameters and signature go with every chunk; a folder becomes the asset folder and is also
-		//    used as the public id prefix, so the id ends up as `folder/name` on Cloudinary's side
+		// 1. The same parameters, signature and upload id go with every chunk; a folder becomes the asset folder and
+		//    is also used as the public id prefix, so the id ends up as `folder/name` on Cloudinary's side
+		const uploadId = this.getUploadId();
+
 		const uploadParameters = {
 			timestamp: this.getTimestamp(),
 			api_key: this.apiKey,
@@ -547,42 +560,43 @@ export class StorageDriverCloudinary implements TusDriver {
 		for await (let chunk of content) {
 			if (!Buffer.isBuffer(chunk)) chunk = Buffer.from(chunk);
 
-			if (chunks.length + chunk.length <= chunkSize) {
-				// 4. Still under the chunk size: keep buffering
-				chunks = Buffer.concat([chunks, chunk], chunks.length + chunk.length);
-			} else {
-				// 5. The buffer would overflow: fill it up to exactly the chunk size, queue it and start the next
-				//    buffer with the remainder, so every chunk but the last has the same size
-				const grab = chunkSize - chunks.length;
-				const currentChunkSize = chunks.length + grab;
-				chunks = Buffer.concat([chunks, chunk.slice(0, grab)], currentChunkSize);
+			// 4. Append first and cut afterwards: a source chunk can be larger than an upload chunk — an object-mode
+			//    stream or a large high-water mark yields such chunks — so one append may complete several upload
+			//    chunks, and computing the "space left" in the buffer instead would go negative and drop bytes
+			chunks = Buffer.concat([chunks, chunk], chunks.length + chunk.length);
+			totalSize += chunk.length;
 
-				// 6. The total is unknown while the stream is still flowing, which `-1` tells Cloudinary
-				const uploadChunkParams: Parameters<typeof this.uploadChunk>[0] = {
-					resourceType,
-					blob: new Blob([chunks]),
-					bytesOffset: uploaded,
-					bytesTotal: -1,
-					parameters: {
-						signature,
-						...uploadParameters,
-					},
-				};
+			// 5. Queue every full chunk and keep only the remainder; a buffer of exactly the chunk size stays, since
+			//    the last request must carry the total, which is unknown while the stream is still flowing — `-1`
+			//    tells Cloudinary more is coming. `Blob` copies the bytes, so the view can be dropped right away
+			while (chunks.length > chunkSize) {
+				const blob = new Blob([chunks.subarray(0, chunkSize)]);
+				const bytesOffset = uploaded;
+
+				chunks = chunks.subarray(chunkSize);
+				uploaded += chunkSize;
 
 				queue
-					.add(() => this.uploadChunk(uploadChunkParams))
+					.add(() =>
+						this.uploadChunk({
+							resourceType,
+							blob,
+							bytesOffset,
+							bytesTotal: -1,
+							uploadId,
+							parameters: {
+								signature,
+								...uploadParameters,
+							},
+						}),
+					)
 					.catch((err) => {
 						error = err;
 					});
-
-				uploaded += currentChunkSize;
-				chunks = chunk.slice(grab);
 			}
-
-			totalSize += chunk.length;
 		}
 
-		// 7. The last chunk carries the real total, which is how Cloudinary knows the upload is complete
+		// 6. The last chunk carries the real total, which is how Cloudinary knows the upload is complete
 		queue
 			.add(() =>
 				this.uploadChunk({
@@ -590,6 +604,7 @@ export class StorageDriverCloudinary implements TusDriver {
 					blob: new Blob([chunks]),
 					bytesOffset: uploaded,
 					bytesTotal: totalSize,
+					uploadId,
 					parameters: {
 						signature,
 						...uploadParameters,
@@ -602,7 +617,7 @@ export class StorageDriverCloudinary implements TusDriver {
 
 		await queue.onIdle();
 
-		// 8. Surface the first chunk failure with the path once every request has settled
+		// 7. Surface the first chunk failure with the path once every request has settled
 		if (error) {
 			throw new Error(`Can't upload file "${filepath}": ${(error as Error).message}`, { cause: error });
 		}
@@ -616,7 +631,8 @@ export class StorageDriverCloudinary implements TusDriver {
 	 * @param options.blob - Chunk contents.
 	 * @param options.bytesOffset - Byte offset of the chunk within the whole upload.
 	 * @param options.bytesTotal - Total upload size, or `-1` while it is still unknown.
-	 * @param options.parameters - Signed form parameters; `timestamp` doubles as the upload id.
+	 * @param options.uploadId - Id shared by every chunk of one upload; Cloudinary joins the chunks by it.
+	 * @param options.parameters - Signed form parameters, sent as text fields next to the file.
 	 * @throws Error carrying Cloudinary's message when the chunk is rejected.
 	 * @see https://support.cloudinary.com/hc/en-us/articles/208263735-Guidelines-for-self-implementing-chunked-upload-to-Cloudinary
 	 * @internal
@@ -626,16 +642,15 @@ export class StorageDriverCloudinary implements TusDriver {
 		blob,
 		bytesOffset,
 		bytesTotal,
+		uploadId,
 		parameters,
 	}: {
 		resourceType: string;
 		blob: Blob;
 		bytesOffset: number;
 		bytesTotal: number;
-		parameters: {
-			timestamp: string;
-			[key: string]: string;
-		};
+		uploadId: string;
+		parameters: Record<string, string>;
 	}) {
 		// 1. Chunks go as multipart form data: the file part plus every signed parameter as a text field
 		const formData = new FormData();
@@ -647,12 +662,12 @@ export class StorageDriverCloudinary implements TusDriver {
 		}
 
 		// 2. `X-Unique-Upload-Id` ties the chunks of one upload together and `Content-Range` places each chunk; the
-		//    timestamp serves as the id because it is already unique per upload and part of the signed parameters
+		//    id travels as a header, outside the signed parameters, so it is free to differ from the timestamp
 		const response = await fetch(`https://api.cloudinary.com/v1_1/${this.cloudName}/${resourceType}/upload`, {
 			method: 'POST',
 			body: formData,
 			headers: {
-				'X-Unique-Upload-Id': parameters.timestamp,
+				'X-Unique-Upload-Id': uploadId,
 				'Content-Range': `bytes ${bytesOffset}-${bytesOffset + blob.size - 1}/${bytesTotal}`,
 			},
 		});
@@ -765,8 +780,15 @@ export class StorageDriverCloudinary implements TusDriver {
 
 	/**
 	 * TUS extensions this driver advertises: creation, termination and expiration.
+	 *
+	 * @returns The extension names in the order the TUS server advertises them.
 	 */
 	get tusExtensions(): string[] {
+		// 1. Only the extensions the chunked-upload methods back are advertised: `creation` maps to
+		//    `createChunkedUpload`, `termination` to `deleteChunkedUpload`, and `expiration` lets the server announce
+		//    when an unfinished upload may be discarded, which Cloudinary does with incomplete chunked uploads on its
+		//    own. Checksum and concatenation are left out because a chunk is only verifiable once Cloudinary has
+		//    assembled the asset, and chunks of several uploads cannot be joined into one
 		return ['creation', 'termination', 'expiration'];
 	}
 
@@ -775,12 +797,14 @@ export class StorageDriverCloudinary implements TusDriver {
 	 *
 	 * @param _filepath - Final asset path relative to the root; unused.
 	 * @param context - Client-supplied size and metadata.
-	 * @returns The context with the upload timestamp recorded in its metadata.
+	 * @returns The context with the signing timestamp and the upload id recorded in its metadata.
 	 */
 	async createChunkedUpload(_filepath: string, context: ChunkedUploadContext): Promise<ChunkedUploadContext> {
-		// 1. Every chunk of one upload must carry the same timestamp, since it doubles as Cloudinary's upload id and
-		//    is part of the signature; the context is what the TUS server hands back on every following call
+		// 1. Every chunk of one upload must carry the same timestamp, since it is part of the signature, and the same
+		//    upload id, since Cloudinary joins the chunks by it; the context is what the TUS server hands back on
+		//    every following call, so both are recorded there
 		context.metadata!['timestamp'] = this.getTimestamp();
+		context.metadata!['uploadId'] = this.getUploadId();
 
 		return context;
 	}
@@ -791,7 +815,7 @@ export class StorageDriverCloudinary implements TusDriver {
 	 * @param filepath - Final asset path relative to the root.
 	 * @param content - Chunk data as sent by the client.
 	 * @param offset - Byte offset within the whole upload where this chunk starts.
-	 * @param context - Context carrying the total `size` and the `timestamp` recorded by
+	 * @param context - Context carrying the total `size` and the `timestamp` and `uploadId` recorded by
 	 * {@link StorageDriverCloudinary.createChunkedUpload}.
 	 * @returns The new upload offset: `offset` plus the bytes of this chunk.
 	 * @throws Error carrying Cloudinary's message when the chunk is rejected.
@@ -806,8 +830,8 @@ export class StorageDriverCloudinary implements TusDriver {
 		const folderPath = this.getFolderPath(fullPath);
 		const resourceType = this.getResourceType(filepath);
 
-		// 1. Same parameters as a plain write, except the timestamp comes from the context so every chunk shares the
-		//    upload id
+		// 1. Same parameters as a plain write, except the timestamp comes from the context so every chunk carries
+		//    the signature the upload started with
 		const uploadParameters = {
 			timestamp: context.metadata!['timestamp'] as string,
 			api_key: this.apiKey,
@@ -822,11 +846,15 @@ export class StorageDriverCloudinary implements TusDriver {
 				: {}),
 		};
 
+		// 2. The upload id also comes from the context, so every chunk lands in the same Cloudinary upload; an upload
+		//    started before the id was recorded keeps the timestamp its earlier chunks went out under
+		const uploadId = context.metadata!['uploadId'] ?? uploadParameters.timestamp;
+
 		let bytesUploaded = offset || 0;
 		let currentChunkSize = 0;
 		let chunks = Buffer.alloc(0);
 
-		// 2. Buffer the whole chunk: the upload API needs its size for `Content-Range` before the request starts
+		// 3. Buffer the whole chunk: the upload API needs its size for `Content-Range` before the request starts
 		for await (const chunk of content) {
 			currentChunkSize += chunk.length;
 			chunks = Buffer.concat([chunks, chunk], currentChunkSize);
@@ -834,13 +862,14 @@ export class StorageDriverCloudinary implements TusDriver {
 
 		bytesUploaded += currentChunkSize;
 
-		// 3. Only the chunk that reaches the declared size carries the real total; earlier ones send `-1`, which
+		// 4. Only the chunk that reaches the declared size carries the real total; earlier ones send `-1`, which
 		//    tells Cloudinary more is coming
 		await this.uploadChunk({
 			resourceType,
 			blob: new Blob([chunks]),
 			bytesOffset: offset || 0,
 			bytesTotal: context.size && bytesUploaded === context.size ? context.size : -1,
+			uploadId,
 			parameters: {
 				signature: this.getFullSignature(uploadParameters),
 				...uploadParameters,

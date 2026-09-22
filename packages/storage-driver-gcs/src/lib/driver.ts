@@ -3,6 +3,7 @@ import { pipeline as pipelinePromise } from 'node:stream/promises';
 import type {
 	Bucket,
 	CreateReadStreamOptions,
+	CreateWriteStreamOptions,
 	FileMetadata,
 	GetFilesOptions,
 	StorageOptions,
@@ -234,15 +235,25 @@ export class StorageDriverGcs implements TusDriver {
 	 *
 	 * @param filepath - Object path relative to the root.
 	 * @param content - Data to store.
+	 * @param type - MIME type stored as the object's `Content-Type`; when omitted the SDK derives one from the object
+	 * name's extension, the way the other backends fall back to their own default.
 	 */
-	async write(filepath: string, content: Readable): Promise<void> {
+	async write(filepath: string, content: Readable, type?: string): Promise<void> {
 		const file = this.file(this.fullPath(filepath));
 
 		// 1. A single non-resumable request: it avoids the extra session round-trip, and resumable uploads have their own
 		//    path through `writeChunk`
-		const stream = file.createWriteStream({ resumable: false });
+		const options: CreateWriteStreamOptions = { resumable: false };
 
-		// 2. `pipeline` propagates errors from either side and closes both streams, unlike a bare `pipe`
+		// 2. The type is recorded only when the caller gave one: an explicit `undefined` would replace the SDK's detection
+		//    by file name with no type at all, and the object would be served as `application/octet-stream`
+		if (type) {
+			options.contentType = type;
+		}
+
+		const stream = file.createWriteStream(options);
+
+		// 3. `pipeline` propagates errors from either side and closes both streams, unlike a bare `pipe`
 		await pipelinePromise(content, stream);
 	}
 
@@ -250,6 +261,7 @@ export class StorageDriverGcs implements TusDriver {
 	 * Delete an object.
 	 *
 	 * @param filepath - Object path relative to the root.
+	 * @throws The SDK error when the object does not exist or the request fails.
 	 */
 	async delete(filepath: string): Promise<void> {
 		// 1. No `ignoreNotFound`: a missing object rejects, so callers learn the path never existed instead of assuming it
@@ -324,7 +336,8 @@ export class StorageDriverGcs implements TusDriver {
 	 * Enumerate object paths under a prefix, page by page.
 	 *
 	 * @param prefix - Path prefix relative to the root; the whole root when empty.
-	 * @returns Object paths relative to the root.
+	 * @returns Object paths relative to the root; folder placeholders, the zero-byte objects whose name ends in `/`
+	 * that the console creates for an empty "folder", are left out.
 	 */
 	async *list(prefix = ''): AsyncGenerator<string, void, unknown> {
 		// 1. Manual pagination in pages of 500: with `autoPaginate` the SDK would buffer the whole listing in memory
@@ -339,8 +352,13 @@ export class StorageDriverGcs implements TusDriver {
 		while (query) {
 			const [files, nextQuery] = await this.bucket.getFiles(query);
 
-			// 3. Strip the root and its slash, so callers get paths in the form they pass in
+			// 3. Skip folder placeholders, as the S3 driver does: a name ending in `/` is a zero-byte marker the console
+			//    creates for an empty "folder", not an object a caller can read, and listing it would hand a consumer a
+			//    path that only exists on this backend. Strip the root and its slash from the rest, so callers get paths
+			//    in the form they pass in
 			for (const file of files) {
+				if (file.name.endsWith('/')) continue;
+
 				yield toRelativePath(this.root, file.name);
 			}
 
@@ -350,8 +368,14 @@ export class StorageDriverGcs implements TusDriver {
 
 	/**
 	 * TUS extensions this driver advertises: creation, termination and expiration.
+	 *
+	 * @returns The extension names in the order the TUS server advertises them.
 	 */
 	get tusExtensions(): string[] {
+		// 1. Only the extensions the chunked-upload methods back are advertised: `creation` maps to
+		//    `createChunkedUpload`, `termination` to `deleteChunkedUpload`, and `expiration` lets the server announce
+		//    when GCS discards an unfinished resumable session. Checksum and concatenation are left out because a
+		//    session verifies chunks only through its own running CRC32C and cannot be assembled from several uploads
 		return ['creation', 'termination', 'expiration'];
 	}
 
@@ -359,17 +383,21 @@ export class StorageDriverGcs implements TusDriver {
 	 * Open a GCS resumable-upload session for a chunked upload.
 	 *
 	 * @param filepath - Final object path relative to the root.
-	 * @param context - Client-supplied size and metadata.
+	 * @param context - Client-supplied size and metadata; the metadata map is created when the client sent none.
 	 * @returns The same context with the session `uri` stored in its metadata for the following calls.
 	 */
 	async createChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<ChunkedUploadContext> {
 		const file = this.file(this.fullPath(filepath));
 
-		// 1. The session URI is the only state GCS needs to accept further chunks; it lives in the context so a resumed
+		// 1. A client that sends no `Upload-Metadata` leaves the map undefined; it is created here, before the session is
+		//    opened, so storing the URI below cannot fail and leak a session GCS already accepted
+		const metadata = (context.metadata ??= {});
+
+		// 2. The session URI is the only state GCS needs to accept further chunks; it lives in the context so a resumed
 		//    upload on another process can continue the same session
 		const [uri] = await file.createResumableUpload();
 
-		context.metadata!['uri'] = uri;
+		metadata['uri'] = uri;
 
 		return context;
 	}
@@ -391,30 +419,36 @@ export class StorageDriverGcs implements TusDriver {
 	): Promise<number> {
 		const file = this.file(this.fullPath(filepath));
 
-		// 1. Continue the stored session as a partial upload: `offset` tells GCS where these bytes go, `resumeCRC32C`
+		// 1. The map is read for the session state and written for the hash below; a context handed over without one
+		//    gets an empty map rather than a TypeError, so the failure a missing session causes is the SDK's, not ours
+		const metadata = (context.metadata ??= {});
+
+		// 2. Continue the stored session as a partial upload: `offset` tells GCS where these bytes go, `resumeCRC32C`
 		//    seeds the running checksum with the hash of the earlier chunks, and `contentLength` lets GCS finalise the
 		//    object on its own once the last byte arrives, which is why `finishChunkedUpload` has nothing left to do
 		const stream = file.createWriteStream({
 			chunkSize: this.preferredChunkSize,
-			uri: context.metadata!['uri'] as string,
+			uri: metadata['uri'] as string,
 			offset,
 			isPartialUpload: true,
-			resumeCRC32C: context.metadata!['hash'] as string,
+			resumeCRC32C: metadata['hash'] as string,
 			metadata: {
 				contentLength: context.size || 0,
 			},
 		});
 
-		// 2. The SDK emits the CRC32C of everything uploaded so far; keeping it in the context is what makes the next
+		// 3. The SDK emits the CRC32C of everything uploaded so far; keeping it in the context is what makes the next
 		//    chunk resumable with an intact checksum
 		stream.on('crc32c', (hash: string) => {
-			context.metadata!['hash'] = hash;
+			// 1. Written to the map the context carries, so the value survives into the next `writeChunk` call
+			metadata['hash'] = hash;
 		});
 
-		// 3. Count the bytes as they pass, since the SDK does not report how much of the stream it consumed
+		// 4. Count the bytes as they pass, since the SDK does not report how much of the stream it consumed
 		let bytesUploaded = offset || 0;
 
 		content.on('data', (chunk: Buffer) => {
+			// 1. Every chunk that flows through the pipeline is counted, whether or not the SDK has sent it yet
 			bytesUploaded += chunk.length;
 		});
 

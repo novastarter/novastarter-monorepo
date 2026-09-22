@@ -23,12 +23,16 @@ export type PolarWebhookPayload = ReturnType<typeof validateEvent>;
  * @param checkout - Polar's.
  * @returns The checkout, with the subscription it created.
  */
-export const toCompletedCheckout = (checkout: Checkout): CompletedCheckout => ({
-	id: checkout.id,
-	customerId: checkout.customerId ?? '',
-	subscriptionId: checkout.subscriptionId ?? null,
-	metadata: toMetadata(checkout.metadata),
-});
+export const toCompletedCheckout = (checkout: Checkout): CompletedCheckout => {
+	// 1. A succeeded checkout always has a customer, but the SDK types it optional; an empty id keeps the shape rather
+	//    than failing a delivery the signature already verified
+	return {
+		id: checkout.id,
+		customerId: checkout.customerId ?? '',
+		subscriptionId: checkout.subscriptionId ?? null,
+		metadata: toMetadata(checkout.metadata),
+	};
+};
 
 /**
  * The id of a Polar webhook delivery: the `webhook-id` header, which Polar keeps stable across retries of one event.
@@ -36,7 +40,10 @@ export const toCompletedCheckout = (checkout: Checkout): CompletedCheckout => ({
  * @param headers - The request headers, lower-cased.
  * @returns The id, or nothing.
  */
-export const deliveryIdOf = (headers: Record<string, string | undefined>): string | undefined => headers['webhook-id'];
+export const deliveryIdOf = (headers: Record<string, string | undefined>): string | undefined => {
+	// 1. The Standard Webhooks id is the one value that survives Polar's retries, so it is the id to deduplicate on
+	return headers['webhook-id'];
+};
 
 /**
  * A verified Polar payload as the kit's event, or `null` for one the kit does not act on.

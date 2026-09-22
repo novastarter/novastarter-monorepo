@@ -15,6 +15,15 @@ export const API_URL = 'https://api.lemonsqueezy.com/v1';
 export const DEFAULT_TIMEOUT = 30_000;
 
 /**
+ * The longest request timeout a client accepts, in milliseconds: the largest 32-bit signed integer, which is as much
+ * as a Node timer holds. `AbortSignal.timeout()` arms a 1 ms timer for anything above it, so a longer timeout would
+ * abandon every request at once rather than never.
+ *
+ * @defaultValue 2^31 − 1, about 24.8 days.
+ */
+export const MAX_TIMEOUT = 2_147_483_647;
+
+/**
  * The fetch the API client sends with: the platform's signature, narrowed to what is used.
  */
 export type ApiFetch = (
@@ -30,7 +39,7 @@ export type LemonSqueezyApiConfig = {
 	apiKey: string;
 	/** Another base URL — a stand-in of the API. */
 	apiUrl?: string | undefined;
-	/** Request timeout in milliseconds. */
+	/** Request timeout in milliseconds: a whole number from `0` to {@link MAX_TIMEOUT}. */
 	timeout?: number | undefined;
 	/** A fetch to send with instead of the platform's — tests hand in a fake. */
 	fetch?: ApiFetch | undefined;
@@ -113,20 +122,32 @@ export class LemonSqueezyApi {
 	 * Create the client for one API key.
 	 *
 	 * @param config - Key, base URL, timeout or fetch.
+	 * @throws RangeError for a timeout that is not a whole number from `0` to {@link MAX_TIMEOUT} — refused here, at
+	 * registration, rather than on the first request.
 	 */
 	constructor(config: LemonSqueezyApiConfig) {
 		// 1. Normalise the base URL once, so a configured trailing slash does not double up in every path
 		this.apiUrl = (config.apiUrl ?? API_URL).replace(/\/$/, '');
+
+		// 2. A timeout `AbortSignal.timeout()` cannot hold is refused now: a negative, fractional or `NaN` delay would
+		//    throw on every request, and one above the timer's bound would abandon every request after 1 ms — either
+		//    way a misconfigured location would fail on first use with an error that does not name the cause
 		this.timeout = config.timeout ?? DEFAULT_TIMEOUT;
 
-		// 2. JSON:API media types on both sides: the API refuses `application/json` bodies
+		if (!(Number.isInteger(this.timeout) && this.timeout >= 0 && this.timeout <= MAX_TIMEOUT)) {
+			throw new RangeError(
+				`LemonSqueezyApi: "timeout" must be a whole number between 0 and ${MAX_TIMEOUT} ms, got ${config.timeout}`,
+			);
+		}
+
+		// 3. JSON:API media types on both sides: the API refuses `application/json` bodies
 		this.headers = {
 			Accept: 'application/vnd.api+json',
 			'Content-Type': 'application/vnd.api+json',
 			Authorization: `Bearer ${config.apiKey}`,
 		};
 
-		// 3. The platform's fetch unless a test hands in its own; the cast narrows it to the signature used
+		// 4. The platform's fetch unless a test hands in its own; the cast narrows it to the signature used
 		this.fetch = config.fetch ?? (globalThis.fetch as unknown as ApiFetch);
 	}
 
@@ -139,9 +160,11 @@ export class LemonSqueezyApi {
 	 * @param body - The JSON:API document to send, when there is one.
 	 * @returns The parsed response; `undefined` for an empty one.
 	 * @throws LemonSqueezyApiError for a non-2xx response.
+	 * @throws `TimeoutError` (the `DOMException` of `AbortSignal.timeout()`) when the request outlives the timeout.
 	 */
 	async request<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T> {
-		// 1. The body is only set when given: a GET with a body is refused by some proxies
+		// 1. The body is only set when given: a GET with a body is refused by some proxies; the signal abandons the
+		//    request at the deadline, which the constructor checked the signal can hold
 		const response = await this.fetch(`${this.apiUrl}${path}`, {
 			method,
 			headers: this.headers,

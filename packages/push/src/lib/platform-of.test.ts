@@ -1,11 +1,13 @@
 /**
- * Tests of `push/lib/platform-of` and `to-web-push-payload`.
+ * Tests of `push/lib/platform-of`.
  */
 import { InvalidPayloadError } from '@novastarter/errors';
 import { describe, expect, test } from 'vitest';
 import { platformOf } from './platform-of.js';
-import { toWebPushPayload } from './to-web-push-payload.js';
 
+/**
+ * A browser subscription with everything `platformOf()` checks for; the broken cases are built from it.
+ */
 const subscription = { endpoint: 'https://push.example/abc', keys: { p256dh: 'p', auth: 'a' } };
 
 describe('platformOf', () => {
@@ -26,31 +28,5 @@ describe('platformOf', () => {
 		expect(() =>
 			platformOf({ subscription: { endpoint: subscription.endpoint, keys: { p256dh: '', auth: 'a' } } }),
 		).toThrow(/p256dh \/ auth keys/);
-	});
-});
-
-describe('toWebPushPayload', () => {
-	test('Keeps what is set and tucks the url into data', () => {
-		// 1. Every field set: the url joins the custom data, where the service worker reads it on click
-		expect(
-			toWebPushPayload({
-				subscription,
-				title: 'Paid',
-				body: 'Invoice #1',
-				icon: '/icon.png',
-				tag: 'invoice-1',
-				url: '/dashboard/billing',
-				data: { invoiceId: '1' },
-			}),
-		).toStrictEqual({
-			title: 'Paid',
-			body: 'Invoice #1',
-			icon: '/icon.png',
-			tag: 'invoice-1',
-			data: { invoiceId: '1', url: '/dashboard/billing' },
-		});
-
-		// 2. The bare minimum: no undefined keys, an empty data object
-		expect(toWebPushPayload({ subscription, title: 'Hi' })).toStrictEqual({ title: 'Hi', data: {} });
 	});
 });

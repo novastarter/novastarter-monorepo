@@ -19,6 +19,9 @@ const mockConfig = vi.hoisted((): Partial<Config> => ({
 
 vi.mock('../config.js', () => ({ default: mockConfig }));
 
+/**
+ * Content served for `.changeset/pre.json`; `undefined` means `changesets` is not in prerelease mode.
+ */
 let mockChangesetPreFile: string | undefined = undefined;
 
 // Only the file system calls the module makes are stubbed: a package counts as bumped when its root starts with
@@ -37,6 +40,9 @@ vi.doMock('node:fs', () => {
 	};
 });
 
+/**
+ * Workspace packages the stubbed `findWorkspacePackages` returns.
+ */
 let packages: Partial<Project>[] = [];
 
 vi.doMock('./find-workspace-packages.js', () => ({
@@ -69,8 +75,9 @@ const generatePackage = (name: string, version: string, opts?: Record<string, an
 	writeProjectManifest: vi.fn(),
 });
 
-// Imported after the mocks are registered, so the module picks up the stubbed `node:fs`
-// @ts-ignore
+/**
+ * Function under test, imported after the mocks are registered so the module picks up the stubbed `node:fs`.
+ */
 const { processPackages } = await import('./process-packages.js');
 
 test('should return main version and package versions', async () => {

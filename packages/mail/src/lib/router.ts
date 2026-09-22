@@ -6,6 +6,11 @@ import type { MailManager, MailRoutes } from './mail-manager.js';
  *
  * @param address - Sender or recipient.
  * @returns What follows the `@`, lower-cased, without a closing bracket; `undefined` when there is none.
+ * @example
+ * ```ts
+ * addressDomain('News <hello@News.Acme.com>');
+ * // => 'news.acme.com'
+ * ```
  */
 export const addressDomain = (address: MailAddress): string | undefined => {
 	// 1. Only the address part carries a domain; a display name may hold anything
@@ -26,31 +31,38 @@ export const addressDomain = (address: MailAddress): string | undefined => {
  *
  * A route by the sender's domain wins over the route by category; without either, every registered location in
  * registration order is the chain — so a single location needs no routes at all. Names the manager does not know
- * are dropped, so a typo in a route degrades to the next location instead of failing every send.
+ * are dropped, so a typo in a route degrades to the next location instead of failing every send: a rule whose names
+ * are all unknown counts as no rule, and the next one applies.
  *
  * @param routes - The registered routes.
  * @param message - Message to route; `from` and `category` are read.
  * @param manager - Manager holding the locations.
  * @returns Location names to try, in order; empty when nothing is registered.
+ * @example
+ * ```ts
+ * const chain = resolveMailChain(manager.routes(), message, manager);
+ *
+ * for (const location of chain) {
+ * 	await manager.location(location).send(message);
+ * }
+ * ```
  */
 export const resolveMailChain = (routes: MailRoutes, message: MailMessage, manager: MailManager): string[] => {
 	const known = manager.locationNames();
 	const category: MailCategory = message.category ?? 'transactional';
 
-	// 1. The sender's domain is the most specific rule
+	// 1. A rule is judged on the locations it can reach: unknown names are dropped before the rule is chosen, so a
+	//    rule made only of typos never wins the selection with an empty chain
+	const usable = (names: string[] | undefined): string[] => (names ?? []).filter((name) => known.includes(name));
+
+	// 2. The sender's domain is the most specific rule
 	const domain = message.from ? addressDomain(message.from) : undefined;
-	const byDomain = domain ? routes.domains?.[domain] : undefined;
-	const byCategory = routes[category];
+	const byDomain = usable(domain ? routes.domains?.[domain] : undefined);
 
-	// 2. Then the category, then everything
-	let chain = known;
+	if (byDomain.length) return byDomain;
 
-	if (byDomain?.length) {
-		chain = byDomain;
-	} else if (byCategory?.length) {
-		chain = byCategory;
-	}
+	// 3. Then the category, then everything the manager knows
+	const byCategory = usable(routes[category]);
 
-	// 3. Unknown names are dropped rather than thrown on, so one bad route never blocks the whole chain
-	return chain.filter((name) => known.includes(name));
+	return byCategory.length ? byCategory : known;
 };

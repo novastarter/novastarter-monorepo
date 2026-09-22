@@ -19,11 +19,30 @@ export const toApnsPriority = (urgency: PushMessage['urgency']): Priority => {
 };
 
 /**
+ * A collapse tag as the `apns-collapse-id` header takes it: at most {@link APNS_COLLAPSE_ID_MAX_LENGTH} bytes of
+ * letters, digits and `_ . : -`.
+ *
+ * @param tag - Free text.
+ * @returns The tag with every other code point replaced by `_`, cut to the limit; `undefined` for an empty one.
+ */
+export const toCollapseId = (tag: string | undefined): string | undefined => {
+	// 1. No tag, no header
+	if (!tag) return undefined;
+
+	// 2. The header goes out verbatim: the HTTP client refuses a value outside Latin-1 before the request leaves, and
+	//    Apple's limit is 64 bytes, not characters. Every code point outside the safe alphabet becomes one `_` — the
+	//    `u` flag keeps an emoji from turning into two — which leaves pure ASCII, where a character is a byte and the
+	//    cut can split no code point
+	return tag.replace(/[^A-Za-z0-9_.:-]/gu, '_').slice(0, APNS_COLLAPSE_ID_MAX_LENGTH);
+};
+
+/**
  * Translate a message into the APNs notification for its token.
  *
  * The title and body go under `aps.alert`; the click target, the image and the custom pairs are top-level keys of
  * the payload, for the app to read (`url`, `image`, then `data`); an image sets `mutable-content` so the app's
- * notification service extension can attach it. The tag is the collapse id, the ttl the expiration.
+ * notification service extension can attach it. The tag is the collapse id, sanitized by {@link toCollapseId}, the
+ * ttl the expiration.
  *
  * @param message - Ours, with a token.
  * @param config - The location's topic, ttl and sound.
@@ -38,6 +57,7 @@ export const toApnsNotification = (
 	// 1. The message's own ttl wins over the location's; the custom pairs carry the click target and the image
 	const ttl = message.ttl ?? config.ttl;
 	const sound = config.sound ?? 'default';
+	const collapseId = toCollapseId(message.tag);
 
 	const data = {
 		...(message.data ?? {}),
@@ -53,7 +73,7 @@ export const toApnsNotification = (
 		alert: { title: message.title, body: message.body ?? '' },
 		priority: toApnsPriority(message.urgency),
 		...(ttl !== undefined ? { expiration: ttl > 0 ? Math.floor(now.getTime() / 1000) + ttl : 0 } : {}),
-		...(message.tag !== undefined ? { collapseId: message.tag.slice(0, APNS_COLLAPSE_ID_MAX_LENGTH) } : {}),
+		...(collapseId !== undefined ? { collapseId } : {}),
 		...(sound ? { sound } : {}),
 		...(message.image !== undefined ? { mutableContent: true } : {}),
 		...(Object.keys(data).length > 0 ? { data } : {}),

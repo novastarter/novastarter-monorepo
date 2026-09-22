@@ -16,6 +16,8 @@ import { generateJoi, type JoiOptions } from './generate-joi.js';
  * @param payload - Object under validation; fields the filter does not mention are ignored.
  * @param options - Passed on to {@link generateJoi}; `requireAll` fails missing fields instead of skipping them.
  * @returns Empty when the payload passes, otherwise one `FailedValidationError` per failed rule.
+ * @throws Plain `Error` from {@link generateJoi} when a leaf filter has no field key or no rule, and from
+ * `joiValidationErrorItemToErrorExtensions` when a Joi rule cannot be mapped to an operator.
  * @example
  * ```ts
  * const errors = validatePayload({ _and: [{ age: { _gte: 18 } }, { email: { _contains: '@' } }] }, { age: 3 });

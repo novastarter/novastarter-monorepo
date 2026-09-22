@@ -1,15 +1,14 @@
 /**
  * Tests of the Stripe driver: the resources stubbed on a real client, the webhooks signed the way Stripe signs them
- * and read from fixtures shaped like Stripe's current events.
+ * and read from fixtures shaped like Stripe's current events. The mappings have their own tests beside their modules
+ * (`to-event.test.ts`, `to-invoice.test.ts`, `to-subscription.test.ts`).
  */
 import { readFileSync } from 'node:fs';
 import { InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
 import Stripe from 'stripe';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { PaymentsDriverStripe, PRORATION } from './driver.js';
-import { toEvent } from './to-event.js';
 import { toInvoice } from './to-invoice.js';
-import { toSubscription } from './to-subscription.js';
 
 /**
  * A fixture event, parsed.
@@ -29,24 +28,30 @@ const WEBHOOK_SECRET = 'whsec_test_secret';
  * @returns The driver and the client to stub on.
  */
 const setup = () => {
+	// 1. A real client, so `webhooks` verifies signatures for real; the resources are spied on per test, so nothing
+	//    ever reaches the network
 	const client = new Stripe('sk_test_x', { appInfo: { name: 'test' } });
+
+	// 2. The driver takes the client instead of building one, which is what the `client` option exists for
 	const driver = new PaymentsDriverStripe({ secretKey: 'sk_test_x', webhookSecret: WEBHOOK_SECRET, client });
 
 	return { client, driver };
 };
 
 /**
- * Deliver a fixture through `parseWebhook`, signed with the given secret.
+ * Deliver a body through `parseWebhook`, signed with the given secret.
  *
  * @param driver - The driver under test.
- * @param event - The event object.
+ * @param body - The event object, or the raw text of a body that is not an event.
  * @param secret - The signing secret; the right one unless given.
  * @returns What `parseWebhook` answered.
  */
-const deliver = (driver: PaymentsDriverStripe, event: Stripe.Event, secret = WEBHOOK_SECRET) => {
-	const payload = JSON.stringify(event);
+const deliver = (driver: PaymentsDriverStripe, body: Stripe.Event | string, secret = WEBHOOK_SECRET) => {
+	// 1. The signature covers the exact bytes, so the text is made once and used for both the header and the call
+	const payload = typeof body === 'string' ? body : JSON.stringify(body);
 	const header = Stripe.webhooks.generateTestHeaderString({ payload, secret });
 
+	// 2. Headers arrive lower-cased, as the route hands them to the driver
 	return driver.parseWebhook(payload, { 'stripe-signature': header, 'content-type': 'application/json' });
 };
 
@@ -56,6 +61,7 @@ afterEach(() => {
 
 describe('PaymentsDriverStripe', () => {
 	test('Refuses to start without a secret key or a webhook secret', () => {
+		// 1. Each missing value is named in the error, so a misconfigured deployment says which option to set
 		expect(() => new PaymentsDriverStripe({ secretKey: '', webhookSecret: 'whsec' })).toThrow('"secretKey"');
 		expect(() => new PaymentsDriverStripe({ secretKey: 'sk', webhookSecret: '' })).toThrow('"webhookSecret"');
 	});
@@ -70,6 +76,7 @@ describe('PaymentsDriverStripe', () => {
 	});
 
 	test('Creates a customer with the organization in its metadata', async () => {
+		// 1. Stripe answers the customer as created; the stub returns what the request carried
 		const { client, driver } = setup();
 
 		const create = vi.spyOn(client.customers, 'create').mockResolvedValue({
@@ -79,6 +86,7 @@ describe('PaymentsDriverStripe', () => {
 			metadata: { organizationId: 'org_42' },
 		} as never);
 
+		// 2. The normalised customer carries Stripe's id and the metadata the sync keys on
 		await expect(
 			driver.createCustomer({ email: 'ada@example.com', name: 'Ada', metadata: { organizationId: 'org_42' } }),
 		).resolves.toStrictEqual({
@@ -88,6 +96,7 @@ describe('PaymentsDriverStripe', () => {
 			metadata: { organizationId: 'org_42' },
 		});
 
+		// 3. Every given field is sent as is, under Stripe's names
 		expect(create).toHaveBeenCalledWith({
 			email: 'ada@example.com',
 			name: 'Ada',
@@ -96,6 +105,7 @@ describe('PaymentsDriverStripe', () => {
 	});
 
 	test('Starts a subscription checkout with the metadata on the session and on the subscription', async () => {
+		// 1. Stripe answers a hosted session with its page and expiry
 		const { client, driver } = setup();
 
 		const create = vi.spyOn(client.checkout.sessions, 'create').mockResolvedValue({
@@ -104,6 +114,7 @@ describe('PaymentsDriverStripe', () => {
 			expires_at: 1789171100,
 		} as never);
 
+		// 2. The session's expiry is a Stripe timestamp, answered as a `Date`
 		await expect(
 			driver.createCheckoutSession({
 				customerId: 'cus_1',
@@ -121,6 +132,8 @@ describe('PaymentsDriverStripe', () => {
 			expiresAt: new Date(1789171100 * 1000),
 		});
 
+		// 3. Subscription mode, one line item, the metadata on the session and under `subscription_data`, so the
+		//    subscription's own events carry it too
 		expect(create).toHaveBeenCalledWith({
 			mode: 'subscription',
 			customer: 'cus_1',
@@ -132,7 +145,7 @@ describe('PaymentsDriverStripe', () => {
 			subscription_data: { trial_period_days: 14, metadata: { organizationId: 'org_42', planId: 'pro' } },
 		});
 
-		// 1. A session without a URL cannot be redirected to
+		// 4. A session without a URL cannot be redirected to
 		create.mockResolvedValue({ id: 'cs_2', url: null, expires_at: 1 } as never);
 
 		await expect(
@@ -141,12 +154,14 @@ describe('PaymentsDriverStripe', () => {
 	});
 
 	test('Opens the portal', async () => {
+		// 1. Stripe answers the portal session with its page
 		const { client, driver } = setup();
 
 		const create = vi
 			.spyOn(client.billingPortal.sessions, 'create')
 			.mockResolvedValue({ url: 'https://billing.stripe.com/session/x' } as never);
 
+		// 2. The URL is all the caller needs; the customer and the way back are what Stripe needs
 		await expect(
 			driver.createPortalSession({ customerId: 'cus_1', returnUrl: 'https://app/billing' }),
 		).resolves.toStrictEqual({
@@ -157,6 +172,7 @@ describe('PaymentsDriverStripe', () => {
 	});
 
 	test('Reads, updates and cancels a subscription through its item', async () => {
+		// 1. One Stripe subscription, as the fixture carries it, answers every stubbed call
 		const { client, driver } = setup();
 		const stripeSubscription = fixture('customer.subscription.created').data.object as Stripe.Subscription;
 
@@ -164,13 +180,14 @@ describe('PaymentsDriverStripe', () => {
 		const update = vi.spyOn(client.subscriptions, 'update').mockResolvedValue(stripeSubscription as never);
 		const cancel = vi.spyOn(client.subscriptions, 'cancel').mockResolvedValue(stripeSubscription as never);
 
+		// 2. A read is the retrieval, normalised
 		await expect(driver.getSubscription('sub_1S5abcDEF123456789')).resolves.toMatchObject({
 			id: 'sub_1S5abcDEF123456789',
 			status: 'trialing',
 			quantity: 3,
 		});
 
-		// 1. A plan change and a seat change go on the item, with the proration as asked
+		// 3. A plan change and a seat change go on the item, with the proration as asked
 		await driver.updateSubscription({
 			subscriptionId: 'sub_1S5abcDEF123456789',
 			priceId: 'price_business_monthly',
@@ -183,6 +200,7 @@ describe('PaymentsDriverStripe', () => {
 			proration_behavior: 'always_invoice',
 		});
 
+		// 4. Without a proration choice the kit prorates, and only the given change goes on the item
 		await driver.updateSubscription({ subscriptionId: 'sub_1S5abcDEF123456789', quantity: 4 });
 
 		expect(update).toHaveBeenLastCalledWith('sub_1S5abcDEF123456789', {
@@ -190,7 +208,7 @@ describe('PaymentsDriverStripe', () => {
 			proration_behavior: PRORATION.prorate,
 		});
 
-		// 2. Cancelling at period end is an update; right away is a cancel — both pass the reason on
+		// 5. Cancelling at period end is an update; right away is a cancel — both pass the reason on
 		await driver.cancelSubscription({ subscriptionId: 'sub_1S5abcDEF123456789', reason: 'Too expensive' });
 
 		expect(update).toHaveBeenLastCalledWith('sub_1S5abcDEF123456789', {
@@ -204,11 +222,13 @@ describe('PaymentsDriverStripe', () => {
 	});
 
 	test('Lists invoices', async () => {
+		// 1. Stripe answers a page of invoices; one from the fixture is enough to check the mapping is applied
 		const { client, driver } = setup();
 		const invoice = fixture('invoice.paid').data.object as Stripe.Invoice;
 
 		const list = vi.spyOn(client.invoices, 'list').mockResolvedValue({ data: [invoice] } as never);
 
+		// 2. Each invoice is normalised; the customer and the limit are passed through as given
 		await expect(driver.listInvoices({ customerId: 'cus_T1abcDEF12345', limit: 10 })).resolves.toStrictEqual([
 			toInvoice(invoice),
 		]);
@@ -217,6 +237,7 @@ describe('PaymentsDriverStripe', () => {
 	});
 
 	test('Verifies a signed webhook and refuses a wrong signature, a missing header and a broken body', async () => {
+		// 1. A delivery signed with the endpoint's secret is verified and mapped
 		const { driver } = setup();
 		const event = fixture('customer.subscription.created');
 
@@ -226,11 +247,12 @@ describe('PaymentsDriverStripe', () => {
 			provider: 'stripe',
 		});
 
+		// 2. Another secret is a forged delivery; no header at all is a malformed one
 		await expect(deliver(driver, event, 'whsec_other')).rejects.toBeInstanceOf(InvalidCredentialsError);
 
 		await expect(driver.parseWebhook(JSON.stringify(event), {})).rejects.toBeInstanceOf(InvalidPayloadError);
 
-		// 1. A body altered after signing is a wrong signature; an unreadable body with a good signature is a payload
+		// 3. A body altered after signing is a wrong signature; an unreadable body with a good signature is a payload
 		const payload = JSON.stringify(event);
 		const header = Stripe.webhooks.generateTestHeaderString({ payload, secret: WEBHOOK_SECRET });
 
@@ -238,124 +260,33 @@ describe('PaymentsDriverStripe', () => {
 			InvalidCredentialsError,
 		);
 
-		const brokenHeader = Stripe.webhooks.generateTestHeaderString({ payload: '{not json', secret: WEBHOOK_SECRET });
+		await expect(deliver(driver, '{not json')).rejects.toBeInstanceOf(InvalidPayloadError);
+	});
 
-		await expect(driver.parseWebhook('{not json', { 'stripe-signature': brokenHeader })).rejects.toBeInstanceOf(
-			InvalidPayloadError,
-		);
+	test('Refuses a signed body that is JSON but not a Stripe event', async () => {
+		// 1. The SDK only verifies and parses; without a shape check a signed `{"hello":1}` would be dropped as an
+		//    event of no interest and acknowledged with 200, so the driver refuses it as a payload problem instead
+		const { driver } = setup();
+
+		await expect(deliver(driver, '{"hello":1}')).rejects.toBeInstanceOf(InvalidPayloadError);
+		await expect(deliver(driver, '{"hello":1}')).rejects.toThrow('not a Stripe event');
+
+		// 2. JSON that is not an object at all, and an event without its `data.object`, are refused the same way
+		await expect(deliver(driver, 'null')).rejects.toBeInstanceOf(InvalidPayloadError);
+		await expect(deliver(driver, '"evt_1"')).rejects.toBeInstanceOf(InvalidPayloadError);
+		await expect(deliver(driver, '{"id":"evt_1","type":"invoice.paid"}')).rejects.toBeInstanceOf(InvalidPayloadError);
+
+		// 3. An event of a type the kit does not act on is still an event: verified and dropped, not refused
+		await expect(deliver(driver, fixture('customer.subscription.trial_will_end'))).resolves.toBeNull();
 	});
 
 	test('Verifies the key with the cheapest read', async () => {
+		// 1. One customer is the smallest authenticated read there is
 		const { client, driver } = setup();
 		const list = vi.spyOn(client.customers, 'list').mockResolvedValue({ data: [] } as never);
 
 		await driver.verify();
 
 		expect(list).toHaveBeenCalledWith({ limit: 1 });
-	});
-});
-
-describe('toSubscription', () => {
-	test('Reads the item for price, seats and the period, the subscription for the rest', () => {
-		const subscription = toSubscription(fixture('customer.subscription.updated').data.object as Stripe.Subscription);
-
-		expect(subscription).toStrictEqual({
-			id: 'sub_1S5abcDEF123456789',
-			customerId: 'cus_T1abcDEF12345',
-			status: 'active',
-			priceId: 'price_pro_monthly',
-			productId: 'prod_T1pro',
-			quantity: 5,
-			interval: 'month',
-			currentPeriodStart: new Date(1789084800 * 1000),
-			currentPeriodEnd: new Date(1791676800 * 1000),
-			cancelAtPeriodEnd: true,
-			cancelAt: new Date(1791676800 * 1000),
-			canceledAt: new Date(1790000000 * 1000),
-			trialEnd: new Date(1790294400 * 1000),
-			endedAt: null,
-			metadata: { organizationId: 'org_42', planId: 'pro' },
-		});
-	});
-
-	test('Refuses a subscription without items or with a status it does not know', () => {
-		const subscription = fixture('customer.subscription.created').data.object as Stripe.Subscription;
-
-		expect(() => toSubscription({ ...subscription, items: { ...subscription.items, data: [] } })).toThrow(
-			'has no items',
-		);
-
-		expect(() => toSubscription({ ...subscription, status: 'frozen' as never })).toThrow('unknown status "frozen"');
-	});
-});
-
-describe('toInvoice', () => {
-	test('Maps amounts, the subscription of the parent and the links', () => {
-		expect(toInvoice(fixture('invoice.paid').data.object as Stripe.Invoice)).toStrictEqual({
-			id: 'in_1S5abcDEF12345',
-			number: 'A1B2C3D4-0001',
-			customerId: 'cus_T1abcDEF12345',
-			subscriptionId: 'sub_1S5abcDEF123456789',
-			status: 'paid',
-			total: { amount: 5700, currency: 'usd' },
-			amountPaid: 5700,
-			amountDue: 5700,
-			createdAt: new Date(1791676800 * 1000),
-			dueAt: null,
-			paidAt: new Date(1791676805 * 1000),
-			hostedUrl: 'https://invoice.stripe.com/i/acct_1/test_YWNjdF8x',
-			pdfUrl: 'https://pay.stripe.com/invoice/acct_1/test_YWNjdF8x/pdf',
-		});
-	});
-});
-
-describe('toEvent', () => {
-	test('Maps the events the kit acts on and drops the rest', () => {
-		expect(toEvent(fixture('checkout.session.completed'))).toMatchObject({
-			id: 'evt_1S5checkout000006',
-			type: 'checkout.completed',
-			provider: 'stripe',
-			occurredAt: new Date(1789084800 * 1000),
-			checkout: {
-				id: 'cs_test_a1B2c3D4e5F6g7H8i9J0',
-				customerId: 'cus_T1abcDEF12345',
-				subscriptionId: 'sub_1S5abcDEF123456789',
-				metadata: { organizationId: 'org_42', planId: 'pro' },
-			},
-		});
-
-		expect(toEvent(fixture('customer.subscription.created'))).toMatchObject({
-			type: 'subscription.created',
-			subscription: { status: 'trialing', quantity: 3 },
-		});
-
-		expect(toEvent(fixture('customer.subscription.updated'))).toMatchObject({
-			type: 'subscription.updated',
-			subscription: { status: 'active', cancelAtPeriodEnd: true },
-		});
-
-		expect(toEvent(fixture('customer.subscription.deleted'))).toMatchObject({
-			type: 'subscription.deleted',
-			subscription: { status: 'canceled', endedAt: new Date(1791676800 * 1000) },
-		});
-
-		expect(toEvent(fixture('invoice.paid'))).toMatchObject({ type: 'invoice.paid', invoice: { status: 'paid' } });
-
-		expect(toEvent(fixture('invoice.payment_failed'))).toMatchObject({
-			type: 'invoice.failed',
-			invoice: { id: 'in_1S5abcDEF12346', status: 'open', amountPaid: 0, paidAt: null },
-		});
-
-		expect(toEvent(fixture('customer.subscription.trial_will_end'))).toBeNull();
-
-		// 1. The raw event rides along for the audit trail
-		expect(toEvent(fixture('invoice.paid'))?.raw).toStrictEqual(fixture('invoice.paid'));
-	});
-
-	test('Ignores a one-off payment checkout', () => {
-		const event = fixture('checkout.session.completed');
-		const session = event.data.object as Stripe.Checkout.Session;
-
-		expect(toEvent({ ...event, data: { object: { ...session, mode: 'payment' } } } as Stripe.Event)).toBeNull();
 	});
 });

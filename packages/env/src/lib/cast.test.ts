@@ -80,7 +80,7 @@ describe('Casting', () => {
 	});
 
 	test('Refuses a broken regex pattern, naming the value', () => {
-		// A typo in a prefixed value is a broken configuration, not a missing variable a schema default would cover
+		// 1. A typo in a prefixed value is a broken configuration, not a missing variable a schema default would cover
 		vi.mocked(getCastFlag).mockReturnValue('regex');
 		expect(() => cast('regex:(')).toThrow('Cannot cast "regex:(" to a regular expression');
 	});

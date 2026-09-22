@@ -24,7 +24,9 @@ export type JobInputOf<Name extends JobName> = JobRegistry[Name] extends JobCont
  *
  * The one entry point for background work: the payload is checked against the contract (an invalid one throws
  * `InvalidPayloadError` right here, in the caller's request, not in a worker), the id is derived, the driver takes
- * it, and `queue.enqueued` is emitted for anyone listening — the activity log, metrics.
+ * it, and `queue.enqueued` is emitted for anyone listening — the activity log, metrics. The driver gets the payload
+ * as passed, not the parsed one: the run parses it once more with defaults and transforms applied, and a transform
+ * applied twice would double a number or fail on a value it already changed the type of.
  *
  * @typeParam Name - A job of the {@link JobRegistry}.
  * @param name - Job name.
@@ -56,12 +58,15 @@ export const enqueue = async <Name extends JobName>(
 	// 1. Validation happens where the bug is: a bad payload fails the caller, never a worker hours later
 	const parsed = contract.parse(payload);
 
-	// 2. The contract's options are the baseline; the call may tighten or loosen them
+	// 2. The contract's options are the baseline; the call may tighten or loosen them. The id is derived from the
+	//    parsed payload, so two calls that differ only in a default the schema fills in still collapse into one job
 	const effective = { ...contract.options, ...options };
 	const id = getJobId(contract, parsed, effective);
 
-	// 3. The queue of the job picks the location: its own when the application registered one, the default otherwise
-	const job = await useQueue().location(contract.queue).enqueue(contract, parsed, effective, id);
+	// 3. The queue of the job picks the location: its own when the application registered one, the default otherwise.
+	//    The driver takes the payload as passed: the run is where it is parsed, exactly once, so a schema transform
+	//    is applied a single time whichever way the job travels
+	const job = await useQueue().location(contract.queue).enqueue(contract, payload, effective, id);
 
 	// 4. Listeners get the parsed payload; the emit is fire-and-forget, as every action event is
 	useEmitter().emitAction(QUEUE_ENQUEUED_EVENT, { ...job, payload: parsed });

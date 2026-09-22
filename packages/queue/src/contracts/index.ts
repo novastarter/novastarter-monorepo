@@ -18,10 +18,13 @@ export const _contracts: Map<string, JobContract> = new Map();
  * @throws Error when a contract of that name is registered already — two modules claiming one name is a bug.
  */
 export const registerJob = <Contract extends JobContract>(contract: Contract): Contract => {
+	// 1. A second contract under one name is refused rather than replacing the first: `enqueue()` and the worker
+	//    would otherwise validate against whichever module loaded last
 	if (_contracts.has(contract.name)) {
 		throw new Error(`Job "${contract.name}" is already registered`);
 	}
 
+	// 2. Kept by name, which is what a job carries through the queue; answered back for the one-line export
 	_contracts.set(contract.name, contract);
 
 	return contract;
@@ -35,8 +38,11 @@ export const registerJob = <Contract extends JobContract>(contract: Contract): C
  * @throws Error for a name nobody registered.
  */
 export const getJobContract = (name: string): JobContract => {
+	// 1. The name is whatever arrived — from a caller, or from BullMQ on the worker side
 	const contract = _contracts.get(name);
 
+	// 2. An unknown name is thrown, not answered with `undefined`: a producer and a worker that disagree on the
+	//    contracts is a deployment bug the log should name
 	if (!contract) {
 		throw new Error(`Job "${name}" is not registered`);
 	}

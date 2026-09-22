@@ -6,19 +6,21 @@ import { GONE_REASONS } from './constants.js';
 /**
  * Turn what the SDK threw into the error `sendPush()` expects.
  *
- * @param error - The SDK's `ApnsError`, or whatever the network threw.
- * @returns A `PushTargetGoneError` for a dead token, an error naming APNs's status and reason otherwise.
+ * @param error - The SDK's `ApnsError`, or whatever the network or the deadline threw.
+ * @returns A `PushTargetGoneError` for a dead token, an error naming APNs's status and reason otherwise; either
+ * way what was thrown stays as the `cause`.
  */
 export const describeError = (error: unknown): Error => {
-	// 1. A refusal by APNs: the reason says whether the token is gone
+	// 1. A refusal by APNs: the reason says whether the token is gone. The SDK's error stays as the cause in both
+	//    branches, so a handler can reach the status, the notification and Apple's timestamp
 	if (error instanceof ApnsError) {
 		if (GONE_REASONS.has(error.reason)) {
-			return new PushTargetGoneError({ platform: 'apns', reason: error.reason });
+			return new PushTargetGoneError({ platform: 'apns', reason: error.reason }, { cause: error });
 		}
 
 		return new Error(`APNs ${error.statusCode} ${error.reason}`, { cause: error });
 	}
 
-	// 2. Anything else — the network, a bug — as is, prefixed
+	// 2. Anything else — the network, the deadline, a bug — as is, prefixed
 	return new Error(`APNs: ${toErrorMessage(error)}`, { cause: error });
 };

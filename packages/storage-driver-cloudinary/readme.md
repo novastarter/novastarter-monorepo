@@ -33,8 +33,7 @@ storage.registerLocation('media', {
 });
 ```
 
-Anywhere later: `useStorage().location('uploads').write(path, stream, type)` and the rest of the `StorageDriver`
-contract.
+Anywhere later: `useStorage().location('media').write(path, stream, type)` and the rest of the `StorageDriver` contract.
 
 ## Options
 

@@ -21,6 +21,7 @@ import type {
 	LsCustomerAttributes,
 	LsDocument,
 	LsListDocument,
+	LsResource,
 	LsSubscriptionAttributes,
 	LsSubscriptionInvoiceAttributes,
 	LsVariantAttributes,
@@ -44,7 +45,7 @@ export type PaymentsDriverLemonSqueezyConfig = {
 	storeId: string | number;
 	/** Another base URL of the API — a stand-in for tests. */
 	apiUrl?: string | undefined;
-	/** Request timeout in milliseconds. */
+	/** Request timeout in milliseconds: a whole number from `0` to 2^31 − 1 (`MAX_TIMEOUT` of the API client). */
 	timeout?: number | undefined;
 	/**
 	 * A fetch to send with instead of the platform's — tests hand in a fake.
@@ -63,6 +64,14 @@ declare module '@novastarter/payments' {
 		lemonsqueezy: PaymentsDriverLemonSqueezyConfig;
 	}
 }
+
+/**
+ * How many subscriptions one list request asks for: the most Lemon Squeezy hands out per page, so a customer's
+ * subscriptions are collected in as few reads as possible.
+ *
+ * @defaultValue 100
+ */
+const SUBSCRIPTIONS_PAGE_SIZE = 100;
 
 /**
  * Driver for [Lemon Squeezy](https://www.lemonsqueezy.com): hosted checkouts, the customer portal, subscriptions
@@ -127,6 +136,8 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 	 * @param config - API key, webhook secret, store.
 	 * @throws Error without a key, a webhook secret or a store — a deployment that cannot verify webhooks would drift
 	 * from Lemon Squeezy silently, and a checkout belongs to a store.
+	 * @throws RangeError for a timeout that is not a whole number from `0` to 2^31 − 1, which would fail every request
+	 * instead of bounding it.
 	 */
 	constructor(config: PaymentsDriverLemonSqueezyConfig) {
 		// 1. Fail at registration for the three values nothing works without, rather than on the first request
@@ -142,7 +153,8 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 			throw new Error('The lemonsqueezy payments driver needs a "storeId"');
 		}
 
-		// 2. The client takes the same options: key, base URL, timeout and the fetch to send with
+		// 2. The client takes the same options: key, base URL, timeout and the fetch to send with; it is the one that
+		//    refuses a timeout its abort signal cannot hold
 		this.api = new LemonSqueezyApi(config);
 		this.webhookSecret = config.webhookSecret;
 
@@ -157,6 +169,7 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 	 *
 	 * @param input - Email, name.
 	 * @returns The customer.
+	 * @throws LemonSqueezyApiError when Lemon Squeezy refuses the request or cannot be reached.
 	 */
 	async createCustomer(input: CreateCustomerInput): Promise<PaymentsCustomer> {
 		// 1. The name is required by the API; the email stands in for a customer without one
@@ -180,6 +193,7 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 	 *
 	 * @param input - Customer, variant, seats, success redirect, discount codes, metadata.
 	 * @returns The checkout and its page.
+	 * @throws LemonSqueezyApiError when Lemon Squeezy refuses the request or cannot be reached.
 	 */
 	async createCheckoutSession(input: CreateCheckoutSessionInput): Promise<CheckoutSession> {
 		// 1. The checkout is matched to the customer by email; the customer resource has it
@@ -230,6 +244,7 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 	 * @param input - Customer (the portal returns to the store, not to `returnUrl`).
 	 * @returns The portal page.
 	 * @throws Error when the customer has no portal link yet — none until a first order.
+	 * @throws LemonSqueezyApiError when Lemon Squeezy refuses the request or cannot be reached.
 	 */
 	async createPortalSession(input: CreatePortalSessionInput): Promise<PortalSession> {
 		// 1. There is no portal session resource: the customer carries a signed portal link
@@ -251,6 +266,7 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 	 *
 	 * @param subscriptionId - Lemon Squeezy's id.
 	 * @returns The subscription, normalised — without metadata, which only the webhooks carry.
+	 * @throws LemonSqueezyApiError when there is no such subscription, or Lemon Squeezy cannot be reached.
 	 */
 	async getSubscription(subscriptionId: string): Promise<Subscription> {
 		// 1. The subscription resource, then the interval of its variant — the subscription does not carry it
@@ -266,11 +282,13 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 	 * Change the variant (plan) and/or the seat count.
 	 *
 	 * A variant change is an update of the subscription; a seat change is an update of its first subscription item.
-	 * `proration: 'invoice'` charges the difference now, `'none'` skips the proration.
+	 * `proration: 'invoice'` charges the difference now, `'none'` skips the proration — on either request, so a seat
+	 * change alone is not prorated behind the caller's back.
 	 *
 	 * @param input - Subscription, new variant and/or seats, proration.
 	 * @returns The subscription after the change.
 	 * @throws Error when neither a variant nor a seat count is given, or the subscription has no item to size.
+	 * @throws LemonSqueezyApiError when Lemon Squeezy refuses the change or cannot be reached.
 	 */
 	async updateSubscription(input: UpdateSubscriptionInput): Promise<Subscription> {
 		// 1. An update with nothing to change is a caller's mistake, not a request to send
@@ -281,9 +299,14 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 		}
 
 		const id = encodeURIComponent(input.subscriptionId);
-		const invoiceImmediately = input.proration === 'invoice';
 
-		// 2. A variant change is an update of the subscription itself
+		// 2. Both endpoints take the same two flags, so the proration asked for holds whichever request carries the
+		//    change: `'invoice'` charges the difference now, `'none'` skips the proration, `'prorate'` leaves it to
+		//    the next renewal
+		const invoiceImmediately = input.proration === 'invoice';
+		const disableProrations = input.proration === 'none';
+
+		// 3. A variant change is an update of the subscription itself
 		if (input.priceId !== undefined) {
 			await this.api.request<LsDocument<LsSubscriptionAttributes>>('PATCH', `/subscriptions/${id}`, {
 				data: {
@@ -292,13 +315,13 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 					attributes: {
 						variant_id: Number(input.priceId),
 						invoice_immediately: invoiceImmediately,
-						disable_prorations: input.proration === 'none',
+						disable_prorations: disableProrations,
 					},
 				},
 			});
 		}
 
-		// 3. The seat count lives on the subscription item, which the subscription names
+		// 4. The seat count lives on the subscription item, which the subscription names
 		if (input.quantity !== undefined) {
 			const { data } = await this.api.request<LsDocument<LsSubscriptionAttributes>>('GET', `/subscriptions/${id}`);
 			const item = data.attributes.first_subscription_item;
@@ -311,12 +334,16 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 				data: {
 					type: 'subscription-items',
 					id: String(item.id),
-					attributes: { quantity: input.quantity, invoice_immediately: invoiceImmediately },
+					attributes: {
+						quantity: input.quantity,
+						invoice_immediately: invoiceImmediately,
+						disable_prorations: disableProrations,
+					},
 				},
 			});
 		}
 
-		// 4. Read back rather than trusting the PATCH responses: the two requests each answer a partial state
+		// 5. Read back rather than trusting the PATCH responses: the two requests each answer a partial state
 		return this.getSubscription(input.subscriptionId);
 	}
 
@@ -326,6 +353,7 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 	 *
 	 * @param input - Subscription (the reason is not recorded by Lemon Squeezy).
 	 * @returns The subscription after the request: `cancelAtPeriodEnd`, `cancelAt` set.
+	 * @throws LemonSqueezyApiError when there is no such subscription, or Lemon Squeezy cannot be reached.
 	 */
 	async cancelSubscription(input: CancelSubscriptionInput): Promise<Subscription> {
 		// 1. DELETE answers the subscription as it now stands — cancelled, valid until `ends_at`
@@ -341,10 +369,11 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 	 * The invoices of a customer's subscriptions, most recent first.
 	 *
 	 * Subscription invoices are filtered by subscription, subscriptions by email: the customer's email leads to the
-	 * subscriptions, each subscription to its invoices — one read per subscription.
+	 * subscriptions — every page of them — each subscription to its invoices, one read per subscription.
 	 *
 	 * @param input - Customer and how many.
 	 * @returns The invoices, normalised.
+	 * @throws LemonSqueezyApiError when there is no such customer, or Lemon Squeezy cannot be reached.
 	 */
 	async listInvoices(input: ListInvoicesInput): Promise<Invoice[]> {
 		const limit = input.limit ?? 20;
@@ -355,17 +384,27 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 			`/customers/${encodeURIComponent(input.customerId)}`,
 		);
 
-		const subscriptions = await this.api.request<LsListDocument<LsSubscriptionAttributes>>(
-			'GET',
-			`/subscriptions?filter[store_id]=${encodeURIComponent(this.storeId)}&filter[user_email]=${encodeURIComponent(customer.attributes.email)}`,
-		);
+		// 2. Every subscription of the email, page by page: the API answers ten per page unless told otherwise, and a
+		//    subscription left on a later page would silently contribute no invoices, however large the limit
+		const query = `filter[store_id]=${encodeURIComponent(this.storeId)}&filter[user_email]=${encodeURIComponent(customer.attributes.email)}&page[size]=${SUBSCRIPTIONS_PAGE_SIZE}`;
+		const subscriptions: LsResource<LsSubscriptionAttributes>[] = [];
 
-		// 2. Only this customer's subscriptions: another customer of the store could share the email
-		const own = subscriptions.data.filter(
+		for (let page = 1, lastPage = 1; page <= lastPage; page++) {
+			const list = await this.api.request<LsListDocument<LsSubscriptionAttributes>>(
+				'GET',
+				`/subscriptions?${query}&page[number]=${page}`,
+			);
+
+			subscriptions.push(...list.data);
+			lastPage = list.meta?.page?.lastPage ?? 1;
+		}
+
+		// 3. Only this customer's subscriptions: another customer of the store could share the email
+		const own = subscriptions.filter(
 			(subscription) => String(subscription.attributes.customer_id) === input.customerId,
 		);
 
-		// 3. One invoice page per subscription, in parallel; each page is capped so no subscription floods the result
+		// 4. One invoice page per subscription, in parallel; each page is capped so no subscription floods the result
 		const pages = await Promise.all(
 			own.map((subscription) =>
 				this.api.request<LsListDocument<LsSubscriptionInvoiceAttributes>>(
@@ -375,7 +414,7 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 			),
 		);
 
-		// 4. Merge the pages, newest first, and cut to the limit the caller asked for
+		// 5. Merge the pages, newest first, and cut to the limit the caller asked for
 		return pages
 			.flatMap((page) => page.data)
 			.map(toInvoice)
@@ -405,7 +444,9 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 			throw new InvalidCredentialsError();
 		}
 
-		// 3. A verified body has to be a delivery: an event name under `meta`, a resource under `data`
+		// 3. A verified body has to be a delivery: an event name under `meta`, a resource with its attributes under
+		//    `data` — the mapping reads all three, so a body missing one is refused as not the provider's event rather
+		//    than crashing the route into a 500 that Lemon Squeezy would keep retrying
 		let payload: LsWebhookPayload;
 
 		try {
@@ -414,7 +455,12 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 			throw new InvalidPayloadError({ reason: 'The body is not JSON' });
 		}
 
-		if (typeof payload?.meta?.event_name !== 'string' || typeof payload.data?.id !== 'string') {
+		if (
+			typeof payload?.meta?.event_name !== 'string' ||
+			typeof payload.data?.id !== 'string' ||
+			typeof payload.data.attributes !== 'object' ||
+			payload.data.attributes === null
+		) {
 			throw new InvalidPayloadError({ reason: 'The body is not a Lemon Squeezy event' });
 		}
 

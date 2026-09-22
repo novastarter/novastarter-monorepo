@@ -2,6 +2,7 @@ import { useEmitter } from '@novastarter/emitter';
 import { ErrorCode, InvalidPayloadError, isNovastarterError } from '@novastarter/errors';
 import { type Logger, useLogger } from '@novastarter/logger';
 import type { LimiterDriver } from '@novastarter/memory';
+import { toError } from '@novastarter/utils';
 import type { MailAddress, MailMessage, MailResult } from '../types.js';
 import { resolveMailChain } from './router.js';
 import { useMail } from './use-mail.js';
@@ -50,17 +51,18 @@ export interface MailSendOptions {
  * 1. Runs the `mail.send` filter, so the app can rewrite or drop it.
  * 2. Fills `from` in from the routes and checks an object `from` has both parts.
  * 3. Trims the html line by line — some clients misbehave past 75 characters of leading whitespace.
- * 4. Picks the chain from the routes and tries each location in turn: one whose limiter is spent, or whose driver
- *    throws, is skipped for the next.
+ * 4. Picks the chain from the routes — or the one location `options.location` names, which has to be registered —
+ *    and tries each location in turn: one whose limiter is spent, or whose driver throws, is skipped for the next.
  * 5. Emits `mail.sent` with the winner, or `mail.failed` and throws when nobody took it.
  *
  * @param message - Message to send; `from` and `category` are optional.
  * @param options - Per-call overrides.
  * @returns The driver's result and the location that delivered, or `null` when a `mail.send` filter dropped the
  * message.
- * @throws InvalidPayloadError for a message without a sender, or a `from` object without name or address;
- * HitRateLimitError when every location of the chain is over its limit; Error when every location failed, the last
- * failure as `cause`, or when no location is registered.
+ * @throws InvalidPayloadError for a message without a sender, or a `from` object without name or address; Error
+ * when `options.location` names a location nobody registered, before anything is sent; HitRateLimitError when every
+ * location of the chain is over its limit; Error when every location failed, the last failure as `cause`, or when no
+ * location is registered.
  *
  * @example
  * ```ts
@@ -91,7 +93,12 @@ export const sendMail = async (message: MailMessage, options: MailSendOptions = 
 		...(typeof filtered.html === 'string' ? { html: normalizeHtml(filtered.html) } : {}),
 	};
 
-	// 3. An explicit location short-circuits the routes; otherwise the chain comes from `from` and `category`
+	// 3. An explicit location short-circuits the routes; otherwise the chain comes from `from` and `category`. A name
+	//    nobody registered is a configuration mistake, named here rather than logged as a delivery failure below
+	if (options.location && !manager.hasLocation(options.location)) {
+		throw new Error(`Mail location "${options.location}" doesn't exist.`);
+	}
+
 	const chain = options.location ? [options.location] : resolveMailChain(routes, prepared, manager);
 
 	if (chain.length === 0) {
@@ -120,12 +127,14 @@ export const sendMail = async (message: MailMessage, options: MailSendOptions = 
 
 			return sent;
 		} catch (error) {
+			// 5. pino takes a non-object first argument as the message, so a driver rejecting with a string would replace
+			//    the line and drop the location; `toError` keeps both
 			lastError = error;
-			logger.warn(error, `Mail location "${location}" failed to send "${prepared.subject}"`);
+			logger.warn(toError(error), `Mail location "${location}" failed to send "${prepared.subject}"`);
 		}
 	}
 
-	// 5. Nobody took it: the reason is the limit when that is all that stood in the way, the last failure otherwise
+	// 6. Nobody took it: the reason is the limit when that is all that stood in the way, the last failure otherwise
 	useEmitter().emitAction(MAIL_FAILED_EVENT, { locations: chain, subject: prepared.subject, to: prepared.to });
 
 	if (limited === chain.length) {
@@ -197,8 +206,14 @@ const consume = async (location: string, limiter: LimiterDriver | undefined, log
  *
  * @param html - Rendered body.
  * @returns The same body, lines trimmed.
+ * @example
+ * ```ts
+ * normalizeHtml('  <p>\n    hi\n  </p>');
+ * // => '<p>\nhi\n</p>'
+ * ```
  */
 export const normalizeHtml = (html: string): string =>
+	// 1. Line breaks stay, so the markup remains readable in the source view; only the indentation goes
 	html
 		.split('\n')
 		.map((line) => line.trim())

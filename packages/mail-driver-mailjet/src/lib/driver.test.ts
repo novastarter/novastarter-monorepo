@@ -1,77 +1,36 @@
 /**
- * Tests of the Mailjet driver with the SDK mocked.
+ * Tests of the Mailjet driver class with the SDK mocked; the message mapper is covered in `to-mailjet-message.test.ts`.
  */
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import defaultExport from '../index.js';
 import { MailDriverMailjet } from './driver.js';
-import { toMailjetMessage } from './to-mailjet-message.js';
 
 const request = vi.fn();
 const post = vi.fn(() => ({ request }));
 
 vi.mock('node-mailjet', () => ({
+	/**
+	 * Stand-in for the SDK's `Client`: records the constructor options and routes `post()` to the shared spy.
+	 */
 	Client: class {
+		/**
+		 * The shared `post` spy, so the test can assert the endpoint and API version the driver asked for.
+		 *
+		 * @internal
+		 */
 		post = post;
 
+		/**
+		 * Keep the options the driver built the client with.
+		 *
+		 * @param options - The key pair the driver passes to the SDK.
+		 */
 		constructor(public options: unknown) {}
 	},
 }));
 
 afterEach(() => {
 	vi.clearAllMocks();
-});
-
-describe('toMailjetMessage', () => {
-	test('Maps the message into Mailjet shape, inline attachments apart', async () => {
-		// 1. Every field finds its Mailjet name; the attachment with a content id lands in `InlinedAttachments`
-		expect(
-			await toMailjetMessage({
-				to: [{ name: 'Ada', address: 'ada@example.com' }],
-				bcc: ['bcc@example.com'],
-				from: { name: 'Acme', address: 'no-reply@acme.test' },
-				replyTo: 'Support <support@acme.test>',
-				subject: 'Hi',
-				html: '<p>Hi</p>',
-				text: 'Hi',
-				headers: { 'X-Campaign': 'welcome' },
-				attachments: [
-					{ filename: 'a.txt', content: 'hello' },
-					{ filename: 'logo.png', content: Buffer.from('png'), contentType: 'image/png', cid: 'logo' },
-				],
-				category: 'marketing',
-				tags: ['welcome', 'v2'],
-			}),
-		).toStrictEqual({
-			From: { Email: 'no-reply@acme.test', Name: 'Acme' },
-			To: [{ Email: 'ada@example.com', Name: 'Ada' }],
-			Bcc: [{ Email: 'bcc@example.com' }],
-			ReplyTo: { Email: 'support@acme.test' },
-			Subject: 'Hi',
-			HTMLPart: '<p>Hi</p>',
-			TextPart: 'Hi',
-			Headers: { 'X-Campaign': 'welcome' },
-			CustomCampaign: 'marketing',
-			CustomID: 'welcome,v2',
-			Attachments: [
-				{
-					ContentType: 'application/octet-stream',
-					Filename: 'a.txt',
-					Base64Content: Buffer.from('hello').toString('base64'),
-				},
-			],
-			InlinedAttachments: [
-				{
-					ContentType: 'image/png',
-					Filename: 'logo.png',
-					Base64Content: Buffer.from('png').toString('base64'),
-					ContentID: 'logo',
-				},
-			],
-		});
-
-		// 2. A message without a sender is refused by name
-		await expect(toMailjetMessage({ to: 'a@b.c', subject: 'x', text: 'x' })).rejects.toThrow(/"from"/);
-	});
 });
 
 describe('MailDriverMailjet', () => {

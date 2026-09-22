@@ -15,6 +15,7 @@ export default [
 	'ChatGPT',
 	'CTA',
 	'DateTime',
+	'FAQs',
 	'FMS',
 	'GitHub',
 	'GPT',

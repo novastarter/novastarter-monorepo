@@ -18,12 +18,10 @@ import {
 	randWord,
 } from '@ngneat/falso';
 import { StorageFileNotFoundError } from '@novastarter/storage';
-import { confinePath, joinPath, normalizePath } from '@novastarter/utils';
-import { isReadableStream } from '@novastarter/utils/node';
+import { confinePath, joinPath } from '@novastarter/utils';
 import { afterEach, beforeEach, describe, expect, type Mock, test, vi } from 'vitest';
 import { StorageDriverAzure, type StorageDriverAzureConfig } from './driver.js';
 
-vi.mock('@novastarter/utils/node');
 vi.mock('@novastarter/utils');
 vi.mock('@azure/storage-blob');
 
@@ -111,6 +109,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	// 1. Reset call history and implementations, so a `mockReturnValue` set in one test cannot leak into the next
 	vi.resetAllMocks();
 });
 
@@ -146,11 +145,14 @@ describe('#constructor', () => {
 	});
 
 	test('Creates signed credentials', () => {
+		// 1. The shared driver from `beforeEach` already ran the constructor, so the credential call is recorded; the
+		//    instance check shows the credential is kept for the SDK rather than rebuilt per request
 		expect(StorageSharedKeyCredential).toHaveBeenCalledWith(sample.config.accountName, sample.config.accountKey);
 		expect(driver['signedCredentials']).toBeInstanceOf(StorageSharedKeyCredential);
 	});
 
 	test('Creates blob service client and sets containerClient', () => {
+		// 1. Hand the SDK fixed instances, so the assertions can follow the wiring by identity instead of by shape
 		const mockSignedCredentials = {} as StorageSharedKeyCredential;
 		vi.mocked(StorageSharedKeyCredential).mockReturnValueOnce(mockSignedCredentials);
 
@@ -162,6 +164,8 @@ describe('#constructor', () => {
 
 		vi.mocked(BlobServiceClient).mockReturnValue(mockBlobServiceClient);
 
+		// 2. Without an endpoint the driver must derive the public one from the account name and sign it with the
+		//    credential built a step earlier
 		const driver = new StorageDriverAzure({
 			containerName: sample.config.containerName,
 			accountName: sample.config.accountName,
@@ -173,12 +177,14 @@ describe('#constructor', () => {
 			mockSignedCredentials,
 		);
 
+		// 3. The container handle has to come from that same service client, or requests would go to another account
 		expect(mockBlobServiceClient.getContainerClient).toHaveBeenCalledWith(sample.config.containerName);
 		expect(driver['containerClient']).toBe(mockContainerClient);
 	});
 
 	describe('Allows overriding endpoint with optional setting', () => {
 		test('Creates blob service client and sets containerClient', () => {
+			// 1. Hand the SDK fixed instances, so the assertions can follow the wiring by identity instead of by shape
 			const mockSignedCredentials = {} as StorageSharedKeyCredential;
 			vi.mocked(StorageSharedKeyCredential).mockReturnValueOnce(mockSignedCredentials);
 
@@ -190,6 +196,8 @@ describe('#constructor', () => {
 
 			vi.mocked(BlobServiceClient).mockReturnValue(mockBlobServiceClient);
 
+			// 2. A custom endpoint must reach the SDK verbatim, or emulators and sovereign clouds would still be routed
+			//    to `blob.core.windows.net`
 			const driver = new StorageDriverAzure({
 				containerName: sample.config.containerName,
 				accountName: sample.config.accountName,
@@ -199,18 +207,21 @@ describe('#constructor', () => {
 
 			expect(BlobServiceClient).toHaveBeenCalledWith(sample.config.endpoint, mockSignedCredentials);
 
+			// 3. The container handle has to come from that same service client, or requests would go to another host
 			expect(mockBlobServiceClient.getContainerClient).toHaveBeenCalledWith(sample.config.containerName);
 			expect(driver['containerClient']).toBe(mockContainerClient);
 		});
 	});
 
 	test('Defaults root path to empty string', () => {
+		// 1. The shared driver was built without a root; an empty string rather than `undefined` keeps `joinPath` from
+		//    producing blob names that start with "undefined/"
 		expect(driver['root']).toBe('');
 	});
 
 	test('Normalizes config path when root is given', () => {
-		vi.mocked(normalizePath).mockReturnValue(sample.path.inputFull);
-
+		// 1. `confinePath` is auto-mocked, so the call alone shows the root goes through the same resolution as every
+		//    key: a leading slash or `..` in the root would otherwise end up inside the blob names
 		new StorageDriverAzure({
 			containerName: sample.config.containerName,
 			accountName: sample.config.accountName,
@@ -239,7 +250,7 @@ describe('#fullPath', () => {
 		// 2. `joinPath` must get root and path in that order, and its result is the blob name
 		const result = driver['fullPath'](sample.path.input);
 
-		// The caller path is confined first, so a leading `..` is dropped before the root is joined
+		// 3. The caller path is confined first, so a leading `..` is dropped before the root is joined
 		expect(confinePath).toHaveBeenCalledWith(sample.path.input);
 		expect(joinPath).toHaveBeenCalledWith(sample.config.root, sample.path.input);
 		expect(result).toBe(sample.path.inputFull);
@@ -250,6 +261,7 @@ describe('#read', () => {
 	let mockDownload: Mock;
 
 	beforeEach(async () => {
+		// 1. Resolve a stream by default, so the range tests only have to assert on the arguments handed to the SDK
 		mockDownload = vi.fn().mockResolvedValue({ readableStreamBody: sample.stream });
 
 		const mockBlobClient = vi.fn().mockReturnValue({
@@ -262,16 +274,18 @@ describe('#read', () => {
 	});
 
 	test('Throws StorageFileNotFoundError when the blob is missing, rethrows anything else', async () => {
-		// A 404 is the error every backend shares; a denied read says nothing about the blob
+		// 1. A 404 is the error every backend shares, so callers can tell a missing blob from any other failure
 		mockDownload.mockRejectedValueOnce(Object.assign(new Error('BlobNotFound'), { statusCode: 404 }));
 		await expect(driver.read(sample.path.input)).rejects.toBeInstanceOf(StorageFileNotFoundError);
 
+		// 2. A denied read says nothing about the blob, so it must keep its own identity instead of becoming "not found"
 		const denied = Object.assign(new Error('AuthorizationFailure'), { statusCode: 403 });
 		mockDownload.mockRejectedValueOnce(denied);
 		await expect(driver.read(sample.path.input)).rejects.toBe(denied);
 	});
 
 	test('Uses blobClient at full path', async () => {
+		// 1. The blob name must be the resolved one, not the caller path, or the root prefix would be lost
 		await driver.read(sample.path.input);
 
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
@@ -279,45 +293,48 @@ describe('#read', () => {
 	});
 
 	test('Calls download with undefined undefined when no range is passed', async () => {
+		// 1. Without a range the SDK gets neither offset nor count, which is how it reads the whole blob
 		await driver.read(sample.path.input);
 
 		expect(mockDownload).toHaveBeenCalledWith(undefined, undefined);
 	});
 
 	test('Calls download with offset if start range is provided', async () => {
+		// 1. A start alone becomes the offset; the count stays undefined so the rest of the blob is read
 		await driver.read(sample.path.input, { range: { start: sample.range.start } });
 
 		expect(mockDownload).toHaveBeenCalledWith(sample.range.start, undefined);
 	});
 
 	test('Calls download with count if end range is provided', async () => {
+		// 1. An end alone counts from byte zero; the bound is inclusive, hence one more than the end
 		await driver.read(sample.path.input, { range: { end: sample.range.end } });
 
 		expect(mockDownload).toHaveBeenCalledWith(undefined, sample.range.end + 1);
 	});
 
 	test('Calls download with offset and count if start and end ranges are provided', async () => {
+		// 1. The SDK takes offset and count, so the closed range has to be converted rather than passed through
 		await driver.read(sample.path.input, { range: sample.range });
 
 		expect(mockDownload).toHaveBeenCalledWith(sample.range.start, sample.range.end - sample.range.start + 1);
 	});
 
 	test('Turns a zero end into a count of one, the first byte', async () => {
-		// `end: 0` is a bound like any other; dropped by a truthiness check it would download the whole blob
+		// 1. `end: 0` is a bound like any other; dropped by a truthiness check it would download the whole blob
 		await driver.read(sample.path.input, { range: { start: 0, end: 0 } });
 
 		expect(mockDownload).toHaveBeenCalledWith(0, 1);
 	});
 
 	test('Throws error when no readable stream is returned', async () => {
+		// 1. `readableStreamBody` is only set in Node; without it there is nothing to hand back, and a silent
+		//    `undefined` would crash the caller further away from the cause
 		mockDownload.mockResolvedValue({ readableStreamBody: undefined });
 
-		try {
-			await driver.read(sample.path.input);
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe(`No stream returned for file "${sample.path.input}"`);
-		}
+		await expect(driver.read(sample.path.input)).rejects.toThrowError(
+			`No stream returned for file "${sample.path.input}"`,
+		);
 	});
 });
 
@@ -326,6 +343,7 @@ describe('#write', () => {
 	let mockBlockBlobClient: Mock;
 
 	beforeEach(() => {
+		// 1. Record the upload call only; the mocked SDK never consumes the stream, so no data has to be written to it
 		mockUploadStream = vi.fn();
 
 		mockBlockBlobClient = vi.fn().mockReturnValue({
@@ -335,17 +353,18 @@ describe('#write', () => {
 		driver['containerClient'] = {
 			getBlockBlobClient: mockBlockBlobClient,
 		} as unknown as ContainerClient;
-
-		vi.mocked(isReadableStream).mockReturnValue(true);
 	});
 
 	test('Gets BlockBlobClient for file path', async () => {
+		// 1. The block blob must be addressed by the resolved name, or the write lands outside the root
 		await driver.write(sample.path.input, sample.stream);
 
 		expect(mockBlockBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
 	});
 
 	test('Uploads stream through uploadStream', async () => {
+		// 1. Buffer size and concurrency stay at the SDK defaults; the only header set is a generic content type, so
+		//    the blob is never served without one
 		await driver.write(sample.path.input, sample.stream);
 
 		expect(mockUploadStream).toHaveBeenCalledWith(sample.stream, undefined, undefined, {
@@ -354,6 +373,7 @@ describe('#write', () => {
 	});
 
 	test('Allows optional mime type to be set', async () => {
+		// 1. A caller-supplied type has to reach the blob's `Content-Type`, since that is what the service serves it with
 		await driver.write(sample.path.input, sample.stream, sample.file.type);
 
 		expect(mockUploadStream).toHaveBeenCalledWith(sample.stream, undefined, undefined, {
@@ -366,6 +386,7 @@ describe('#delete', () => {
 	let mockDeleteIfExists: Mock;
 
 	beforeEach(() => {
+		// 1. Resolve `true` as the SDK does for a blob that was present; the driver ignores the flag either way
 		mockDeleteIfExists = vi.fn().mockResolvedValue(true);
 
 		const mockBlockBlobClient = vi.fn().mockReturnValue({
@@ -378,6 +399,7 @@ describe('#delete', () => {
 	});
 
 	test('Uses blobClient at full path', async () => {
+		// 1. The blob name must be the resolved one, or a delete could remove a blob outside the root
 		await driver.delete(sample.path.input);
 
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
@@ -385,6 +407,7 @@ describe('#delete', () => {
 	});
 
 	test('Returns delete result', async () => {
+		// 1. `deleteIfExists` rather than `delete`, so removing a blob that is already gone is a no-op, not a 404
 		await driver.delete(sample.path.input);
 
 		expect(mockDeleteIfExists).toHaveBeenCalled();
@@ -393,6 +416,7 @@ describe('#delete', () => {
 
 describe('#stat', () => {
 	beforeEach(() => {
+		// 1. Answer the HEAD request with the fixture's size and date, so the mapping test has known values to compare
 		const mockGetProperties = vi.fn().mockReturnValue({
 			contentLength: sample.file.size,
 			lastModified: sample.file.modified,
@@ -408,6 +432,7 @@ describe('#stat', () => {
 	});
 
 	test('Uses blobClient at full path', async () => {
+		// 1. The blob name must be the resolved one, or the metadata would describe a blob outside the root
 		await driver.stat(sample.path.input);
 
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
@@ -415,6 +440,7 @@ describe('#stat', () => {
 	});
 
 	test('Returns contentLength/lastModified as size/modified from getProperties', async () => {
+		// 1. Only the two fields every backend shares are returned, under the names the `Stat` contract uses
 		const result = await driver.stat(sample.path.input);
 
 		expect(result).toStrictEqual({
@@ -453,6 +479,7 @@ describe('#exists', () => {
 	let mockExists: Mock;
 
 	beforeEach(() => {
+		// 1. Answer `true` by default, so the pass-through test can tell the SDK's answer from a hard-coded one
 		mockExists = vi.fn().mockResolvedValue(true);
 
 		const mockBlockBlobClient = vi.fn().mockReturnValue({
@@ -465,6 +492,7 @@ describe('#exists', () => {
 	});
 
 	test('Uses blobClient at full path', async () => {
+		// 1. The blob name must be the resolved one, or the check would report on a blob outside the root
 		await driver.exists(sample.path.input);
 
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
@@ -472,17 +500,16 @@ describe('#exists', () => {
 	});
 
 	test('Returns exists result', async () => {
+		// 1. The SDK already does the HEAD request and the 404 check, so its answer is returned untouched
 		const result = await driver.exists(sample.path.input);
 
 		expect(mockExists).toHaveBeenCalled();
 		expect(result).toBe(true);
 	});
 
-	/**
-	 * The SDK only answers false for a missing blob, so a failed lookup has to keep travelling. Reporting
-	 * it as a missing file makes callers act on a wrong answer.
-	 */
 	test('Throws if the lookup failed', async () => {
+		// 1. The SDK only answers `false` for a missing blob, so a failed lookup has to keep travelling; reporting it as
+		//    a missing file would make callers act on a wrong answer
 		const error = new Error('Service unavailable');
 		mockExists.mockRejectedValue(error);
 
@@ -495,6 +522,7 @@ describe('#move', () => {
 	let mockBlockBlobClient: Mock;
 
 	beforeEach(() => {
+		// 1. Only the delete step runs against the SDK here; `copy` is stubbed so the move is checked in isolation
 		mockDeleteIfExists = vi.fn();
 
 		mockBlockBlobClient = vi.fn().mockReturnValue({
@@ -509,12 +537,14 @@ describe('#move', () => {
 	});
 
 	test('Calls #copy with src and dest', async () => {
+		// 1. Blob Storage has no rename, so the move must reuse the server-side copy with the caller's paths
 		await driver.move(sample.path.src, sample.path.dest);
 
 		expect(driver.copy).toHaveBeenCalledWith(sample.path.src, sample.path.dest);
 	});
 
 	test('Deletes src file after copy is completed', async () => {
+		// 1. The source is removed by its resolved name and exactly once; a second delete would be a wasted request
 		await driver.move(sample.path.src, sample.path.dest);
 
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.src);
@@ -530,6 +560,7 @@ describe('#copy', () => {
 	let mockUrl: string;
 
 	beforeEach(() => {
+		// 1. The poller resolves at once, so `copy` returns without the test having to drive a pending server-side copy
 		mockPollUntilDone = vi.fn();
 
 		mockBeginCopyFromUrl = vi.fn().mockResolvedValue({
@@ -538,7 +569,7 @@ describe('#copy', () => {
 
 		mockUrl = randUrl();
 
-		// 1. The first client is the source (only its `url` is read), the second is the target the copy is started on
+		// 2. The first client is the source (only its `url` is read), the second is the target the copy is started on
 		mockBlockBlobClient = vi
 			.fn()
 			.mockReturnValueOnce({
@@ -554,6 +585,7 @@ describe('#copy', () => {
 	});
 
 	test('Gets BlockBlobClient for src and dest', async () => {
+		// 1. Both names are resolved, so neither end of the copy can escape the root
 		await driver.copy(sample.path.src, sample.path.dest);
 
 		expect(driver['fullPath']).toHaveBeenCalledTimes(2);
@@ -566,6 +598,7 @@ describe('#copy', () => {
 	});
 
 	test('Calls beginCopyFromUrl with source url', async () => {
+		// 1. The copy is started on the target from the source's URL, which is the only way the service copies blobs
 		await driver.copy(sample.path.src, sample.path.dest);
 
 		expect(mockBeginCopyFromUrl).toHaveBeenCalledOnce();
@@ -573,6 +606,8 @@ describe('#copy', () => {
 	});
 
 	test('Waits for the polling to be done', async () => {
+		// 1. The copy runs asynchronously on the server, so returning before the poller finishes would let a `move`
+		//    delete the source while the copy is still pending
 		await driver.copy(sample.path.src, sample.path.dest);
 
 		expect(mockPollUntilDone).toHaveBeenCalledOnce();
@@ -583,6 +618,8 @@ describe('#list', () => {
 	let mockListBlobsFlat: Mock;
 
 	beforeEach(() => {
+		// 1. An empty page by default; a plain array stands in for the SDK's paged iterator, since `for await` accepts
+		//    either
 		mockListBlobsFlat = vi.fn().mockReturnValue([]);
 
 		driver['containerClient'] = {
@@ -591,6 +628,7 @@ describe('#list', () => {
 	});
 
 	test('Uses listBlobsFlat at default empty path', async () => {
+		// 1. With no prefix the whole root is listed; the resolver still runs so the root itself becomes the prefix
 		await driver.list().next();
 
 		expect(driver['fullPath']).toHaveBeenCalledWith('');
@@ -601,6 +639,7 @@ describe('#list', () => {
 	});
 
 	test('Allows for optional prefix', async () => {
+		// 1. The prefix is resolved like any key, so a listing under `media` cannot spill into a sibling folder
 		await driver.list(sample.path.input).next();
 
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
@@ -611,6 +650,7 @@ describe('#list', () => {
 	});
 
 	test('Returns blob.name for each returned blob', async () => {
+		// 1. With an empty root there is nothing to strip, so the blob name comes back as the relative path unchanged
 		const mockFile = randFilePath();
 		mockListBlobsFlat.mockReturnValue([{ name: mockFile }]);
 

@@ -13,7 +13,9 @@ describe('No value', () => {
 	const types: (FilterOperator | 'required' | 'regex')[] = ['null', 'nnull', 'empty', 'nempty', 'required', 'regex'];
 
 	test.each(types)('Constructs message for "%s"', (type) => {
+		// 1. Snapshot the message so a wording change is a deliberate diff, not a silent one
 		const message = messageConstructor({ field, type, path });
+
 		expect(message).toMatchSnapshot();
 	});
 });
@@ -25,7 +27,9 @@ describe('Valid value (primitive)', () => {
 	const valid = 15;
 
 	test.each(types)('Constructs message for "%s"', (type) => {
+		// 1. Snapshot the message so a wording change is a deliberate diff, not a silent one
 		const message = messageConstructor({ field, type, valid, path });
+
 		expect(message).toMatchSnapshot();
 	});
 });
@@ -37,7 +41,9 @@ describe('Valid value (list)', () => {
 	const valid = ['valA', 'valB', 'valC'];
 
 	test.each(types)('Constructs message for "%s"', (type) => {
+		// 1. Snapshot the message so a wording change is a deliberate diff, not a silent one
 		const message = messageConstructor({ field, type, valid, path });
+
 		expect(message).toMatchSnapshot();
 	});
 });
@@ -49,7 +55,9 @@ describe('Invalid value (primitive)', () => {
 	const invalid = 15;
 
 	test.each(types)('Constructs message for "%s"', (type) => {
+		// 1. Snapshot the message so a wording change is a deliberate diff, not a silent one
 		const message = messageConstructor({ field, type, invalid, path });
+
 		expect(message).toMatchSnapshot();
 	});
 });
@@ -61,7 +69,9 @@ describe('Invalid value (list)', () => {
 	const invalid = ['valA', 'valB', 'valC'];
 
 	test.each(types)('Constructs message for "%s"', (type) => {
+		// 1. Snapshot the message so a wording change is a deliberate diff, not a silent one
 		const message = messageConstructor({ field, type, invalid, path });
+
 		expect(message).toMatchSnapshot();
 	});
 });
@@ -73,13 +83,16 @@ describe('Substring', () => {
 	const substring = 'test_substring';
 
 	test.each(types)('Constructs message for "%s"', (type) => {
+		// 1. Snapshot the message so a wording change is a deliberate diff, not a silent one
 		const message = messageConstructor({ field, type, substring, path });
+
 		expect(message).toMatchSnapshot();
 	});
 });
 
 describe('Unsafe number', () => {
 	test('Constructs message for "unsafe"', () => {
+		// 1. Snapshot the message so a wording change is a deliberate diff, not a silent one
 		const message = messageConstructor({
 			field,
 			type: 'unsafe',
@@ -92,7 +105,9 @@ describe('Unsafe number', () => {
 
 describe('Nested path', () => {
 	test('Names the path below the field', () => {
+		// 1. The path is joined with dots, indices included, so the client can point at the exact input
 		const message = messageConstructor({ field, type: 'required', path: ['address', 0, 'city'] });
+
 		expect(message).toBe('Validation failed for field "test_field" at "address.0.city". Value is required.');
 	});
 });

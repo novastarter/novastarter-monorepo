@@ -43,31 +43,54 @@ const isRedisClient = (connection: RedisConfig | Redis): connection is Redis => 
 export const DEFAULT_REMOVE_ON_FAIL = 1_000;
 
 /**
+ * The states BullMQ keeps queued work in, folded into `waiting` of {@link QueueStats}.
+ *
+ * A job with a `priority` waits in `prioritized`, a parent waiting for its children in `waiting-children`; only a
+ * plain job sits in `waiting` itself. BullMQ's own `count()` sums the same states.
+ *
+ * @defaultValue `waiting`, `prioritized`, `waiting-children`
+ */
+export const WAITING_STATES = ['waiting', 'prioritized', 'waiting-children'] as const;
+
+/**
  * Turn a contract's options into BullMQ's `JobsOptions`.
  *
  * Every option of `JobOptions` has a direct counterpart except `timeout` and `unique`: the first is enforced by the
- * worker (BullMQ has no per-job timeout), the second is already folded into the id by `getJobId()`.
+ * worker (BullMQ has no per-job timeout), the second decides what the id becomes. A `unique` id is BullMQ's
+ * deduplication key rather than the record's id: BullMQ drops the key when the job completes or fails for good, so
+ * only queued, retrying or running work collapses — a record kept for inspection after a failure would otherwise
+ * make every later enqueue of that work a silent no-op. An explicit `jobId`, and the random id of any other job, is
+ * the record's id, as the caller expects to find it in the driver; {@link QueueDriverBullmq.enqueue} clears a
+ * finished record under an explicit id first, for the same reason.
  *
  * @param options - Effective options of the job.
- * @param id - Job id; BullMQ ignores an add whose id is queued already, which is what `unique` relies on.
+ * @param id - Job id from `getJobId()`.
  * @returns Options for `Queue.add()`.
  */
 export const toJobsOptions = (options: JobOptions & EnqueueOptions, id?: string): JobsOptions => {
 	const jobsOptions: JobsOptions = {};
 
-	if (id !== undefined) jobsOptions.jobId = id;
+	// 1. A derived id collapses duplicates through BullMQ's deduplication, which ends with the job; the record keeps
+	//    an id of BullMQ's own. Any other id names the record, so the caller finds it by what `enqueue()` answered
+	if (id !== undefined && options.unique && !options.jobId) {
+		jobsOptions.deduplication = { id };
+	} else if (id !== undefined) {
+		jobsOptions.jobId = id;
+	}
+
+	// 2. The counterparts BullMQ takes as they are, only set when given, since it would take `undefined` literally
 	if (options.attempts !== undefined) jobsOptions.attempts = options.attempts;
 	if (options.priority !== undefined) jobsOptions.priority = options.priority;
 	if (options.delay !== undefined) jobsOptions.delay = options.delay;
 
-	// 1. A bare number is a fixed wait; the object form is BullMQ's own
+	// 3. A bare number is a fixed wait; the object form is BullMQ's own
 	if (typeof options.backoff === 'number') {
 		jobsOptions.backoff = { type: 'fixed', delay: options.backoff };
 	} else if (options.backoff !== undefined) {
 		jobsOptions.backoff = options.backoff;
 	}
 
-	// 2. Completed records go by the contract; failed ones are kept in bounded numbers for inspection
+	// 4. Completed records go by the contract; failed ones are kept in bounded numbers for inspection
 	if (options.removeOnComplete !== undefined) jobsOptions.removeOnComplete = options.removeOnComplete;
 	jobsOptions.removeOnFail = DEFAULT_REMOVE_ON_FAIL;
 
@@ -108,6 +131,13 @@ export class QueueDriverBullmq implements QueueDriver {
 	 */
 	private readonly opening: Map<string, Promise<Queue>> = new Map();
 
+	/**
+	 * Whether `close()` ran: a queue opened afterwards would sit in the map unclosed, over a client already quit.
+	 *
+	 * @internal
+	 */
+	private closed = false;
+
 	/** The module, loaded once on first use. */
 	private bullmq: Promise<typeof import('bullmq')> | undefined;
 
@@ -115,9 +145,16 @@ export class QueueDriverBullmq implements QueueDriver {
 	 * Open the driver on its Redis.
 	 *
 	 * @param config - Connection, prefix, telemetry and logger.
+	 * @throws Error when `connection` is missing: ioredis would silently connect to `localhost:6379` and retry forever.
 	 */
 	constructor(config: QueueDriverBullmqConfig) {
-		// 1. A given client belongs to whoever created it; a URL or options become a client of the driver's own,
+		// 1. A missing connection is a configuration error of the location; refused by the option's name, like every
+		//    driver of the kit does, rather than left to ioredis's default of a local server
+		if (!config.connection) {
+			throw new Error('The bullmq queue driver needs a "connection"');
+		}
+
+		// 2. A given client belongs to whoever created it; a URL or options become a client of the driver's own,
 		//    pinned to what BullMQ requires
 		this.ownsConnection = !isRedisClient(config.connection);
 
@@ -125,6 +162,7 @@ export class QueueDriverBullmq implements QueueDriver {
 			? config.connection
 			: createRedis(config.connection, { maxRetriesPerRequest: null });
 
+		// 3. What a worker of the same location reads back, so producer and worker agree on keys and traces
 		this.prefix = config.prefix;
 		this.telemetry = config.telemetry;
 		this.logger = config.logger ?? useLogger();
@@ -134,10 +172,12 @@ export class QueueDriverBullmq implements QueueDriver {
 	 * Add the job to its queue.
 	 *
 	 * @param contract - The job's contract.
-	 * @param payload - Parsed payload.
+	 * @param payload - Validated payload, as the caller passed it; the worker parses it.
 	 * @param options - Effective options.
 	 * @param id - Job id from `enqueue()`.
-	 * @returns The job's identity as BullMQ recorded it.
+	 * @returns The job's identity as BullMQ recorded it: the record's id, which for a `unique` job is BullMQ's own,
+	 * and the queued job's when the add collapsed into it.
+	 * @throws Error when the driver is closed; whatever BullMQ throws.
 	 */
 	async enqueue(
 		contract: JobContract,
@@ -145,9 +185,21 @@ export class QueueDriverBullmq implements QueueDriver {
 		options: JobOptions & EnqueueOptions,
 		id?: string,
 	): Promise<EnqueuedJob> {
+		// 1. A `Queue` per name, shared with `stats()`; a closed driver refuses here
 		const queue = await this.getQueue(contract.queue);
 
-		// 1. The BullMQ job name is the action: workers see `send` on queue `mail`, and `getJobContract` rejoins the two
+		// 2. An explicit id names the record, and BullMQ answers an add with whatever record it holds under that id,
+		//    finished or not. A completed or failed one — kept for inspection — is dropped first, so the id can be
+		//    used again once its work is done and only queued, retrying or running work collapses, as with `unique`
+		if (options.jobId) {
+			const state = await queue.getJobState(options.jobId);
+
+			if (state === 'completed' || state === 'failed') {
+				await queue.remove(options.jobId);
+			}
+		}
+
+		// 3. The BullMQ job name is the action: workers see `send` on queue `mail`, and `getJobContract` rejoins the two
 		const job = await queue.add(contract.action, payload, toJobsOptions(options, id));
 
 		return { id: String(job.id ?? id), name: contract.name, queue: contract.queue };
@@ -155,24 +207,29 @@ export class QueueDriverBullmq implements QueueDriver {
 
 	/**
 	 * Close every queue opened so far, and the connection when the driver opened it.
+	 *
 	 * @throws What the first queue that refused to close threw, after every other queue and the client closed.
 	 */
 	async close(): Promise<void> {
-		// 1. A queue still opening — its first use awaiting the `bullmq` import — would land in the map after the
+		// 1. Closed first, so an `enqueue()` racing the shutdown is refused rather than reopening a queue over a
+		//    client about to quit
+		this.closed = true;
+
+		// 2. A queue still opening — its first use awaiting the `bullmq` import — would land in the map after the
 		//    close and never be closed, over a client already quit; the openings are waited for first, failed or not
 		await Promise.allSettled([...this.opening.values()]);
 
-		// 2. Every queue closes before the client does: a queue on a shared client that closed after it would fail
+		// 3. Every queue closes before the client does: a queue on a shared client that closed after it would fail
 		//    its last commands. Every outcome is waited for, so one refusing queue does not leave the others open
 		const outcomes = await Promise.allSettled([...this.queues.values()].map((queue) => queue.close()));
 		this.queues.clear();
 
-		// 3. A client the caller handed in is theirs to close; one opened here would otherwise keep the process alive
+		// 4. A client the caller handed in is theirs to close; one opened here would otherwise keep the process alive
 		if (this.ownsConnection) {
 			await this.connection.quit();
 		}
 
-		// 4. A queue that refused to close is reported once everything else is down
+		// 5. A queue that refused to close is reported once everything else is down
 		const failure = outcomes.find((outcome) => outcome.status === 'rejected');
 
 		if (failure) {
@@ -185,18 +242,24 @@ export class QueueDriverBullmq implements QueueDriver {
 	 *
 	 * @param queues - The queue names; every registered contract's queue unless given.
 	 * @returns One entry per queue, in the given order.
+	 * @throws Error when the driver is closed; whatever BullMQ throws.
 	 */
 	async stats(queues: readonly string[] = getQueueNames()): Promise<QueueStats[]> {
 		return Promise.all(
 			queues.map(async (name) => {
 				// 1. A `Queue` per name, shared with `enqueue()`; the counts are one round trip each
 				const queue = await this.getQueue(name);
-				const counts = await queue.getJobCounts('waiting', 'active', 'delayed', 'failed', 'completed');
+
+				const counts = await queue.getJobCounts(...WAITING_STATES, 'active', 'delayed', 'failed', 'completed');
+
+				// 2. Queued work is spread over three of BullMQ's states — a prioritised job never sits in `waiting` —
+				//    and reported as one, since the reader asks how much is waiting, not where BullMQ keeps it
+				const waiting = WAITING_STATES.reduce((sum, state) => sum + (counts[state] ?? 0), 0);
 
 				return {
 					name,
 					counts: {
-						waiting: counts['waiting'] ?? 0,
+						waiting,
 						active: counts['active'] ?? 0,
 						delayed: counts['delayed'] ?? 0,
 						failed: counts['failed'] ?? 0,
@@ -212,9 +275,15 @@ export class QueueDriverBullmq implements QueueDriver {
 	 *
 	 * @param name - Queue name.
 	 * @returns The queue.
+	 * @throws Error when the driver is closed: a queue opened now would never be closed.
 	 */
 	private getQueue(name: string): Promise<Queue> {
-		// 1. Open at most once per name: an open queue is answered with, an opening one is joined, so two `enqueue()`
+		// 1. Nothing opens after `close()`: the map it would land in was cleared, and the client may be gone
+		if (this.closed) {
+			return Promise.reject(new Error('The bullmq queue driver is closed'));
+		}
+
+		// 2. Open at most once per name: an open queue is answered with, an opening one is joined, so two `enqueue()`
 		//    calls in the same tick do not each build a `Queue` and leak the one the map forgets
 		const existing = this.queues.get(name);
 
@@ -269,6 +338,8 @@ export class QueueDriverBullmq implements QueueDriver {
 	 * @throws Error naming the missing package when it is not installed.
 	 */
 	private load(): Promise<typeof import('bullmq')> {
+		// 1. The import is memoised, so every queue of the driver shares one load; a failed one names the optional
+		//    peer to install, since Node's own "Cannot find package" would not say why the driver needs it
 		this.bullmq ??= import('bullmq').catch((error: unknown) => {
 			throw new Error('Queue driver "bullmq" needs the "bullmq" package: pnpm add bullmq', { cause: error });
 		});

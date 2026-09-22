@@ -105,9 +105,11 @@ export class MailDriverMailtrap implements MailDriver {
 	 * @throws The SDK's `MailtrapError` (its message lists Mailtrap's errors) when the API refuses.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
+		// 1. The message is translated before the request, so a missing sender fails by name instead of as an API error;
+		// the SDK throws its own `MailtrapError` on refusal, which passes through untouched
 		const response = await this.client.send(await toMailtrapMail(message));
 
-		// 1. Mailtrap takes a message whole or refuses it, so every recipient counts as accepted
+		// 2. Mailtrap takes a message whole or refuses it, so every recipient counts as accepted
 		return {
 			messageId: response.message_ids[0],
 			accepted: toMailAddressList(message.to).map(bareMailAddress),
@@ -121,9 +123,10 @@ export class MailDriverMailtrap implements MailDriver {
 	 * @throws The SDK's error when Mailtrap refuses the token; an error when it has no account.
 	 */
 	async verify(): Promise<void> {
+		// 1. Listing the accounts is the cheapest call that needs the token: a bad one is refused here, without a send
 		const accounts = await this.client.general.accounts.getAllAccounts();
 
-		// 1. A token of no account can send nothing
+		// 2. A token of no account can send nothing
 		if (accounts.length === 0) {
 			throw new Error('Mailtrap token has access to no account');
 		}

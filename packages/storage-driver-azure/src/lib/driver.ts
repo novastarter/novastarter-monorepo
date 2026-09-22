@@ -180,9 +180,9 @@ export class StorageDriverAzure implements TusDriver {
 	 * @param filepath - Blob path relative to the root.
 	 * @param options - Optional byte range; `version` is not supported by this driver and is ignored.
 	 * @returns The download body as a Node stream.
-	 * @throws Error when the SDK returns no body to stream.
 	 * @throws StorageFileNotFoundError when the blob does not exist.
-	 * @throws The SDK error for any other failure, or an `Error` when the SDK hands back no stream.
+	 * @throws Error when the SDK returns no body to stream.
+	 * @throws The SDK error for any other failure.
 	 */
 	async read(filepath: string, options?: ReadOptions): Promise<Readable> {
 		const { range } = options || {};
@@ -334,8 +334,14 @@ export class StorageDriverAzure implements TusDriver {
 
 	/**
 	 * TUS extensions this driver advertises: creation, termination and expiration.
+	 *
+	 * @returns The extension names in the order the TUS server advertises them.
 	 */
 	get tusExtensions(): string[] {
+		// 1. Only the extensions the chunked-upload methods back are advertised: `creation` maps to
+		//    `createChunkedUpload`, `termination` to `deleteChunkedUpload`, and `expiration` lets the server announce
+		//    when an unfinished append blob may be discarded. Checksum and concatenation are left out because an append
+		//    blob can neither verify a chunk before it lands nor be assembled from several uploads
 		return ['creation', 'termination', 'expiration'];
 	}
 
