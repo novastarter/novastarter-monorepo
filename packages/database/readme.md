@@ -9,9 +9,10 @@ pnpm add @novastarter/database @novastarter/database-driver-postgres drizzle-orm
 ```
 
 One driver package per backend: `database-driver-postgres`, `database-driver-supabase`, `database-driver-neon` (a
-WebSocket pool and an HTTP class), `database-driver-mysql`, `database-driver-sqlite`, `database-driver-d1`. The
-application depends on `drizzle-orm` itself: the schema (`pgTable`, `mysqlTable`, `sqliteTable`), the operators (`eq`,
-`sql`) and the queries are Drizzle's; this package only hands out the database.
+WebSocket pool and an HTTP class), `database-driver-pglite` (Postgres in the process), `database-driver-mysql`,
+`database-driver-sqlite`, `database-driver-turso`, `database-driver-d1`. The application depends on `drizzle-orm`
+itself: the schema (`pgTable`, `mysqlTable`, `sqliteTable`), the operators (`eq`, `sql`) and the queries are Drizzle's;
+this package only hands out the database.
 
 ## Usage
 
@@ -99,8 +100,10 @@ Every driver exposes the same four members:
 
 A Drizzle schema is bound to its dialect — `pgTable` against PostgreSQL, `mysqlTable` against MySQL, `sqliteTable`
 against SQLite — so a location cannot switch dialects the way a queue switches from Redis to in-process. The Postgres
-drivers (`postgres`, `supabase`, `neon`, `neon-http`) are interchangeable and share `PgDatabase`; `sqlite` and `d1`
-share the schema but not the API — `BetterSQLite3Database` is synchronous, `DrizzleD1Database` asynchronous.
+drivers (`postgres`, `supabase`, `neon`, `neon-http`, `pglite`) are interchangeable and share `PgDatabase` — PGlite runs
+the same schema inside the process, which is what an app falls back on without a server; `sqlite`, `turso` and `d1`
+share the schema but not the API — `BetterSQLite3Database` is synchronous, `LibSQLDatabase` and `DrizzleD1Database`
+asynchronous.
 
 Every driver takes, next to its connection options, `schema`, `casing` (`snake_case` or `camelCase`), `logger` (the kit
 logger, the process one unless given) and `queryLogging` (every query with its parameters at `debug`).

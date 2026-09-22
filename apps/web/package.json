@@ -13,6 +13,7 @@
 	"dependencies": {
 		"@novastarter/database": "workspace:*",
 		"@novastarter/database-driver-neon": "workspace:*",
+		"@novastarter/database-driver-pglite": "workspace:*",
 		"@novastarter/database-driver-postgres": "workspace:*",
 		"@novastarter/database-driver-supabase": "workspace:*",
 		"@novastarter/env": "workspace:*",

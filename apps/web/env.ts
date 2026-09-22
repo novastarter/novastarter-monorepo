@@ -32,8 +32,13 @@ export const envSchema = z.object({
 	REDIS: optional(z.url()),
 	/** Prefix of the BullMQ keys, so several projects can share a Redis. */
 	QUEUE_PREFIX: z.string().default('novastarter'),
-	/** The PostgreSQL connection string; unset, the app registers no database location. */
+	/** The PostgreSQL connection string; unset, the app runs on PGlite in-process under `DATABASE_PGLITE_DIR`. */
 	DATABASE_URL: optional(z.url()),
+	/**
+	 * Directory of the in-process PGlite database used without a `DATABASE_URL`, relative to the working directory
+	 * and created when missing; `memory://` for one that lives as long as the process.
+	 */
+	DATABASE_PGLITE_DIR: z.string().default('./data/pglite'),
 	/**
 	 * Which driver carries `DATABASE_URL`: plain node-postgres, Supabase with its TLS defaults, Neon over WebSocket
 	 * (`neon`) or over HTTP (`neon-http`, one fetch per query, no transactions).

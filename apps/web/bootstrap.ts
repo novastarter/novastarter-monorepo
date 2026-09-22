@@ -1,5 +1,6 @@
 import { useDatabase } from '@novastarter/database';
 import { DatabaseDriverNeon, DatabaseDriverNeonHttp } from '@novastarter/database-driver-neon';
+import { DatabaseDriverPglite } from '@novastarter/database-driver-pglite';
 import { DatabaseDriverPostgres } from '@novastarter/database-driver-postgres';
 import { DatabaseDriverSupabase } from '@novastarter/database-driver-supabase';
 import { createLogger, registerLogger, useLogger } from '@novastarter/logger';
@@ -77,17 +78,17 @@ export const bootstrap = (): AppEnv => {
 	useStorage().registerDriver('local', StorageDriverLocal);
 	useStorage().registerLocation('default', storageConfig(env));
 
-	// 7. Database: the four driver classes the app ships with, then the `default` location when the app has a database
+	// 7. Database: the five driver classes the app ships with, then the `default` location — a server, or PGlite in
+	//    the process. Registering opens nothing: the driver, and with PGlite the WASM boot, runs on the first `location()`
 	useDatabase().registerDriver('postgres', DatabaseDriverPostgres);
 	useDatabase().registerDriver('supabase', DatabaseDriverSupabase);
 	useDatabase().registerDriver('neon', DatabaseDriverNeon);
 	useDatabase().registerDriver('neon-http', DatabaseDriverNeonHttp);
+	useDatabase().registerDriver('pglite', DatabaseDriverPglite);
 
 	const database = databaseConfig(env);
 
-	if (database) {
-		useDatabase().registerLocation('default', database);
-	}
+	useDatabase().registerLocation('default', database);
 
 	// 8. Mail: the built-in drivers come with the manager; the `default` location and the routes are the app's
 	const mail = mailConfig(env);
@@ -107,7 +108,7 @@ export const bootstrap = (): AppEnv => {
 	}
 
 	_state.booted = true;
-	useLogger().debug({ redis: Boolean(redis), database: Boolean(database) }, 'Application bootstrapped');
+	useLogger().debug({ redis: Boolean(redis), database: database.driver }, 'Application bootstrapped');
 
 	return env;
 };

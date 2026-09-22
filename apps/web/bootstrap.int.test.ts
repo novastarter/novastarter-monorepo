@@ -33,6 +33,7 @@ afterEach(() => {
 test('Registers every subsystem in-process without a Redis and runs a job end to end', async () => {
 	vi.stubEnv('REDIS', '');
 	vi.stubEnv('DATABASE_URL', '');
+	vi.stubEnv('DATABASE_PGLITE_DIR', 'memory://');
 	vi.stubEnv('STORAGE_LOCAL_ROOT', './uploads');
 	vi.stubEnv('MAIL_FROM', 'no-reply@acme.test');
 
@@ -42,10 +43,17 @@ test('Registers every subsystem in-process without a Redis and runs a job end to
 	expect(useRedis().locationNames()).toEqual([]);
 	expect(useStorage().hasLocation('default')).toBe(true);
 
-	// Without a `DATABASE_URL` the drivers are registered and no location is: a schema is bound to its dialect, so
-	// there is no in-process database to fall back on
-	expect(useDatabase().locationNames()).toEqual([]);
-	expect(useDatabase()['drivers'].size).toBe(4);
+	// Without a `DATABASE_URL` the `default` location is PGlite on the configured directory; nothing may build it
+	// here — that would boot a Postgres in WebAssembly — so only the registration is checked
+	expect(useDatabase().hasLocation('default')).toBe(true);
+
+	expect(useDatabase()['configs'].get('default')?.[0]).toMatchObject({
+		driver: 'pglite',
+		options: { connection: 'memory://' },
+	});
+
+	expect(useDatabase().instantiated().size).toBe(0);
+	expect(useDatabase()['drivers'].size).toBe(5);
 	expect(useQueue().location('anything')).toBeInstanceOf(QueueDriverLocal);
 	expect(useMail().hasLocation('default')).toBe(true);
 	expect(useMail().routes().from).toBe('no-reply@acme.test');

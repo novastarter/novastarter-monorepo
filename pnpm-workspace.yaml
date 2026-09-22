@@ -19,8 +19,10 @@ catalog:
   '@changesets/cli': 3.0.3
   '@changesets/types': 7.0.0
   '@cloudflare/workers-types': 5.20260916.1
+  '@electric-sql/pglite': 0.5.8
   '@eslint/js': 10.0.1
   '@google-cloud/storage': 8.0.0
+  '@libsql/client': 0.18.0
   '@neondatabase/serverless': 1.1.0
   '@ngneat/falso': 8.0.2
   '@paddle/paddle-node-sdk': 3.10.0

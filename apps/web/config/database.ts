@@ -4,10 +4,10 @@ import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core';
 import type { AppEnv } from '../env';
 
 /**
- * What `useDatabase().location()` hands out: the Drizzle database the four Postgres drivers the app ships share —
- * node-postgres, Supabase and both Neon transports all extend `PgDatabase`. `$client` differs per driver (a `pg` pool,
- * a Neon pool, a query function) and is not part of it. The schema type joins as the second parameter —
- * `PgDatabase<PgQueryResultHKT, typeof schema>` — once the app defines its tables.
+ * What `useDatabase().location()` hands out: the Drizzle database the five Postgres drivers the app ships share —
+ * node-postgres, Supabase, both Neon transports and PGlite all extend `PgDatabase`. `$client` differs per driver (a
+ * `pg` pool, a Neon pool, a query function, a PGlite instance) and is not part of it. The schema type joins as the
+ * second parameter — `PgDatabase<PgQueryResultHKT, typeof schema>` — once the app defines its tables.
  */
 declare module '@novastarter/database' {
 	interface DatabaseLocations {
@@ -16,19 +16,24 @@ declare module '@novastarter/database' {
 }
 
 /**
- * The `default` database location: the PostgreSQL the app reaches, when it has one.
+ * The `default` database location: the PostgreSQL the app reaches, or PGlite in-process without one.
  *
- * No in-process fallback, unlike memory and queue: a Drizzle schema is bound to its dialect, so an app written for
- * PostgreSQL cannot fall back to SQLite. Without a `DATABASE_URL` the location is not registered and `location()`
- * throws.
+ * The in-process fallback of memory and queue, for the database: a Drizzle schema is bound to its dialect, and PGlite
+ * is Postgres, so the app's `pgTable` schema and its migrations run unchanged on it — development and tests need no
+ * server, and the data persists under `DATABASE_PGLITE_DIR`.
  *
  * @param env - The app's variables.
- * @returns The location to register; `undefined` without a `DATABASE_URL`.
+ * @returns The location to register.
  */
-export const databaseConfig = (env: AppEnv): LocationConfig<DatabaseDrivers> | undefined => {
-	// 1. No URL, no location: registering one would only move the failure to the first query
+export const databaseConfig = (env: AppEnv): LocationConfig<DatabaseDrivers> => {
+	// 1. No URL: Postgres inside the process, on the configured directory
 	if (!env.DATABASE_URL) {
-		return undefined;
+		return {
+			driver: 'pglite',
+			options: {
+				connection: env.DATABASE_PGLITE_DIR,
+			},
+		};
 	}
 
 	// 2. Supabase gets its driver, so TLS is on and the project's certificate is verified
