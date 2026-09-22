@@ -1,16 +1,17 @@
 import type { DatabaseDrivers } from '@novastarter/database';
 import type { LocationConfig } from '@novastarter/utils';
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import type { Pool } from 'pg';
+import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core';
 import type { AppEnv } from '../env';
 
 /**
- * What `useDatabase().location()` hands out: both drivers the app ships expose Drizzle's node-postgres database. The
- * schema type joins here — `NodePgDatabase<typeof schema>` — once the app defines its tables.
+ * What `useDatabase().location()` hands out: the Drizzle database the four Postgres drivers the app ships share —
+ * node-postgres, Supabase and both Neon transports all extend `PgDatabase`. `$client` differs per driver (a `pg` pool,
+ * a Neon pool, a query function) and is not part of it. The schema type joins as the second parameter —
+ * `PgDatabase<PgQueryResultHKT, typeof schema>` — once the app defines its tables.
  */
 declare module '@novastarter/database' {
 	interface DatabaseLocations {
-		default: NodePgDatabase & { $client: Pool };
+		default: PgDatabase<PgQueryResultHKT>;
 	}
 }
 
@@ -30,8 +31,7 @@ export const databaseConfig = (env: AppEnv): LocationConfig<DatabaseDrivers> | u
 		return undefined;
 	}
 
-	// 2. Supabase gets its driver, so TLS is on and the project's certificate is verified; anything else is plain
-	//    node-postgres on the URL alone
+	// 2. Supabase gets its driver, so TLS is on and the project's certificate is verified
 	if (env.DATABASE_DRIVER === 'supabase') {
 		return {
 			driver: 'supabase',
@@ -42,6 +42,17 @@ export const databaseConfig = (env: AppEnv): LocationConfig<DatabaseDrivers> | u
 		};
 	}
 
+	// 3. Neon over WebSocket or HTTP, for a deployment without TCP sockets; the console string works for both
+	if (env.DATABASE_DRIVER === 'neon' || env.DATABASE_DRIVER === 'neon-http') {
+		return {
+			driver: env.DATABASE_DRIVER,
+			options: {
+				connection: env.DATABASE_URL,
+			},
+		};
+	}
+
+	// 4. Anything else is plain node-postgres on the URL alone
 	return {
 		driver: 'postgres',
 		options: {

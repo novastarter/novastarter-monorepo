@@ -45,7 +45,7 @@ test('Registers every subsystem in-process without a Redis and runs a job end to
 	// Without a `DATABASE_URL` the drivers are registered and no location is: a schema is bound to its dialect, so
 	// there is no in-process database to fall back on
 	expect(useDatabase().locationNames()).toEqual([]);
-	expect(useDatabase()['drivers'].size).toBe(2);
+	expect(useDatabase()['drivers'].size).toBe(4);
 	expect(useQueue().location('anything')).toBeInstanceOf(QueueDriverLocal);
 	expect(useMail().hasLocation('default')).toBe(true);
 	expect(useMail().routes().from).toBe('no-reply@acme.test');
@@ -93,6 +93,22 @@ test('Registers the default database location from DATABASE_URL without opening 
 	});
 
 	expect(useDatabase().instantiated().size).toBe(0);
+
+	// 3. Both Neon transports take the URL as their connection
+	for (const driver of ['neon', 'neon-http'] as const) {
+		_state.booted = false;
+		readEnv.reset();
+		vi.stubEnv('DATABASE_DRIVER', driver);
+
+		bootstrap();
+
+		expect(useDatabase()['configs'].get('default')?.[0]).toMatchObject({
+			driver,
+			options: { connection: 'postgresql://postgres:secret@127.0.0.1:5432/app' },
+		});
+
+		expect(useDatabase().instantiated().size).toBe(0);
+	}
 });
 
 test('Boots once per process', () => {

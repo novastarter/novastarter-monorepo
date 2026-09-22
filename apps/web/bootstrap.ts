@@ -1,4 +1,5 @@
 import { useDatabase } from '@novastarter/database';
+import { DatabaseDriverNeon, DatabaseDriverNeonHttp } from '@novastarter/database-driver-neon';
 import { DatabaseDriverPostgres } from '@novastarter/database-driver-postgres';
 import { DatabaseDriverSupabase } from '@novastarter/database-driver-supabase';
 import { createLogger, registerLogger, useLogger } from '@novastarter/logger';
@@ -76,9 +77,11 @@ export const bootstrap = (): AppEnv => {
 	useStorage().registerDriver('local', StorageDriverLocal);
 	useStorage().registerLocation('default', storageConfig(env));
 
-	// 7. Database: both driver classes the app ships with, then the `default` location when the app has a database
+	// 7. Database: the four driver classes the app ships with, then the `default` location when the app has a database
 	useDatabase().registerDriver('postgres', DatabaseDriverPostgres);
 	useDatabase().registerDriver('supabase', DatabaseDriverSupabase);
+	useDatabase().registerDriver('neon', DatabaseDriverNeon);
+	useDatabase().registerDriver('neon-http', DatabaseDriverNeonHttp);
 
 	const database = databaseConfig(env);
 
