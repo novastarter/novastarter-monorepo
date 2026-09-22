@@ -7,7 +7,7 @@
 			"period": "monthly"
 		},
 		"test_mode": true,
-		"webhook_id": "wh_2"
+		"webhook_id": "wh_1"
 	},
 	"data": {
 		"type": "subscriptions",

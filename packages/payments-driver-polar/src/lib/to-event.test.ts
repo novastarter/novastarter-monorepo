@@ -36,7 +36,15 @@ describe('toEvent', () => {
 			subscription: { status: 'active', cancelAtPeriodEnd: true },
 		});
 
-		// 4. The specific subscription events repeat what `subscription.updated` already said
+		// 4. A `subscription.updated` carrying the canceled status is the revocation's echo — a retried or late one
+		//    must not re-announce the subscription the `subscription.revoked` event already ended
+		const late = { ...parsed('subscription.revoked'), type: 'subscription.updated' } as unknown as Parameters<
+			typeof toEvent
+		>[0];
+
+		expect(toEvent(late, 'msg_3')).toBeNull();
+
+		// 5. The specific subscription events repeat what `subscription.updated` already said
 		expect(toEvent(parsed('subscription.active'), 'msg_4')).toBeNull();
 
 		expect(toEvent(parsed('subscription.revoked'), 'msg_5')).toMatchObject({
@@ -44,10 +52,10 @@ describe('toEvent', () => {
 			subscription: { status: 'canceled', endedAt: new Date('2026-10-10T12:00:00Z') },
 		});
 
-		// 5. A paid order is the kit's paid invoice
+		// 6. A paid order is the kit's paid invoice
 		expect(toEvent(parsed('order.paid'), 'msg_6')).toMatchObject({ type: 'invoice.paid', invoice: { status: 'paid' } });
 
-		// 6. The raw payload rides along for the audit trail
+		// 7. The raw payload rides along for the audit trail
 		expect(toEvent(parsed('order.paid'), 'msg_6')?.raw).toStrictEqual(parsed('order.paid'));
 	});
 });

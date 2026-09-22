@@ -38,6 +38,10 @@ export interface SubscriptionContext {
  * `providerIds.lemonsqueezy`, so it fills `priceId`; the product id fills `productId`. The seat count is the first
  * subscription item's quantity. The current period ends at `renews_at`; its start is not reported.
  *
+ * A cancelled subscription reports no cancellation time of its own, so `canceledAt` is the resource's `updated_at` —
+ * the last change of any kind. It approximates the cancellation and drifts when the subscription is touched during
+ * its grace period (a plan change, a payment recovery); `cancelAt` (`ends_at`) is exact.
+ *
  * @param subscription - Lemon Squeezy's, as retrieved or as a webhook carried it.
  * @param context - The interval and the metadata, from wherever the caller found them.
  * @returns The normalised subscription.
@@ -47,10 +51,11 @@ export const toSubscription = (
 	subscription: LsResource<LsSubscriptionAttributes>,
 	context: SubscriptionContext,
 ): Subscription => {
+	// 1. The attributes and the status are read first: an unknown status is a change on Lemon Squeezy's side, better
+	//    loud than silently wrong
 	const attributes = subscription.attributes;
 	const status = LS_STATUSES[attributes.status];
 
-	// 1. An unknown status is a change on Lemon Squeezy's side, better loud than silently wrong
 	if (!status) {
 		throw new Error(
 			`Lemon Squeezy subscription "${subscription.id}" has an unknown status "${String(attributes.status)}"`,

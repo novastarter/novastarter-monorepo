@@ -1,4 +1,5 @@
 import { InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
+import { useLogger } from '@novastarter/logger';
 import type {
 	BillingInterval,
 	CancelSubscriptionInput,
@@ -45,7 +46,7 @@ export type PaymentsDriverLemonSqueezyConfig = {
 	storeId: string | number;
 	/** Another base URL of the API — a stand-in for tests. */
 	apiUrl?: string | undefined;
-	/** Request timeout in milliseconds: a whole number from `0` to 2^31 − 1 (`MAX_TIMEOUT` of the API client). */
+	/** Request timeout in milliseconds: a whole number from 1 to 2^31 − 1 (`MAX_TIMEOUT` of the API client). */
 	timeout?: number | undefined;
 	/**
 	 * A fetch to send with instead of the platform's — tests hand in a fake.
@@ -72,6 +73,16 @@ declare module '@novastarter/payments' {
  * @defaultValue 100
  */
 const SUBSCRIPTIONS_PAGE_SIZE = 100;
+
+/**
+ * How many pages of subscriptions one `listInvoices` call reads at most: a bound, so a customer with very many
+ * subscriptions — or a server reporting a huge `lastPage` — cannot turn the call into an unbounded sequence of
+ * blocking round trips. Ten pages of the largest page size cover a thousand subscriptions; past that the result is
+ * truncated and the truncation is reported.
+ *
+ * @defaultValue 10
+ */
+const MAX_SUBSCRIPTION_PAGES = 10;
 
 /**
  * Driver for [Lemon Squeezy](https://www.lemonsqueezy.com): hosted checkouts, the customer portal, subscriptions
@@ -136,7 +147,7 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 	 * @param config - API key, webhook secret, store.
 	 * @throws Error without a key, a webhook secret or a store — a deployment that cannot verify webhooks would drift
 	 * from Lemon Squeezy silently, and a checkout belongs to a store.
-	 * @throws RangeError for a timeout that is not a whole number from `0` to 2^31 − 1, which would fail every request
+	 * @throws RangeError for a timeout that is not a whole number from 1 to 2^31 − 1, which would fail every request
 	 * instead of bounding it.
 	 */
 	constructor(config: PaymentsDriverLemonSqueezyConfig) {
@@ -165,14 +176,25 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 	/**
 	 * Create the Lemon Squeezy customer for an organization.
 	 *
-	 * Customers carry no custom data on Lemon Squeezy; the metadata reaches it with the checkout instead.
+	 * Customers carry no custom data on Lemon Squeezy — the metadata reaches it with the checkout instead — so a
+	 * caller asking to store some is refused rather than answered with a customer that lost it silently.
 	 *
-	 * @param input - Email, name.
+	 * @param input - Email, name, metadata.
 	 * @returns The customer.
+	 * @throws Error when `input.metadata` is given: Lemon Squeezy customers carry no custom data, so the metadata
+	 * would be dropped; pass it to `createCheckoutSession` instead, which sends it as the checkout's custom data.
 	 * @throws LemonSqueezyApiError when Lemon Squeezy refuses the request or cannot be reached.
 	 */
 	async createCustomer(input: CreateCustomerInput): Promise<PaymentsCustomer> {
-		// 1. The name is required by the API; the email stands in for a customer without one
+		// 1. Refused before any request: the API has no field for it, so storing the metadata is impossible — better
+		//    loud now than a silent loss the return value's empty `metadata` would only reveal in production
+		if (input.metadata !== undefined) {
+			throw new Error(
+				'The lemonsqueezy payments driver cannot store customer metadata: Lemon Squeezy keeps custom data on checkouts, not on customers — pass the metadata to createCheckoutSession instead',
+			);
+		}
+
+		// 2. The name is required by the API; the email stands in for a customer without one
 		const { data } = await this.api.request<LsDocument<LsCustomerAttributes>>('POST', '/customers', {
 			data: {
 				type: 'customers',
@@ -181,7 +203,7 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 			},
 		});
 
-		// 2. No metadata: Lemon Squeezy keeps custom data on checkouts and orders, not on customers
+		// 3. No metadata: Lemon Squeezy keeps custom data on checkouts and orders, not on customers
 		return { id: data.id, email: data.attributes.email, name: data.attributes.name || null, metadata: {} };
 	}
 
@@ -193,17 +215,26 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 	 *
 	 * @param input - Customer, variant, seats, success redirect, discount codes, metadata.
 	 * @returns The checkout and its page.
+	 * @throws Error when `input.priceId` is not a positive integer — the variant id the API expects.
 	 * @throws LemonSqueezyApiError when Lemon Squeezy refuses the request or cannot be reached.
 	 */
 	async createCheckoutSession(input: CreateCheckoutSessionInput): Promise<CheckoutSession> {
-		// 1. The checkout is matched to the customer by email; the customer resource has it
+		// 1. The catalog's price id is the variant id, and the API wants it numeric: anything else would be sent as
+		//    JSON `null` and refused by the API with a message that does not name the cause, so the bad id is named
+		//    here, before any request
+		const variantId = Number(input.priceId);
+
+		if (!Number.isInteger(variantId) || variantId <= 0) {
+			throw new Error(
+				`The lemonsqueezy payments driver needs a "priceId" that is a positive integer, got "${input.priceId}"`,
+			);
+		}
+
+		// 2. The checkout is matched to the customer by email; the customer resource has it
 		const { data: customer } = await this.api.request<LsDocument<LsCustomerAttributes>>(
 			'GET',
 			`/customers/${encodeURIComponent(input.customerId)}`,
 		);
-
-		// 2. The catalog's price id is the variant id; the API wants it numeric in the quantities and the enabled list
-		const variantId = Number(input.priceId);
 
 		// 3. Custom data and quantities are only sent when given, so the API keeps its defaults otherwise
 		const { data } = await this.api.request<LsDocument<LsCheckoutAttributes>>('POST', '/checkouts', {
@@ -287,7 +318,8 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 	 *
 	 * @param input - Subscription, new variant and/or seats, proration.
 	 * @returns The subscription after the change.
-	 * @throws Error when neither a variant nor a seat count is given, or the subscription has no item to size.
+	 * @throws Error when neither a variant nor a seat count is given, when `input.priceId` is not a positive integer —
+	 * the variant id the API expects — or the subscription has no item to size.
 	 * @throws LemonSqueezyApiError when Lemon Squeezy refuses the change or cannot be reached.
 	 */
 	async updateSubscription(input: UpdateSubscriptionInput): Promise<Subscription> {
@@ -298,22 +330,33 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 			);
 		}
 
+		// 2. The id URL-encoded once, used by every request below
 		const id = encodeURIComponent(input.subscriptionId);
 
-		// 2. Both endpoints take the same two flags, so the proration asked for holds whichever request carries the
+		// 3. Both endpoints take the same two flags, so the proration asked for holds whichever request carries the
 		//    change: `'invoice'` charges the difference now, `'none'` skips the proration, `'prorate'` leaves it to
 		//    the next renewal
 		const invoiceImmediately = input.proration === 'invoice';
 		const disableProrations = input.proration === 'none';
 
-		// 3. A variant change is an update of the subscription itself
+		// 4. A variant change is an update of the subscription itself; the price id is the variant id, numeric the way
+		//    the API expects — a non-numeric one would be sent as JSON `null` and refused with a message that does not
+		//    name the cause, so it is named here, before any request
 		if (input.priceId !== undefined) {
+			const variantId = Number(input.priceId);
+
+			if (!Number.isInteger(variantId) || variantId <= 0) {
+				throw new Error(
+					`The lemonsqueezy payments driver needs a "priceId" that is a positive integer, got "${input.priceId}"`,
+				);
+			}
+
 			await this.api.request<LsDocument<LsSubscriptionAttributes>>('PATCH', `/subscriptions/${id}`, {
 				data: {
 					type: 'subscriptions',
 					id: input.subscriptionId,
 					attributes: {
-						variant_id: Number(input.priceId),
+						variant_id: variantId,
 						invoice_immediately: invoiceImmediately,
 						disable_prorations: disableProrations,
 					},
@@ -321,7 +364,7 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 			});
 		}
 
-		// 4. The seat count lives on the subscription item, which the subscription names
+		// 5. The seat count lives on the subscription item, which the subscription names
 		if (input.quantity !== undefined) {
 			const { data } = await this.api.request<LsDocument<LsSubscriptionAttributes>>('GET', `/subscriptions/${id}`);
 			const item = data.attributes.first_subscription_item;
@@ -343,7 +386,7 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 			});
 		}
 
-		// 5. Read back rather than trusting the PATCH responses: the two requests each answer a partial state
+		// 6. Read back rather than trusting the PATCH responses: the two requests each answer a partial state
 		return this.getSubscription(input.subscriptionId);
 	}
 
@@ -369,27 +412,33 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 	 * The invoices of a customer's subscriptions, most recent first.
 	 *
 	 * Subscription invoices are filtered by subscription, subscriptions by email: the customer's email leads to the
-	 * subscriptions — every page of them — each subscription to its invoices, one read per subscription.
+	 * subscriptions — every page of them, up to {@link MAX_SUBSCRIPTION_PAGES} — each subscription to its invoices,
+	 * one read per subscription. A customer with subscriptions past the cap contributes the invoices of the pages
+	 * that were read; the truncation is reported through the logger.
 	 *
 	 * @param input - Customer and how many.
 	 * @returns The invoices, normalised.
 	 * @throws LemonSqueezyApiError when there is no such customer, or Lemon Squeezy cannot be reached.
 	 */
 	async listInvoices(input: ListInvoicesInput): Promise<Invoice[]> {
+		// 1. The caller's limit, with the page size of one subscription's invoices defaulting to it below
 		const limit = input.limit ?? 20;
 
-		// 1. Subscriptions cannot be filtered by customer id, only by email — so the customer is read first
+		// 2. Subscriptions cannot be filtered by customer id, only by email — so the customer is read first
 		const { data: customer } = await this.api.request<LsDocument<LsCustomerAttributes>>(
 			'GET',
 			`/customers/${encodeURIComponent(input.customerId)}`,
 		);
 
-		// 2. Every subscription of the email, page by page: the API answers ten per page unless told otherwise, and a
-		//    subscription left on a later page would silently contribute no invoices, however large the limit
+		// 3. Every subscription of the email, page by page: the API answers ten per page unless told otherwise, and a
+		//    subscription left on a later page would silently contribute no invoices, however large the limit; the page
+		//    count is capped, so a customer with very many subscriptions cannot hold the call hostage — past the cap
+		//    the result is truncated and the truncation is reported, not silent
 		const query = `filter[store_id]=${encodeURIComponent(this.storeId)}&filter[user_email]=${encodeURIComponent(customer.attributes.email)}&page[size]=${SUBSCRIPTIONS_PAGE_SIZE}`;
 		const subscriptions: LsResource<LsSubscriptionAttributes>[] = [];
+		let lastPage = 1;
 
-		for (let page = 1, lastPage = 1; page <= lastPage; page++) {
+		for (let page = 1; page <= Math.min(lastPage, MAX_SUBSCRIPTION_PAGES); page++) {
 			const list = await this.api.request<LsListDocument<LsSubscriptionAttributes>>(
 				'GET',
 				`/subscriptions?${query}&page[number]=${page}`,
@@ -399,12 +448,18 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 			lastPage = list.meta?.page?.lastPage ?? 1;
 		}
 
-		// 3. Only this customer's subscriptions: another customer of the store could share the email
+		if (lastPage > MAX_SUBSCRIPTION_PAGES) {
+			useLogger().warn(
+				`Lemon Squeezy customer "${input.customerId}" has subscriptions past page ${MAX_SUBSCRIPTION_PAGES}; listInvoices read the first ${MAX_SUBSCRIPTION_PAGES} pages and left the rest unread`,
+			);
+		}
+
+		// 4. Only this customer's subscriptions: another customer of the store could share the email
 		const own = subscriptions.filter(
 			(subscription) => String(subscription.attributes.customer_id) === input.customerId,
 		);
 
-		// 4. One invoice page per subscription, in parallel; each page is capped so no subscription floods the result
+		// 5. One invoice page per subscription, in parallel; each page is capped so no subscription floods the result
 		const pages = await Promise.all(
 			own.map((subscription) =>
 				this.api.request<LsListDocument<LsSubscriptionInvoiceAttributes>>(
@@ -414,7 +469,7 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 			),
 		);
 
-		// 5. Merge the pages, newest first, and cut to the limit the caller asked for
+		// 6. Merge the pages, newest first, and cut to the limit the caller asked for
 		return pages
 			.flatMap((page) => page.data)
 			.map(toInvoice)
@@ -425,11 +480,17 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 	/**
 	 * Verify a webhook against the signing secret and normalise its event.
 	 *
+	 * The subscription events carry no billing interval, so mapping one reads the variant synchronously
+	 * (`GET /variants/:id`, cached per variant for the process): an API failure there turns a verified delivery into
+	 * a 500, which Lemon Squeezy retries — the event is applied once it answers.
+	 *
 	 * @param rawBody - The body byte for byte.
 	 * @param headers - The request headers, lower-cased.
 	 * @returns The event, or `null` for one the kit does not act on.
 	 * @throws InvalidPayloadError without the `x-signature` header, or for a body that is not a Lemon Squeezy event.
 	 * @throws InvalidCredentialsError when the signature does not verify.
+	 * @throws LemonSqueezyApiError when the variant read of a subscription event fails — reported as a 500, so Lemon
+	 * Squeezy redelivers.
 	 */
 	async parseWebhook(rawBody: string, headers: WebhookHeaders): Promise<PaymentsEvent | null> {
 		// 1. Without a signature header there is nothing to verify against; the delivery is malformed, not forged

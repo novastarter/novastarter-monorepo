@@ -127,6 +127,27 @@ describe('#constructor', () => {
 		);
 	});
 
+	test('Refuses a chunk size GCS would reject even when resumable uploads are off', () => {
+		// 1. `writeChunk` hands the size to the SDK regardless of the flag, so a value GCS would reject on the first
+		//    PATCH must not pass construction just because `enabled` is false
+		expect(
+			() => new StorageDriverGcs({ bucket: sample.config.bucket, tus: { enabled: false, chunkSize: 1000 } }),
+		).toThrowErrorMatchingInlineSnapshot(
+			`[Error: The gcs storage driver got a "tus.chunkSize" that is not a power of two of at least 256 KiB]`,
+		);
+	});
+
+	test.each([[0], [Number.NaN]])(
+		'Refuses a configured chunk size of %s instead of falling back to the default',
+		(chunkSize) => {
+			// 1. `||` would read `0` and `NaN` as "not configured" and silently swap in the default before the
+			//    validation ran; the configured value itself is what the constructor refuses
+			expect(
+				() => new StorageDriverGcs({ bucket: sample.config.bucket, tus: { enabled: true, chunkSize } }),
+			).toThrowError('The gcs storage driver got a "tus.chunkSize" that is not a power of two of at least 256 KiB');
+		},
+	);
+
 	test('Defaults root path to empty string', () => {
 		// 1. The shared driver is built without a root; an empty string keeps `joinPath` and `toRelativePath` no-ops
 		//    rather than a `'/'` that would end up inside every object name
@@ -472,6 +493,16 @@ describe('#stat', () => {
 
 		await expect(driver.stat(sample.path.input)).rejects.toBe(error);
 	});
+
+	test('Refuses a metadata record missing size or modification time', async () => {
+		// 1. Both fields are optional in the SDK's types; passing them on would hand the caller `NaN` and an
+		//    `Invalid Date` far from their cause, so a broken record is refused with the path named
+		mockFile.getMetadata.mockResolvedValue([{}]);
+
+		await expect(driver.stat(sample.path.input)).rejects.toThrowError(
+			`No stat returned for file "${sample.path.input}": the metadata has no size or updated time`,
+		);
+	});
 });
 
 describe('#exists', () => {
@@ -754,6 +785,23 @@ describe('#writeChunk', () => {
 		expect(result).toBe(offset);
 	});
 
+	test('Continues the stored session without a content length when the size is unknown', async () => {
+		// 1. A deferred-length upload has no total yet; `0` would read as a real total and finalise the object empty,
+		//    while an absent key lets the upload library keep the total deferred
+		const context: ChunkedUploadContext = { size: undefined, metadata: { uri, hash } };
+
+		await driver.writeChunk(sample.path.input, sample.stream, offset, context);
+
+		expect(mockFile.createWriteStream).toHaveBeenCalledWith({
+			chunkSize: DEFAULT_CHUNK_SIZE,
+			uri,
+			offset,
+			isPartialUpload: true,
+			resumeCRC32C: hash,
+			metadata: {},
+		});
+	});
+
 	test('Returns the offset advanced by the bytes consumed', async () => {
 		// 1. The mocked `pipeline` waits for the chunk to end, so the bytes written below flow through the driver's
 		//    `data` listener before the offset is computed
@@ -782,15 +830,61 @@ describe('#writeChunk', () => {
 		expect(context.metadata).toStrictEqual({ uri, hash });
 	});
 
-	test('Copes with a context that carries no metadata map', async () => {
-		// 1. A context handed over without its map must not crash on reading the session state or on storing the hash;
-		//    a missing session is the SDK's error to report, not a TypeError of the driver
+	test('Refuses a context that carries no session uri, naming the file', async () => {
+		// 1. Without a session URI there is nothing to continue; like the S3 driver, which refuses a missing upload id,
+		//    the failure is named here instead of `undefined` reaching the SDK under a `string` type
 		const context: ChunkedUploadContext = { size: sample.file.size, metadata: undefined };
 
-		await driver.writeChunk(sample.path.input, sample.stream, offset, context);
+		await expect(driver.writeChunk(sample.path.input, sample.stream, offset, context)).rejects.toThrowError(
+			`Cannot write a chunk of "${sample.path.input}": the context has no session uri`,
+		);
 
-		mockWriteStream.emit('crc32c', hash);
+		expect(mockFile.createWriteStream).not.toHaveBeenCalled();
+	});
+});
 
-		expect(context.metadata).toStrictEqual({ hash });
+describe('A driver with resumable uploads disabled (tus.enabled: false)', () => {
+	let disabledDriver: StorageDriverGcs;
+
+	beforeEach(() => {
+		// 1. The flag is the location's way of saying resumable uploads are not served here; a fresh driver is built
+		//    because the shared one is created without `tus` options
+		disabledDriver = new StorageDriverGcs({ bucket: sample.config.bucket, tus: { enabled: false } });
+	});
+
+	test('Refuses to create a chunked upload with the named error', async () => {
+		// 1. Refusing up front keeps the driver from opening a session its operator never agreed to serve
+		await expect(
+			disabledDriver.createChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} }),
+		).rejects.toThrowError(
+			'The gcs storage driver refuses chunked uploads because resumable uploads are disabled (tus.enabled is false)',
+		);
+	});
+
+	test('Refuses to write a chunk with the named error', async () => {
+		// 1. Refusing up front fails with the reason, instead of failing later on the missing session state
+		await expect(
+			disabledDriver.writeChunk(sample.path.input, sample.stream, 0, { size: sample.file.size, metadata: {} }),
+		).rejects.toThrowError(
+			'The gcs storage driver refuses chunked uploads because resumable uploads are disabled (tus.enabled is false)',
+		);
+	});
+
+	test('Refuses to finish a chunked upload with the named error', async () => {
+		// 1. Refusing up front keeps the call from silently "finishing" an upload the location never accepted
+		await expect(
+			disabledDriver.finishChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} }),
+		).rejects.toThrowError(
+			'The gcs storage driver refuses chunked uploads because resumable uploads are disabled (tus.enabled is false)',
+		);
+	});
+
+	test('Refuses to delete a chunked upload with the named error', async () => {
+		// 1. Refusing up front keeps the termination from deleting whatever the path happens to name
+		await expect(
+			disabledDriver.deleteChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} }),
+		).rejects.toThrowError(
+			'The gcs storage driver refuses chunked uploads because resumable uploads are disabled (tus.enabled is false)',
+		);
 	});
 });

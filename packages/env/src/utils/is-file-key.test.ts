@@ -5,7 +5,9 @@ import { expect, test } from 'vitest';
 import { isFileKey } from './is-file-key.js';
 
 test('Returns false if key is less than or equal to 5 in length', () => {
-	// 1. `_FILE` alone is four characters, so anything at or below the suffix length cannot name a variable
+	// 1. `_FILE` alone is five characters and must stay a plain variable name; anything at or below the suffix
+	//    length cannot name a variable
+	expect(isFileKey('_FILE')).toBe(false);
 	expect(isFileKey('hello')).toBe(false);
 	expect(isFileKey('foo')).toBe(false);
 });

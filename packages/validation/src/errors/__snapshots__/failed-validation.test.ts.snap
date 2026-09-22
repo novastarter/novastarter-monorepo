@@ -18,11 +18,27 @@ exports[`No value > Constructs message for "required" 1`] = `"Validation failed 
 
 exports[`Substring > Constructs message for "contains" 1`] = `"Validation failed for field "test_field". Value has to contain "test_substring"."`;
 
+exports[`Substring > Constructs message for "ends_with" 1`] = `"Validation failed for field "test_field". Value has to end with "test_substring"."`;
+
 exports[`Substring > Constructs message for "icontains" 1`] = `"Validation failed for field "test_field". Value has to contain "test_substring"."`;
+
+exports[`Substring > Constructs message for "iends_with" 1`] = `"Validation failed for field "test_field". Value has to end with "test_substring"."`;
+
+exports[`Substring > Constructs message for "istarts_with" 1`] = `"Validation failed for field "test_field". Value has to start with "test_substring"."`;
 
 exports[`Substring > Constructs message for "ncontains" 1`] = `"Validation failed for field "test_field". Value can't contain "test_substring"."`;
 
-exports[`Unsafe number > Constructs message for "unsafe" 1`] = `"Validation failed for field "test_field". Value is not a safe number."`;
+exports[`Substring > Constructs message for "nends_with" 1`] = `"Validation failed for field "test_field". Value can't end with "test_substring"."`;
+
+exports[`Substring > Constructs message for "niends_with" 1`] = `"Validation failed for field "test_field". Value can't end with "test_substring"."`;
+
+exports[`Substring > Constructs message for "nistarts_with" 1`] = `"Validation failed for field "test_field". Value can't start with "test_substring"."`;
+
+exports[`Substring > Constructs message for "nstarts_with" 1`] = `"Validation failed for field "test_field". Value can't start with "test_substring"."`;
+
+exports[`Substring > Constructs message for "starts_with" 1`] = `"Validation failed for field "test_field". Value has to start with "test_substring"."`;
+
+exports[`Unsafe > Constructs message for "unsafe" 1`] = `"Validation failed for field "test_field". Value is not valid."`;
 
 exports[`Valid value (list) > Constructs message for "in" 1`] = `"Validation failed for field "test_field". Value has to be one of "valA", "valB", "valC"."`;
 

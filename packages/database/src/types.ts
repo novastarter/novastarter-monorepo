@@ -23,6 +23,10 @@ export type DatabaseCapabilities = {
 	/**
 	 * Whether `db.transaction()` works: `false` over Neon's HTTP transport, which holds no session, and on Cloudflare
 	 * D1, which refuses the `begin` Drizzle sends; `db.batch()` is the one transaction those two offer.
+	 *
+	 * This says nothing about prepared statements: `.prepare(name)` may be rejected where plain transactions work —
+	 * on Supabase's transaction pooler (port 6543) — and Drizzle's relational query builder sends named prepares, so
+	 * it fails there while `db.transaction()` succeeds.
 	 */
 	readonly transactions: boolean;
 };
@@ -67,6 +71,27 @@ export type DrizzleOptions<Schema extends Record<string, unknown>> = {
 };
 
 /**
+ * What switching query logging on carries: the SQL text is always logged, the bound parameter values only on request.
+ *
+ * @example
+ * ```ts
+ * queryLogging: { params: true }
+ * ```
+ */
+export type QueryLoggingOptions = {
+	/**
+	 * Log the bound parameter values verbatim, next to the SQL text.
+	 *
+	 * Off by default: at `debug` level in production the values carry what users typed — password hashes, tokens, PII —
+	 * and the kit logger's redaction works on known paths, which cannot reach values inside the `params` array. The
+	 * parameter count is logged instead, so the line stays useful without the values.
+	 *
+	 * @defaultValue false
+	 */
+	params?: boolean | undefined;
+};
+
+/**
  * The options every driver shares; each driver adds its own connection fields on top.
  *
  * @typeParam Schema - The Drizzle schema the database is typed with; the tables and relations the application
@@ -79,8 +104,11 @@ export type DatabaseDriverCommonConfig<Schema extends Record<string, unknown> = 
 	casing?: DatabaseCasing | undefined;
 	/** Where connection errors and, with `queryLogging`, every query are reported; the process logger unless given. */
 	logger?: Logger | undefined;
-	/** Log every query with its parameters at `debug` through `logger`. @defaultValue false */
-	queryLogging?: boolean | undefined;
+	/**
+	 * Log every query at `debug` through `logger`: the SQL text with the parameter count, or the values too as
+	 * `queryLogging: { params: true }`. @defaultValue false
+	 */
+	queryLogging?: boolean | QueryLoggingOptions | undefined;
 	/**
 	 * The location's name, carried by every log line (`database`) and by {@link DatabaseUnavailableError};
 	 * {@link DatabaseManager.registerLocation} fills it in, so a location never has to.

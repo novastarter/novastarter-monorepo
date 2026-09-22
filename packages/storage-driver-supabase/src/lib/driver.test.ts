@@ -17,14 +17,17 @@ import {
 	randText,
 	randGitShortSha as randUnique,
 } from '@ngneat/falso';
+import { DEFAULT_CHUNK_SIZE } from '@novastarter/constants';
 import { StorageFileNotFoundError } from '@novastarter/storage';
 import { StorageClient } from '@supabase/storage-js';
+import * as tus from 'tus-js-client';
 import { fetch, Response } from 'undici';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { StorageDriverSupabaseConfig } from './driver.js';
 import { StorageDriverSupabase } from './driver.js';
 
 vi.mock('@supabase/storage-js');
+vi.mock('tus-js-client');
 vi.mock('undici');
 
 /**
@@ -75,6 +78,20 @@ function fileEntry(name: string, size: number, modified: Date) {
  */
 function folderEntry(name: string) {
 	return { name, id: null, metadata: null };
+}
+
+/**
+ * Build a byte-mode stream holding one chunk, the way the TUS server hands a chunk to `writeChunk`.
+ *
+ * `writeChunk` buffers the chunk before handing it to `tus-js-client`, so the stream must be readable: `Readable.from`
+ * defaults to object mode, in which `read(size)` ignores the size, and a bare `new Readable()` has no `_read`
+ * implementation at all, so both would fail the moment the driver reads them.
+ *
+ * @param bytes - Chunk contents.
+ * @returns A readable of exactly those bytes.
+ */
+function chunkStream(bytes: Buffer): Readable {
+	return Readable.from([bytes], { objectMode: false });
 }
 
 beforeEach(() => {
@@ -169,34 +186,25 @@ describe('#constructor', () => {
 
 describe('#getClient', () => {
 	test('Throws error if serviceRole is missing', () => {
-		// 1. The constructor calls `getClient`, so constructing is enough to exercise it. The project/endpoint check
-		//    runs first, so a config with neither reports that error before the missing key
-		try {
-			new StorageDriverSupabase({ bucket: 'bucket' } as any);
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe('The supabase storage driver needs a "projectId" or an "endpoint"');
-		}
+		// 1. The constructor calls `getClient`, so constructing is enough to exercise it; with a project set the
+		//    endpoint check passes, so the missing key is what gets reported
+		expect(() => new StorageDriverSupabase({ bucket: 'bucket', projectId: 'project', serviceRole: '' })).toThrowError(
+			'The supabase storage driver needs a "serviceRole"',
+		);
 	});
 
 	test('Throws error if bucket missing', () => {
-		// 1. Same ordering: without a project or endpoint the client check fails before the bucket check is reached
-		try {
-			new StorageDriverSupabase({ serviceRole: 'key' } as any);
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe('The supabase storage driver needs a "projectId" or an "endpoint"');
-		}
+		// 1. The client builds fine with a project and a key; the bucket check is the last guard and names the option
+		expect(() => new StorageDriverSupabase({ bucket: '', serviceRole: 'key', projectId: 'project' })).toThrowError(
+			'The supabase storage driver needs a "bucket"',
+		);
 	});
 
 	test('Throws error if projectId and endpoint are both missing', () => {
 		// 1. Without either the endpoint would read `https://undefined.supabase.co`, so the constructor has to refuse
-		try {
-			new StorageDriverSupabase({ serviceRole: 'secret', bucket: 'bucket' });
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe('The supabase storage driver needs a "projectId" or an "endpoint"');
-		}
+		expect(() => new StorageDriverSupabase({ serviceRole: 'secret', bucket: 'bucket' })).toThrowError(
+			'The supabase storage driver needs a "projectId" or an "endpoint"',
+		);
 	});
 
 	test('Throws error if serviceRole is missing with a project', () => {
@@ -316,6 +324,23 @@ describe('#getAuthenticatedUrl', () => {
 
 		expect(result).toBe('https://projectId.supabase.co/storage/v1/object/authenticated/bucket/testing/testing.png');
 	});
+
+	test.each([
+		['report?v=1.pdf', 'report%3Fv%3D1.pdf'],
+		['report#v1.pdf', 'report%23v1.pdf'],
+	])('Percent-encodes the object name %s so it addresses one object', (input, encoded) => {
+		// 1. A raw `?` would read as the start of the query string and a raw `#` as the fragment, so the endpoint
+		//    would be asked for a different object than the caller named
+		const driver = new StorageDriverSupabase({
+			serviceRole: 'serviceRole',
+			bucket: 'bucket',
+			projectId: 'projectId',
+		});
+
+		const result = driver['getAuthenticatedUrl'](input);
+
+		expect(result).toBe(`https://projectId.supabase.co/storage/v1/object/authenticated/bucket/${encoded}`);
+	});
 });
 
 describe('#read', () => {
@@ -332,7 +357,8 @@ describe('#read', () => {
 	});
 
 	test('Uses getAuthenticatedUrl to get endpoint when no root is set', async () => {
-		// 1. The request must carry the bearer token and nothing else: no range header when none was asked for
+		// 1. The request must carry the service-role key in both headers and nothing else: no range header when none
+		//    was asked for
 		await driver.read(sample.path.input);
 
 		expect(driver['getAuthenticatedUrl']).toHaveBeenCalledWith(sample.path.input);
@@ -340,6 +366,7 @@ describe('#read', () => {
 		expect(fetch).toHaveBeenCalledWith(endpoint, {
 			headers: {
 				Authorization: `Bearer ${sample.config.serviceRole}`,
+				apikey: sample.config.serviceRole,
 			},
 			method: 'GET',
 		});
@@ -356,6 +383,7 @@ describe('#read', () => {
 		expect(fetch).toHaveBeenCalledWith(rootEndpoint, {
 			headers: {
 				Authorization: `Bearer ${sample.config.serviceRole}`,
+				apikey: sample.config.serviceRole,
 			},
 			method: 'GET',
 		});
@@ -368,6 +396,7 @@ describe('#read', () => {
 		expect(fetch).toHaveBeenCalledWith(endpoint, {
 			headers: {
 				Authorization: `Bearer ${sample.config.serviceRole}`,
+				apikey: sample.config.serviceRole,
 				Range: `bytes=${sample.range.start}-`,
 			},
 			method: 'GET',
@@ -381,6 +410,7 @@ describe('#read', () => {
 		expect(fetch).toHaveBeenCalledWith(endpoint, {
 			headers: {
 				Authorization: `Bearer ${sample.config.serviceRole}`,
+				apikey: sample.config.serviceRole,
 				Range: `bytes=0-${sample.range.end}`,
 			},
 			method: 'GET',
@@ -394,6 +424,7 @@ describe('#read', () => {
 		expect(fetch).toHaveBeenCalledWith(endpoint, {
 			headers: {
 				Authorization: `Bearer ${sample.config.serviceRole}`,
+				apikey: sample.config.serviceRole,
 				Range: `bytes=${sample.range.start}-${sample.range.end}`,
 			},
 			method: 'GET',
@@ -476,6 +507,7 @@ describe('#read', () => {
 		expect(fetch).toHaveBeenCalledWith(endpoint, {
 			headers: {
 				Authorization: `Bearer ${sample.config.serviceRole}`,
+				apikey: sample.config.serviceRole,
 				Range: `bytes=${sample.range.start}-${sample.range.end}`,
 			},
 			method: 'GET',
@@ -647,6 +679,37 @@ describe('#stat', () => {
 		expect(error).toMatchObject({ extensions: { filepath: sample.path.input } });
 	});
 
+	test('Throws an error naming the file when the entry carries no metadata, instead of reporting zero size and the epoch', async () => {
+		// 1. The API can report a file entry whose metadata is absent; the S3, GCS and Azure drivers refuse a stat
+		//    response missing its fields, so this driver does the same rather than handing out `0` / the epoch under
+		//    the `Stat` type
+		driver['bucket'] = {
+			list: vi.fn().mockReturnValue({
+				data: [{ name: basename(sample.path.input), id: randUnique(), metadata: null }],
+				error: null,
+			}),
+		} as any;
+
+		await expect(driver.stat(sample.path.input)).rejects.toThrowError(
+			`No stat returned for file "${sample.path.input}": the listing entry has no size or modification time`,
+		);
+	});
+
+	test('Throws an error naming the file when the entry metadata has no size or modification time', async () => {
+		// 1. A metadata map without the fields is as broken as an absent one: without both values there is no stat to
+		//    report, only a guess
+		driver['bucket'] = {
+			list: vi.fn().mockReturnValue({
+				data: [{ name: basename(sample.path.input), id: randUnique(), metadata: {} }],
+				error: null,
+			}),
+		} as any;
+
+		await expect(driver.stat(sample.path.input)).rejects.toThrowError(
+			`No stat returned for file "${sample.path.input}": the listing entry has no size or modification time`,
+		);
+	});
+
 	test('Throws an error wrapping the storage error if the lookup failed', async () => {
 		// 1. A failed lookup is not the same answer as an empty one, so the failure has to reach the caller instead of
 		//    being reported as a missing file; it is wrapped with the path like every other failure of this driver
@@ -785,12 +848,13 @@ describe('#write', () => {
 	});
 
 	test('Passes streams to body as is', async () => {
-		// 1. Without a type the driver sends an empty content type; the other options are fixed by the driver
+		// 1. Without a type the driver sends a generic binary content type, since the endpoint rejects an empty one;
+		//    the other options are fixed by the driver
 		await driver.write(sample.path.input, sample.stream);
 
 		expect(driver['bucket'].upload).toHaveBeenCalledWith(sample.path.input, sample.stream, {
 			cacheControl: '3600',
-			contentType: '',
+			contentType: 'application/octet-stream',
 			duplex: 'half',
 			upsert: true,
 		});
@@ -1163,5 +1227,251 @@ describe('#list', () => {
 		expect(error).toBeInstanceOf(Error);
 		expect((error as Error).message).toBe(`Error listing prefix "${sample.path.input}"`);
 		expect((error as Error).cause).toBeUndefined();
+	});
+});
+
+describe('#tusExtensions', () => {
+	test('Advertises creation, termination and expiration', () => {
+		// 1. Exactly what Supabase's own TUS endpoint supports; advertising more would promise what the backend
+		//    cannot honour
+		expect(driver.tusExtensions).toStrictEqual(['creation', 'termination', 'expiration']);
+	});
+});
+
+describe('#getResumableUrl', () => {
+	test('Points at the resumable endpoint of the Storage API', () => {
+		// 1. The bucket and object name travel in the TUS metadata, so the URL is the bare endpoint
+		expect(driver['getResumableUrl']()).toBe(
+			`https://${sample.config.projectId}.supabase.co/storage/v1/upload/resumable`,
+		);
+	});
+});
+
+describe('#createChunkedUpload', () => {
+	test('Passes the context through untouched', async () => {
+		// 1. The TUS upload is created lazily by the first `writeChunk`, so there is nothing to set up on Supabase's
+		//    side and the client's metadata must survive unchanged
+		const context = { size: sample.file.size, metadata: { contentType: sample.file.type } };
+
+		const result = await driver.createChunkedUpload(sample.path.input, context);
+
+		expect(result).toBe(context);
+		expect(result.metadata).toStrictEqual({ contentType: sample.file.type });
+	});
+});
+
+describe('#writeChunk', () => {
+	let uploadUrl: string;
+
+	let mockUpload: {
+		url: string | null;
+		start: ReturnType<typeof vi.fn>;
+		resumeFromPreviousUpload: ReturnType<typeof vi.fn>;
+	};
+
+	let captured: { source: Readable; options: any } | undefined;
+
+	beforeEach(() => {
+		uploadUrl = `https://uploads.supabase.co/upload/resumable/${randUnique()}`;
+
+		mockUpload = {
+			url: uploadUrl,
+			start: vi.fn(),
+			resumeFromPreviousUpload: vi.fn(),
+		};
+
+		// 1. The library is replaced by a recording stand-in, so the options the driver hands it can be asserted
+		//    without any request; `start` is driven per test through the callbacks the driver relies on
+		vi.mocked(tus.Upload).mockImplementation(((source: Readable, options: any) => {
+			captured = { source, options };
+
+			return mockUpload;
+		}) as never);
+	});
+
+	test('Creates a TUS upload for the chunk and resolves with the advanced offset', async () => {
+		const context = { size: sample.file.size, metadata: { contentType: sample.file.type } };
+
+		mockUpload.start.mockImplementation(() => {
+			captured!.options.onUploadUrlAvailable();
+			captured!.options.onChunkComplete(3, 3, sample.file.size);
+		});
+
+		const result = await driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 0, context);
+
+		// 1. The buffered chunk is the library's one-shot source, the endpoint is the resumable URL, and the metadata
+		//    names the target: the bucket, the object name under the root and the content type from the client metadata
+		expect(tus.Upload).toHaveBeenCalledTimes(1);
+
+		const received: Buffer[] = [];
+
+		for await (const chunk of captured!.source) {
+			received.push(chunk as Buffer);
+		}
+
+		expect(Buffer.concat(received).toString()).toBe('abc');
+		expect(captured!.options.endpoint).toBe(driver['getResumableUrl']());
+
+		expect(captured!.options.metadata).toStrictEqual({
+			bucketName: sample.config.bucket,
+			objectName: sample.path.input,
+			contentType: sample.file.type,
+			cacheControl: '3600',
+		});
+
+		// 2. The service-role key authorises the upload, `x-upsert` lets a re-upload replace the object, the chunk size
+		//    is the configured one, and retries are left to the TUS server in front of this driver
+		expect(captured!.options.headers).toStrictEqual({
+			Authorization: `Bearer ${sample.config.serviceRole}`,
+			'x-upsert': 'true',
+		});
+
+		expect(captured!.options.chunkSize).toBe(DEFAULT_CHUNK_SIZE);
+		expect(captured!.options.retryDelays).toBeNull();
+
+		// 3. A known size is passed as `uploadSize`; the offset moves by what the chunk callback reports
+		expect(captured!.options.uploadSize).toBe(sample.file.size);
+		expect(result).toBe(3);
+	});
+
+	test('Falls back to the generic content type and omits uploadSize when the length is deferred', async () => {
+		const context = { size: undefined, metadata: undefined };
+
+		mockUpload.start.mockImplementation(() => {
+			captured!.options.onChunkComplete(3, 3, 0);
+		});
+
+		await driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 0, context);
+
+		expect(captured!.options.metadata['contentType']).toBe('application/octet-stream');
+		expect(captured!.options.uploadSize).toBeUndefined();
+	});
+
+	test('Records the upload URL in the context when Supabase assigns one', async () => {
+		const context = { size: sample.file.size, metadata: {} };
+
+		mockUpload.start.mockImplementation(() => {
+			captured!.options.onUploadUrlAvailable();
+			captured!.options.onChunkComplete(0, 0, sample.file.size);
+		});
+
+		await driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 0, context);
+
+		// 1. The upload URL is the only handle for appending later chunks, and the creation date is recorded next to
+		//    it because resuming an upload reads both
+		expect(context.metadata).toStrictEqual({
+			'upload-url': uploadUrl,
+			creation_date: expect.any(String),
+		});
+	});
+
+	test('Resumes the upload recorded in the context instead of creating a new one', async () => {
+		const creationDate = randPastDate().toString();
+
+		const context = {
+			size: sample.file.size,
+			metadata: { 'upload-url': uploadUrl, creation_date: creationDate },
+		};
+
+		mockUpload.start.mockImplementation(() => {
+			captured!.options.onChunkComplete(3, 3, sample.file.size);
+		});
+
+		const result = await driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 3, context);
+
+		// 1. Resuming must hand the library its previous-upload literal: the recorded URL and creation date, the same
+		//    metadata the upload started with, and no storage key or parallel URLs, since this driver never stores
+		//    uploads in a urlStorage
+		expect(mockUpload.resumeFromPreviousUpload).toHaveBeenCalledWith({
+			size: sample.file.size,
+			creationTime: creationDate,
+			metadata: captured!.options.metadata,
+			uploadUrl,
+			urlStorageKey: '',
+			parallelUploadUrls: null,
+		});
+
+		expect(result).toBe(6);
+	});
+
+	test('Resumes a deferred-length upload with a null size', async () => {
+		const context = {
+			size: undefined,
+			metadata: { 'upload-url': uploadUrl, creation_date: randPastDate().toString() },
+		};
+
+		mockUpload.start.mockImplementation(() => {
+			captured!.options.onChunkComplete(3, 3, 0);
+		});
+
+		await driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 0, context);
+
+		// 1. `null` is the previous-upload contract's own marker for an unknown total, where the old non-null
+		//    assertion handed the library `undefined` under a `number` type
+		expect(mockUpload.resumeFromPreviousUpload).toHaveBeenCalledWith(
+			expect.objectContaining({ size: null, uploadUrl }),
+		);
+	});
+
+	test('Rejects with the library error when the chunk is rejected', async () => {
+		const failure = new Error('tus upload failed');
+
+		const context = { size: sample.file.size, metadata: {} };
+
+		mockUpload.start.mockImplementation(() => {
+			captured!.options.onError(failure);
+		});
+
+		await expect(driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 0, context)).rejects.toBe(
+			failure,
+		);
+	});
+
+	test.each([[4], [5]])(
+		'Refuses a chunk of %d bytes above the configured size before the upload starts',
+		async (bytes) => {
+			// 1. A chunk larger than `tus.chunkSize` used to be truncated to the first request and crash the library's
+			//    upload loop with a TypeError; it is now refused with the named error the other drivers use, before
+			//    `tus-js-client` is involved at all
+			const limitedDriver = new StorageDriverSupabase({
+				serviceRole: sample.config.serviceRole,
+				bucket: sample.config.bucket,
+				projectId: sample.config.projectId,
+				tus: { chunkSize: 3 },
+			});
+
+			const context = { size: sample.file.size, metadata: {} };
+
+			await expect(
+				limitedDriver.writeChunk(sample.path.input, chunkStream(Buffer.alloc(bytes, 'a')), 0, context),
+			).rejects.toThrowError(`The chunk of ${bytes} bytes exceeds the chunk size limit of 3 bytes`);
+
+			// 2. The refusal happens before the library's upload loop starts, so no TypeError escapes and no upload is
+			//    created
+			expect(tus.Upload).not.toHaveBeenCalled();
+		},
+	);
+});
+
+describe('#finishChunkedUpload', () => {
+	test('Resolves without a request', async () => {
+		// 1. Supabase assembles the object itself once the final chunk arrives, so there is nothing to do
+		await expect(
+			driver.finishChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} }),
+		).resolves.toBeUndefined();
+	});
+});
+
+describe('#deleteChunkedUpload', () => {
+	test('Removes the object under the final name', async () => {
+		// 1. An unfinished TUS upload has no handle the driver could abort, and Supabase expires it on its own, so
+		//    termination is a plain delete of the object under the final name
+		driver['bucket'] = {
+			remove: vi.fn().mockResolvedValue({ data: [], error: null }),
+		} as any;
+
+		await driver.deleteChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} });
+
+		expect(driver['bucket'].remove).toHaveBeenCalledWith([sample.path.input]);
 	});
 });

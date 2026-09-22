@@ -41,6 +41,8 @@ export const toCompletedCheckout = (session: Stripe.Checkout.Session): Completed
  *
  * @param event - The event `constructEvent` handed back.
  * @returns The normalised event, or `null`.
+ * @throws Error for a subscription with a status the kit does not know, or without items — either means Stripe
+ * changed something the mapping has to learn.
  */
 export const toEvent = (event: Stripe.Event): PaymentsEvent | null => {
 	// 1. What every event shares: Stripe's event id, the driver name, when it happened, the raw event

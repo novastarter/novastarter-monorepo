@@ -22,6 +22,8 @@ const optional = <T extends z.ZodType>(schema: T) => {
  * @returns The schema of a boolean variable.
  */
 const flag = () => {
+	// 1. A cast boolean passes through, every spelling `z.stringbool()` knows is read from the raw string, and an
+	//    absent value falls back to `false` rather than failing the variable
 	return optional(z.union([z.boolean(), z.stringbool()])).default(false);
 };
 
@@ -60,8 +62,23 @@ export const envSchema = z.object({
 	DATABASE_SSL_CA: optional(z.string()),
 	/** Directory of the local storage location. */
 	STORAGE_LOCAL_ROOT: z.string().default('./uploads'),
+	/**
+	 * Driver of the `default` mail location: `console` writes every message to the log, `sendmail` pipes it to the
+	 * local `sendmail` binary. Unset, `console` outside production — a fresh clone reads its mail in the terminal —
+	 * and required in production, where the console driver would log verification links and reset tokens instead of
+	 * delivering them. Drivers that need more configuration (`smtp`, `file`, a vendor package) are wired in
+	 * `config/mail.ts`.
+	 */
+	MAIL_DRIVER: z.enum(['console', 'sendmail']).optional(),
 	/** Sender of every message without a `from` of its own. */
 	MAIL_FROM: z.string().default('noreply@localhost'),
+	/**
+	 * Driver of the `default` SMS location; `console` is the only built-in one. Unset, it is the default outside
+	 * production — a fresh clone reads its one-time codes in the terminal — and required in production, where the
+	 * console driver would log every code instead of delivering it. A vendor driver (`@novastarter/sms-driver-*`) is
+	 * wired in `config/sms.ts`.
+	 */
+	SMS_DRIVER: z.enum(['console']).optional(),
 	/** Sender of every SMS without a `from` of its own: a number in E.164, or an alphanumeric sender id. */
 	SMS_FROM: z.string().default('Novastarter'),
 });

@@ -83,8 +83,8 @@ const driverParsing = (parse: () => Promise<PaymentsEvent | null>): new () => Pa
 const headers: WebhookHeaders = { 'stripe-signature': 't=1,v1=abc' };
 
 beforeEach(() => {
-	vi.mocked(useLogger).mockReturnValue(logger as any);
-	vi.mocked(useEmitter).mockReturnValue(emitter as any);
+	vi.mocked(useLogger).mockReturnValue(logger as never);
+	vi.mocked(useEmitter).mockReturnValue(emitter as never);
 
 	const payments = usePayments();
 

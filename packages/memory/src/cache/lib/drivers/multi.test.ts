@@ -239,6 +239,27 @@ describe('delete', () => {
 		await expect(cache.delete(mockKey)).rejects.toThrow('READONLY');
 		expect(cache['local'].delete).not.toHaveBeenCalled();
 	});
+
+	test('Keeps an in-flight set of the same key out of L1', async () => {
+		// 1. A `set` waits for its L2 reply; a concurrent `delete` of the same process removes the key from both
+		//    levels, but the set would still land in L1 afterwards — the sender skips its own invalidation messages —
+		//    with L2 holding nothing and no further invalidation coming
+		let settle!: () => void;
+		vi.mocked(cache['redis'].set).mockReturnValueOnce(new Promise<void>((resolve) => (settle = resolve)));
+
+		const write = cache.set(mockKey, mockValue);
+		await Promise.resolve();
+
+		await cache.delete(mockKey);
+		settle();
+		await write;
+
+		// 2. The delete ran, and the late write stayed out of L1
+		expect(cache['redis'].delete).toHaveBeenCalledWith(mockKey);
+		expect(cache['local'].delete).toHaveBeenCalledWith(mockKey);
+		expect(cache['local'].set).not.toHaveBeenCalled();
+		expect(cache['writing'].size).toBe(0);
+	});
 });
 
 describe('invalidation over the bus', () => {
@@ -322,6 +343,27 @@ describe('clear', () => {
 		expect(cache['local'].clear).toHaveBeenCalledOnce();
 		expect(cache['redis'].clear).toHaveBeenCalledOnce();
 		expect(result).toBeUndefined();
+	});
+
+	test('Keeps in-flight sets of this process out of L1', async () => {
+		// 1. Two writes of different keys wait for their L2 replies while a `clear` of the same process runs: like a
+		//    keyless invalidation of another process, it marks every in-flight write to skip L1 — the sender skips its
+		//    own messages, so without the mark each write would repopulate L1 after everything was cleared
+		const settles: (() => void)[] = [];
+		vi.mocked(cache['redis'].set).mockImplementation(() => new Promise<void>((resolve) => settles.push(resolve)));
+
+		const first = cache.set(mockKey, mockValue);
+		const second = cache.set('other-key', mockValue);
+		await Promise.resolve();
+
+		await cache.clear();
+		settles.forEach((settle) => settle());
+		await Promise.all([first, second]);
+
+		// 2. The clear ran, and neither late write reached L1
+		expect(cache['local'].clear).toHaveBeenCalledOnce();
+		expect(cache['local'].set).not.toHaveBeenCalled();
+		expect(cache['writing'].size).toBe(0);
 	});
 });
 

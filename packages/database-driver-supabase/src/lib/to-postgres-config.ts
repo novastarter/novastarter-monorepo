@@ -13,7 +13,7 @@ export type DatabaseDriverSupabaseConfig<Schema extends Record<string, unknown> 
 		/**
 		 * The connection string from the project's dashboard: the direct host, the session pooler (port 5432) or the
 		 * transaction pooler (port 6543). Without an `sslmode` parameter — node-postgres lets the URL override the
-		 * `ssl` option, so TLS is set with `ssl` and `ca` here instead.
+		 * `ssl` option, so TLS is set with `ssl` and `ca` here instead, and a `url` carrying one is refused.
 		 */
 		url: string;
 		/**
@@ -25,7 +25,8 @@ export type DatabaseDriverSupabaseConfig<Schema extends Record<string, unknown> 
 		ssl?: boolean | ConnectionOptions | undefined;
 		/**
 		 * PEM of Supabase's root certificate (`prod-ca-2021.crt` under the project's database settings), for a server
-		 * whose certificate does not chain to a public root; laid over `ssl` as its `ca`.
+		 * whose certificate does not chain to a public root; laid over `ssl` as its `ca`. A blank value counts as
+		 * absent: an empty string would otherwise replace Node's default root store and verify against nothing.
 		 */
 		ca?: string | undefined;
 		/** Further pool options; `connectionString` and `ssl` are taken from `url`, `ssl` and `ca`. */
@@ -46,8 +47,10 @@ const resolveSsl = (ssl: boolean | ConnectionOptions = true, ca?: string): boole
 		return false;
 	}
 
-	// 2. A certificate turns `true` into TLS options and joins the ones given, so verification runs against it
-	if (ca !== undefined) {
+	// 2. A certificate turns `true` into TLS options and joins the ones given, so verification runs against it. A
+	//    blank value counts as absent: `ca` replaces Node's default root store, so an empty string would verify
+	//    against an empty trust store and fail every connection with an issuer error
+	if (ca) {
 		return { ...(typeof ssl === 'object' ? ssl : {}), ca };
 	}
 
@@ -63,7 +66,7 @@ const resolveSsl = (ssl: boolean | ConnectionOptions = true, ca?: string): boole
  * @typeParam Schema - The Drizzle schema the database is typed with.
  * @param config - The Supabase options.
  * @returns The Postgres driver's options.
- * @throws Error when `url` is missing.
+ * @throws Error when `url` is missing, is not a valid URL, or carries an `sslmode` parameter.
  * @example
  * ```ts
  * super(toPostgresConfig(config));
@@ -78,7 +81,25 @@ export const toPostgresConfig = <Schema extends Record<string, unknown>>(
 		throw new Error('The supabase database driver needs a "url"');
 	}
 
-	// 2. The shared options pass through untouched; the four of this driver become one pool config
+	// 2. Parse the URL before anything else reads it, and refuse a malformed one in the words of this driver: `new
+	//    URL` would raise a bare `TypeError: Invalid URL`, naming nothing of the configuration at fault
+	let parsed: URL;
+
+	try {
+		parsed = new URL(config.url);
+	} catch {
+		throw new Error('The supabase database driver needs a "url" that is a valid URL');
+	}
+
+	// 3. Refuse a URL carrying sslmode: node-postgres lets the URL override the `ssl` option, so an sslmode there
+	//    would silently defeat the TLS set here — the one misconfiguration that fails open instead of refusing
+	if (parsed.searchParams.has('sslmode')) {
+		throw new Error(
+			'The supabase database driver needs a "url" without an "sslmode" parameter: set TLS with "ssl" and "ca" instead',
+		);
+	}
+
+	// 4. The shared options pass through untouched; the four of this driver become one pool config
 	const { url, ssl, ca, pool, ...common } = config;
 
 	return {

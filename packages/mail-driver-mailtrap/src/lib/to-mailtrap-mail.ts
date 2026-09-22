@@ -9,6 +9,14 @@ import {
 import type { Address, Attachment, Mail } from 'mailtrap';
 
 /**
+ * Largest `custom_variables` JSON payload Mailtrap accepts; a bigger one is dropped by Mailtrap, so the joined tags
+ * are cut until the serialized object fits.
+ *
+ * @defaultValue 1000 bytes.
+ */
+export const MAILTRAP_CUSTOM_VARIABLES_MAX_BYTES = 1000;
+
+/**
  * A `MailAddress` the way Mailtrap takes it.
  *
  * @param address - Ours.
@@ -46,7 +54,8 @@ export const toMailtrapAttachment = async (attachment: MailAttachment): Promise<
  * Translate a message into the payload of Mailtrap's `send()`.
  *
  * The category is Mailtrap's own `category`; the tags become a `tags` custom variable, which the message log shows
- * and the webhooks carry.
+ * and the webhooks carry — joined and cut so the `custom_variables` payload stays within Mailtrap's limit, the way
+ * the other drivers cut a label to their provider's limit.
  *
  * @param message - Ours, with `from` set (`sendMail()` fills it in).
  * @returns Mailtrap's.
@@ -58,7 +67,18 @@ export const toMailtrapMail = async (message: MailMessage): Promise<Mail> => {
 		throw new Error('Mailtrap needs a "from" address');
 	}
 
-	// 2. Optional fields are only set when present, so the request carries no `undefined` keys
+	// 2. The tags ride in the `tags` custom variable: Mailtrap caps the whole `custom_variables` payload at
+	//    MAILTRAP_CUSTOM_VARIABLES_MAX_BYTES of JSON, so the joined value is cut until the serialized object fits —
+	//    a label past the cap would have the variables dropped rather than read
+	const joined = (message.tags ?? []).join(',');
+	let tags = joined;
+
+	while (tags !== '' && Buffer.byteLength(JSON.stringify({ tags }), 'utf8') > MAILTRAP_CUSTOM_VARIABLES_MAX_BYTES) {
+		// 3. Drop the last code point — a multi-byte one is never split — until the payload fits
+		tags = [...tags].slice(0, -1).join('');
+	}
+
+	// 4. Optional fields are only set when present, so the request carries no `undefined` keys
 	const mail = {
 		from: toMailtrapAddress(message.from),
 		to: toMailAddressList(message.to).map(toMailtrapAddress),
@@ -70,10 +90,10 @@ export const toMailtrapMail = async (message: MailMessage): Promise<Mail> => {
 		...(message.bcc ? { bcc: message.bcc.map(toMailtrapAddress) } : {}),
 		...(message.replyTo ? { reply_to: toMailtrapAddress(message.replyTo) } : {}),
 		...(message.headers ? { headers: message.headers } : {}),
-		...(message.tags?.length ? { custom_variables: { tags: message.tags.join(',') } } : {}),
+		...(tags !== '' ? { custom_variables: { tags } } : {}),
 	} as Mail;
 
-	// 3. Attachments are read in parallel: every one is complete before the request is built
+	// 5. Attachments are read in parallel: every one is complete before the request is built
 	if (message.attachments?.length) {
 		mail.attachments = await Promise.all(message.attachments.map(toMailtrapAttachment));
 	}

@@ -1,4 +1,6 @@
+import { useLogger } from '@novastarter/logger';
 import type { BusDriver, CacheDriver } from '@novastarter/memory';
+import { toError } from '@novastarter/utils';
 import { LimitExceededError, ResourceRestrictedError } from './errors';
 import type { PlanCatalog } from './plan-catalog';
 import type { EntitlementValue } from './plans';
@@ -171,6 +173,9 @@ export class EntitlementManager {
 	/**
 	 * Whether `initialize()` subscribed to the bus already, so a second call is a no-op.
 	 *
+	 * Set before the subscription awaits and reset when it fails, so a refused subscription never leaves the flag
+	 * true with nothing subscribed; inherited by forks, which share the subscription and must not add a second one.
+	 *
 	 * @internal
 	 */
 	private subscribed = false;
@@ -199,18 +204,37 @@ export class EntitlementManager {
 	/**
 	 * Listen for invalidations from other processes; a no-op without a bus, and idempotent.
 	 *
+	 * A refused subscription resets the flag and rethrows, so a later call retries instead of silently staying
+	 * unsubscribed; the flag is set before the await only to keep a concurrent second call from subscribing twice.
+	 *
 	 * @returns When subscribed.
+	 * @throws The error the bus refused the subscription with.
 	 */
 	async initialize(): Promise<void> {
 		// 1. Nothing to hear without a bus, and one subscription is enough however often start-up calls this
 		if (this.subscribed || !this.bus) return;
 
+		// 2. Set before the await so a concurrent call waits instead of subscribing twice; the catch below resets
+		//    the flag on a refusal, so it never stays true with no subscription behind it
 		this.subscribed = true;
 
-		// 2. A message from another process clears the local copy without publishing again — no echo across nodes
-		await this.bus.subscribe<InvalidateMessage>(this.channel, (message) => {
-			void this.clearCacheLocally(message.organizationId, message.keys);
-		});
+		try {
+			// 3. A message from another process clears the local copy without publishing again — no echo across nodes
+			await this.bus.subscribe<InvalidateMessage>(this.channel, (message) => {
+				// 1. The bus waits for no handler: the delete runs detached, and a failure is logged rather than left
+				//    as an unhandled rejection that can take the process down
+				void this.clearCacheLocally(message.organizationId, message.keys).catch((error: unknown) => {
+					useLogger().error(
+						toError(error),
+						`Failed to clear the entitlement cache of "${message.organizationId}" after a bus invalidation`,
+					);
+				});
+			});
+		} catch (error) {
+			// 4. The subscription never happened, so the flag must not claim it — the next start-up subscribes again
+			this.subscribed = false;
+			throw error;
+		}
 	}
 
 	/**
@@ -344,8 +368,9 @@ export class EntitlementManager {
 
 		if (!validator) return false;
 
-		// 2. The same cache slot as a usage count: a key is either a limit or a switch, never both
-		const cacheKey = usageCacheKey(organizationId, key);
+		// 2. A key may carry a counter and a validator at once, so the switch state caches in a slot of its own —
+		//    sharing the usage slot would have the two overwrite each other
+		const cacheKey = switchCacheKey(organizationId, key);
 
 		if (!fresh && this.cache) {
 			const cached = await this.cache.get<boolean>(cacheKey);
@@ -477,7 +502,9 @@ export class EntitlementManager {
 	 * A manager that answers for another plan — an upgrade or a downgrade the organization is looking at — with
 	 * this one's counters, validators and cache, so the usage is not counted twice.
 	 *
-	 * Read-only by intent: the fork shares the cache, so `clearCache()` on it clears for everyone.
+	 * Read-only by intent: the fork shares the cache, so `clearCache()` on it clears for everyone. It also shares the
+	 * bus subscription: `initialize()` on a fork is a no-op once the original subscribed — one callback per bus, not
+	 * one per manager — but a fork made before the original subscribed subscribes on its own first call.
 	 *
 	 * @param planId - The plan to answer for; `null` for no plan (the free one).
 	 * @returns The fork.
@@ -497,6 +524,10 @@ export class EntitlementManager {
 		forked.validators = this.validators;
 		forked.cachePlan = false;
 
+		// 3. The fork rides the original's bus subscription; copying the flag keeps its initialize from attaching a
+		//    second callback that would clear the same cache twice
+		forked.subscribed = this.subscribed;
+
 		return forked;
 	}
 
@@ -511,10 +542,17 @@ export class EntitlementManager {
 		// 1. Nothing was cached without a cache, so there is nothing to drop
 		if (!this.cache) return;
 
-		// 2. Without keys the plan goes too — it is what a subscription change alters
+		// 2. A key may carry both a count and a switch state, so both slots of every target key go; without keys the
+		//    plan goes too — it is what a subscription change alters
 		const targets = keys
-			? keys.map((key) => usageCacheKey(organizationId, key))
-			: [planCacheKey(organizationId), ...this.registeredKeys().map((key) => usageCacheKey(organizationId, key))];
+			? keys.flatMap((key) => [usageCacheKey(organizationId, key), switchCacheKey(organizationId, key)])
+			: [
+					planCacheKey(organizationId),
+					...this.registeredKeys().flatMap((key) => [
+						usageCacheKey(organizationId, key),
+						switchCacheKey(organizationId, key),
+					]),
+				];
 
 		await Promise.all(targets.map((target) => this.cache!.delete(target)));
 	}
@@ -536,3 +574,15 @@ export const planCacheKey = (organizationId: string): string => `plan:${organiza
  * @returns The key.
  */
 export const usageCacheKey = (organizationId: string, key: string): string => `usage:${organizationId}:${key}`;
+
+/**
+ * The cache key of an organization's switch state of an entitlement.
+ *
+ * A key may carry a counter and a validator at once, so the switch state cannot share the usage slot — the two
+ * would overwrite each other and the cache would never hold.
+ *
+ * @param organizationId - The organization.
+ * @param key - The entitlement key.
+ * @returns The key.
+ */
+export const switchCacheKey = (organizationId: string, key: string): string => `switch:${organizationId}:${key}`;

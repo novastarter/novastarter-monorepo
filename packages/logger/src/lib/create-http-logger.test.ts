@@ -75,6 +75,23 @@ test('Logs rather than throws on a request target that is no valid URL', () => {
 	expect(ignore!({ url: '//[' })).toBe(false);
 });
 
+test('Layers the built ignore over the caller autoLogging instead of dropping it', () => {
+	// 1. With both `ignorePaths` and a caller `autoLogging`, the caller's object must be merged under the built
+	//    `ignore` rather than replaced wholesale, so `ignorePaths` is honored
+	const callerIgnore = vi.fn(() => true);
+
+	createHttpLogger({
+		logger,
+		ignorePaths: ['/server/ping'],
+		http: { autoLogging: { ignore: callerIgnore } },
+	});
+
+	const { ignore } = lastOptions();
+
+	expect(ignore!({ url: '/server/ping' })).toBe(true);
+	expect(callerIgnore).not.toHaveBeenCalled();
+});
+
 test('Merges the serializers of the caller and redacts after its req serializer ran', () => {
 	// 1. A `res` serializer of the caller's must survive next to the `req` built here
 	const res = vi.fn((response: { statusCode: number }) => ({ status: response.statusCode }));

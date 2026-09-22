@@ -1,6 +1,5 @@
 // @ts-check
 
-import process from 'node:process';
 import eslintJs from '@eslint/js';
 import eslintConfigPrettier from 'eslint-config-prettier';
 import eslintImportPlugin from 'eslint-plugin-import-x';
@@ -38,9 +37,10 @@ export default typescriptEslint.config(
 	// Custom basic rules
 	{
 		rules: {
-			// No console & debugger statements in production
-			'no-console': process.env.NODE_ENV !== 'development' ? 'error' : 'off',
-			'no-debugger': process.env.NODE_ENV !== 'development' ? 'error' : 'off',
+			// No console & debugger statements, everywhere: lint severity must not depend on the ambient
+			// environment, or the same source lints clean on a developer machine and fails in CI
+			'no-console': 'error',
+			'no-debugger': 'error',
 			// Require empty line between certain statements
 			'padding-line-between-statements': [
 				'error',

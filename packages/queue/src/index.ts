@@ -23,5 +23,6 @@ export * from './lib/start-schedules.js';
 export * from './lib/synchronized-clock.js';
 export * from './lib/use-queue.js';
 export * from './lib/validate-cron.js';
+export * from './lib/validate-delay.js';
 export * from './schedules.js';
 export * from './types.js';

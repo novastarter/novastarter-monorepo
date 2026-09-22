@@ -14,7 +14,7 @@ import { usePayments } from './use-payments.js';
 export const PAYMENTS_WEBHOOK_FILTER = 'payments.webhook';
 
 /**
- * Action event after a webhook delivery verified, was one the kit tracks and passed the filter.
+ * Action event after a verified webhook delivery of a tracked event passed the filter.
  *
  * @defaultValue `payments.received`
  */

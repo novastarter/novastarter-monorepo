@@ -25,6 +25,13 @@ describe('toPostgresConfig', () => {
 		);
 	});
 
+	test('Throws when the url is not a valid URL', () => {
+		// 1. `new URL` would raise a bare `TypeError: Invalid URL` — the driver names the option at fault instead
+		expect(() => toPostgresConfig({ url: 'not-a-url' })).toThrowErrorMatchingInlineSnapshot(
+			`[Error: The supabase database driver needs a "url" that is a valid URL]`,
+		);
+	});
+
 	test('Turns the url into a pool on TLS by default', () => {
 		// 1. `toStrictEqual`: no key of the driver's own may leak through, and nothing undefined may be added
 		expect(toPostgresConfig({ url: sample.url })).toStrictEqual({
@@ -42,6 +49,22 @@ describe('toPostgresConfig', () => {
 			connectionString: sample.url,
 			ssl: { servername: 'db', ca: sample.ca },
 		});
+	});
+
+	test('Treats a blank certificate as absent', () => {
+		// 1. An empty string would otherwise replace Node's default root store and verify against nothing — the shape
+		//    an env var that exists but is blank produces
+		expect(toPostgresConfig({ url: sample.url, ca: '' })).toStrictEqual({
+			connection: { connectionString: sample.url, ssl: true },
+		});
+	});
+
+	test('Throws when the url carries an sslmode parameter', () => {
+		// 1. node-postgres lets the URL override the `ssl` option, so an sslmode there would silently defeat the TLS
+		//    set here — refused up front, in the words of this driver
+		expect(() => toPostgresConfig({ url: `${sample.url}?sslmode=disable` })).toThrowErrorMatchingInlineSnapshot(
+			`[Error: The supabase database driver needs a "url" without an "sslmode" parameter: set TLS with "ssl" and "ca" instead]`,
+		);
 	});
 
 	test('Passes TLS options and an explicit off through', () => {

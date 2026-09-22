@@ -34,7 +34,8 @@ export type DatabaseDriverPgliteOptions = Omit<PGliteOptions, 'dataDir'>;
  * filesystem of its own; a string without a scheme is a path.
  *
  * @param connection - The `connection` string of a location.
- * @returns The path to create, or `undefined` for a database that lives elsewhere than on disk.
+ * @returns The path to create, or `undefined` for a database that lives elsewhere than on disk; a `file://` URL with
+ * an empty path names no directory either, so PGlite's own error for it surfaces instead of `mkdirSync`'s.
  * @example
  * ```ts
  * const directory = dataDirectory(config.connection);
@@ -45,9 +46,11 @@ export type DatabaseDriverPgliteOptions = Omit<PGliteOptions, 'dataDir'>;
  * ```
  */
 export const dataDirectory = (connection: string): string | undefined => {
-	// 1. The prefix is PGlite's to read; the filesystem wants the bare path
+	// 1. The prefix is PGlite's to read; the filesystem wants the bare path. A pathless `file://` slices to '', which
+	//    names no directory: mkdirSync('') would fail deep in the constructor with a bare ENOENT, while `undefined`
+	//    leaves the URL to PGlite, whose error says what is wrong with it
 	if (connection.startsWith('file://')) {
-		return connection.slice('file://'.length);
+		return connection.slice('file://'.length) || undefined;
 	}
 
 	// 2. Any other scheme names no directory

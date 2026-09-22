@@ -1,5 +1,4 @@
 import type { Readable } from 'node:stream';
-import { finished } from 'node:stream/promises';
 import {
 	type BlobGetPropertiesResponse,
 	BlobServiceClient,
@@ -54,7 +53,7 @@ export type StorageDriverAzureConfig = {
 		| {
 				/** Whether resumable uploads are switched on; only then is `chunkSize` validated. */
 				enabled: boolean;
-				/** Chunk size in bytes appended per TUS PATCH request; must not exceed {@link MAXIMUM_CHUNK_SIZE}. */
+				/** Chunk size in bytes appended per TUS PATCH request; must be positive and not exceed {@link MAXIMUM_CHUNK_SIZE}. */
 				chunkSize?: number | undefined;
 		  }
 		| undefined;
@@ -131,7 +130,7 @@ export class StorageDriverAzure implements TusDriver {
 	 *
 	 * @param config - Connection and behaviour options.
 	 * @throws Error when `accountName`, `accountKey` or `containerName` is missing, or when resumable uploads are
-	 * enabled with a `chunkSize` above {@link MAXIMUM_CHUNK_SIZE}.
+	 * enabled with a `chunkSize` that is not positive or exceeds {@link MAXIMUM_CHUNK_SIZE}.
 	 */
 	constructor(config: StorageDriverAzureConfig) {
 		// 1. Refuse a missing credential or container here: the SDK would only fail on the first request, with an error
@@ -167,7 +166,13 @@ export class StorageDriverAzure implements TusDriver {
 			throw new Error('The azure storage driver got a "tus.chunkSize" above 100 MiB');
 		}
 
-		// 6. One TUS chunk becomes one `Append Block` request, so the bound `writeChunk` enforces per chunk is the
+		// 6. A zero, negative or NaN size would be kept as the per-chunk bound and refuse every chunk that arrives; the
+		//    check is written as `!(size > 0)`, the NaN-safe form the S3 driver uses, since comparisons never catch NaN
+		if (config.tus?.enabled && config.tus.chunkSize !== undefined && !(config.tus.chunkSize > 0)) {
+			throw new Error('The azure storage driver got a "tus.chunkSize" below 1 byte');
+		}
+
+		// 7. One TUS chunk becomes one `Append Block` request, so the bound `writeChunk` enforces per chunk is the
 		//    configured size when resumable uploads are on — validated above to stay within the service limit — and the
 		//    service limit itself otherwise
 		this.maximumChunkSize = config.tus?.enabled && config.tus.chunkSize ? config.tus.chunkSize : MAXIMUM_CHUNK_SIZE;
@@ -231,6 +236,9 @@ export class StorageDriverAzure implements TusDriver {
 	/**
 	 * Upload a stream as a block blob, replacing any existing content.
 	 *
+	 * With no `type` given the blob defaults to `application/octet-stream` by design, so typeless bytes stay
+	 * downloadable without the service having to guess a format.
+	 *
 	 * @param filepath - Blob path relative to the root.
 	 * @param content - Data to store.
 	 * @param type - MIME type stored as the blob's `Content-Type`; `application/octet-stream` when omitted.
@@ -279,9 +287,15 @@ export class StorageDriverAzure implements TusDriver {
 			throw error;
 		}
 
+		// 2. Both fields are optional in the SDK's types; a properties response without one is a broken answer and is
+		//    refused here rather than handed out as `undefined` under the non-optional `Stat` type
+		if (props.contentLength === undefined || props.lastModified === undefined) {
+			throw new Error(`No stat returned for file "${filepath}"`);
+		}
+
 		return {
-			size: props.contentLength as number,
-			modified: props.lastModified as Date,
+			size: props.contentLength,
+			modified: props.lastModified,
 		};
 	}
 
@@ -330,7 +344,8 @@ export class StorageDriverAzure implements TusDriver {
 	 * Enumerate blob paths under a prefix.
 	 *
 	 * @param prefix - Path prefix relative to the root; the whole root when empty.
-	 * @returns Blob paths relative to the root.
+	 * @returns Blob paths relative to the root; folder placeholder blobs, the zero-byte markers whose name ends in `/`
+	 * that ADLS Gen2 and several upload tools create, are left out.
 	 */
 	async *list(prefix = ''): AsyncGenerator<string, void, unknown> {
 		// 1. A flat listing walks every blob under the prefix regardless of virtual folders, which is what a recursive
@@ -339,8 +354,13 @@ export class StorageDriverAzure implements TusDriver {
 			prefix: toListPrefix(this.fullPath(prefix), prefix),
 		});
 
-		// 2. Strip the root and its slash so callers get paths in the form they pass in
+		// 2. Skip folder placeholder blobs, as the S3 and GCS drivers do: a name ending in `/` is a zero-byte marker an
+		//    empty "folder" is created with, not an object a caller can read, and listing it would hand a consumer a
+		//    path that only exists on this backend. Strip the root and its slash from the rest, so callers get paths in
+		//    the form they pass in
 		for await (const blob of blobs) {
+			if ((blob.name as string).endsWith('/')) continue;
+
 			yield toRelativePath(this.root, blob.name as string);
 		}
 	}
@@ -393,31 +413,39 @@ export class StorageDriverAzure implements TusDriver {
 		const client = this.containerClient.getAppendBlobClient(this.fullPath(filepath));
 
 		let bytesUploaded = offset || 0;
+		let chunkSize = 0;
 
 		const chunks: Buffer[] = [];
 
-		// 1. Buffer the whole chunk first: `appendBlock` needs the exact byte length up front, which a stream cannot
-		//    give; the chunk is bounded by the check below, so it stays within `MAXIMUM_CHUNK_SIZE`
-		content.on('data', (chunk: Buffer) => {
+		// 1. Buffer the chunk as it streams in, counting bytes on the way: `appendBlock` needs the exact byte length
+		//    up front, which a stream cannot give; the moment the incoming chunk crosses the bound the stream is
+		//    destroyed and the error thrown, so an oversized chunk is refused while it is still arriving rather than
+		//    after the whole of it has been buffered
+		for await (let chunk of content) {
+			if (!Buffer.isBuffer(chunk)) chunk = Buffer.from(chunk);
+
+			chunkSize += chunk.length;
 			bytesUploaded += chunk.length;
 			chunks.push(chunk);
-		});
 
-		await finished(content);
+			// 2. One TUS chunk becomes one `Append Block` request, so a chunk above the bound is refused here, with the
+			//    size named, instead of as a service error mid-upload
+			if (chunkSize > this.maximumChunkSize) {
+				throw new Error(
+					`The chunk of ${chunkSize} bytes exceeds the chunk size limit of ${this.maximumChunkSize} bytes`,
+				);
+			}
+		}
 
 		const chunk = Buffer.concat(chunks);
 
-		// 2. One TUS chunk becomes one `Append Block` request, so a chunk above the bound is refused here, with the
-		//    size named, instead of as a service error mid-upload
-		if (chunk.length > this.maximumChunkSize) {
-			throw new Error(
-				`The chunk of ${chunk.length} bytes exceeds the chunk size limit of ${this.maximumChunkSize} bytes`,
-			);
-		}
-
 		// 3. Skip the request for an empty chunk; the service rejects a zero-length append
 		if (chunk.length > 0) {
-			await client.appendBlock(chunk, chunk.length);
+			// 4. The append position is pinned to the offset the chunk claims to start at: append blobs always append
+			//    at the current end, so a PATCH whose response was lost and which the TUS client resends at the same
+			//    offset would otherwise append the same bytes a second time, silently growing the blob past its
+			//    declared size. With the condition the service answers 412 instead of corrupting the upload
+			await client.appendBlock(chunk, chunk.length, { conditions: { appendPosition: offset } });
 		}
 
 		return bytesUploaded;

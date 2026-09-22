@@ -42,7 +42,12 @@ describe('describeError', () => {
 			'The registration token is not a valid FCM registration token',
 		);
 
-		expect(describeError(invalid)).toMatchObject({ cause: invalid });
+		expect(describeError(invalid)).toBeInstanceOf(PushTargetGoneError);
+
+		expect(describeError(invalid)).toMatchObject({
+			extensions: { platform: 'fcm', reason: 'messaging/invalid-argument' },
+			cause: invalid,
+		});
 	});
 
 	test('Names the code of any other refusal, keeping the SDK error as the cause', () => {
@@ -56,6 +61,18 @@ describe('describeError', () => {
 			message: 'FCM messaging/invalid-argument: Invalid data payload key',
 			cause: refused,
 		});
+	});
+
+	test('Treats a Node system error as the network, not a coded refusal', () => {
+		// 1. System errors carry a string `code` of their own (ECONNRESET, ENOTFOUND, ETIMEDOUT); without Firebase's
+		//    `messaging/` prefix the coded branch must not fire, or the report would name an FCM code that was never
+		//    returned
+		const reset = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+		const described = describeError(reset);
+
+		expect(described).not.toBeInstanceOf(PushTargetGoneError);
+
+		expect(described).toMatchObject({ message: 'FCM: socket hang up', cause: reset });
 	});
 
 	test('Prefixes anything without a code and passes it on as the cause', () => {

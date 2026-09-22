@@ -18,7 +18,7 @@ export interface HitRateLimitErrorExtensions {
  * @param extensions - Limit and reset time of the hit.
  * @returns Message telling the caller how long to wait, in a human-readable duration.
  */
-export const messageConstructor = (extensions: HitRateLimitErrorExtensions): string => {
+export const hitRateLimitMessage = (extensions: HitRateLimitErrorExtensions): string => {
 	// 1. Express the wait relative to now, since that is what the caller needs to know
 	const msBeforeNext = extensions.reset.getTime() - Date.now();
 
@@ -43,4 +43,4 @@ export const messageConstructor = (extensions: HitRateLimitErrorExtensions): str
  * ```
  */
 export const HitRateLimitError: NovastarterErrorConstructor<HitRateLimitErrorExtensions> =
-	createError<HitRateLimitErrorExtensions>(ErrorCode.RequestsExceeded, messageConstructor, 429);
+	createError<HitRateLimitErrorExtensions>(ErrorCode.RequestsExceeded, hitRateLimitMessage, 429);

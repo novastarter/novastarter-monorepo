@@ -70,6 +70,12 @@ describe('dataDirectory', () => {
 		expect(dataDirectory(MEMORY_DATA_DIR)).toBeUndefined();
 		expect(dataDirectory('idb://app')).toBeUndefined();
 	});
+
+	test('Answers nothing for a file:// URL with an empty path', () => {
+		// 1. `file://` alone slices to '': mkdirSync('') would fail with a bare ENOENT, while `undefined` leaves the
+		//    URL to PGlite, whose own error names the problem
+		expect(dataDirectory('file://')).toBeUndefined();
+	});
 });
 
 describe('#constructor', () => {
@@ -103,6 +109,15 @@ describe('#constructor', () => {
 
 		expect(mkdirSync).not.toHaveBeenCalled();
 		expect(PGlite).toHaveBeenCalledExactlyOnceWith(MEMORY_DATA_DIR);
+	});
+
+	test('Creates no directory for a file:// URL with an empty path', () => {
+		new DatabaseDriverPglite({ connection: 'file://', logger: sample.logger as never });
+
+		// 1. An empty path would reach mkdirSync as '' and fail with a bare ENOENT; the URL goes to PGlite as is, so
+		//    its own clearer error for it surfaces
+		expect(mkdirSync).not.toHaveBeenCalled();
+		expect(PGlite).toHaveBeenCalledExactlyOnceWith('file://');
 	});
 
 	test('Passes the PGlite options through', () => {
@@ -170,7 +185,7 @@ describe('#constructor', () => {
 
 		(options.logger as { logQuery(query: string, params: unknown[]): void }).logQuery('select 1', []);
 
-		expect(sample.logger.debug).toHaveBeenCalledExactlyOnceWith({ query: 'select 1', params: [] }, 'Database query');
+		expect(sample.logger.debug).toHaveBeenCalledExactlyOnceWith({ query: 'select 1', paramCount: 0 }, 'Database query');
 	});
 });
 
@@ -202,7 +217,7 @@ describe('#label', () => {
 
 		(options.logger as { logQuery(query: string, params: unknown[]): void }).logQuery('select 1', []);
 
-		expect(child.debug).toHaveBeenCalledExactlyOnceWith({ query: 'select 1', params: [] }, 'Database query');
+		expect(child.debug).toHaveBeenCalledExactlyOnceWith({ query: 'select 1', paramCount: 0 }, 'Database query');
 		expect(sample.logger.debug).not.toHaveBeenCalled();
 	});
 

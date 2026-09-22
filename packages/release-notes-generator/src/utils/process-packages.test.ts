@@ -50,7 +50,6 @@ vi.doMock('./find-workspace-packages.js', () => ({
 }));
 
 beforeEach(() => {
-	vi.unstubAllEnvs();
 	mockChangesetPreFile = undefined;
 	packages = [];
 	mockConfig.mainPackage = 'main';
@@ -83,7 +82,7 @@ const { processPackages } = await import('./process-packages.js');
 test('should return main version and package versions', async () => {
 	packages = [generatePackage('main', '1.0.0'), generatePackage('example', '1.1.0')];
 
-	const { mainVersion, isPrerelease, packageVersions } = await processPackages();
+	const { mainVersion, isPrerelease, packageVersions } = await processPackages({ workspaceRoot: 'mock-workspace' });
 
 	expect(mainVersion).toEqual('1.0.0');
 	expect(isPrerelease).toEqual(false);
@@ -91,14 +90,16 @@ test('should return main version and package versions', async () => {
 });
 
 test('should fail if main version is missing', async () => {
-	await expect(() => processPackages()).rejects.toThrow(`Main version of the 'main' package is missing or invalid`);
+	await expect(() => processPackages({ workspaceRoot: 'mock-workspace' })).rejects.toThrow(
+		`Main version of the 'main' package is missing or invalid`,
+	);
 });
 
 test('should name the environment variable when the forced version is invalid', async () => {
 	// 1. A malformed forced version is blamed on its source, never on an undefined main package
-	vi.stubEnv('NOVASTARTER_VERSION', 'not-a-version');
-
-	await expect(() => processPackages()).rejects.toThrow(
+	await expect(() =>
+		processPackages({ workspaceRoot: 'mock-workspace', forcedVersion: 'not-a-version' }),
+	).rejects.toThrow(
 		'Main version of the NOVASTARTER_VERSION environment variable ("not-a-version") is missing or invalid',
 	);
 });
@@ -107,7 +108,9 @@ test('should work without a main package', async () => {
 	delete mockConfig.mainPackage;
 	packages = [generatePackage('example', '1.1.0')];
 
-	const { mainVersion, isPrerelease, prereleaseId, packageVersions } = await processPackages();
+	const { mainVersion, isPrerelease, prereleaseId, packageVersions } = await processPackages({
+		workspaceRoot: 'mock-workspace',
+	});
 
 	expect(mainVersion).toBeUndefined();
 	expect(isPrerelease).toEqual(false);
@@ -117,22 +120,37 @@ test('should work without a main package', async () => {
 
 test('should take the prerelease state from changesets without a main package', async () => {
 	delete mockConfig.mainPackage;
-	mockChangesetPreFile = JSON.stringify({ tag: 'beta' });
+	mockChangesetPreFile = JSON.stringify({ mode: 'pre', tag: 'beta' });
 	packages = [generatePackage('example', '1.1.0-beta.0')];
 
-	const { mainVersion, isPrerelease, prereleaseId } = await processPackages();
+	const { mainVersion, isPrerelease, prereleaseId } = await processPackages({ workspaceRoot: 'mock-workspace' });
 
 	expect(mainVersion).toBeUndefined();
 	expect(isPrerelease).toEqual(true);
 	expect(prereleaseId).toEqual('beta');
 });
 
+test('should not read a prerelease tag from a finished prerelease cycle', async () => {
+	// 1. `changesets pre exit` keeps `pre.json` on disk with `mode: "exit"`, so the stable release right after a
+	//    prerelease cycle must not be reported as a prerelease
+	delete mockConfig.mainPackage;
+	mockChangesetPreFile = JSON.stringify({ mode: 'exit', tag: 'beta' });
+	packages = [generatePackage('example', '1.1.0')];
+
+	const { mainVersion, isPrerelease, prereleaseId } = await processPackages({ workspaceRoot: 'mock-workspace' });
+
+	expect(mainVersion).toBeUndefined();
+	expect(isPrerelease).toEqual(false);
+	expect(prereleaseId).toBeUndefined();
+});
+
 test('should respect manually defined version', async () => {
 	packages = [generatePackage('main', '1.0.0'), generatePackage('example', '1.1.0')];
 
-	vi.stubEnv('NOVASTARTER_VERSION', '2.0.0');
-
-	const { mainVersion, packageVersions } = await processPackages();
+	const { mainVersion, packageVersions } = await processPackages({
+		workspaceRoot: 'mock-workspace',
+		forcedVersion: '2.0.0',
+	});
 
 	expect(mainVersion).toEqual('2.0.0');
 	expect(packageVersions).toEqual([{ name: 'example', version: '1.1.0' }]);
@@ -142,27 +160,28 @@ test('should respect manually defined version without a main package', async () 
 	delete mockConfig.mainPackage;
 	packages = [generatePackage('example', '1.1.0')];
 
-	vi.stubEnv('NOVASTARTER_VERSION', '2.0.0');
-
-	const { mainVersion, packageVersions } = await processPackages();
+	const { mainVersion, packageVersions } = await processPackages({
+		workspaceRoot: 'mock-workspace',
+		forcedVersion: '2.0.0',
+	});
 
 	expect(mainVersion).toEqual('2.0.0');
 	expect(packageVersions).toEqual([{ name: 'example', version: '1.1.0' }]);
 });
 
 test('should fail with manually defined version when not in prerelease mode', async () => {
-	vi.stubEnv('NOVASTARTER_VERSION', '2.0.0-beta.0');
-
-	await expect(() => processPackages()).rejects.toThrow(
-		`Main version is a prerelease but changesets isn't in prerelease mode`,
-	);
+	await expect(() =>
+		processPackages({ workspaceRoot: 'mock-workspace', forcedVersion: '2.0.0-beta.0' }),
+	).rejects.toThrow(`Main version is a prerelease but changesets isn't in prerelease mode`);
 });
 
 test('should work with manually defined version when in prerelease mode', async () => {
-	mockChangesetPreFile = JSON.stringify({ tag: 'beta' });
-	vi.stubEnv('NOVASTARTER_VERSION', '2.0.0-beta.0');
+	mockChangesetPreFile = JSON.stringify({ mode: 'pre', tag: 'beta' });
 
-	const { mainVersion, isPrerelease, prereleaseId } = await processPackages();
+	const { mainVersion, isPrerelease, prereleaseId } = await processPackages({
+		workspaceRoot: 'mock-workspace',
+		forcedVersion: '2.0.0-beta.0',
+	});
 
 	expect(mainVersion).toEqual('2.0.0-beta.0');
 	expect(isPrerelease).toEqual(true);
@@ -170,10 +189,10 @@ test('should work with manually defined version when in prerelease mode', async 
 });
 
 test('should pass in prerelease mode', async () => {
-	mockChangesetPreFile = JSON.stringify({ tag: 'beta' });
+	mockChangesetPreFile = JSON.stringify({ mode: 'pre', tag: 'beta' });
 	packages = [generatePackage('main', '1.0.0-beta.0')];
 
-	const { mainVersion, isPrerelease, prereleaseId } = await processPackages();
+	const { mainVersion, isPrerelease, prereleaseId } = await processPackages({ workspaceRoot: 'mock-workspace' });
 
 	expect(mainVersion).toEqual('1.0.0-beta.0');
 	expect(isPrerelease).toEqual(true);
@@ -187,13 +206,13 @@ test('should return correct version for linked packages', async () => {
 		generatePackage('target', '1.1.0', { bumped: false }),
 	];
 
-	const { packageVersions } = await processPackages();
+	const { packageVersions } = await processPackages({ workspaceRoot: 'mock-workspace' });
 
 	expect(packageVersions).toEqual(expect.arrayContaining([{ name: 'target', version: '1.1.1' }]));
 });
 
 test('should return correct version for linked packages in prerelease mode', async () => {
-	mockChangesetPreFile = JSON.stringify({ tag: 'beta' });
+	mockChangesetPreFile = JSON.stringify({ mode: 'pre', tag: 'beta' });
 
 	packages = [
 		generatePackage('main', '1.0.0-beta.0'),
@@ -201,13 +220,13 @@ test('should return correct version for linked packages in prerelease mode', asy
 		generatePackage('target', '1.1.0', { bumped: false }),
 	];
 
-	const { packageVersions } = await processPackages();
+	const { packageVersions } = await processPackages({ workspaceRoot: 'mock-workspace' });
 
 	expect(packageVersions).toEqual(expect.arrayContaining([{ name: 'target', version: '1.1.1-beta.0' }]));
 });
 
 test('should return correct version for linked packages in prerelease mode with existing prerelease version', async () => {
-	mockChangesetPreFile = JSON.stringify({ tag: 'beta' });
+	mockChangesetPreFile = JSON.stringify({ mode: 'pre', tag: 'beta' });
 
 	packages = [
 		generatePackage('main', '1.0.0-beta.0'),
@@ -215,19 +234,19 @@ test('should return correct version for linked packages in prerelease mode with 
 		generatePackage('target', '1.1.1-beta.0', { bumped: false }),
 	];
 
-	const { packageVersions } = await processPackages();
+	const { packageVersions } = await processPackages({ workspaceRoot: 'mock-workspace' });
 
 	expect(packageVersions).toEqual(expect.arrayContaining([{ name: 'target', version: '1.1.1-beta.1' }]));
 });
 
 test('should ignore private packages', async () => {
-	mockChangesetPreFile = JSON.stringify({ tag: 'beta' });
+	mockChangesetPreFile = JSON.stringify({ mode: 'pre', tag: 'beta' });
 
 	const privatePackage = generatePackage('private', '0.0.1', { additional: { private: true } });
 
 	packages = [generatePackage('main', '1.0.0'), privatePackage];
 
-	const { packageVersions } = await processPackages();
+	const { packageVersions } = await processPackages({ workspaceRoot: 'mock-workspace' });
 
 	expect(privatePackage.writeProjectManifest).not.toHaveBeenCalled();
 	expect(packageVersions).not.toContainEqual(expect.objectContaining({ name: 'private' }));

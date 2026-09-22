@@ -23,7 +23,8 @@ export const STRIPE_STATUSES: readonly SubscriptionStatus[] = [
  * A Stripe subscription as the kit sees it.
  *
  * Reads the first subscription item: the kit sells one price per subscription (a plan, times its seats), and since
- * API version 2025-03-31 the billing period lives on the item, not on the subscription.
+ * API version 2025-03-31 the billing period lives on the item, not on the subscription — an endpoint pinned to an
+ * earlier API version still receives deliveries carrying it on the subscription, which is read as the fallback.
  *
  * @param subscription - Stripe's, as retrieved or as a webhook carried it.
  * @returns The normalised subscription.
@@ -43,7 +44,12 @@ export const toSubscription = (subscription: Stripe.Subscription): Subscription 
 		throw new Error(`Stripe subscription "${subscription.id}" has an unknown status "${subscription.status}"`);
 	}
 
-	// 3. The period comes from the item; the interval from its price, `month` for a price without a recurrence
+	// 3. The period comes from the item since API version 2025-03-31, with the subscription itself as the fallback:
+	//    a webhook endpoint pinned to an earlier API version still carries the period there, and silently mapping no
+	//    period at all would hide that version drift. The subscription's fields are gone from the current types —
+	//    removed with the move to the item — so the older shape is read through a cast
+	const legacyPeriod = subscription as { current_period_start?: number; current_period_end?: number };
+
 	return {
 		id: subscription.id,
 		customerId: idOf(subscription.customer) ?? '',
@@ -52,8 +58,8 @@ export const toSubscription = (subscription: Stripe.Subscription): Subscription 
 		productId: idOf(item.price.product),
 		quantity: item.quantity ?? 1,
 		interval: (item.price.recurring?.interval ?? 'month') as BillingInterval,
-		currentPeriodStart: fromUnix(item.current_period_start),
-		currentPeriodEnd: fromUnix(item.current_period_end),
+		currentPeriodStart: fromUnix(item.current_period_start ?? legacyPeriod.current_period_start),
+		currentPeriodEnd: fromUnix(item.current_period_end ?? legacyPeriod.current_period_end),
 		cancelAtPeriodEnd: subscription.cancel_at_period_end,
 		cancelAt: fromUnix(subscription.cancel_at),
 		canceledAt: fromUnix(subscription.canceled_at),

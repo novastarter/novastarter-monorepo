@@ -4,8 +4,7 @@
 import { Blob, Buffer } from 'node:buffer';
 import type { Hash } from 'node:crypto';
 import { createHash, randomUUID } from 'node:crypto';
-import type { ParsedPath } from 'node:path';
-import { extname, parse } from 'node:path';
+import { extname } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { ReadableStream } from 'node:stream/web';
 import {
@@ -46,7 +45,8 @@ vi.mock('undici');
  * Real `joinPath`, kept for the suites that need genuine path joining while `@novastarter/utils` stays mocked for the
  * rest.
  */
-const { joinPath: joinPathActual } = await vi.importActual<typeof import('@novastarter/utils')>('@novastarter/utils');
+const { confinePath: confinePathActual, joinPath: joinPathActual } =
+	await vi.importActual<typeof import('@novastarter/utils')>('@novastarter/utils');
 
 /**
  * Real `Buffer` and `Blob`, kept for the suites that push actual bytes through the buffering code while `node:buffer`
@@ -493,9 +493,10 @@ describe('#getTimestamp', () => {
 		vi.useRealTimers();
 	});
 
-	test('Returns unix timestamp for current time', () => {
-		// 1. The timestamp is a signed parameter, so it is produced as text straight away
-		expect(driver['getTimestamp']()).toBe(String(mockDate.getTime()));
+	test('Returns unix timestamp in seconds for current time', () => {
+		// 1. Cloudinary signs `timestamp` as Unix time in seconds; the value is produced as text straight away because
+		//    every parameter is signed and sent as text
+		expect(driver['getTimestamp']()).toBe(String(Math.floor(mockDate.getTime() / 1000)));
 	});
 });
 
@@ -559,8 +560,6 @@ describe('#getResourceType', () => {
 });
 
 describe('#getPublicId', () => {
-	let mockParsedPath: string;
-
 	beforeEach(() => {
 		// 1. A fresh driver, since the shared one has `getPublicId` stubbed out; the resource type stays stubbed so
 		//    each test can pick the branch it exercises
@@ -573,9 +572,8 @@ describe('#getPublicId', () => {
 
 		driver['getResourceType'] = vi.fn().mockReturnValue(sample.resourceType);
 
-		// 2. `parse` is mocked, so the `name` it reports is what the image/video branch must return
-		mockParsedPath = randDirectoryPath();
-		vi.mocked(parse).mockReturnValue({ name: mockParsedPath } as ParsedPath);
+		// 2. The real confinement runs here, since the separator normalisation is part of what is under test
+		vi.mocked(confinePath).mockImplementation(confinePathActual);
 	});
 
 	test('Gets resourceType for given filepath', () => {
@@ -584,19 +582,62 @@ describe('#getPublicId', () => {
 		expect(driver['getResourceType']).toHaveBeenCalledWith(sample.path.input);
 	});
 
-	test('Returns original file path if type is raw', () => {
+	test('Keeps the extension for raw assets', () => {
 		// 1. Cloudinary stores no format for raw assets, so the extension is the only way the name survives
-		vi.mocked(parse).mockReturnValueOnce({ base: sample.path.input } as ParsedPath);
 		driver['getResourceType'] = vi.fn().mockReturnValue('raw');
-		const publicId = driver['getPublicId'](sample.path.input);
-		expect(publicId).toBe(sample.path.input);
+		const publicId = driver['getPublicId']('folder/sub/file.tar.gz');
+		expect(publicId).toBe('file.tar.gz');
 	});
 
-	test('Parsed base path if other type', () => {
+	test('Drops the extension for images and videos', () => {
 		// 1. Cloudinary appends the format to image and video ids itself; keeping it would yield `name.png.png`
 		driver['getResourceType'] = vi.fn().mockReturnValue(rand(['image', 'video']));
-		const publicId = driver['getPublicId'](sample.path.input);
-		expect(publicId).toBe(mockParsedPath);
+		const publicId = driver['getPublicId']('folder/sub/file.png');
+		expect(publicId).toBe('file');
+	});
+
+	test('Leaves a leading-dot name without an extension untouched', () => {
+		// 1. A name like `.well-known` has no extension, exactly the way `node:path` treated it
+		driver['getResourceType'] = vi.fn().mockReturnValue('image');
+		const publicId = driver['getPublicId']('.well-known');
+		expect(publicId).toBe('.well-known');
+	});
+
+	test('Splits on forward slashes whatever the platform separators were', () => {
+		// 1. Backslashes arrive from Windows callers; a platform separator would read the whole path as one name there
+		driver['getResourceType'] = vi.fn().mockReturnValue('image');
+		const publicId = driver['getPublicId']('folder\\sub\\file.png');
+		expect(publicId).toBe('file');
+	});
+});
+
+describe('#getFolderPath', () => {
+	beforeEach(() => {
+		// 1. A fresh driver, since the shared one has `getFolderPath` stubbed out
+		driver = new StorageDriverCloudinary({
+			apiKey: sample.config.apiKey,
+			apiSecret: sample.config.apiSecret,
+			cloudName: sample.config.cloudName,
+			accessMode: sample.config.accessMode,
+		});
+
+		// 2. The real confinement runs here, since the separator normalisation is part of what is under test
+		vi.mocked(confinePath).mockImplementation(confinePathActual);
+	});
+
+	test('Returns the folder without a trailing separator', () => {
+		// 1. The asset-folder parameter wants exactly the directory part of the path
+		expect(driver['getFolderPath']('folder/sub/file.png')).toBe('folder/sub');
+	});
+
+	test('Returns an empty string for a bare file name', () => {
+		// 1. A file at the root has no folder, so the parameter is left out entirely
+		expect(driver['getFolderPath']('file.png')).toBe('');
+	});
+
+	test('Normalises platform separators to forward slashes', () => {
+		// 1. Backslashes arrive from Windows callers; the folder is a Cloudinary entity and always uses forward slashes
+		expect(driver['getFolderPath']('folder\\sub\\file.png')).toBe('folder/sub');
 	});
 });
 
@@ -686,6 +727,19 @@ describe('#read', () => {
 		);
 	});
 
+	test('Percent-encodes path segments so a public id with reserved characters still addresses one asset', async () => {
+		// 1. `?` and `#` are legal in a raw public id, but turn the rest of a URL into a query or fragment; each segment
+		//    is encoded so the delivery API still reads the id the caller stored
+		driver['fullPath'] = vi.fn().mockReturnValue('media/report?v=1.pdf');
+
+		await driver.read(sample.path.input);
+
+		expect(fetch).toHaveBeenCalledWith(
+			`https://res.cloudinary.com/${sample.config.cloudName}/${sample.resourceType}/upload/${sample.parameterSignature}/media/report%3Fv%3D1.pdf`,
+			{ method: 'GET' },
+		);
+	});
+
 	test('Adds optional Range header for start', async () => {
 		// 1. An open end asks for everything from `start` on
 		await driver.read(sample.path.input, { range: { start: sample.range.start, end: undefined } });
@@ -717,27 +771,22 @@ describe('#read', () => {
 	});
 
 	test('Throws error when response has status >= 400', async () => {
-		// 1. An error status carries no asset to stream; the caller gets the path, not a broken stream
-		mockResponse.status = randNumber({ min: 400, max: 599 });
+		// 1. An error status carries no asset to stream; the caller gets the path, not a broken stream. 404 is kept out
+		//    of the range because it throws the not-found error, which has its own test
+		mockResponse.status = randNumber({ min: 405, max: 599 });
 
-		try {
-			await driver.read(sample.path.input);
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe(`No stream returned for file "${sample.path.input}"`);
-		}
+		await expect(driver.read(sample.path.input)).rejects.toThrowError(
+			`No stream returned for file "${sample.path.input}"`,
+		);
 	});
 
 	test('Throws error when response has no readable body', async () => {
 		// 1. A 2xx without a body cannot be turned into a stream either, so it is reported the same way
 		mockResponse.body = null;
 
-		try {
-			await driver.read(sample.path.input);
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe(`No stream returned for file "${sample.path.input}"`);
-		}
+		await expect(driver.read(sample.path.input)).rejects.toThrowError(
+			`No stream returned for file "${sample.path.input}"`,
+		);
 	});
 
 	test('Cancels the response body it never reads', async () => {
@@ -1038,12 +1087,9 @@ describe('#move', () => {
 		// 1. A rejected rename is reported with the source path, so the caller knows which move failed
 		mockResponse.status = randNumber({ min: 400, max: 599 });
 
-		try {
-			await driver.move(sample.path.src, sample.path.dest);
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe(`Can't move file "${sample.path.src}": Unknown`);
-		}
+		await expect(driver.move(sample.path.src, sample.path.dest)).rejects.toThrowError(
+			`Can't move file "${sample.path.src}": Unknown`,
+		);
 	});
 
 	test(`Defaults to Unknown if error object doesn't contain message`, async () => {
@@ -1051,12 +1097,9 @@ describe('#move', () => {
 		mockResponse.status = randNumber({ min: 400, max: 599 });
 		mockResponseBody.error = {};
 
-		try {
-			await driver.move(sample.path.src, sample.path.dest);
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe(`Can't move file "${sample.path.src}": Unknown`);
-		}
+		await expect(driver.move(sample.path.src, sample.path.dest)).rejects.toThrowError(
+			`Can't move file "${sample.path.src}": Unknown`,
+		);
 	});
 
 	test(`Renders message if returned by Cloudinary`, async () => {
@@ -1064,12 +1107,9 @@ describe('#move', () => {
 		mockResponse.status = randNumber({ min: 400, max: 599 });
 		mockResponseBody.error = { message: randText() };
 
-		try {
-			await driver.move(sample.path.src, sample.path.dest);
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe(`Can't move file "${sample.path.src}": ${mockResponseBody.error.message}`);
-		}
+		await expect(driver.move(sample.path.src, sample.path.dest)).rejects.toThrowError(
+			`Can't move file "${sample.path.src}": ${mockResponseBody.error.message}`,
+		);
 	});
 });
 
@@ -1171,49 +1211,58 @@ describe('#write', () => {
 		expect(vi.mocked(driver['uploadChunk']).mock.calls[0]![0].uploadId).toBe(sample.uploadId);
 	});
 
-	test('Queues chunk upload each time chunks add up to more than 5.5 MB of data', async () => {
-		// 1. Nothing is sent for the first 3 MB; with the second 3 MB the buffer passes 5.5 MB and the first 5.5 MB go
-		//    out as one chunk with an unknown total; the 0.5 MB left plus the final 1 MB are the last request, which
+	test('Queues chunk upload each time chunks add up to more than the upload chunk size', async () => {
+		// 1. The chunk size is five percent above the Cloudinary minimum, so the first 6 MB pass one cut: the first
+		//    chunk goes out with an unknown total and the remainder plus the final 1 MB is the last request, which
 		//    carries the real total
+		const chunkSize = Math.ceil(MINIMUM_CHUNK_SIZE * 1.05);
+
 		await driver.write(
 			sample.path.input,
 			createStream([BufferActual.alloc(3e6), BufferActual.alloc(3e6), BufferActual.alloc(1e6)]),
 		);
 
 		expect(chunkRanges()).toStrictEqual([
-			[0, 5.5e6, -1],
-			[5.5e6, 1.5e6, 7e6],
+			[0, chunkSize, -1],
+			[chunkSize, 7e6 - chunkSize, 7e6],
 		]);
 	});
 
 	test('Keeps a buffer of exactly the chunk size for the last request', async () => {
-		// 1. A source that adds up to exactly 5.5 MB is one chunk; sending it early with an unknown total would leave
-		//    Cloudinary waiting for a final request that never comes
-		await driver.write(sample.path.input, createStream([BufferActual.alloc(5.5e6)]));
+		// 1. A source that adds up to exactly the chunk size is one chunk; sending it early with an unknown total would
+		//    leave Cloudinary waiting for a final request that never comes
+		const chunkSize = Math.ceil(MINIMUM_CHUNK_SIZE * 1.05);
 
-		expect(chunkRanges()).toStrictEqual([[0, 5.5e6, 5.5e6]]);
+		await driver.write(sample.path.input, createStream([BufferActual.alloc(chunkSize)]));
+
+		expect(chunkRanges()).toStrictEqual([[0, chunkSize, chunkSize]]);
 	});
 
 	test('Sends every byte when one source chunk is larger than the upload chunk size', async () => {
 		// 1. A 12 MB source chunk holds two full upload chunks: the loop used to compute the space left in the buffer,
 		//    which went negative on the second cut and silently dropped bytes
+		const chunkSize = Math.ceil(MINIMUM_CHUNK_SIZE * 1.05);
+
 		await driver.write(sample.path.input, createStream([BufferActual.alloc(12e6, 1), BufferActual.alloc(12e6, 2)]));
 
-		// 2. 24 MB is four full chunks and a 2 MB tail, with contiguous offsets and the total only on the last one
+		// 2. 24 MB is four full chunks and a tail, with contiguous offsets and the total only on the last one
 		expect(chunkRanges()).toStrictEqual([
-			[0, 5.5e6, -1],
-			[5.5e6, 5.5e6, -1],
-			[11e6, 5.5e6, -1],
-			[16.5e6, 5.5e6, -1],
-			[22e6, 2e6, 24e6],
+			[0, chunkSize, -1],
+			[chunkSize, chunkSize, -1],
+			[2 * chunkSize, chunkSize, -1],
+			[3 * chunkSize, chunkSize, -1],
+			[4 * chunkSize, 24e6 - 4 * chunkSize, 24e6],
 		]);
 
-		// 3. The chunk spanning both sources must switch from the first fill value to the second at byte 12 MB
+		// 3. The chunk spanning both sources switches from the first fill value to the second where the second source
+		//    begins, at 12 MB minus the two full chunks already cut from the first source
 		const bytes = new Uint8Array(await vi.mocked(driver['uploadChunk']).mock.calls[2]![0].blob.arrayBuffer());
 
+		const switchAt = 12e6 - 2 * chunkSize;
+
 		expect(bytes[0]).toBe(1);
-		expect(bytes[1e6 - 1]).toBe(1);
-		expect(bytes[1e6]).toBe(2);
+		expect(bytes[switchAt - 1]).toBe(1);
+		expect(bytes[switchAt]).toBe(2);
 		expect(bytes[bytes.length - 1]).toBe(2);
 	});
 
@@ -1226,6 +1275,29 @@ describe('#write', () => {
 		await expect(driver.write(sample.path.input, createStream())).rejects.toThrowError(
 			`Can't upload file "${sample.path.input}": ${cause.message}`,
 		);
+	});
+
+	test('Reports the first of several failed chunks', async () => {
+		// 1. Chunks run concurrently and every request settles before the error surfaces, so the reported failure must
+		//    be the first one remembered rather than whichever chunk rejected last
+		const first = new Error(randText());
+		const last = new Error(randText());
+
+		vi.mocked(driver['uploadChunk']).mockRejectedValueOnce(first).mockRejectedValueOnce(last);
+
+		await expect(
+			driver.write(sample.path.input, createStream([BufferActual.alloc(6e6), BufferActual.alloc(6e6)])),
+		).rejects.toThrowError(`Can't upload file "${sample.path.input}": ${first.message}`);
+	});
+
+	test('Rejects an empty write instead of resolving while nothing is stored', async () => {
+		// 1. Cloudinary accepts no zero-length chunk, so an empty stream stores nothing; resolving would leave any
+		//    previous asset under the same public id untouched while reading as success, which is why the write refuses
+		await expect(driver.write(sample.path.input, createStream([]))).rejects.toThrowError(
+			`Can't upload file "${sample.path.input}": the stream is empty`,
+		);
+
+		expect(driver['uploadChunk']).not.toHaveBeenCalled();
 	});
 });
 
@@ -1329,12 +1401,7 @@ describe('#uploadChunk', () => {
 		// 1. A rejected chunk is reported; `write` wraps the message with the path later
 		mockResponse.status = randNumber({ min: 400, max: 599 });
 
-		try {
-			await driver['uploadChunk'](input);
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe('Unknown');
-		}
+		await expect(driver['uploadChunk'](input)).rejects.toThrowError('Unknown');
 	});
 
 	test('Defaults to Unknown if Cloudinary API response error message is not known', async () => {
@@ -1342,12 +1409,7 @@ describe('#uploadChunk', () => {
 		mockResponse.status = randNumber({ min: 400, max: 599 });
 		mockResponseBody.error = {};
 
-		try {
-			await driver['uploadChunk'](input);
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe('Unknown');
-		}
+		await expect(driver['uploadChunk'](input)).rejects.toThrowError('Unknown');
 	});
 
 	test('Sets error message to Cloudinary return message', async () => {
@@ -1355,12 +1417,7 @@ describe('#uploadChunk', () => {
 		mockResponse.status = randNumber({ min: 400, max: 599 });
 		mockResponseBody.error = { message: randWord() };
 
-		try {
-			await driver['uploadChunk'](input);
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe(mockResponseBody.error.message);
-		}
+		await expect(driver['uploadChunk'](input)).rejects.toThrowError(mockResponseBody.error.message);
 	});
 });
 
@@ -1480,13 +1537,34 @@ describe('#list', () => {
 
 	test('Fetches search api results', async () => {
 		// 1. The search API takes a wildcard expression and basic auth; an empty cursor asks for the first page. The
-		//    expression is encoded so a prefix with `&`, `#` or `+` cannot break the query
+		//    expression pins the prefix to the `public_id` field and quotes it, so the search language cannot read a
+		//    caller-controlled prefix as operators
 		await driver.list(sample.path.input).next();
 
 		expect(fetch).toHaveBeenCalledWith(
 			`https://api.cloudinary.com/v1_1/${sample.config.cloudName}/resources/search?expression=${encodeURIComponent(
-				sample.path.inputFull,
-			)}*&next_cursor=`,
+				`public_id:"${sample.path.inputFull}*"`,
+			)}&next_cursor=`,
+			{
+				method: 'GET',
+				headers: {
+					Authorization: sample.basicAuth,
+				},
+			},
+		);
+	});
+
+	test('Quotes and pins a prefix carrying search-language operators', async () => {
+		// 1. A prefix like `x OR public_id:*` would, unquoted, list every asset in the account past the location root;
+		//    the expression must address only the public ids under the given prefix
+		driver['fullPath'] = vi.fn().mockReturnValue('x OR public_id:*');
+
+		await driver.list(sample.path.input).next();
+
+		const query = new URLSearchParams({ expression: 'public_id:"x OR public_id:**"', next_cursor: '' });
+
+		expect(fetch).toHaveBeenCalledWith(
+			`https://api.cloudinary.com/v1_1/${sample.config.cloudName}/resources/search?${query}`,
 			{
 				method: 'GET',
 				headers: {
@@ -1527,8 +1605,8 @@ describe('#list', () => {
 
 		expect(fetch).toHaveBeenCalledWith(
 			`https://api.cloudinary.com/v1_1/${sample.config.cloudName}/resources/search?expression=${encodeURIComponent(
-				sample.path.inputFull,
-			)}*&next_cursor=${mockNextCursor}`,
+				`public_id:"${sample.path.inputFull}*"`,
+			)}&next_cursor=${mockNextCursor}`,
 			{
 				method: 'GET',
 				headers: {
@@ -1536,6 +1614,20 @@ describe('#list', () => {
 				},
 			},
 		);
+	});
+
+	test('Reads a 2xx answer without JSON body as an empty page', async () => {
+		// 1. A proxy's HTML page on a 2xx would crash the listing on an un iterable `resources`; it reads as no assets
+		//    under the prefix instead
+		mockResponse.json.mockResolvedValue({});
+
+		const output: string[] = [];
+
+		for await (const path of driver.list(sample.path.input)) {
+			output.push(path);
+		}
+
+		expect(output).toStrictEqual([]);
 	});
 
 	test('Throws error if search api fails', async () => {
@@ -1629,6 +1721,16 @@ describe('#writeChunk', () => {
 		expect(driver['getUploadId']).not.toHaveBeenCalled();
 	});
 
+	test('Derives the resource type from the full path, the way write and delete do', async () => {
+		// 1. The root can end in a name with an extension, so the caller path alone can pick the wrong resource type;
+		//    like `write`, `delete` and `move`, the resolved full path is what the type is derived from
+		await driver.writeChunk(sample.path.input, Readable.from([BufferActual.from('abc')]), 0, context);
+
+		expect(driver['getResourceType']).toHaveBeenCalledWith(sample.path.inputFull);
+
+		expect(vi.mocked(driver['uploadChunk']).mock.calls[0]![0].resourceType).toBe(sample.resourceType);
+	});
+
 	test('Falls back to the timestamp as upload id for an upload started without one', async () => {
 		// 1. Chunks of an upload created before the id was recorded went out under the timestamp; switching ids
 		//    halfway would strand them
@@ -1677,6 +1779,62 @@ describe('#writeChunk', () => {
 		expect(vi.mocked(tusDriver['uploadChunk'])).not.toHaveBeenCalled();
 	});
 
+	test('Refuses an oversized chunk while it is still streaming', async () => {
+		// 1. The bound is checked on the running total inside the loop, so a chunk that never ends is refused after the
+		//    piece that crosses it rather than being buffered whole — an endless chunk would otherwise exhaust the heap
+		//    before the driver ever refused it
+		const tusDriver = new StorageDriverCloudinary({
+			cloudName: sample.config.cloudName,
+			apiKey: sample.config.apiKey,
+			apiSecret: sample.config.apiSecret,
+			accessMode: sample.config.accessMode,
+			tus: { enabled: true, chunkSize: MINIMUM_CHUNK_SIZE },
+		});
+
+		tusDriver['fullPath'] = vi.fn().mockReturnValue(sample.path.inputFull);
+		tusDriver['getFolderPath'] = vi.fn().mockReturnValue('');
+		tusDriver['getResourceType'] = vi.fn().mockReturnValue(sample.resourceType);
+		tusDriver['getPublicId'] = vi.fn().mockReturnValue(sample.publicId.input);
+		tusDriver['getTimestamp'] = vi.fn().mockReturnValue(sample.timestamp);
+		tusDriver['getFullSignature'] = vi.fn().mockReturnValue(sample.fullSignature);
+		tusDriver['uploadChunk'] = vi.fn();
+
+		let pulls = 0;
+
+		const endless = Readable.from(
+			(async function* () {
+				while (true) {
+					pulls += 1;
+					yield BufferActual.alloc(1e6);
+				}
+			})(),
+		);
+
+		await expect(tusDriver.writeChunk(sample.path.input, endless, 0, context)).rejects.toThrow(
+			'exceeds the chunk size limit',
+		);
+
+		// 2. The refusal happens on the piece that crosses the bound and the stream is abandoned rather than drained,
+		//    so the generator must not keep running past a buffered prefetch
+		await new Promise((resolve) => setImmediate(resolve));
+
+		expect(pulls).toBeLessThan(10);
+
+		expect(vi.mocked(tusDriver['uploadChunk'])).not.toHaveBeenCalled();
+	});
+
+	test('Converts string chunks to buffers before counting and buffering', async () => {
+		// 1. A chunk stream that yields strings — an object-mode readable or one with an encoding set — used to make
+		//    `chunk.length` count characters and `Buffer.concat` throw; the chunk is converted the way `write` does it
+		vi.mocked(Buffer.from).mockImplementation(BufferActual.from);
+
+		await expect(driver.writeChunk(sample.path.input, Readable.from(['abc']), 0, context)).resolves.toBe(3);
+
+		const [options] = vi.mocked(driver['uploadChunk']).mock.calls[0]!;
+
+		expect(options.blob.size).toBe(3);
+	});
+
 	test('Declares an unknown total until the chunk that completes the upload', async () => {
 		// 1. Cloudinary assembles the asset on the request that carries the real total, so an earlier chunk must
 		//    send `-1` and the last one the declared size; the returned offset is what the TUS server stores
@@ -1691,5 +1849,13 @@ describe('#writeChunk', () => {
 			[0, 3, -1],
 			[3, 3, 6],
 		]);
+	});
+
+	test('Sends no request for an empty chunk and returns the offset unchanged', async () => {
+		// 1. An empty chunk would send `Content-Range: bytes 0--1/0`, which Cloudinary rejects, so nothing is sent and
+		//    the given offset comes back, the way the Azure driver skips the append of an empty chunk
+		await expect(driver.writeChunk(sample.path.input, Readable.from([]), 3, context)).resolves.toBe(3);
+
+		expect(vi.mocked(driver['uploadChunk'])).not.toHaveBeenCalled();
 	});
 });

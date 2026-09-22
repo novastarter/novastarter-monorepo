@@ -22,9 +22,11 @@ export interface JobOptions {
 	/**
 	 * Collapse duplicates: `true` derives the job id from the payload, a function computes it — a second enqueue with
 	 * the same id while the first is still queued, retrying or running is a no-op that answers the queued job's
-	 * identity; once that job completed or failed for good, the next enqueue runs again. The value must not contain
-	 * `:`, which BullMQ reserves. On the `bullmq` driver the derived id is the deduplication key and the record gets
-	 * an id of BullMQ's own, which is what `enqueue()` answers.
+	 * identity; once that job completed or failed for good, the next enqueue runs again. With `true`, the payload is
+	 * serialised with object keys sorted before digesting, so the same content in a different key order still
+	 * collapses into one job. The value must not contain `:`, which BullMQ reserves. On the `bullmq` driver the
+	 * derived id is the deduplication key and the record gets an id of BullMQ's own, which is what `enqueue()`
+	 * answers.
 	 */
 	unique?: boolean | ((payload: any) => string);
 }

@@ -34,9 +34,9 @@ export const PADDLE_STATUSES: Record<string, SubscriptionStatus> = {
  * subscription without items.
  */
 export const toSubscription = (subscription: PaddleSubscriptionLike): Subscription => {
+	// 1. The status is read first: an unknown one is a change on Paddle's side, better loud than silently wrong
 	const status = PADDLE_STATUSES[subscription.status];
 
-	// 1. An unknown status is a change on Paddle's side, better loud than silently wrong
 	if (!status) {
 		throw new Error(`Paddle subscription "${subscription.id}" has an unknown status "${String(subscription.status)}"`);
 	}

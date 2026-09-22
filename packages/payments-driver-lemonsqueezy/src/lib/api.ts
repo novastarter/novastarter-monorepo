@@ -39,7 +39,7 @@ export type LemonSqueezyApiConfig = {
 	apiKey: string;
 	/** Another base URL — a stand-in of the API. */
 	apiUrl?: string | undefined;
-	/** Request timeout in milliseconds: a whole number from `0` to {@link MAX_TIMEOUT}. */
+	/** Request timeout in milliseconds: a whole number from 1 to {@link MAX_TIMEOUT}. */
 	timeout?: number | undefined;
 	/** A fetch to send with instead of the platform's — tests hand in a fake. */
 	fetch?: ApiFetch | undefined;
@@ -122,7 +122,7 @@ export class LemonSqueezyApi {
 	 * Create the client for one API key.
 	 *
 	 * @param config - Key, base URL, timeout or fetch.
-	 * @throws RangeError for a timeout that is not a whole number from `0` to {@link MAX_TIMEOUT} — refused here, at
+	 * @throws RangeError for a timeout that is not a whole number from 1 to {@link MAX_TIMEOUT} — refused here, at
 	 * registration, rather than on the first request.
 	 */
 	constructor(config: LemonSqueezyApiConfig) {
@@ -130,13 +130,14 @@ export class LemonSqueezyApi {
 		this.apiUrl = (config.apiUrl ?? API_URL).replace(/\/$/, '');
 
 		// 2. A timeout `AbortSignal.timeout()` cannot hold is refused now: a negative, fractional or `NaN` delay would
-		//    throw on every request, and one above the timer's bound would abandon every request after 1 ms — either
-		//    way a misconfigured location would fail on first use with an error that does not name the cause
+		//    throw on every request, `0` would abandon every request immediately, and one above the timer's bound
+		//    would abandon every request after 1 ms — either way a misconfigured location would fail on first use
+		//    with an error that does not name the cause
 		this.timeout = config.timeout ?? DEFAULT_TIMEOUT;
 
-		if (!(Number.isInteger(this.timeout) && this.timeout >= 0 && this.timeout <= MAX_TIMEOUT)) {
+		if (!(Number.isInteger(this.timeout) && this.timeout >= 1 && this.timeout <= MAX_TIMEOUT)) {
 			throw new RangeError(
-				`LemonSqueezyApi: "timeout" must be a whole number between 0 and ${MAX_TIMEOUT} ms, got ${config.timeout}`,
+				`LemonSqueezyApi: "timeout" must be a whole number between 1 and ${MAX_TIMEOUT} ms, got ${config.timeout}`,
 			);
 		}
 
@@ -147,8 +148,10 @@ export class LemonSqueezyApi {
 			Authorization: `Bearer ${config.apiKey}`,
 		};
 
-		// 4. The platform's fetch unless a test hands in its own; the cast narrows it to the signature used
-		this.fetch = config.fetch ?? (globalThis.fetch as unknown as ApiFetch);
+		// 4. The platform's fetch unless a test hands in its own, bound to the global object: `fetch` is a WebIDL
+		//    operation on some runtimes and throws `TypeError: Illegal invocation` when called with another receiver,
+		//    which is what `this.fetch(...)` would be; the cast narrows it to the signature used
+		this.fetch = config.fetch ?? (globalThis.fetch.bind(globalThis) as unknown as ApiFetch);
 	}
 
 	/**

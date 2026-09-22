@@ -58,4 +58,26 @@ describe('toSubscription', () => {
 		// 2. A status the kit does not know means Stripe changed something the mapping has to learn — better loud
 		expect(() => toSubscription({ ...subscription, status: 'frozen' as never })).toThrow('unknown status "frozen"');
 	});
+
+	test('Falls back to the subscription-level period of a delivery pinned to an older API version', () => {
+		// 1. Before API version 2025-03-31 the period lives on the subscription, not the item: an endpoint pinned to an
+		//    earlier version receives deliveries of that shape, and the period must map instead of failing silently
+		const subscription = subscriptionOf('customer.subscription.updated');
+		const [item] = subscription.items.data;
+
+		const legacy = {
+			...subscription,
+			items: {
+				...subscription.items,
+				data: [{ ...item, current_period_start: undefined, current_period_end: undefined }],
+			},
+			current_period_start: 1789084800,
+			current_period_end: 1791676800,
+		} as unknown as Stripe.Subscription;
+
+		expect(toSubscription(legacy)).toMatchObject({
+			currentPeriodStart: new Date(1789084800 * 1000),
+			currentPeriodEnd: new Date(1791676800 * 1000),
+		});
+	});
 });

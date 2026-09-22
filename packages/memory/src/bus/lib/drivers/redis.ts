@@ -99,19 +99,22 @@ export class BusDriverRedis implements BusDriver {
 	private readonly compressionMinSize: number;
 
 	/**
-	 * Subscribers per namespaced channel.
+	 * Subscribers per namespaced channel; a `Set` so the same callback is never registered twice, in a `Map` so a
+	 * channel named like an `Object.prototype` member — `toString`, `constructor` — is a channel and not an
+	 * inherited function.
 	 *
 	 * @internal
 	 */
-	private handlers: Record<string, Set<MessageHandler<any>>>;
+	private handlers: Map<string, Set<MessageHandler<unknown>>>;
 
 	/**
 	 * The Redis `SUBSCRIBE` under way per namespaced channel, while it is; every `subscribe()` of that channel waits
-	 * for the same one, so all of them learn whether Redis took it.
+	 * for the same one, so all of them learn whether Redis took it. A `Map` for the reason given at
+	 * {@link BusDriverRedis.handlers}: a channel named like an `Object.prototype` member must stay a channel.
 	 *
 	 * @internal
 	 */
-	private pending: Record<string, Promise<void>> = {};
+	private pending: Map<string, Promise<void>> = new Map();
 
 	/**
 	 * The handling of the messages received so far, one after the other.
@@ -159,15 +162,16 @@ export class BusDriverRedis implements BusDriver {
 		// 2. One listener for every channel; the binary event keeps compressed payloads intact, and every message is
 		//    handled after the one before it, so an asynchronous decompression cannot reorder the stream
 		this.sub.on('messageBuffer', (channel, message) => {
-			// 1. The handler never rejects, so the chain never breaks; the chain is kept, the promise of this message
-			//    is not needed by anyone
-			this.inbox = this.inbox.then(() => this.messageBufferHandler(channel, message));
+			// 1. Payload errors are handled inside the handler, but its logging can still throw; a rejection is
+			//    neither observed by anyone nor allowed to turn the chain rejected, which would skip every later
+			//    message — so it is swallowed, the chain is kept and the promise of this message is not needed
+			this.inbox = this.inbox.then(() => this.messageBufferHandler(channel, message)).catch(() => {});
 		});
 
 		// 3. Apply the documented defaults: compress, but only from 1 kB up
 		this.compression = config.compression ?? true;
 		this.compressionMinSize = config.compressionMinSize ?? 1000;
-		this.handlers = {};
+		this.handlers = new Map();
 	}
 
 	/**
@@ -228,23 +232,25 @@ export class BusDriverRedis implements BusDriver {
 		// 2. Handlers are keyed by the namespaced name, the form Redis reports incoming messages under
 		const namespaced = withNamespace(channel, this.namespace);
 
-		const existingSet = this.handlers[namespaced];
+		const existingSet = this.handlers.get(namespaced);
 
 		// 3. Only the first callback triggers a Redis `SUBSCRIBE`; later ones join the existing set — and wait for the
 		//    `SUBSCRIBE` still under way, if any, so a caller that joined while Redis was being asked learns of a
 		//    failure too instead of being told its handler is in place when the set is about to go. A `close()` that
-		//    landed meanwhile dropped the set as well, and is reported the same way
+		//    landed meanwhile dropped the set as well, and is reported the same way. The set keeps handlers of
+		//    `unknown` payloads, so a callback typed for one payload is cast on its way in: a subscriber receives
+		//    whatever is published, the same widening the local driver's untyped set relies on
 		if (existingSet !== undefined) {
-			existingSet.add(callback);
-			await this.pending[namespaced];
+			existingSet.add(callback as MessageHandler<unknown>);
+			await this.pending.get(namespaced);
 			this.assertOpen();
 
 			return;
 		}
 
-		const set = new Set<MessageHandler<T>>();
-		set.add(callback);
-		this.handlers[namespaced] = set;
+		const set = new Set<MessageHandler<unknown>>();
+		set.add(callback as MessageHandler<unknown>);
+		this.handlers.set(namespaced, set);
 
 		// 4. A `SUBSCRIBE` that fails leaves no set behind: with one in place, a retry would take the branch above and
 		//    add its callback without ever asking Redis again, so the channel would stay silent for good. The promise
@@ -255,21 +261,21 @@ export class BusDriverRedis implements BusDriver {
 			() => {},
 			(error: unknown) => {
 				// 1. Only this call's own set goes; the error still reaches every caller awaiting this subscription
-				if (this.handlers[namespaced] === set) {
-					delete this.handlers[namespaced];
+				if (this.handlers.get(namespaced) === set) {
+					this.handlers.delete(namespaced);
 				}
 
 				throw error;
 			},
 		);
 
-		this.pending[namespaced] = subscription;
+		this.pending.set(namespaced, subscription);
 
 		try {
 			await subscription;
 		} finally {
-			if (this.pending[namespaced] === subscription) {
-				delete this.pending[namespaced];
+			if (this.pending.get(namespaced) === subscription) {
+				this.pending.delete(namespaced);
 			}
 		}
 
@@ -289,17 +295,19 @@ export class BusDriverRedis implements BusDriver {
 		// 1. Handlers are keyed by the namespaced name, the form Redis reports incoming messages under
 		const namespaced = withNamespace(channel, this.namespace);
 
-		const set = this.handlers[namespaced];
+		const set = this.handlers.get(namespaced);
 
 		if (set === undefined) {
 			return;
 		}
 
-		set.delete(callback);
+		// 2. The set keeps handlers of `unknown` payloads, so the typed callback is cast to be found in it — the same
+		//    widening as on the way in through `subscribe`
+		set.delete(callback as MessageHandler<unknown>);
 
-		// 2. Drop the Redis subscription once nobody listens, so the connection stops receiving those messages
+		// 3. Drop the Redis subscription once nobody listens, so the connection stops receiving those messages
 		if (set.size === 0) {
-			delete this.handlers[namespaced];
+			this.handlers.delete(namespaced);
 
 			await this.sub.unsubscribe(namespaced);
 		}
@@ -311,7 +319,7 @@ export class BusDriverRedis implements BusDriver {
 	 * The publishing connection belongs to the caller — the `@novastarter/redis` location it came from — and is
 	 * closed there.
 	 *
-	 * @returns Once the server acknowledged the quit.
+	 * @returns Once the server acknowledged the quit, or the connection was dropped without one.
 	 */
 	async close(): Promise<void> {
 		// 1. Closed first, so a `subscribe()` racing the quit — its `SUBSCRIBE` on the wire, answered before the queued
@@ -320,8 +328,20 @@ export class BusDriverRedis implements BusDriver {
 
 		// 2. Only the duplicate is the driver's own; its subscriptions end with it, so the handlers and any `SUBSCRIBE`
 		//    still under way can go too
-		this.handlers = {};
-		this.pending = {};
+		this.handlers = new Map();
+		this.pending = new Map();
+
+		// 3. The duplicate connects lazily on its first `SUBSCRIBE`, so on a deployment whose Redis is unreachable it
+		//    never left `connecting`/`reconnecting`; `quit` sends QUIT through the normal command path, which would
+		//    reconnect forever to deliver it and never resolve, hanging the shutdown — a connection that is not
+		//    `ready` is dropped with `disconnect` instead, which sends nothing and waits for nothing
+		if (this.sub.status !== 'ready') {
+			this.sub.disconnect();
+
+			return;
+		}
+
+		// 4. A connected subscriber quits gracefully: the server is told and pending replies are waited for
 		await this.sub.quit();
 	}
 
@@ -354,8 +374,9 @@ export class BusDriverRedis implements BusDriver {
 	private async messageBufferHandler(channel: Buffer, message: Buffer): Promise<void> {
 		// 1. Redis reports the channel as bytes; decode it to look the handlers up
 		const namespaced = uint8ArrayToString(bufferToUint8Array(channel));
+		const handlers = this.handlers.get(namespaced);
 
-		if (!(namespaced in this.handlers)) {
+		if (handlers === undefined) {
 			return;
 		}
 
@@ -381,6 +402,6 @@ export class BusDriverRedis implements BusDriver {
 
 		// 3. Hand the same value to every callback, each on its own: a failing subscriber is logged and the others
 		//    still run
-		dispatch(namespaced, this.handlers[namespaced], payload);
+		dispatch(namespaced, handlers, payload);
 	}
 }

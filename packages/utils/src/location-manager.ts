@@ -143,7 +143,9 @@ export abstract class LocationManager<Instance, Config extends unknown[]> {
 	 * their release starts: a location asked for after closing, or while the releases are still running, is built
 	 * afresh rather than answered with a closed or closing instance, and such an instance is kept for the next
 	 * `close()`. A `close()` that overlaps another waits for it rather than releasing the same instances twice, then
-	 * releases what was built meanwhile, so every instance built before a `close()` call is released by that call.
+	 * releases what was built meanwhile: every instance in the release snapshot of a `close()` call — everything
+	 * built before the run starts — is released by that call, while an instance built during the run is kept for
+	 * the next one.
 	 *
 	 * @returns Once every instance let go of what it held.
 	 * @throws What the one failing {@link LocationManager.release} threw, or an `AggregateError` of all of them when

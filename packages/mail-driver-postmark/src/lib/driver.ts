@@ -96,14 +96,18 @@ export class MailDriverPostmark implements MailDriver {
 	 * @param message - Rendered message.
 	 * @returns Postmark's message id; every recipient as accepted — a refused recipient fails the whole request.
 	 * @throws An error naming Postmark with the SDK's error as the cause (`PostmarkError` with `code` and
-	 * `statusCode`; `InactiveRecipientsError` names the suppressed recipients) when the API refuses.
+	 * `statusCode`; `InactiveRecipientsError` names the suppressed recipients) when the API refuses; the mapper's
+	 * own error unchanged when the message cannot be built.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
-		// 1. Translate first, so a message Postmark cannot take fails before the request
+		// 1. Translate first, so a failure of the mapper (no sender, unreadable attachment) surfaces the kit's own
+		//    error before the request instead of a re-wrapped API error
+		const postmarkMessage = await toPostmarkMessage(message, this.streams);
+
 		let response: Awaited<ReturnType<ServerClient['sendEmail']>>;
 
 		try {
-			response = await this.client.sendEmail(await toPostmarkMessage(message, this.streams));
+			response = await this.client.sendEmail(postmarkMessage);
 		} catch (error) {
 			// 2. The SDK throws on a refusal; wrapped so the log names the provider, the SDK's error as the cause
 			throw describeError(error);

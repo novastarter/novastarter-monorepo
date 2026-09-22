@@ -12,8 +12,10 @@ export const PROVIDER = 'paddle';
 
 /**
  * Paddle's subscription events that are a change of an existing subscription — every one of them arrives alongside
- * `subscription.updated` for the same change, so they are mapped the same way and the sync's `synced_at` guard keeps
- * the later one from undoing the earlier.
+ * `subscription.updated` for the same change, so they are mapped the same way.
+ *
+ * A `subscription.updated` whose status is `canceled` is dropped rather than mapped: `subscription.canceled` owns the
+ * deletion, and a retried or late `updated` would otherwise resurrect a subscription the deletion already ended.
  *
  * @defaultValue `subscription.updated`, `activated`, `trialing`, `past_due`, `paused`, `resumed`, `imported`
  */
@@ -32,7 +34,9 @@ export const SUBSCRIPTION_UPDATE_EVENTS: ReadonlySet<string> = new Set([
  *
  * - `subscription.created` → `subscription.created`; the status changes (`activated`, `trialing`, `past_due`,
  *   `paused`, `resumed`, `updated`, `imported`) → `subscription.updated`; `subscription.canceled` →
- *   `subscription.deleted`, since a canceled Paddle subscription is over.
+ *   `subscription.deleted`, since a canceled Paddle subscription is over. A `subscription.updated` whose status is
+ *   `canceled` is dropped — the cancellation is the `subscription.canceled` event's news, and acting on the update
+ *   as well could undo the deletion.
  * - `transaction.completed` → `invoice.paid`; `transaction.payment_failed` → `invoice.failed`. The transaction of a
  *   checkout completes as well, so the first payment arrives the same way as a renewal; the subscription it created
  *   comes in its own event with the checkout's custom data copied onto it, which is what the sync needs — hence no
@@ -42,6 +46,8 @@ export const SUBSCRIPTION_UPDATE_EVENTS: ReadonlySet<string> = new Set([
  *
  * @param event - What `webhooks.unmarshal()` handed back.
  * @returns The normalised event, or `null`.
+ * @throws Error for a status the kit does not know, or a subscription without items — a change on Paddle's side the
+ * mapping has to learn.
  */
 export const toEvent = (event: EventEntity): PaymentsEvent | null => {
 	// 1. What every event shares: Paddle's event id, the driver name, when it happened, the raw event
@@ -65,11 +71,13 @@ export const toEvent = (event: EventEntity): PaymentsEvent | null => {
 			// 3. The status changes share one shape; the type narrowing above cannot express the set, so the data is
 			//    read through the notification shape they all carry
 			if (SUBSCRIPTION_UPDATE_EVENTS.has(event.eventType)) {
-				return {
-					...base,
-					type: 'subscription.updated',
-					subscription: toSubscription(event.data as SubscriptionNotification),
-				};
+				const data = event.data as SubscriptionNotification;
+
+				// 4. The canceled status is the `subscription.canceled` event's news, which maps to the kit's deletion:
+				//    dropping the update keeps a retried or late one from resurrecting a deleted subscription
+				if (data.status === 'canceled') return null;
+
+				return { ...base, type: 'subscription.updated', subscription: toSubscription(data) };
 			}
 
 			return null;

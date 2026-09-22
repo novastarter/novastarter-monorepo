@@ -43,11 +43,25 @@ export class RedisManager extends LocationManager<Redis, [config: RedisConfig, o
 	/**
 	 * Quit a client opened by {@link RedisManager.build}.
 	 *
+	 * `quit` asks the server to close the connection and waits for pending replies, which is what a graceful
+	 * shutdown wants — but only from a client that is actually connected. ioredis sends QUIT through its normal
+	 * command path, so a client that never reached `ready` (a location registered but never reachable) reconnects
+	 * endlessly, retrying forever by default, to deliver QUIT; the quit then never resolves and the shutdown hangs.
+	 * A client that is not `ready` is torn down with `disconnect` instead: it sends nothing, waits for nothing.
+	 *
 	 * @param redis - The client of a location.
-	 * @returns Once the server acknowledged the quit.
+	 * @returns Once the server acknowledged the quit, or the client was dropped without one.
 	 */
 	protected async release(redis: Redis): Promise<void> {
-		// 1. `quit` waits for pending replies, which is what a graceful shutdown wants
+		// 1. A client that is not connected has no server to notify: `quit` would reconnect forever to deliver QUIT
+		//    and never resolve, hanging the shutdown — `disconnect` drops the socket without sending anything
+		if (redis.status !== 'ready') {
+			redis.disconnect();
+
+			return;
+		}
+
+		// 2. A connected client quits gracefully: the server is told and pending replies are waited for
 		await redis.quit();
 	}
 }

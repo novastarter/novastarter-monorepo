@@ -3,8 +3,9 @@
  *
  * libsql parses `file:` URLs itself — `file:relative.db`, `file:/absolute.db`, `file:///absolute.db`, an optional
  * `localhost` host — because the WHATWG `URL` turns `file:./x` into `/x`; the same grammar is read here, so the
- * directory the driver creates is the one libsql opens. A database in memory (`:memory:`, `file::memory:`) and every
- * other scheme (`libsql://`, `https://`, `wss://`) name no path.
+ * directory the driver creates is the one libsql opens. A URL with any other host names no path: libsql rejects it
+ * itself, so there is no directory for the driver to create. A database in memory (`:memory:`, `file::memory:`) and
+ * every other scheme (`libsql://`, `https://`, `wss://`) name no path.
  *
  * @param url - The `url` of a location.
  * @returns The path, or `undefined`.
@@ -18,15 +19,24 @@
  * ```
  */
 export const localFilePath = (url: string): string | undefined => {
-	// 1. Only the `file:` scheme names a path; the path ends where a query or a fragment begins
-	const match = /^file:(?:\/\/(?:localhost)?)?([^?#]*)/.exec(url);
+	// 1. Only the `file:` scheme names a path; an empty or `localhost` host is local, and the path ends where a query
+	//    or a fragment begins
+	const match = /^file:(?:\/\/([^/?#]*))?([^?#]*)/.exec(url);
 
 	if (!match) {
 		return undefined;
 	}
 
-	// 2. `:memory:` is a database in memory, spelled with or without the scheme
-	const path = match[1] ?? '';
+	// 2. A remote host is libsql's own rejection, not a directory: answering a path here would create a bogus
+	//    directory for a URL the client refuses to open
+	const host = match[1] ?? '';
+
+	if (host !== '' && host !== 'localhost') {
+		return undefined;
+	}
+
+	// 3. `:memory:` is a database in memory, spelled with or without the scheme
+	const path = match[2] ?? '';
 
 	if (path === '' || path === ':memory:') {
 		return undefined;

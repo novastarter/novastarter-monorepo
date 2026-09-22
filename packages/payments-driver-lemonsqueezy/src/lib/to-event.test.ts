@@ -15,9 +15,11 @@ describe('toEvent', () => {
 	const intervalOf = async () => 'month' as const;
 
 	test('Maps the order, subscription and payment events, drops the rest', async () => {
-		// 1. The purchase: the checkout's custom data comes back as metadata, the subscription follows in its own event
+		// 1. The purchase: the checkout's custom data comes back as metadata, the subscription follows in its own event;
+		//    every fixture carries the same `webhook_id` — the endpoint's, as real deliveries do — and the event id is
+		//    derived from the event, the resource and its update time all the same
 		await expect(toEvent(fixture('order_created'), intervalOf)).resolves.toMatchObject({
-			id: 'wh_1',
+			id: 'order_created:5001:2026-09-01T10:00:00.000000Z',
 			type: 'checkout.completed',
 			provider: 'lemonsqueezy',
 			occurredAt: new Date('2026-09-01T10:00:00.000000Z'),
@@ -26,12 +28,13 @@ describe('toEvent', () => {
 
 		// 2. A new subscription, with the custom data that rode along under `meta`
 		await expect(toEvent(fixture('subscription_created'), intervalOf)).resolves.toMatchObject({
+			id: 'subscription_created:3001:2026-09-01T10:00:05.000000Z',
 			type: 'subscription.created',
 			subscription: { id: '3001', status: 'active', metadata: { organizationId: 'org_123', planId: 'pro' } },
 		});
 
-		// 3. A cancellation is an update — the grace period — and this fixture has no `webhook_id`, so the id is
-		//    derived from the event, the resource and its update time
+		// 3. A cancellation is an update — the grace period — and the id is derived even though the delivery carries a
+		//    `webhook_id`
 		await expect(toEvent(fixture('subscription_cancelled'), intervalOf)).resolves.toMatchObject({
 			id: 'subscription_cancelled:3001:2026-09-15T12:00:00.000000Z',
 			type: 'subscription.updated',
@@ -59,8 +62,13 @@ describe('toEvent', () => {
 		await expect(toEvent(fixture('license_key_created'), intervalOf)).resolves.toBeNull();
 	});
 
-	test('deliveryIdOf prefers the webhook id', () => {
-		// 1. Lemon Squeezy's own id is stable across retries of one event, so it wins over the derived one
-		expect(deliveryIdOf(fixture<{ updated_at?: string }>('subscription_created'))).toBe('wh_2');
+	test('deliveryIdOf derives a per-event id even though the delivery carries a webhook_id', () => {
+		// 1. `meta.webhook_id` is the id of the webhook configuration, identical on every delivery of one endpoint;
+		//    keying the idempotency guard on it would drop every event after the first, so it is ignored
+		const created = deliveryIdOf(fixture<{ updated_at?: string }>('subscription_created'));
+		const expired = deliveryIdOf(fixture<{ updated_at?: string }>('subscription_expired'));
+
+		expect(created).toBe('subscription_created:3001:2026-09-01T10:00:05.000000Z');
+		expect(expired).not.toBe(created);
 	});
 });

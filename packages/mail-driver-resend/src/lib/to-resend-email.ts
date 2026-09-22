@@ -15,15 +15,24 @@ import type { CreateEmailOptions } from 'resend';
 export const RESEND_TAG_COUNT = 75;
 
 /**
- * A tag name or value the way Resend accepts it: ASCII letters, digits, underscores and dashes.
+ * Longest tag name or value Resend accepts; a longer one fails the whole send with a `422`.
+ *
+ * @defaultValue 256 characters.
+ */
+export const RESEND_TAG_LENGTH = 256;
+
+/**
+ * A tag name or value the way Resend accepts it: ASCII letters, digits, underscores and dashes, at most
+ * {@link RESEND_TAG_LENGTH} characters.
  *
  * @param value - Free text.
- * @returns The sanitised text, anything else replaced by `_`.
+ * @returns The sanitised text, anything else replaced by `_` and the tail past the limit cut off.
  */
 export const toResendTag = (value: string): string =>
-	// 1. Resend matches a tag name against `^[A-Za-z0-9_-]+$` and refuses the whole send over one miss, so anything
-	//    outside the set becomes `_` — the SES driver's sanitiser works the same way
-	value.replace(/[^A-Za-z0-9_-]/g, '_');
+	// 1. Resend matches a tag name against `^[A-Za-z0-9_-]+$`, refuses a whole send over one miss and caps a name at
+	//    256 characters — so anything outside the set becomes `_` and the tail past the limit is cut, the way the SES
+	//    driver's sanitiser works
+	value.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, RESEND_TAG_LENGTH);
 
 /**
  * An attachment the way Resend takes it: base64 content, with the content id for `cid:` references.
@@ -68,8 +77,9 @@ export const toResendEmail = async (message: MailMessage): Promise<CreateEmailOp
 		throw new Error('Resend needs a "from" address');
 	}
 
-	// 2. Tags are sanitised, since Resend refuses anything outside its character set; one left with no name would be
-	//    rejected and the list is capped at Resend's limit, so neither can fail the send
+	// 2. Tags are sanitised and cut, since Resend refuses anything outside its character set and past its length
+	//    limit; one left with no name would be rejected and the list is capped at Resend's limit, so none can fail
+	//    the send
 	const tags = [
 		{ name: 'category', value: toResendTag(message.category ?? 'transactional') },
 		...(message.tags ?? [])

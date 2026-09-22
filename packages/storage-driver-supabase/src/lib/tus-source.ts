@@ -40,12 +40,17 @@ class StreamSource extends tus.StreamSource {
 	 *
 	 * @param start - Absolute upload offset the library asks for.
 	 * @param end - Absolute upload offset the slice should end at.
-	 * @returns The rebased slice on the first call, `null` afterwards.
+	 * @returns The rebased slice on the first call, an exhausted `{ value: null, done: true }` afterwards — the
+	 * shape `tus-js-client` destructures, where a bare `null` crashed its upload loop with a TypeError.
 	 */
 	// @ts-expect-error the base method is untyped, so the override signature cannot be checked against it
-	override async slice(start: number, end: number): Promise<TusSliceResult | null> {
+	override async slice(start: number, end: number): Promise<TusSliceResult> {
 		// 1. Act like the stream ended after it's been called once
-		if (this._streamEnded) return null;
+		if (this._streamEnded) {
+			// 1. The library destructures `{ value, done }` from the result; a done slice with no value makes it reject
+			//    with its own size-mismatch error, while a bare `null` crashed its upload loop with a TypeError
+			return { value: null, done: true };
+		}
 
 		this._streamEnded = true;
 

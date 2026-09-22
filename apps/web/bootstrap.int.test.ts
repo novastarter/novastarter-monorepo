@@ -15,9 +15,12 @@ import { _state, bootstrap, shutdown } from './bootstrap';
 import { readEnv } from './env';
 
 afterEach(() => {
+	// 1. The boot flags and the parsed env reset first: every manager below is rebuilt from them on the next test
 	_state.booted = false;
 	_state.handlers = false;
 	readEnv.reset();
+
+	// 2. Every subsystem manager goes back to unregistered, and the job handlers the bootstrap registered with it
 	useQueue.reset();
 	useRedis.reset();
 	useStorage.reset();
@@ -29,6 +32,8 @@ afterEach(() => {
 	useCache.reset();
 	useBus.reset();
 	useLimiter.reset();
+
+	// 3. The environment stubs of the finished test, so the next one reads the real shell again
 	vi.unstubAllEnvs();
 });
 

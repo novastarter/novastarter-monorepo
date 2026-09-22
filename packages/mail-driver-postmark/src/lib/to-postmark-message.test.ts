@@ -52,6 +52,14 @@ describe('toPostmarkTagsMetadata', () => {
 		expect(toPostmarkTagsMetadata(['v2', 'eu'])).toStrictEqual({ tags: 'v2,eu' });
 	});
 
+	test('Skips a tag left empty by the cut, so no stray comma lands in a value', () => {
+		// 1. An empty tag joins nothing: the value keeps only the tags that record something
+		expect(toPostmarkTagsMetadata(['', 'a'])).toStrictEqual({ tags: 'a' });
+
+		// 2. Nothing but empty tags: no field at all
+		expect(toPostmarkTagsMetadata([''])).toStrictEqual({});
+	});
+
 	test('Splits tags across values so none passes the length limit', () => {
 		// 1. Four ordinary tags and three commas fill 84 characters: past what one value may hold
 		const tags = ['onboarding-sequence-step-2', 'region-europe-west', 'experiment-variant-b', 'source-web-signup'];
@@ -154,6 +162,21 @@ describe('toPostmarkMessage', () => {
 			category: 'transactional',
 			tags: 'onboarding-sequence-step-2,region-europe-west,experiment-variant-b',
 			tags2: 'source-web-signup',
+		});
+	});
+
+	test('Drops empty tags before the first becomes Tag', async () => {
+		// 1. An empty tag records nothing in Postmark, so the first non-empty one takes `Tag` and the rest skip the
+		//    metadata values without leaving stray commas
+		expect(
+			await toPostmarkMessage({ to: 'a@example.com', from: 'me@acme.test', subject: 'S', text: 'T', tags: ['', 'v2'] }),
+		).toStrictEqual({
+			From: 'me@acme.test',
+			To: 'a@example.com',
+			Subject: 'S',
+			TextBody: 'T',
+			Tag: 'v2',
+			Metadata: { category: 'transactional' },
 		});
 	});
 

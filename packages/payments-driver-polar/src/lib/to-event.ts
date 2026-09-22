@@ -37,12 +37,13 @@ export const toCompletedCheckout = (checkout: Checkout): CompletedCheckout => {
 /**
  * The id of a Polar webhook delivery: the `webhook-id` header, which Polar keeps stable across retries of one event.
  *
+ * @typeParam T - The headers' record type, so a record known to hold the header yields the id, not `undefined`.
  * @param headers - The request headers, lower-cased.
- * @returns The id, or nothing.
+ * @returns The id, or nothing for a record without it.
  */
-export const deliveryIdOf = (headers: Record<string, string | undefined>): string | undefined => {
+export const deliveryIdOf = <T extends Record<string, string | undefined>>(headers: T): T['webhook-id'] => {
 	// 1. The Standard Webhooks id is the one value that survives Polar's retries, so it is the id to deduplicate on
-	return headers['webhook-id'];
+	return headers['webhook-id'] as T['webhook-id'];
 };
 
 /**
@@ -51,8 +52,9 @@ export const deliveryIdOf = (headers: Record<string, string | undefined>): strin
  * - `checkout.updated` with status `succeeded` → `checkout.completed`.
  * - `subscription.created` → `subscription.created`; `subscription.updated` → `subscription.updated` (Polar's
  *   catch-all, sent alongside the specific `active`, `canceled`, `uncanceled`, `past_due` and `revoked` events, which
- *   are therefore dropped so one change arrives once); `subscription.revoked` → `subscription.deleted`, since a
- *   revoked subscription is over.
+ *   are therefore dropped so one change arrives once) — except when the status is `canceled`, which is the
+ *   `subscription.revoked` event's news, so the update is dropped rather than re-announcing a deleted subscription;
+ *   `subscription.revoked` → `subscription.deleted`, since a revoked subscription is over.
  * - `order.paid` → `invoice.paid`. Polar reports a failed renewal as `subscription.past_due` — the status change
  *   arrives through `subscription.updated`; there is no `invoice.failed` from Polar.
  *
@@ -61,6 +63,7 @@ export const deliveryIdOf = (headers: Record<string, string | undefined>): strin
  * @param payload - What `validateEvent` handed back.
  * @param id - The delivery id, from the `webhook-id` header.
  * @returns The normalised event, or `null`.
+ * @throws Error for a status the kit does not know — a change on Polar's side the mapping has to learn.
  */
 export const toEvent = (payload: PolarWebhookPayload, id: string): PaymentsEvent | null => {
 	// 1. What every event shares: the delivery id, the driver name, when it happened, the raw payload
@@ -78,6 +81,10 @@ export const toEvent = (payload: PolarWebhookPayload, id: string): PaymentsEvent
 			return { ...base, type: 'subscription.created', subscription: toSubscription(payload.data) };
 
 		case 'subscription.updated':
+			// 4. The canceled status is the `subscription.revoked` event's news, which maps to the kit's deletion:
+			//    dropping the update keeps a retried or late one from re-announcing a deleted subscription
+			if (payload.data.status === 'canceled') return null;
+
 			return { ...base, type: 'subscription.updated', subscription: toSubscription(payload.data) };
 
 		case 'subscription.revoked':

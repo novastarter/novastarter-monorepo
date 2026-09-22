@@ -21,7 +21,13 @@ describe('DatabaseDriverSqlite in memory', () => {
 	beforeAll(async () => {
 		driver = new DatabaseDriverSqlite({ file: MEMORY_FILE, logger: logger as never });
 
-		// 1. A drizzle-kit folder of one migration, in the layout `drizzle-kit generate` writes
+		// 1. The fixture table the statements below write is made here, not by the migration: every test must pass run
+		//    alone, under `vitest -t` as well as whole-file
+		driver.db.run(
+			sql`CREATE TABLE IF NOT EXISTS notes ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "text" text NOT NULL)`,
+		);
+
+		// 2. A drizzle-kit folder of one migration, in the layout `drizzle-kit generate` writes
 		migrationsFolder = await mkdtemp(join(tmpdir(), 'novastarter-migrations-'));
 		await mkdir(join(migrationsFolder, 'meta'));
 
@@ -34,15 +40,23 @@ describe('DatabaseDriverSqlite in memory', () => {
 			}),
 		);
 
+		// 3. The migration itself: a probe table nothing reads — the migrator running it and journaling it is the point
 		await writeFile(
 			join(migrationsFolder, '0000_init.sql'),
-			'CREATE TABLE `notes` (`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL, `text` text NOT NULL);',
+			'CREATE TABLE "probe" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL);',
 		);
 	});
 
 	afterAll(async () => {
-		await driver.close();
-		await rm(migrationsFolder, { recursive: true, force: true });
+		// 1. A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
+		//    real failure stays the one reported
+		if (driver) {
+			await driver.close();
+		}
+
+		if (migrationsFolder) {
+			await rm(migrationsFolder, { recursive: true, force: true });
+		}
 	});
 
 	test('ping answers', async () => {

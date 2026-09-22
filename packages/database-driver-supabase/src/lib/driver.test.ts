@@ -1,36 +1,46 @@
 /**
  * Tests of `database-driver-supabase/lib/driver`.
+ *
+ * The parent Postgres driver is not mocked: these tests build the real driver over a pool that opens its connections
+ * lazily, so what they assert is this subclass's own behaviour — the mapped options reaching node-postgres and the
+ * inherited capabilities surviving the `declare` field.
  */
 import { randDomainName, randPassword, randWord } from '@ngneat/falso';
-import { DatabaseDriverPostgres } from '@novastarter/database-driver-postgres';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { DatabaseDriverSupabase } from './driver.js';
-
-vi.mock('@novastarter/database-driver-postgres');
-
-afterEach(() => {
-	vi.resetAllMocks();
-});
 
 describe('#constructor', () => {
 	test('Builds the Postgres driver on the mapped options', () => {
 		const url = `postgresql://postgres.${randWord()}:${randPassword()}@${randDomainName()}:6543/postgres`;
 
-		// 1. Everything runs on the Postgres driver: the class is a subclass built with the mapped config
-		const driver = new DatabaseDriverSupabase({ url, pool: { max: 2 } });
-
-		expect(driver).toBeInstanceOf(DatabaseDriverPostgres);
-
-		expect(DatabaseDriverPostgres).toHaveBeenCalledExactlyOnceWith({
-			connection: { max: 2, connectionString: url, ssl: true },
+		// 1. Everything runs on the Postgres driver: the pool it opens answers the mapped config, and the pool is
+		//    reachable as `db.$client` the way the contract types it
+		const driver = new DatabaseDriverSupabase({
+			url,
+			pool: { max: 2 },
+			logger: { error: vi.fn(), debug: vi.fn() } as never,
 		});
+
+		expect(driver.db.$client.options).toMatchObject({ max: 2, connectionString: url, ssl: true });
 	});
 
 	test('Throws when the url is missing, before any pool exists', () => {
+		// 1. The mapping throws before the parent constructor runs, so no pool is opened for a driver that cannot exist
 		expect(() => new DatabaseDriverSupabase({ url: '' })).toThrowErrorMatchingInlineSnapshot(
 			`[Error: The supabase database driver needs a "url"]`,
 		);
+	});
+});
 
-		expect(DatabaseDriverPostgres).not.toHaveBeenCalled();
+describe('#capabilities', () => {
+	test('Declares whether transactions work', () => {
+		// 1. The field is declared, not redefined: with `useDefineForClassFields` a plain field would shadow the
+		//    inherited value with `undefined`, and this assertion is what catches a lost `declare`
+		const driver = new DatabaseDriverSupabase({
+			url: `postgresql://postgres.${randWord()}:${randPassword()}@${randDomainName()}:6543/postgres`,
+			logger: { error: vi.fn(), debug: vi.fn() } as never,
+		});
+
+		expect(driver.capabilities).toStrictEqual({ transactions: true });
 	});
 });

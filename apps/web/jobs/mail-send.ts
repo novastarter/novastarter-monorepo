@@ -193,6 +193,8 @@ export const toMailMessage = async (
  * @returns The handler.
  */
 export const createMailSendHandler = (options: MailSendHandlerOptions = {}): JobHandler<typeof mailSend> => {
+	// 1. The options are captured here, so the bootstrap registers a ready-made handler and a test can hand in its
+	//    own renderer
 	return async (payload: MailSendPayload): Promise<void> => {
 		// 1. The template is rendered and the message sent inside the job, so a failure of either is retried
 		const message = await toMailMessage(payload, options.render);

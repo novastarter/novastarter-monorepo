@@ -24,6 +24,19 @@ describe('getJobId', () => {
 		expect(getJobId(contract, { customer: 'c2' }, { unique: true })).not.toBe(first);
 	});
 
+	test('Collapses payloads that hold the same entries in a different key order', () => {
+		// 1. Key order is not part of the work: the digest sorts object keys first, so both payloads collapse into
+		//    one id, at the top level and nested alike
+		const first = getJobId(contract, { a: 1, b: { c: 2, d: 3 } }, { unique: true });
+
+		expect(getJobId(contract, { b: { d: 3, c: 2 }, a: 1 }, { unique: true })).toBe(first);
+
+		// 2. Array order stays significant — it is part of an array's meaning — so a reordered array is different work
+		expect(getJobId(contract, { list: ['a', 'b'] }, { unique: true })).not.toBe(
+			getJobId(contract, { list: ['b', 'a'] }, { unique: true }),
+		);
+	});
+
 	test('Tells payloads apart that a 32-bit string hash would fold together', () => {
 		// 1. `Aa` and `BB` share a Java-style `h * 31 + c` hash; folded together, the second job would silently be
 		//    dropped as a duplicate of the first

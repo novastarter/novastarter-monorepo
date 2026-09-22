@@ -1,7 +1,7 @@
 /**
  * Tests of `release-notes-generator/utils/find-workspace-packages`.
  */
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type { ProjectManifest } from '@pnpm/types';
@@ -145,6 +145,15 @@ describe('collectDescendants', () => {
 		await seed({ 'packages/node_modules/dep/nested/package.json': manifest('dep') });
 
 		await expect(collectDescendants(root, 'packages')).resolves.toEqual(['packages']);
+	});
+
+	test('should not recurse forever on a symlink loop', async () => {
+		await seed({ 'packages/a/package.json': manifest('a') });
+
+		// 1. The link points back at its own parent; a walker that follows symlinks would recurse endlessly
+		await symlink('.', join(root, 'packages/a/loop'), 'dir');
+
+		await expect(collectDescendants(root, 'packages')).resolves.toEqual(['packages', 'packages/a']);
 	});
 });
 
@@ -335,6 +344,20 @@ describe('findWorkspacePackages', () => {
 			'packages/a/package.json': manifest('a'),
 			'packages/shared/README.md': '# no manifest here',
 		});
+
+		const projects = await findWorkspacePackages(root);
+
+		expect(projects.map((project) => project.manifest.name)).toEqual(['a']);
+	});
+
+	test('should survive a symlink loop during a wildcard expansion', async () => {
+		await seed({
+			'pnpm-workspace.yaml': 'packages:\n  - packages/**\n',
+			'packages/a/package.json': manifest('a'),
+		});
+
+		// 1. `a/loop` points back at `packages`, the directory the `**` walk starts from
+		await symlink('..', join(root, 'packages/a/loop'), 'dir');
 
 		const projects = await findWorkspacePackages(root);
 

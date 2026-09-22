@@ -109,7 +109,7 @@ export class Emitter {
 	 * @typeParam T - Payload the event carries.
 	 * @param event - Event name, or several names run one after another.
 	 * @param payload - Value the handlers may replace.
-	 * @param meta - Details of the operation, merged with the event name.
+	 * @param meta - Details of the operation, merged under the event name, which wins over a meta `event` key.
 	 * @param context - Who is acting; defaults to an anonymous context.
 	 * @returns The payload after every handler had its turn.
 	 */
@@ -133,7 +133,7 @@ export class Emitter {
 		// 3. Sequential on purpose: every filter sees the result of the previous one
 		for (const { event, listeners } of eventListeners) {
 			for (const listener of listeners) {
-				const result = await listener(updatedPayload, { event, ...meta }, context ?? this.getDefaultContext());
+				const result = await listener(updatedPayload, { ...meta, event }, context ?? this.getDefaultContext());
 
 				if (result !== undefined) {
 					updatedPayload = result;
@@ -150,7 +150,7 @@ export class Emitter {
 	 * A rejected handler is logged as a warning; the operation that emitted the event is never affected.
 	 *
 	 * @param event - Event name, or several names.
-	 * @param meta - Details of the operation, merged with the event name.
+	 * @param meta - Details of the operation, merged under the event name, which wins over a meta `event` key.
 	 * @param context - Who acted; defaults to an anonymous context.
 	 */
 	public emitAction(event: string | string[], meta: Record<string, any>, context: EventContext | null = null): void {
@@ -163,7 +163,7 @@ export class Emitter {
 		//    inside the wrapper `onAction` gave it, so two failing handlers make two lines where `emitAsync`, a
 		//    `Promise.all`, would surface only the first; what is caught here is eventemitter2's own trouble
 		for (const event of events) {
-			this.actionEmitter.emitAsync(event, { event, ...meta }, context ?? this.getDefaultContext()).catch((error) => {
+			this.actionEmitter.emitAsync(event, { ...meta, event }, context ?? this.getDefaultContext()).catch((error) => {
 				logger.warn(toError(error), `An error was thrown while emitting action "${event}"`);
 			});
 		}
@@ -175,7 +175,7 @@ export class Emitter {
 	 * Failures are logged as warnings rather than thrown, so one broken hook cannot stop the application from starting.
 	 *
 	 * @param event - Stage name, such as `app.before` or `routes.after`.
-	 * @param meta - What the stage exposes to the hooks, merged with the event name.
+	 * @param meta - What the stage exposes to the hooks, merged under the event name, which wins over a meta `event` key.
 	 */
 	public async emitInit(event: string, meta: Record<string, any>): Promise<void> {
 		// 1. The logger is read per call, so a `registerLogger` after start-up is honoured
@@ -185,7 +185,7 @@ export class Emitter {
 		//    handler logs its own failure inside the wrapper `onInit` gave it; what is caught here is eventemitter2's
 		//    own trouble
 		try {
-			await this.initEmitter.emitAsync(event, { event, ...meta });
+			await this.initEmitter.emitAsync(event, { ...meta, event });
 		} catch (error) {
 			logger.warn(toError(error), `An error was thrown while emitting init "${event}"`);
 		}

@@ -136,13 +136,15 @@ export class SmsDriverTwilio implements SmsDriver {
 			});
 		}
 
-		// 3. Segments are what the message is billed by; the SDK reports the count as a string
+		// 3. Segments are what the message is billed by; the SDK reports the count as a string. `Number(null)` and
+		//    `Number('')` are 0 — a value that would claim the text was split into zero parts — so the count is only
+		//    reported when Twilio actually says one
 		const segments = Number(created.numSegments);
 
 		return {
 			messageId: created.sid,
 			status: created.status,
-			...(Number.isFinite(segments) ? { segments } : {}),
+			...(created.numSegments != null && created.numSegments !== '' && Number.isFinite(segments) ? { segments } : {}),
 		};
 	}
 
@@ -156,5 +158,23 @@ export class SmsDriverTwilio implements SmsDriver {
 		await this.client.balance.fetch().catch((error: unknown) => {
 			throw describeError(error);
 		});
+	}
+
+	/**
+	 * Destroy the keep-alive HTTPS agent the SDK's request client pools its connections in.
+	 *
+	 * The SDK exposes no close of its own: its `RequestClient` hangs the `https.Agent` off its axios instance's
+	 * defaults, so that is where the driver reaches it. A client without such an agent — a custom or mocked one —
+	 * simply has nothing to release.
+	 *
+	 * @returns Once the sockets are released.
+	 */
+	async close(): Promise<void> {
+		// 1. The agent lives on the axios defaults of the client's request client, so the whole path is optional:
+		//    a custom or mocked client without any of it has nothing to release, and a failed destroy must not mask
+		//    a clean shutdown
+		const agent = this.client.httpClient?.axios?.defaults?.httpsAgent as { destroy?: () => void } | undefined;
+
+		agent?.destroy?.();
 	}
 }

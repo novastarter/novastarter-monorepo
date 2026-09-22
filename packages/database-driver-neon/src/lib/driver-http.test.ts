@@ -113,7 +113,7 @@ describe('#constructor', () => {
 		(options.logger as { logQuery(query: string, params: unknown[]): void }).logQuery('select 1', []);
 
 		expect(sample.processLogger.debug).toHaveBeenCalledExactlyOnceWith(
-			{ query: 'select 1', params: [] },
+			{ query: 'select 1', paramCount: 0 },
 			'Database query',
 		);
 	});
@@ -149,7 +149,7 @@ describe('#label', () => {
 
 		(options.logger as { logQuery(query: string, params: unknown[]): void }).logQuery('select 1', []);
 
-		expect(child.debug).toHaveBeenCalledExactlyOnceWith({ query: 'select 1', params: [] }, 'Database query');
+		expect(child.debug).toHaveBeenCalledExactlyOnceWith({ query: 'select 1', paramCount: 0 }, 'Database query');
 		expect(sample.logger.debug).not.toHaveBeenCalled();
 	});
 

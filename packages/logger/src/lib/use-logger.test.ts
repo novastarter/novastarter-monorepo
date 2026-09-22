@@ -7,7 +7,7 @@ import type { Logger } from 'pino';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { createLogger } from './create-logger.js';
 import { type LogsBus, LogsStream } from './logs-stream.js';
-import { getHttpLogsStream, getLogsStream, registerLogger, useLogger } from './use-logger.js';
+import { registerLogger, useHttpLogsStream, useLogger, useLogsStream } from './use-logger.js';
 
 vi.mock('./create-logger.js');
 vi.mock('./logs-stream.js');
@@ -18,8 +18,8 @@ afterEach(() => {
 	vi.resetAllMocks();
 
 	useLogger.reset();
-	getLogsStream.reset();
-	getHttpLogsStream.reset();
+	useLogsStream.reset();
+	useHttpLogsStream.reset();
 });
 
 describe('useLogger', () => {
@@ -57,34 +57,34 @@ describe('useLogger', () => {
 	});
 });
 
-describe('getLogsStream', () => {
+describe('useLogsStream', () => {
 	test('Creates a basic logs stream once and refuses arguments afterwards', () => {
 		// 1. The first call decides the shape and the bus; a later call without arguments answers with the stream
-		const first = getLogsStream(true, messenger);
-		const second = getLogsStream();
+		const first = useLogsStream(true, messenger);
+		const second = useLogsStream();
 
 		expect(LogsStream).toHaveBeenCalledTimes(1);
 		expect(LogsStream).toHaveBeenCalledWith('basic', messenger);
 		expect(second).toBe(first);
 
 		// 2. Arguments that would have no say are refused, not ignored
-		expect(() => getLogsStream(false, messenger)).toThrow('singleton: the instance exists already');
+		expect(() => useLogsStream(false, messenger)).toThrow('singleton: the instance exists already');
 	});
 
 	test('Refuses a first call without the bus instead of building a stream that fails on its first line', () => {
-		expect(() => getLogsStream()).toThrow(
-			'getLogsStream: the first call builds the stream and needs (pretty, messenger)',
+		expect(() => useLogsStream()).toThrow(
+			'useLogsStream: the first call builds the stream and needs (pretty, messenger)',
 		);
 
-		expect(() => getHttpLogsStream()).toThrow('getHttpLogsStream: the first call builds the stream');
+		expect(() => useHttpLogsStream()).toThrow('useHttpLogsStream: the first call builds the stream');
 		expect(LogsStream).not.toHaveBeenCalled();
 	});
 });
 
-describe('getHttpLogsStream', () => {
+describe('useHttpLogsStream', () => {
 	test('Creates a http logs stream once, raw when not pretty', () => {
-		const first = getHttpLogsStream(false, messenger);
-		const second = getHttpLogsStream();
+		const first = useHttpLogsStream(false, messenger);
+		const second = useHttpLogsStream();
 
 		expect(LogsStream).toHaveBeenCalledTimes(1);
 		expect(LogsStream).toHaveBeenCalledWith(false, messenger);

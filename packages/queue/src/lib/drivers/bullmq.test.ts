@@ -60,7 +60,12 @@ vi.mock('bullmq', () => ({ Queue: FakeQueue, Worker: vi.fn() }));
 
 // No Redis is opened in unit tests; the client is a stand-in that remembers what it was opened with
 vi.mock('@novastarter/redis', () => ({
-	createRedis: vi.fn((config: unknown) => ({ config, quit: vi.fn(async () => 'OK') })),
+	createRedis: vi.fn((config: unknown) => ({
+		config,
+		status: 'ready',
+		quit: vi.fn(async () => 'OK'),
+		disconnect: vi.fn(),
+	})),
 }));
 
 const logger = { info: vi.fn(), error: vi.fn() };
@@ -227,6 +232,24 @@ describe('QueueDriverBullmq', () => {
 		await driver.close();
 	});
 
+	test('Refuses a negative or NaN delay, exactly as the local driver refuses it', async () => {
+		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as any });
+
+		// 1. The same RangeError the `local` driver throws, so both locations answer a bad delay identically
+		await expect(driver.enqueue(contract, { value: 'x' }, { ...contract.options, delay: -1 })).rejects.toThrow(
+			RangeError,
+		);
+
+		await expect(driver.enqueue(contract, { value: 'x' }, { ...contract.options, delay: Number.NaN })).rejects.toThrow(
+			'The delay of job "test.echo" must be 0 or more milliseconds, got NaN',
+		);
+
+		// 2. A refused job never reaches Redis: no queue was opened for it
+		expect(FakeQueue.instances).toHaveLength(0);
+
+		await driver.close();
+	});
+
 	test('Uses a given client as is and leaves it open', async () => {
 		const client = { quit: vi.fn(async () => 'OK') };
 		const driver = new QueueDriverBullmq({ connection: client as never, logger: logger as any });
@@ -236,6 +259,22 @@ describe('QueueDriverBullmq', () => {
 
 		await driver.close();
 		expect(client.quit).not.toHaveBeenCalled();
+	});
+
+	test('close() disconnects a client that never reached ready instead of waiting for a quit', async () => {
+		// 1. `quit` sends QUIT through the command path, so a client that never connected would reconnect forever to
+		//    deliver it and the close would hang; the close drops the socket with `disconnect` instead
+		const quit = vi.fn(async () => 'OK');
+		const disconnect = vi.fn();
+
+		vi.mocked(createRedis).mockReturnValueOnce({ status: 'connecting', quit, disconnect } as never);
+
+		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as any });
+
+		await driver.close();
+
+		expect(disconnect).toHaveBeenCalledOnce();
+		expect(quit).not.toHaveBeenCalled();
 	});
 
 	test('Reports the counts of the given queues, folding prioritised work into waiting, zero for states BullMQ leaves out', async () => {

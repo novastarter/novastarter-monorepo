@@ -53,10 +53,12 @@ export const createRedis = (config: RedisConfig, overrides: RedisOptions = {}): 
  */
 const fromUrl = (url: string): RedisOptions => {
 	// 1. `rediss://` means TLS with the default options, as it does for ioredis itself — which takes `tls: true` at
-	//    runtime while typing the field as an object, hence the cast; every other form carries none
+	//    runtime while typing the field as an object, hence the cast; the scheme is compared case-insensitively, the
+	//    way a URI scheme is read (RFC 3986 §3.1), so `REDISS://…` gets its TLS too instead of reaching a TLS endpoint
+	//    over a plain socket; every other form carries none
 	const options = parseURL(url) as Record<string, unknown>;
 
-	if (url.startsWith('rediss://')) {
+	if (/^rediss:\/\//i.test(url)) {
 		options['tls'] = true;
 	}
 

@@ -82,25 +82,27 @@ export class KvDriverLocal implements KvDriver {
 		// 1. `LRUCache` refuses to be constructed without `max` or `ttl`, so fall back to a plain `Map` when neither
 		//    limit is configured
 		if (config.maxKeys || config.ttl) {
-			const options: Record<string, unknown> = {};
+			// 2. The lru-cache types model the options as a union that requires whichever limit is configured, so the
+			//    object is built per combination, typed against the library's own options instead of an untyped record
+			let options: LRUCache.Options<string, Uint8Array, unknown>;
 
 			if (config.maxKeys) {
-				options['max'] = config.maxKeys;
+				// 3. With a ttl, purge expired entries on a timer; by default the LRU only drops them lazily on access,
+				//    which would let a write-heavy store grow until reads happen
+				options = config.ttl ? { max: config.maxKeys, ttl: config.ttl, ttlAutopurge: true } : { max: config.maxKeys };
+			} else {
+				// 4. Only a ttl reaches this branch — the outer condition rules a bare `maxKeys` out — and the
+				//    lru-cache types demand the purge flag alongside a ttl; the assertion states what the condition
+				//    guarantees
+				options = { ttl: config.ttl!, ttlAutopurge: true };
 			}
 
-			// 2. With a ttl, purge expired entries on a timer; by default the LRU only drops them lazily on access,
-			//    which would let a write-heavy store grow until reads happen
-			if (config.ttl) {
-				options['ttl'] = config.ttl;
-				options['ttlAutopurge'] = true;
-			}
-
-			this.store = new LRUCache(options as any);
+			this.store = new LRUCache(options);
 		} else {
 			this.store = new Map();
 		}
 
-		// 3. The same wait budget as the Redis store's retries, so a busy key fails the same way on both backends; a
+		// 5. The same wait budget as the Redis store's retries, so a busy key fails the same way on both backends; a
 		//    budget a timer cannot hold is refused here rather than failing every `acquireLock` later
 		this.lockTimeout = config.lockTimeout ?? 5000;
 

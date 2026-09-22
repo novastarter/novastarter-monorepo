@@ -112,7 +112,7 @@ export const buildLevelFormatters = (
 	// 2. The formatter adds `severity` next to the numeric level rather than replacing it, so collectors that read
 	//    either field keep working
 	return {
-		level(label: string, number: any) {
+		level(label: string, number: number) {
 			// 1. Unmapped labels get `info` rather than `undefined`, so a collector never sees a line without severity
 			return {
 				severity: levels[label] || 'info',

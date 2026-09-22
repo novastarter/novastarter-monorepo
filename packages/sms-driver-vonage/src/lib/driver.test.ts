@@ -96,9 +96,13 @@ describe('SmsDriverVonage', () => {
 
 		const driver = new SmsDriverVonage({ apiKey: 'key', apiSecret: 'secret' });
 
-		// 1. The credentials travel as query parameters, and nothing is created or billed
+		// 1. The credentials travel in an `Authorization` header and nothing is created or billed; they never go in
+		//    the URL, which proxies, traces and error output record — the secret would leak into all of those
 		await expect(driver.verify()).resolves.toBeUndefined();
-		expect(fetch).toHaveBeenCalledWith(`${BALANCE_URL}?api_key=key&api_secret=secret`);
+
+		expect(fetch).toHaveBeenCalledWith(BALANCE_URL, {
+			headers: { Authorization: `Basic ${Buffer.from('key:secret').toString('base64')}` },
+		});
 
 		// 2. Bad credentials answer 401, which is reported with the status
 		fetch.mockResolvedValueOnce({ ok: false, status: 401, statusText: 'Unauthorized' });
@@ -107,5 +111,22 @@ describe('SmsDriverVonage', () => {
 		// 3. A network failure never reached the API and is described as it is
 		fetch.mockRejectedValueOnce(new Error('ENOTFOUND'));
 		await expect(driver.verify()).rejects.toThrow('Vonage: ENOTFOUND');
+	});
+
+	test('Bounds the balance read with the configured timeout', async () => {
+		const fetch = vi.fn(async () => ({ ok: true, status: 200, statusText: 'OK' }));
+
+		vi.stubGlobal('fetch', fetch);
+
+		const driver = new SmsDriverVonage({ apiKey: 'key', apiSecret: 'secret', timeout: 5_000 });
+
+		await expect(driver.verify()).resolves.toBeUndefined();
+
+		// 1. The timeout the SDK client was built with bounds this fetch too — a stalled balance read would otherwise
+		//    sit out the agent's minutes-long limits
+		expect(fetch).toHaveBeenCalledWith(BALANCE_URL, {
+			headers: { Authorization: `Basic ${Buffer.from('key:secret').toString('base64')}` },
+			signal: expect.any(AbortSignal),
+		});
 	});
 });

@@ -1,6 +1,8 @@
 /**
- * What a worker and the web app agree on for job delivery: the path, the headers, the body — one place, so the
- * sender (the worker process) and the receiver (the web app) cannot drift apart.
+ * The signing constants and URL contract of the upcoming internal-jobs endpoint.
+ *
+ * No sender or receiver consumes these constants yet; the module lands ahead of the endpoint so the worker and the
+ * web app share one definition from the day it ships.
  */
 
 /**
@@ -41,7 +43,7 @@ export interface InternalJobRequest {
 /**
  * The URL a job of a name is delivered to.
  *
- * @param baseUrl - The web app's origin (`INTERNAL_API_URL`), with or without a trailing slash.
+ * @param baseUrl - The origin of the web app the job is delivered to, with or without a trailing slash.
  * @param name - The job name, `<queue>.<action>`.
  * @returns The absolute URL.
  *

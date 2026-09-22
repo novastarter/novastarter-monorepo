@@ -2,7 +2,7 @@
  * Tests of `errors/errors/hit-rate-limit`.
  */
 import { afterAll, beforeAll, expect, test, vi } from 'vitest';
-import { messageConstructor } from './hit-rate-limit.js';
+import { hitRateLimitMessage } from './hit-rate-limit.js';
 
 beforeAll(() => {
 	// 1. A fixed clock, so the duration in the message is stable enough to snapshot
@@ -18,7 +18,7 @@ afterAll(() => {
 test('Constructs message', () => {
 	// 1. Thirty seconds after the fixed now, reported in a human-readable duration
 	expect(
-		messageConstructor({
+		hitRateLimitMessage({
 			limit: 100,
 			reset: new Date('2023-05-31T14:45:30Z'),
 		}),
@@ -28,7 +28,7 @@ test('Constructs message', () => {
 test('Clamps a reset in the past to "retry now"', () => {
 	// 1. A stale reset is answered with a zero wait rather than a negative duration the client cannot act on
 	expect(
-		messageConstructor({
+		hitRateLimitMessage({
 			limit: 100,
 			reset: new Date('2023-05-31T14:44:30Z'),
 		}),
@@ -38,7 +38,7 @@ test('Clamps a reset in the past to "retry now"', () => {
 test('Treats an invalid reset Date as "retry now" instead of throwing', () => {
 	// 1. `ms(NaN)` throws, and the error constructor must not blow up while reporting another error
 	expect(
-		messageConstructor({
+		hitRateLimitMessage({
 			limit: 100,
 			reset: new Date('not-a-date'),
 		}),

@@ -101,6 +101,8 @@ export const toSmsMessage = (payload: SmsSendPayload): SmsMessage => {
  * @returns The handler.
  */
 export const createSmsSendHandler = (): JobHandler<typeof smsSend> => {
+	// 1. The factory keeps the shape of the sibling handlers: nothing is captured today, and options arrive without
+	//    a rewrite of the bootstrap or the tests
 	return async (payload: SmsSendPayload): Promise<void> => {
 		// 1. The message is sent inside the job, so a provider failure is retried rather than losing the message
 		await sendSms(toSmsMessage(payload), { location: payload.location });

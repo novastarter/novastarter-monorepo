@@ -2,11 +2,11 @@
  * Tests of `errors/errors/invalid-payload`.
  */
 import { expect, test } from 'vitest';
-import { InvalidPayloadError, messageConstructor } from './invalid-payload.js';
+import { InvalidPayloadError, invalidPayloadMessage } from './invalid-payload.js';
 
 test('Constructs message', () => {
 	// 1. The reason is quoted after the fixed opening, so the message reads as one sentence
-	expect(messageConstructor({ reason: 'Field "email" is required' })).toMatchInlineSnapshot(
+	expect(invalidPayloadMessage({ reason: 'Field "email" is required' })).toMatchInlineSnapshot(
 		'"Invalid payload. Field "email" is required."',
 	);
 });

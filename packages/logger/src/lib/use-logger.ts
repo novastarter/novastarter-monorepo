@@ -47,27 +47,27 @@ export const registerLogger = (logger: Logger<never>): void => {
  *
  * @param pretty - `true` publishes level, time and message; `false` publishes the raw line.
  * @param messenger - Bus the lines are published on.
- * @returns The same stream on every call; `getLogsStream.reset()` drops it, for tests.
+ * @returns The same stream on every call; `useLogsStream.reset()` drops it, for tests.
  * @throws Error when the first call passes no bus, or a later call passes arguments.
  */
-export const getLogsStream: Singleton<LogsStream, [pretty: boolean, messenger: LogsBus]> = singleton(
+export const useLogsStream: Singleton<LogsStream, [pretty: boolean, messenger: LogsBus]> = singleton(
 	(pretty?: boolean, messenger?: LogsBus) =>
-		new LogsStream(pretty ? 'basic' : false, requireBus('getLogsStream', messenger)),
+		new LogsStream(pretty ? 'basic' : false, requireBus('useLogsStream', messenger)),
 );
 
 /**
  * Return the bus stream for HTTP logs, building it on first use.
  *
- * The arguments belong to the first call, like {@link getLogsStream}; a later call passes none.
+ * The arguments belong to the first call, like {@link useLogsStream}; a later call passes none.
  *
  * @param pretty - `true` folds the request into one message; `false` publishes the raw line.
  * @param messenger - Bus the lines are published on.
- * @returns The same stream on every call; `getHttpLogsStream.reset()` drops it, for tests.
+ * @returns The same stream on every call; `useHttpLogsStream.reset()` drops it, for tests.
  * @throws Error when the first call passes no bus, or a later call passes arguments.
  */
-export const getHttpLogsStream: Singleton<LogsStream, [pretty: boolean, messenger: LogsBus]> = singleton(
+export const useHttpLogsStream: Singleton<LogsStream, [pretty: boolean, messenger: LogsBus]> = singleton(
 	(pretty?: boolean, messenger?: LogsBus) =>
-		new LogsStream(pretty ? 'http' : false, requireBus('getHttpLogsStream', messenger)),
+		new LogsStream(pretty ? 'http' : false, requireBus('useHttpLogsStream', messenger)),
 );
 
 /**

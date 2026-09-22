@@ -91,22 +91,26 @@ export class MailDriverSendgrid implements MailDriver {
 	 * @param message - Rendered message.
 	 * @returns SendGrid's message id from the `x-message-id` header; every recipient as accepted.
 	 * @throws An error naming SendGrid with the SDK's error as the cause (`response.body` describes the rejection)
-	 * when the API refuses.
+	 * when the API refuses; the mapper's own error unchanged when the message cannot be built.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
-		// 1. The API answers with headers only; the message id lives in one of them
+		// 1. The message is translated before the request, so a failure of the mapper (no sender, unreadable
+		//    attachment) surfaces the kit's own error instead of a re-wrapped API error
+		const mail = await toSendgridMail(message, this.sandbox);
+
+		// 2. The API answers with headers only; the message id lives in one of them
 		let response: ClientResponse;
 
 		try {
-			[response] = await this.client.send(await toSendgridMail(message, this.sandbox));
+			[response] = await this.client.send(mail);
 		} catch (error) {
-			// 2. The SDK throws its `ResponseError` on a refusal; wrapped so the log names the provider
+			// 3. The SDK throws its `ResponseError` on a refusal; wrapped so the log names the provider
 			throw describeError(error);
 		}
 
 		const messageId = response.headers['x-message-id'];
 
-		// 3. SendGrid takes a message whole or refuses it, so every recipient counts as accepted
+		// 4. SendGrid takes a message whole or refuses it, so every recipient counts as accepted
 		return {
 			messageId: typeof messageId === 'string' ? messageId : undefined,
 			accepted: toMailAddressList(message.to).map(bareMailAddress),

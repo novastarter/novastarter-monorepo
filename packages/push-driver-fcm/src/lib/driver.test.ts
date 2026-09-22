@@ -4,6 +4,7 @@
  * `describe-error.ts`.
  */
 import { PushTargetGoneError } from '@novastarter/push';
+import { TimeoutError } from '@novastarter/utils';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import defaultExport from '../index.js';
 import { PushDriverFcm } from './driver.js';
@@ -33,6 +34,11 @@ const initializeApp = vi.fn((options: unknown, name: string) => ({ name, options
  */
 const deleteApp = vi.fn();
 
+/**
+ * Stands in for firebase-admin's `getMessaging()`; hands out the send spy as the messaging client.
+ */
+const getMessaging = vi.fn(() => ({ send }));
+
 vi.mock('firebase-admin/app', () => ({
 	cert: (...args: unknown[]) => cert(...(args as [])),
 	initializeApp: (...args: [unknown, string]) => initializeApp(...args),
@@ -40,7 +46,7 @@ vi.mock('firebase-admin/app', () => ({
 }));
 
 vi.mock('firebase-admin/messaging', () => ({
-	getMessaging: () => ({ send }),
+	getMessaging: (...args: unknown[]) => getMessaging(...(args as [])),
 }));
 
 /**
@@ -81,6 +87,24 @@ describe('PushDriverFcm', () => {
 		// 2. A missing field is a configuration error, reported by the options' names
 		expect(driver.platforms).toStrictEqual(['fcm']);
 		expect(() => new PushDriverFcm({ projectId: 'p', clientEmail: 'c' })).toThrow(/"serviceAccount"/);
+	});
+
+	test('Deletes the half-built Firebase app when the messaging client fails', () => {
+		// 1. `getMessaging()` throwing leaves the app in the SDK's global registry, holding live agents; the driver
+		//    deletes it, best-effort, before the error propagates
+		const failure = new Error('messaging unavailable');
+
+		getMessaging.mockImplementationOnce(() => {
+			throw failure;
+		});
+
+		deleteApp.mockResolvedValue(undefined);
+
+		expect(() => new PushDriverFcm({ serviceAccount: account })).toThrow(failure);
+
+		expect(deleteApp).toHaveBeenCalledWith(
+			expect.objectContaining({ name: expect.stringMatching(/^novastarter-push-/) }),
+		);
 	});
 
 	test('Sends and answers the message name; reports a dead token as gone and the rest as errors with the cause', async () => {
@@ -128,6 +152,47 @@ describe('PushDriverFcm', () => {
 		await expect(
 			driver.send({ subscription: { endpoint: 'https://e', keys: { p256dh: 'p', auth: 'a' } }, title: 'Hi' }),
 		).rejects.toThrow(/needs a token/);
+	});
+
+	test('Fails a send that outlives the timeout, and waits without one', async () => {
+		// 1. The SDK takes no timeout, so the driver races it: a request FCM never answers fails after the deadline, the
+		//    timeout as the cause; the request itself runs on — the SDK call cannot be told to stop
+		send.mockReturnValueOnce(new Promise(() => {}));
+
+		const bounded = new PushDriverFcm({ serviceAccount: account, timeout: 20 });
+
+		const failure: unknown = await bounded.send({ token: 'tok', title: 'Hi' }).catch((error: unknown) => error);
+
+		expect(failure).toBeInstanceOf(Error);
+		expect((failure as Error).message).toBe('FCM: Timed out after 20 ms');
+		expect((failure as Error).cause).toBeInstanceOf(TimeoutError);
+
+		// 2. An answer in time goes through unchanged, so the race costs a bounded send nothing
+		send.mockResolvedValueOnce('projects/proj/messages/1');
+
+		expect(await bounded.send({ token: 'tok', title: 'Hi' })).toStrictEqual({
+			messageId: 'projects/proj/messages/1',
+			status: 'accepted',
+		});
+
+		// 3. Without a deadline the driver waits for the client, however long it takes
+		let settled = false;
+
+		send.mockReturnValueOnce(new Promise(() => {}));
+
+		const unbounded = new PushDriverFcm({ serviceAccount: account });
+
+		void unbounded.send({ token: 'tok', title: 'Hi' }).then(
+			() => {
+				settled = true;
+			},
+			() => {
+				settled = true;
+			},
+		);
+
+		await new Promise((resolve) => setTimeout(resolve, 40));
+		expect(settled).toBe(false);
 	});
 
 	test('Verifies by fetching an access token and releases its app on close', async () => {

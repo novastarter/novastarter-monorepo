@@ -224,7 +224,7 @@ export class PressureMonitor {
 	 *
 	 * @internal
 	 */
-	private updateUsage() {
+	private updateUsage(): void {
 		// 1. A closed monitor has a disabled histogram and no timer to re-arm; the stale sample stays as it is
 		if (this.closed) {
 			return;
@@ -243,7 +243,7 @@ export class PressureMonitor {
 	 *
 	 * @internal
 	 */
-	private updateMemoryUsage() {
+	private updateMemoryUsage(): void {
 		// 1. A single `memoryUsage()` call reports both values; only heap and RSS are compared against thresholds
 		const { heapUsed, rss } = memoryUsage();
 		this.memoryHeapUsed = heapUsed;
@@ -255,7 +255,7 @@ export class PressureMonitor {
 	 *
 	 * @internal
 	 */
-	private updateEventLoopUsage() {
+	private updateEventLoopUsage(): void {
 		// 1. A bare `eventLoopUtilization()` is cumulative since the loop started and would flatten every spike into a
 		//    lifetime average; passing the previous reading makes Node return the ratio over the last interval only
 		const current = performance.eventLoopUtilization();

@@ -1,5 +1,5 @@
 /**
- * Tests of `push/lib/push-manager` and `use-push`.
+ * Tests of `push/lib/push-manager` on managers built by hand; the process-wide one is `use-push.test.ts`'s.
  *
  * `@novastarter/logger` is mocked, since the console driver resolves the application logger when it is built.
  */
@@ -9,7 +9,6 @@ import type { PushDriver } from '../driver.js';
 import type { PushPlatform, PushResult } from '../types.js';
 import { PushDriverConsole } from './drivers/console.js';
 import { PushManager } from './push-manager.js';
-import { usePush } from './use-push.js';
 
 vi.mock('@novastarter/logger');
 
@@ -57,7 +56,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	usePush.reset();
 	vi.clearAllMocks();
 });
 
@@ -141,36 +139,5 @@ describe('PushManager', () => {
 		expect(closed).toHaveBeenCalledOnce();
 		expect(manager.locationNames()).toEqual(['fcm', 'log', 'unused']);
 		expect(manager.instantiated().size).toBe(0);
-	});
-});
-
-describe('usePush', () => {
-	test('Keeps one manager per process and shares its registrations', () => {
-		// 1. Two calls, one instance
-		const first = usePush();
-		const second = usePush();
-
-		expect(first).toBe(second);
-		expect(first).toBeInstanceOf(PushManager);
-
-		// 2. A location registered through one handle is visible through the other
-		first.registerLocation('default', {
-			driver: 'console',
-			options: {},
-		});
-
-		expect(second.hasLocation('default')).toBe(true);
-	});
-
-	test('Starts over once the cache is reset', () => {
-		// 1. Tests reset the cache in place; the next call builds a fresh manager without the old locations
-		usePush().registerLocation('default', {
-			driver: 'console',
-			options: {},
-		});
-
-		usePush.reset();
-
-		expect(usePush().hasLocation('default')).toBe(false);
 	});
 });

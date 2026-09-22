@@ -30,11 +30,20 @@ describe('toDrizzleOptions', () => {
 		// 1. Off: no logger key at all, so Drizzle makes no logger call per query
 		expect(toDrizzleOptions({ queryLogging: false }, logger)).not.toHaveProperty('logger');
 
-		// 2. On: the logger reports to the kit logger handed in
+		// 2. On: the logger reports the SQL text and the parameter count to the kit logger handed in
 		const options = toDrizzleOptions({ queryLogging: true }, logger);
 
-		options.logger?.logQuery('select 1', []);
+		options.logger?.logQuery('select 1', [42]);
 
-		expect(logger.debug).toHaveBeenCalledWith({ query: 'select 1', params: [] }, 'Database query');
+		expect(logger.debug).toHaveBeenCalledWith({ query: 'select 1', paramCount: 1 }, 'Database query');
+	});
+
+	test('Forwards the queryLogging options to the query logger', () => {
+		// 1. The object form asks for the values: they join the SQL text, verbatim as the query bound them
+		const options = toDrizzleOptions({ queryLogging: { params: true } }, logger);
+
+		options.logger?.logQuery('select 1', [42]);
+
+		expect(logger.debug).toHaveBeenCalledWith({ query: 'select 1', params: [42] }, 'Database query');
 	});
 });

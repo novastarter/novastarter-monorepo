@@ -39,6 +39,10 @@ export declare class StorageDriver {
 	/**
 	 * Remove an object.
 	 *
+	 * What deleting a missing object does is driver-specific: the S3, Azure, Cloudinary and Supabase drivers treat it
+	 * as a no-op, the local driver throws the file system's `ENOENT` error, and GCS rejects with its SDK's 404.
+	 * Callers must not rely on either behaviour.
+	 *
 	 * @param filepath - Object path relative to the driver root.
 	 */
 	delete(filepath: string): Promise<void>;
@@ -99,6 +103,9 @@ export declare class StorageDriver {
  *
  * The TUS server calls the chunked-upload methods in this order: create once, write a chunk per PATCH request, then
  * finish or delete. The {@link ChunkedUploadContext} carries the driver's state between those calls.
+ *
+ * Of the client-sent metadata, the keys `contentType` and `cacheControl` are reserved: drivers may honor them as the
+ * media type and cache header of the finished object.
  */
 export interface TusDriver extends StorageDriver {
 	/**

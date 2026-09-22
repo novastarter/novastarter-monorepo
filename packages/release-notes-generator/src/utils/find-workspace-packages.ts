@@ -131,8 +131,12 @@ export async function readSubdirectories(workspaceRoot: string, directory: strin
 
 	const subdirectories: string[] = [];
 
-	// 2. `node_modules` never holds workspace packages and would make `**` patterns crawl every dependency
 	for (const entry of entries) {
+		// 2. A symlinked directory is never a workspace package root, and following one would let a symlink loop
+		//    recurse forever in `collectDescendants` — this is the cycle guard for the tree walk
+		if (entry.isSymbolicLink()) continue;
+
+		// 3. `node_modules` never holds workspace packages and would make `**` patterns crawl every dependency
 		if (!entry.isDirectory() || entry.name === 'node_modules') continue;
 
 		subdirectories.push(directory ? `${directory}/${entry.name}` : entry.name);
