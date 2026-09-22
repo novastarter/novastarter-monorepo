@@ -1,3 +1,7 @@
+import { useDatabase } from '@novastarter/database';
+import { DatabaseDriverNeon, DatabaseDriverNeonHttp } from '@novastarter/database-driver-neon';
+import { DatabaseDriverPostgres } from '@novastarter/database-driver-postgres';
+import { DatabaseDriverSupabase } from '@novastarter/database-driver-supabase';
 import { createLogger, registerLogger, useLogger } from '@novastarter/logger';
 import { useMail } from '@novastarter/mail';
 import { useBus, useCache, useKv, useLimiter } from '@novastarter/memory';
@@ -5,6 +9,7 @@ import { registerJobHandlers, useQueue } from '@novastarter/queue';
 import { useRedis } from '@novastarter/redis';
 import { useStorage } from '@novastarter/storage';
 import { StorageDriverLocal } from '@novastarter/storage-driver-local';
+import { databaseConfig } from './config/database';
 import { loggerConfig } from './config/logger';
 import { mailConfig } from './config/mail';
 import { memoryConfig } from './config/memory';
@@ -30,10 +35,10 @@ export const _state: { booted: boolean; handlers: boolean } = { booted: false, h
  * Wire every subsystem of the kit from the app's configuration, once per process.
  *
  * The one place the environment meets the packages: the variables are parsed against the app's schema, turned into
- * the location configs under `config/`, and registered on the managers — logger, Redis, memory, queue, storage, mail —
- * then the handlers of the app's jobs under `jobs/`. Each package reads nothing itself; a location opens its
- * connections on first use. Registering is idempotent across calls, so a second `bootstrap()` (Next.js reloading the
- * server module in development, a test suite) is a no-op.
+ * the location configs under `config/`, and registered on the managers — logger, Redis, memory, queue, storage,
+ * database, mail — then the handlers of the app's jobs under `jobs/`. Each package reads nothing itself; a location
+ * opens its connections on first use. Registering is idempotent across calls, so a second `bootstrap()` (Next.js
+ * reloading the server module in development, a test suite) is a no-op.
  *
  * @returns The parsed variables, for the caller that wants them.
  */
@@ -72,13 +77,25 @@ export const bootstrap = (): AppEnv => {
 	useStorage().registerDriver('local', StorageDriverLocal);
 	useStorage().registerLocation('default', storageConfig(env));
 
-	// 7. Mail: the built-in drivers come with the manager; the `default` location and the routes are the app's
+	// 7. Database: the four driver classes the app ships with, then the `default` location when the app has a database
+	useDatabase().registerDriver('postgres', DatabaseDriverPostgres);
+	useDatabase().registerDriver('supabase', DatabaseDriverSupabase);
+	useDatabase().registerDriver('neon', DatabaseDriverNeon);
+	useDatabase().registerDriver('neon-http', DatabaseDriverNeonHttp);
+
+	const database = databaseConfig(env);
+
+	if (database) {
+		useDatabase().registerLocation('default', database);
+	}
+
+	// 8. Mail: the built-in drivers come with the manager; the `default` location and the routes are the app's
 	const mail = mailConfig(env);
 
 	useMail().registerLocation('default', mail.location);
 	useMail().registerRoutes(mail.routes);
 
-	// 8. Jobs: the handlers of the contracts under `jobs/`, so a worker or the local queue can run them — once per
+	// 9. Jobs: the handlers of the contracts under `jobs/`, so a worker or the local queue can run them — once per
 	//    process, since a handler holds nothing a shutdown would release and the queue refuses a second registration
 	if (!_state.handlers) {
 		registerJobHandlers({
@@ -90,13 +107,14 @@ export const bootstrap = (): AppEnv => {
 	}
 
 	_state.booted = true;
-	useLogger().debug({ redis: Boolean(redis) }, 'Application bootstrapped');
+	useLogger().debug({ redis: Boolean(redis), database: Boolean(database) }, 'Application bootstrapped');
 
 	return env;
 };
 
 /**
- * Release what the subsystems hold — queues, SDK clients, subscriptions, Redis clients — for a clean shutdown.
+ * Release what the subsystems hold — queues, SDK clients, subscriptions, database pools, Redis clients — for a clean
+ * shutdown.
  *
  * Every manager keeps its locations, and the process is marked as not booted: a later `bootstrap()` in the same
  * process (a test suite, a dev server reloading) registers everything again, so the memory locations get a fresh
@@ -114,6 +132,7 @@ export const shutdown = async (): Promise<void> => {
 		useQueue().close(),
 		useMail().close(),
 		useStorage().close(),
+		useDatabase().close(),
 		useBus().close(),
 		useKv().close(),
 		useCache().close(),

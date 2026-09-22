@@ -1,0 +1,210 @@
+/**
+ * Tests of `database-driver-sqlite/lib/driver`.
+ */
+import { mkdirSync } from 'node:fs';
+import { randDirectoryPath, randFileName } from '@ngneat/falso';
+import { useLogger } from '@novastarter/logger';
+import Database from 'better-sqlite3';
+import { sql } from 'drizzle-orm';
+import { type BetterSQLite3Database, drizzle } from 'drizzle-orm/better-sqlite3';
+import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { DatabaseDriverSqlite, MEMORY_FILE } from './driver.js';
+
+// A factory rather than an automock of `better-sqlite3`: automocking would load the native addon first
+vi.mock('better-sqlite3', () => ({
+	default: vi.fn(function () {
+		return { pragma: vi.fn(), close: vi.fn() };
+	}),
+}));
+
+vi.mock('node:fs');
+vi.mock('@novastarter/logger', () => ({ useLogger: vi.fn() }));
+vi.mock('drizzle-orm/better-sqlite3', () => ({ drizzle: vi.fn() }));
+vi.mock('drizzle-orm/better-sqlite3/migrator', () => ({ migrate: vi.fn() }));
+
+/**
+ * Random fixture regenerated before every test, so no test can depend on values another one left behind.
+ */
+let sample: {
+	directory: string;
+	file: string;
+	folder: string;
+	logger: { error: ReturnType<typeof vi.fn>; debug: ReturnType<typeof vi.fn> };
+	processLogger: { error: ReturnType<typeof vi.fn>; debug: ReturnType<typeof vi.fn> };
+	db: { run: ReturnType<typeof vi.fn> };
+};
+
+/**
+ * The handle the mocked `better-sqlite3` constructor answered with, for the driver built last.
+ */
+const lastHandle = () => vi.mocked(Database).mock.results.at(-1)!.value as { pragma: ReturnType<typeof vi.fn> };
+
+beforeEach(() => {
+	// 1. Fresh values per test; the file sits in a directory, so the directory creation has something to do
+	const directory = randDirectoryPath();
+
+	sample = {
+		directory,
+		file: `${directory}/${randFileName()}.db`,
+		folder: randDirectoryPath(),
+		logger: { error: vi.fn(), debug: vi.fn() },
+		processLogger: { error: vi.fn(), debug: vi.fn() },
+		db: { run: vi.fn() },
+	};
+
+	// 2. `drizzle` answers a bare object: only `run` is called, and the migrator is mocked whole
+	vi.mocked(drizzle).mockReturnValue(sample.db as unknown as BetterSQLite3Database & { $client: Database.Database });
+	vi.mocked(useLogger).mockReturnValue(sample.processLogger as never);
+});
+
+afterEach(() => {
+	// 1. Clear the call history, so a handle built in one test cannot be read by the next; the implementations stay,
+	//    since the `better-sqlite3` factory above is what every test constructs its handle with
+	vi.clearAllMocks();
+});
+
+describe('#constructor', () => {
+	test('Throws when the file is missing', () => {
+		// 1. Without one better-sqlite3 would open an anonymous database whose writes vanish at exit
+		expect(() => new DatabaseDriverSqlite({ file: '' })).toThrowErrorMatchingInlineSnapshot(
+			`[Error: The sqlite database driver needs a "file"]`,
+		);
+	});
+
+	test('Creates the directory and opens the file', () => {
+		const driver = new DatabaseDriverSqlite({ file: sample.file, logger: sample.logger as never });
+
+		// 1. The directory first, recursively, since better-sqlite3 cannot create it; then the file without options
+		expect(mkdirSync).toHaveBeenCalledExactlyOnceWith(sample.directory, { recursive: true });
+		expect(Database).toHaveBeenCalledExactlyOnceWith(sample.file);
+		expect(driver['database']).toBe(lastHandle());
+	});
+
+	test('Passes the open options through', () => {
+		const options = { readonly: true, timeout: 1000 };
+
+		new DatabaseDriverSqlite({ file: sample.file, options, logger: sample.logger as never });
+
+		expect(Database).toHaveBeenCalledExactlyOnceWith(sample.file, options);
+	});
+
+	test('Creates no directory for a database in memory', () => {
+		new DatabaseDriverSqlite({ file: MEMORY_FILE, logger: sample.logger as never });
+
+		expect(mkdirSync).not.toHaveBeenCalled();
+		expect(Database).toHaveBeenCalledExactlyOnceWith(MEMORY_FILE);
+	});
+
+	test('Turns foreign keys and WAL on for a file by default', () => {
+		new DatabaseDriverSqlite({ file: sample.file, logger: sample.logger as never });
+
+		expect(lastHandle().pragma).toHaveBeenCalledWith('foreign_keys = ON');
+		expect(lastHandle().pragma).toHaveBeenCalledWith('journal_mode = WAL');
+	});
+
+	test('Turns foreign keys on but not WAL for a database in memory', () => {
+		new DatabaseDriverSqlite({ file: MEMORY_FILE, logger: sample.logger as never });
+
+		expect(lastHandle().pragma).toHaveBeenCalledExactlyOnceWith('foreign_keys = ON');
+	});
+
+	test('Honours the pragma options either way', () => {
+		// 1. Both off for a file: no pragma at all
+		new DatabaseDriverSqlite({ file: sample.file, foreignKeys: false, wal: false, logger: sample.logger as never });
+
+		expect(lastHandle().pragma).not.toHaveBeenCalled();
+
+		// 2. WAL asked for in memory: the driver does what it is told
+		new DatabaseDriverSqlite({ file: MEMORY_FILE, wal: true, logger: sample.logger as never });
+
+		expect(lastHandle().pragma).toHaveBeenCalledWith('journal_mode = WAL');
+	});
+
+	test('Builds the Drizzle database over the handle with the schema and casing', () => {
+		const schema = { notes: {} };
+
+		const driver = new DatabaseDriverSqlite({
+			file: sample.file,
+			schema,
+			casing: 'snake_case',
+			logger: sample.logger as never,
+		});
+
+		// 1. Drizzle gets the handle and only the options that carry a value
+		expect(drizzle).toHaveBeenCalledExactlyOnceWith(driver['database'], { schema, casing: 'snake_case' });
+		expect(driver.db).toBe(sample.db);
+	});
+
+	test('Hands Drizzle a query logger on the process logger only when asked for', () => {
+		new DatabaseDriverSqlite({ file: sample.file });
+
+		// 1. Off by default: no logger key, so Drizzle makes no logger call per query
+		expect(vi.mocked(drizzle).mock.calls[0]![1]).toStrictEqual({});
+
+		new DatabaseDriverSqlite({ file: sample.file, queryLogging: true });
+
+		// 2. On, without a logger of its own: the query logger reports to the process logger
+		const options = vi.mocked(drizzle).mock.calls[1]![1]!;
+
+		(options.logger as { logQuery(query: string, params: unknown[]): void }).logQuery('select 1', []);
+
+		expect(sample.processLogger.debug).toHaveBeenCalledExactlyOnceWith(
+			{ query: 'select 1', params: [] },
+			'Database query',
+		);
+	});
+});
+
+describe('#ping', () => {
+	test('Runs select 1 through Drizzle', async () => {
+		const driver = new DatabaseDriverSqlite({ file: MEMORY_FILE, logger: sample.logger as never });
+
+		await driver.ping();
+
+		// 1. Through `db.run`, so the same path the application's statements take is what gets proven
+		expect(sample.db.run).toHaveBeenCalledExactlyOnceWith(sql`select 1`);
+	});
+
+	test('Rethrows what the statement raised', async () => {
+		const driver = new DatabaseDriverSqlite({ file: MEMORY_FILE, logger: sample.logger as never });
+		const error = new Error('database is locked');
+
+		sample.db.run.mockImplementation(() => {
+			throw error;
+		});
+
+		await expect(driver.ping()).rejects.toBe(error);
+	});
+});
+
+describe('#migrate', () => {
+	test('Runs the better-sqlite3 migrator over the folder', async () => {
+		const driver = new DatabaseDriverSqlite({ file: MEMORY_FILE, logger: sample.logger as never });
+
+		await driver.migrate({ migrationsFolder: sample.folder, migrationsTable: undefined });
+
+		// 1. The Drizzle database goes in as is, the options without their undefined keys
+		expect(migrate).toHaveBeenCalledExactlyOnceWith(sample.db, { migrationsFolder: sample.folder });
+	});
+
+	test('Refuses a missing folder before touching the database', async () => {
+		const driver = new DatabaseDriverSqlite({ file: MEMORY_FILE, logger: sample.logger as never });
+
+		await expect(driver.migrate({ migrationsFolder: '' })).rejects.toThrowErrorMatchingInlineSnapshot(
+			`[Error: DatabaseDriver.migrate needs a "migrationsFolder"]`,
+		);
+
+		expect(migrate).not.toHaveBeenCalled();
+	});
+});
+
+describe('#close', () => {
+	test('Closes the handle', async () => {
+		const driver = new DatabaseDriverSqlite({ file: MEMORY_FILE, logger: sample.logger as never });
+
+		await driver.close();
+
+		expect(driver['database'].close).toHaveBeenCalledOnce();
+	});
+});

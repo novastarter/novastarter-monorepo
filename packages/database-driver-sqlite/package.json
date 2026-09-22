@@ -1,0 +1,43 @@
+{
+	"name": "@novastarter/database-driver-sqlite",
+	"version": "0.0.1",
+	"description": "SQLite driver for `@novastarter/database` on better-sqlite3 and Drizzle ORM",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/novastarter/novastarter-monorepo.git",
+		"directory": "packages/database-driver-sqlite"
+	},
+	"sideEffects": false,
+	"type": "module",
+	"exports": {
+		".": "./dist/index.js",
+		"./package.json": "./package.json"
+	},
+	"main": "dist/index.js",
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsdown src/index.ts --dts",
+		"dev": "tsdown src/index.ts --dts --watch",
+		"check-types": "tsc --noEmit -p tsconfig.json",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage"
+	},
+	"dependencies": {
+		"@novastarter/database": "workspace:*",
+		"@novastarter/logger": "workspace:*",
+		"better-sqlite3": "catalog:",
+		"drizzle-orm": "catalog:"
+	},
+	"devDependencies": {
+		"@ngneat/falso": "catalog:",
+		"@novastarter/tsconfig": "workspace:*",
+		"@types/better-sqlite3": "catalog:",
+		"@types/node": "catalog:",
+		"@vitest/coverage-v8": "catalog:",
+		"tsdown": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	}
+}

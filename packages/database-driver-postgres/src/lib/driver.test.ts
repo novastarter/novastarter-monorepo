@@ -1,0 +1,218 @@
+/**
+ * Tests of `database-driver-postgres/lib/driver`.
+ */
+import { randDirectoryPath, randDomainName, randPassword, randUserName, randWord } from '@ngneat/falso';
+import { useLogger } from '@novastarter/logger';
+import { sql } from 'drizzle-orm';
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import { Pool } from 'pg';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { DatabaseDriverPostgres } from './driver.js';
+
+vi.mock('pg');
+vi.mock('@novastarter/logger', () => ({ useLogger: vi.fn() }));
+vi.mock('drizzle-orm/node-postgres', () => ({ drizzle: vi.fn() }));
+vi.mock('drizzle-orm/node-postgres/migrator', () => ({ migrate: vi.fn() }));
+
+/**
+ * Random fixture regenerated before every test, so no test can depend on values another one left behind.
+ */
+let sample: {
+	url: string;
+	folder: string;
+	logger: { error: ReturnType<typeof vi.fn>; debug: ReturnType<typeof vi.fn> };
+	processLogger: { error: ReturnType<typeof vi.fn>; debug: ReturnType<typeof vi.fn> };
+	db: { execute: ReturnType<typeof vi.fn> };
+};
+
+beforeEach(() => {
+	// 1. Fresh values per test; the URL is well-formed so the test reads like a real configuration
+	sample = {
+		url: `postgresql://${randUserName()}:${randPassword()}@${randDomainName()}:5432/${randWord()}`,
+		folder: randDirectoryPath(),
+		logger: { error: vi.fn(), debug: vi.fn() },
+		processLogger: { error: vi.fn(), debug: vi.fn() },
+		db: { execute: vi.fn() },
+	};
+
+	// 2. `drizzle` answers a bare object: only `execute` is called, and the migrator is mocked whole
+	vi.mocked(drizzle).mockReturnValue(sample.db as unknown as NodePgDatabase & { $client: Pool });
+	vi.mocked(useLogger).mockReturnValue(sample.processLogger as never);
+});
+
+afterEach(() => {
+	// 1. Reset call history and implementations, so a `mockReturnValue` set in one test cannot leak into the next
+	vi.resetAllMocks();
+});
+
+describe('#constructor', () => {
+	test('Throws when the connection is missing', () => {
+		// 1. Without one node-postgres would read its `PG*` variables and connect somewhere never configured
+		expect(() => new DatabaseDriverPostgres({ connection: '' })).toThrowErrorMatchingInlineSnapshot(
+			`[Error: The postgres database driver needs a "connection"]`,
+		);
+	});
+
+	test('Opens a pool of its own from a connection string', () => {
+		const driver = new DatabaseDriverPostgres({ connection: sample.url, logger: sample.logger as never });
+
+		// 1. The string becomes the pool's `connectionString`; the pool is the driver's, so it is closed by it
+		expect(Pool).toHaveBeenCalledExactlyOnceWith({ connectionString: sample.url });
+		expect(driver['pool']).toBe(vi.mocked(Pool).mock.instances[0]);
+		expect(driver['ownsPool']).toBe(true);
+	});
+
+	test('Opens a pool of its own from pool options', () => {
+		const options = { host: randDomainName(), database: randWord(), max: 4 };
+
+		new DatabaseDriverPostgres({ connection: options, logger: sample.logger as never });
+
+		// 1. Options go to node-postgres as they are
+		expect(Pool).toHaveBeenCalledExactlyOnceWith(options);
+	});
+
+	test('Uses a given pool as is and leaves it to the caller', () => {
+		// 1. A pool built before the driver: the driver must neither open another nor take this one over
+		const pool = new Pool();
+
+		const driver = new DatabaseDriverPostgres({ connection: pool, logger: sample.logger as never });
+
+		expect(Pool).toHaveBeenCalledOnce();
+		expect(driver['pool']).toBe(pool);
+		expect(driver['ownsPool']).toBe(false);
+		expect(pool.on).not.toHaveBeenCalled();
+	});
+
+	test('Reports the errors of its own pool to the logger instead of crashing the process', () => {
+		new DatabaseDriverPostgres({ connection: sample.url, logger: sample.logger as never });
+
+		// 1. The listener is on `error`, so an idle client's failure is no longer an unhandled event
+		const pool = vi.mocked(Pool).mock.instances[0]!;
+
+		expect(pool.on).toHaveBeenCalledExactlyOnceWith('error', expect.any(Function));
+
+		// 2. What the pool emits reaches the logger with the error first, as pino expects
+		const error = new Error('connection terminated');
+		const listener = vi.mocked(pool.on).mock.calls[0]![1] as (error: Error) => void;
+
+		listener(error);
+
+		expect(sample.logger.error).toHaveBeenCalledExactlyOnceWith(error, 'Postgres pool error');
+	});
+
+	test('Falls back to the process logger', () => {
+		new DatabaseDriverPostgres({ connection: sample.url });
+
+		const listener = vi.mocked(vi.mocked(Pool).mock.instances[0]!.on).mock.calls[0]![1] as (error: Error) => void;
+		const error = new Error('connection terminated');
+
+		listener(error);
+
+		expect(sample.processLogger.error).toHaveBeenCalledExactlyOnceWith(error, 'Postgres pool error');
+	});
+
+	test('Builds the Drizzle database over the pool with the schema and casing', () => {
+		const schema = { users: {} };
+
+		const driver = new DatabaseDriverPostgres({
+			connection: sample.url,
+			schema,
+			casing: 'snake_case',
+			logger: sample.logger as never,
+		});
+
+		// 1. Drizzle gets the pool and only the options that carry a value
+		expect(drizzle).toHaveBeenCalledExactlyOnceWith(driver['pool'], { schema, casing: 'snake_case' });
+		expect(driver.db).toBe(sample.db);
+	});
+
+	test('Hands Drizzle a query logger only when asked for', () => {
+		new DatabaseDriverPostgres({ connection: sample.url, logger: sample.logger as never });
+
+		// 1. Off by default: no logger key, so Drizzle makes no logger call per query
+		expect(vi.mocked(drizzle).mock.calls[0]![1]).toStrictEqual({});
+
+		new DatabaseDriverPostgres({ connection: sample.url, logger: sample.logger as never, queryLogging: true });
+
+		// 2. On: the query logger reports to the driver's logger
+		const options = vi.mocked(drizzle).mock.calls[1]![1]!;
+
+		(options.logger as { logQuery(query: string, params: unknown[]): void }).logQuery('select 1', []);
+
+		expect(sample.logger.debug).toHaveBeenCalledExactlyOnceWith({ query: 'select 1', params: [] }, 'Database query');
+	});
+});
+
+describe('#ping', () => {
+	test('Runs select 1 through Drizzle', async () => {
+		const driver = new DatabaseDriverPostgres({ connection: sample.url, logger: sample.logger as never });
+
+		await driver.ping();
+
+		// 1. Through `db.execute`, so the same path the application's queries take is what gets proven
+		expect(sample.db.execute).toHaveBeenCalledExactlyOnceWith(sql`select 1`);
+	});
+
+	test('Rethrows what the query raised', async () => {
+		const driver = new DatabaseDriverPostgres({ connection: sample.url, logger: sample.logger as never });
+		const error = new Error('connection refused');
+
+		sample.db.execute.mockRejectedValue(error);
+
+		await expect(driver.ping()).rejects.toBe(error);
+	});
+});
+
+describe('#migrate', () => {
+	test('Runs the node-postgres migrator over the folder', async () => {
+		const driver = new DatabaseDriverPostgres({ connection: sample.url, logger: sample.logger as never });
+
+		await driver.migrate({ migrationsFolder: sample.folder, migrationsTable: undefined });
+
+		// 1. The Drizzle database goes in as is, the options without their undefined keys
+		expect(migrate).toHaveBeenCalledExactlyOnceWith(sample.db, { migrationsFolder: sample.folder });
+	});
+
+	test('Forwards the journal table and schema', async () => {
+		const driver = new DatabaseDriverPostgres({ connection: sample.url, logger: sample.logger as never });
+
+		await driver.migrate({ migrationsFolder: sample.folder, migrationsTable: 'migrations', migrationsSchema: 'app' });
+
+		expect(migrate).toHaveBeenCalledExactlyOnceWith(sample.db, {
+			migrationsFolder: sample.folder,
+			migrationsTable: 'migrations',
+			migrationsSchema: 'app',
+		});
+	});
+
+	test('Refuses a missing folder before touching the database', async () => {
+		const driver = new DatabaseDriverPostgres({ connection: sample.url, logger: sample.logger as never });
+
+		await expect(driver.migrate({ migrationsFolder: '' })).rejects.toThrowErrorMatchingInlineSnapshot(
+			`[Error: DatabaseDriver.migrate needs a "migrationsFolder"]`,
+		);
+
+		expect(migrate).not.toHaveBeenCalled();
+	});
+});
+
+describe('#close', () => {
+	test('Ends a pool of its own', async () => {
+		const driver = new DatabaseDriverPostgres({ connection: sample.url, logger: sample.logger as never });
+
+		await driver.close();
+
+		expect(driver['pool'].end).toHaveBeenCalledOnce();
+	});
+
+	test('Leaves a given pool open for its owner', async () => {
+		// 1. The caller built the pool and may share it; ending it here would pull it from under them
+		const pool = new Pool();
+		const driver = new DatabaseDriverPostgres({ connection: pool, logger: sample.logger as never });
+
+		await driver.close();
+
+		expect(pool.end).not.toHaveBeenCalled();
+	});
+});

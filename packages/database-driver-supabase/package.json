@@ -1,0 +1,42 @@
+{
+	"name": "@novastarter/database-driver-supabase",
+	"version": "0.0.1",
+	"description": "Supabase Postgres driver for `@novastarter/database` on node-postgres and Drizzle ORM",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/novastarter/novastarter-monorepo.git",
+		"directory": "packages/database-driver-supabase"
+	},
+	"sideEffects": false,
+	"type": "module",
+	"exports": {
+		".": "./dist/index.js",
+		"./package.json": "./package.json"
+	},
+	"main": "dist/index.js",
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsdown src/index.ts --dts",
+		"dev": "tsdown src/index.ts --dts --watch",
+		"check-types": "tsc --noEmit -p tsconfig.json",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage"
+	},
+	"dependencies": {
+		"@novastarter/database": "workspace:*",
+		"@novastarter/database-driver-postgres": "workspace:*"
+	},
+	"devDependencies": {
+		"@ngneat/falso": "catalog:",
+		"@novastarter/tsconfig": "workspace:*",
+		"@types/node": "catalog:",
+		"@types/pg": "catalog:",
+		"@vitest/coverage-v8": "catalog:",
+		"drizzle-orm": "catalog:",
+		"tsdown": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	}
+}
