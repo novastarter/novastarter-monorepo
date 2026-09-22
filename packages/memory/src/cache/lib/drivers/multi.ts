@@ -188,13 +188,18 @@ export class CacheDriverMulti implements CacheDriver {
 	 *
 	 * @param key - Key to save.
 	 * @param value - Value to save. Can be any JavaScript primitive, plain object or array.
+	 * @throws Error when the cache was closed, or the subscription to other processes' invalidations cannot be made:
+	 * a write this process could not be told to invalidate is refused.
 	 */
 	async set(key: string, value: unknown): Promise<void> {
 		// 1. Subscribed first: a key written into L1 by a process that receives no invalidations would go stale unseen
 		await this.subscribe();
 
-		// 2. Write both levels in parallel; they are independent
-		await Promise.all([this.local.set(key, value), this.redis.set(key, value)]);
+		// 2. L2 first, L1 only once L2 took the value: written the other way round, a Redis that refuses the write
+		//    (read-only replica, out of memory, timeout) would leave this process serving a value from L1 that L2 and
+		//    every other process lack, with no invalidation ever published for it
+		await this.redis.set(key, value);
+		await this.local.set(key, value);
 
 		// 3. Tell other processes their L1 copy of this key is stale
 		await this.clearOthers(key);
@@ -204,13 +209,17 @@ export class CacheDriverMulti implements CacheDriver {
 	 * Remove the given key from both levels and from the L1 of other processes.
 	 *
 	 * @param key - Key to remove.
+	 * @throws Error when the cache was closed, or the subscription to other processes' invalidations cannot be made:
+	 * a write this process could not be told to invalidate is refused.
 	 */
 	async delete(key: string): Promise<void> {
 		// 1. Subscribed first, for the same reason as in `set`
 		await this.subscribe();
 
-		// 2. Delete from both levels in parallel
-		await Promise.all([this.local.delete(key), this.redis.delete(key)]);
+		// 2. L2 first, then L1, in the same order as `set`: a failed L2 delete leaves L1 as it was, which is a copy of
+		//    what L2 still holds
+		await this.redis.delete(key);
+		await this.local.delete(key);
 
 		// 3. Other processes drop the key from their L1 as well
 		await this.clearOthers(key);
@@ -245,13 +254,16 @@ export class CacheDriverMulti implements CacheDriver {
 
 	/**
 	 * Remove all keys from both levels and from the L1 of other processes.
+	 * @throws Error when the cache was closed, or the subscription to other processes' invalidations cannot be made:
+	 * a write this process could not be told to invalidate is refused.
 	 */
 	async clear(): Promise<void> {
 		// 1. Subscribed first, for the same reason as in `set`
 		await this.subscribe();
 
-		// 2. Clear both levels in parallel
-		await Promise.all([this.local.clear(), this.redis.clear()]);
+		// 2. L2 first, then L1, in the same order as `set`
+		await this.redis.clear();
+		await this.local.clear();
 
 		// 3. A message without a key means "drop everything"
 		await this.clearOthers();

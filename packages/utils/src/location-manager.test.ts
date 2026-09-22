@@ -40,15 +40,34 @@ class TestManager extends LocationManager<Handle, [config: string, extra?: numbe
 	 *
 	 * @param handle - A handle made by {@link TestManager.build}.
 	 */
-	protected async release(handle: Handle): Promise<void> {
-		// 1. A handle whose config says so refuses to close, for the tests of a failing shutdown
-		if (handle.config.endsWith('/refuses')) {
+	protected release(handle: Handle): Promise<void> {
+		// 1. A handle whose config says so throws before returning a promise, for the test of a synchronous failure
+		if (handle.config.endsWith('/throws')) {
+			throw new Error(`${handle.config} throws on close`);
+		}
+
+		return this.releaseAsync(handle);
+	}
+
+	/**
+	 * The asynchronous part of {@link TestManager.release}.
+	 *
+	 * @param handle - A handle made by {@link TestManager.build}.
+	 */
+	private async releaseAsync(handle: Handle): Promise<void> {
+		// 1. A handle whose config says so refuses to close at once, for the tests of a failing shutdown
+		if (handle.config.endsWith('/refuses') && !handle.config.includes('/slow')) {
 			throw new Error(`${handle.config} refuses to close`);
 		}
 
-		// 2. A handle whose config says so waits for the test to let it go, for the tests of a concurrent `location()`
-		if (handle.config.endsWith('/slow')) {
+		// 2. A handle whose config says so waits for the test to let it go, for the tests of a concurrent `location()`;
+		//    one that says both waits, then refuses
+		if (handle.config.includes('/slow')) {
 			await this.slowRelease;
+		}
+
+		if (handle.config.endsWith('/refuses')) {
+			throw new Error(`${handle.config} refuses to close`);
 		}
 
 		handle.released = true;
@@ -242,7 +261,7 @@ describe('#close', () => {
 		expect(manager.instantiated().size).toBe(0);
 	});
 
-	test('Joins a close() already under way instead of releasing the same instance twice', async () => {
+	test('Waits for a close() already under way instead of releasing twice, then releases what was built meanwhile', async () => {
 		const manager = new TestManager();
 		const releases = vi.spyOn(manager as never, 'release' as never);
 		let letGo!: () => void;
@@ -252,23 +271,71 @@ describe('#close', () => {
 		});
 
 		manager.registerLocation('slow', 'redis://a/slow');
+		manager.registerLocation('late', 'redis://b');
 		const slow = manager.location('slow');
 
-		// 1. Two overlapping calls, one release; both settle once it is done, and a later call starts a fresh run
+		// 1. Two overlapping calls: `slow` is released once, and `late`, built before the second call, is released
+		//    by that second call rather than left for a third. The second call settles only once the first run is done
 		const first = manager.close();
+		const late = manager.location('late');
 		const second = manager.close();
+		const secondSettled = vi.fn();
+		void second.then(secondSettled);
 
-		expect(second).toBe(first);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(secondSettled).not.toHaveBeenCalled();
+		expect(late.released).toBe(false);
 
 		letGo();
 		await Promise.all([first, second]);
 
-		expect(releases).toHaveBeenCalledTimes(1);
-		expect(slow.released).toBe(true);
-
-		manager.location('slow');
-		await manager.close();
 		expect(releases).toHaveBeenCalledTimes(2);
+		expect(slow.released).toBe(true);
+		expect(late.released).toBe(true);
+		expect(manager.instantiated().size).toBe(0);
+	});
+
+	test('Reports both failures when the joined run and its own run fail', async () => {
+		const manager = new TestManager();
+		let letGo!: () => void;
+
+		manager.slowRelease = new Promise<void>((resolve) => {
+			letGo = resolve;
+		});
+
+		// 1. `slow` refuses after waiting, `late` refuses at once; the second call sees both failures
+		manager.registerLocation('slow', 'redis://a/slow/refuses');
+		manager.registerLocation('late', 'redis://b/refuses');
+		manager.location('slow');
+
+		const first = manager.close();
+		manager.location('late');
+		const second = manager.close();
+
+		letGo();
+		await expect(first).rejects.toThrow('redis://a/slow/refuses refuses to close');
+
+		const error: unknown = await second.catch((thrown: unknown) => thrown);
+		expect(error).toBeInstanceOf(AggregateError);
+
+		expect((error as AggregateError).errors.map((e: Error) => e.message)).toEqual([
+			'redis://a/slow/refuses refuses to close',
+			'redis://b/refuses refuses to close',
+		]);
+	});
+
+	test('Releases every other instance when one release() throws before returning a promise', async () => {
+		const manager = new TestManager();
+
+		manager.registerLocation('ok', 'redis://ok');
+		manager.registerLocation('bad', 'redis://bad/throws');
+		const ok = manager.location('ok');
+		manager.location('bad');
+
+		// 1. The synchronous throw is a failure like a rejection: reported at the end, after `ok` was released
+		await expect(manager.close()).rejects.toThrow('redis://bad/throws throws on close');
+		expect(ok.released).toBe(true);
+		expect(manager.instantiated().size).toBe(0);
 	});
 
 	test('Throws an AggregateError when several instances refuse to close', async () => {

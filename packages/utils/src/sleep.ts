@@ -45,12 +45,14 @@ export const sleep = (ms: number, signal?: AbortSignal): Promise<void> => {
 		// 3. Arm the timer; on fire, the abort listener is dropped so a later abort of a long-lived signal finds
 		//    nothing to call
 		const timer = setTimeout(() => {
+			// 1. The wait is over: the listener goes first, so an abort arriving now finds nothing to reject
 			signal?.removeEventListener('abort', onAbort);
 			resolve();
 		}, ms);
 
 		// 4. On abort, clear the timer and reject with the signal's reason, so the caller sees why the wait ended
 		function onAbort(): void {
+			// 1. The timer goes first, so it cannot resolve a promise this rejection is about to settle
 			clearTimeout(timer);
 			reject(signal?.reason);
 		}

@@ -33,7 +33,7 @@ describe('publish', () => {
 		const mockPayload = { hello: 'world' };
 		const mockHandlers = [vi.fn(), vi.fn()];
 
-		bus['handlers'][mockChannel] = new Set(mockHandlers);
+		bus['handlers'].set(mockChannel, new Set(mockHandlers));
 
 		await bus.publish(mockChannel, mockPayload);
 
@@ -53,7 +53,7 @@ describe('publish', () => {
 			vi.fn(),
 		];
 
-		bus['handlers'][mockChannel] = new Set(mockHandlers);
+		bus['handlers'].set(mockChannel, new Set(mockHandlers));
 
 		await bus.publish(mockChannel, mockPayload);
 
@@ -75,9 +75,9 @@ describe('subscribe', () => {
 
 		await bus.subscribe(mockChannel, mockHandler);
 
-		expect(bus['handlers'][mockChannel]).toBeInstanceOf(Set);
-		expect(bus['handlers'][mockChannel]?.size).toBe(1);
-		expect(bus['handlers'][mockChannel]?.values().next().value).toBe(mockHandler);
+		expect(bus['handlers'].get(mockChannel)).toBeInstanceOf(Set);
+		expect(bus['handlers'].get(mockChannel)?.size).toBe(1);
+		expect(bus['handlers'].get(mockChannel)?.values().next().value).toBe(mockHandler);
 	});
 
 	test('Adds callback handler if set already exists', async () => {
@@ -85,14 +85,14 @@ describe('subscribe', () => {
 		const existingHandler = vi.fn();
 		const mockHandler = vi.fn();
 
-		bus['handlers'][mockChannel] = new Set([existingHandler]);
+		bus['handlers'].set(mockChannel, new Set([existingHandler]));
 
 		await bus.subscribe(mockChannel, mockHandler);
 
-		expect(bus['handlers'][mockChannel]).toBeInstanceOf(Set);
-		expect(bus['handlers'][mockChannel]?.size).toBe(2);
+		expect(bus['handlers'].get(mockChannel)).toBeInstanceOf(Set);
+		expect(bus['handlers'].get(mockChannel)?.size).toBe(2);
 
-		const handlers = Array.from(bus['handlers'][mockChannel]);
+		const handlers = Array.from(bus['handlers'].get(mockChannel)!);
 		expect(handlers[0]).toBe(existingHandler);
 		expect(handlers[1]).toBe(mockHandler);
 	});
@@ -111,14 +111,42 @@ describe('unsubscribe', () => {
 		const existingHandler = vi.fn();
 		const mockHandler = vi.fn();
 
-		bus['handlers'][mockChannel] = new Set([existingHandler, mockHandler]);
+		bus['handlers'].set(mockChannel, new Set([existingHandler, mockHandler]));
 
 		await bus.unsubscribe(mockChannel, mockHandler);
 
-		expect(bus['handlers'][mockChannel]).toBeInstanceOf(Set);
-		expect(bus['handlers'][mockChannel]?.size).toBe(1);
+		expect(bus['handlers'].get(mockChannel)).toBeInstanceOf(Set);
+		expect(bus['handlers'].get(mockChannel)?.size).toBe(1);
 
-		const handlers = Array.from(bus['handlers'][mockChannel]);
+		const handlers = Array.from(bus['handlers'].get(mockChannel)!);
 		expect(handlers[0]).toBe(existingHandler);
+	});
+});
+
+describe('payload', () => {
+	test("Hands subscribers a serialised copy, as the Redis bus would, not the publisher's object", async () => {
+		const handler = vi.fn();
+		const payload = { count: 1, at: new Date('2026-01-01T00:00:00.000Z'), missing: undefined };
+
+		await bus.subscribe('channel', handler);
+		await bus.publish('channel', payload);
+
+		// 1. A copy, and one that went through the wire format: the `Date` is a string, the `undefined` field is gone
+		expect(handler).toHaveBeenCalledOnce();
+		expect(handler.mock.calls[0]![0]).not.toBe(payload);
+		expect(handler.mock.calls[0]![0]).toStrictEqual({ count: 1, at: '2026-01-01T00:00:00.000Z' });
+	});
+});
+
+describe('channel names', () => {
+	test('Treats a channel named like an Object.prototype member as a channel', async () => {
+		// A plain object as the registry would answer `toString` with the inherited function instead of a set
+		const handler = vi.fn();
+
+		await bus.subscribe('toString', handler);
+		await bus.publish('toString', 'payload');
+		await bus.unsubscribe('toString', handler);
+
+		expect(handler).toHaveBeenCalledWith('payload');
 	});
 });

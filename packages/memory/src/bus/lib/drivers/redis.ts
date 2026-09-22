@@ -114,6 +114,17 @@ export class BusDriverRedis implements BusDriver {
 	private pending: Record<string, Promise<void>> = {};
 
 	/**
+	 * The handling of the messages received so far, one after the other.
+	 *
+	 * Decompressing is asynchronous, so a small plain message arriving right after a gzipped one would otherwise be
+	 * handed to the subscribers first; chaining every message onto the previous one keeps the order Redis sent them
+	 * in, which is what a subscriber to a stream of invalidations or log lines relies on.
+	 *
+	 * @internal
+	 */
+	private inbox: Promise<void> = Promise.resolve();
+
+	/**
 	 * Create the bus on top of an existing Redis connection.
 	 *
 	 * @param config - Redis configuration.
@@ -125,8 +136,13 @@ export class BusDriverRedis implements BusDriver {
 		this.pub = config.redis;
 		this.sub = config.redis.duplicate();
 
-		// 2. One listener for every channel; the binary event keeps compressed payloads intact
-		this.sub.on('messageBuffer', (channel, message) => this.messageBufferHandler(channel, message));
+		// 2. One listener for every channel; the binary event keeps compressed payloads intact, and every message is
+		//    handled after the one before it, so an asynchronous decompression cannot reorder the stream
+		this.sub.on('messageBuffer', (channel, message) => {
+			// 1. The handler never rejects, so the chain never breaks; the chain is kept, the promise of this message
+			//    is not needed by anyone
+			this.inbox = this.inbox.then(() => this.messageBufferHandler(channel, message));
+		});
 
 		// 3. Apply the documented defaults: compress, but only from 1 kB up
 		this.compression = config.compression ?? true;

@@ -94,8 +94,10 @@ useKv().registerDriver('memcached', KvDriverMemcached);
 
 A key-value store with `get`, `set`, `delete`, `has`, `increment` and `setMax` (store only a larger number; a Lua script
 on Redis) and locks (`acquireLock`, `usingLock`): in-process, one holder per key at a time, on the local backend;
-distributed through Redlock on Redis. Local options: `maxKeys`, `ttl`. Redis options: `redis`, `namespace`, `ttl`,
-`compression` (gzip values above `compressionMinSize`, on by default), `lockTimeout`.
+distributed through Redlock on Redis, under a namespace of their own (`<namespace>-locks`). Local options: `maxKeys`,
+`ttl`, `lockTimeout` (how long `acquireLock` waits for a busy key, 5 s). Redis options: `redis`, `namespace`, `ttl`,
+`compression` (gzip values above `compressionMinSize`, on by default), `lockTimeout` (how long a lock is held and about
+how long `acquireLock` waits for a busy one, 5 s; at least 200 ms).
 
 ## Cache
 

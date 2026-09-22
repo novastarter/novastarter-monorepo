@@ -68,8 +68,10 @@ test('Hands the arguments of the first call to the builder and refuses arguments
 	expect(build).toHaveBeenCalledOnce();
 	expect(build).toHaveBeenCalledWith({ name: 'first' });
 
-	// 2. A later call with arguments is refused rather than answered with an instance those arguments had no say in
+	// 2. A later call with arguments is refused rather than answered with an instance those arguments had no say in;
+	//    an explicit `undefined`, as a helper forwarding an optional parameter passes, carries none and is fine
 	expect(() => use({ name: 'second' })).toThrow('singleton: the instance exists already');
+	expect(use(undefined)).toBe(first);
 	expect(build).toHaveBeenCalledOnce();
 
 	// 3. A replaced instance counts as existing too; after a reset the arguments are taken again

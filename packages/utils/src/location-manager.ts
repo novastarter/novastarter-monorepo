@@ -142,21 +142,50 @@ export abstract class LocationManager<Instance, Config extends unknown[]> {
 	 * because a different one refused to close. The registrations stay, and the instances leave the registry before
 	 * their release starts: a location asked for after closing, or while the releases are still running, is built
 	 * afresh rather than answered with a closed or closing instance, and such an instance is kept for the next
-	 * `close()`. A `close()` that overlaps another joins it rather than releasing the same instances twice.
+	 * `close()`. A `close()` that overlaps another waits for it rather than releasing the same instances twice, then
+	 * releases what was built meanwhile, so every instance built before a `close()` call is released by that call.
 	 *
 	 * @returns Once every instance let go of what it held.
 	 * @throws What the one failing {@link LocationManager.release} threw, or an `AggregateError` of all of them when
 	 * several failed — after every instance was released and dropped, so a later `close()` releases nothing twice.
 	 */
-	close(): Promise<void> {
-		// 1. One release run at a time: a second `close()` while the first is under way answers with the same promise,
-		//    so no instance is released twice — a second `quit()` on a client would fail — and both callers learn how
-		//    the run ended. The field is cleared once it settles, so a later `close()` starts a fresh run
+	async close(): Promise<void> {
+		// 1. A release run under way is waited for, never doubled: releasing an instance twice — a second `quit()` on
+		//    a client — would fail. Its failure is kept for the end, so this caller learns of it too
+		let joined: { error: unknown } | undefined;
+
+		if (this.closing) {
+			try {
+				await this.closing;
+			} catch (error) {
+				joined = { error };
+			}
+		}
+
+		// 2. A run of this call's own, for whatever the registry holds now — nothing, most of the time, or the
+		//    instances a `location()` built while the joined run was releasing. The field is cleared once it settles,
+		//    so a later `close()` starts afresh
 		this.closing ??= this.releaseAll().finally(() => {
 			this.closing = undefined;
 		});
 
-		return this.closing;
+		let own: { error: unknown } | undefined;
+
+		try {
+			await this.closing;
+		} catch (error) {
+			own = { error };
+		}
+
+		// 3. The failures come out after every release is done, so nothing stays open because of them: the one as it
+		//    came, both together when the joined run and this call's own run failed
+		if (joined && own) {
+			throw new AggregateError([joined.error, own.error], 'Two close runs failed');
+		}
+
+		if (joined ?? own) {
+			throw (joined ?? own)?.error;
+		}
 	}
 
 	/**
@@ -174,8 +203,10 @@ export abstract class LocationManager<Instance, Config extends unknown[]> {
 		this.instances.clear();
 
 		// 2. Only the instances built so far hold anything; they release in parallel, each its own connections, and
-		//    every outcome is waited for, so one failure does not abandon the releases still running
-		const outcomes = await Promise.allSettled(released.map((instance) => this.release(instance)));
+		//    every outcome is waited for, so one failure does not abandon the releases still running. Each release
+		//    starts inside an async function, so a `release()` that throws before returning a promise is a rejection
+		//    like any other rather than an exception that would stop the others from being started
+		const outcomes = await Promise.allSettled(released.map(async (instance) => await this.release(instance)));
 
 		// 3. Report the failures once nothing is left open: the one error as it came, several as an `AggregateError`
 		const failures = outcomes.filter((outcome) => outcome.status === 'rejected').map((outcome) => outcome.reason);

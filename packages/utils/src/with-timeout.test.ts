@@ -1,6 +1,7 @@
 /**
  * Tests of `utils/withTimeout`: settles with the operation in time, gives up at the deadline or on abort, cleans up.
  */
+import { getEventListeners } from 'node:events';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { MAX_TIMER_DELAY } from './sleep.js';
 import { TimeoutError, withTimeout } from './with-timeout.js';
@@ -175,14 +176,18 @@ test('Resolves with a plain value a function operation answers with, clearing th
 	expect(vi.getTimerCount()).toBe(0);
 });
 
-test('Ignores an abort after the operation settled', async () => {
-	// 1. The abort listener is removed on settlement, so a late abort finds nothing to reject
+test('Removes its abort listener once the operation settled, so a shared signal keeps no reference', async () => {
+	// 1. The listener is there while the wait runs and gone on settlement, so a late abort finds nothing to reject
+	//    and a shutdown signal shared by many calls does not accumulate one listener per finished call
 	const controller = new AbortController();
 	const wait = withTimeout(resolveAfter(100, 'ok'), 1000, { signal: controller.signal });
+
+	expect(getEventListeners(controller.signal, 'abort')).toHaveLength(1);
 
 	await vi.advanceTimersByTimeAsync(100);
 	await expect(wait).resolves.toBe('ok');
 
+	expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
 	controller.abort();
 	expect(vi.getTimerCount()).toBe(0);
 });

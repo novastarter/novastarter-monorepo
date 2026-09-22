@@ -18,6 +18,7 @@ export class TimeoutError extends Error {
 	 * @param ms - The deadline that passed, in milliseconds.
 	 */
 	constructor(ms: number) {
+		// 1. The name matches the `DOMException` of `AbortSignal.timeout()`, so one `error.name` check covers both
 		super(`Timed out after ${ms} ms`);
 		this.name = 'TimeoutError';
 		this.ms = ms;
@@ -155,10 +156,12 @@ export const withTimeout = <T>(
 		//    a no-op on an already rejected promise
 		pending.then(
 			(value) => {
+				// 1. In time: the timer goes, the caller gets the value
 				cleanup();
 				resolve(value);
 			},
 			(cause: unknown) => {
+				// 1. Failed in time: the timer goes, the caller gets the operation's own error
 				cleanup();
 				reject(cause);
 			},

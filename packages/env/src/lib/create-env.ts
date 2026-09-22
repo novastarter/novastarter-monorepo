@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { toErrorMessage } from '@novastarter/utils';
 import { DEFAULTS } from '../constants/defaults.js';
 import type { Env } from '../types/env.js';
 import { getConfigPath } from '../utils/get-config-path.js';
@@ -33,7 +34,8 @@ export interface CreateEnvOptions {
  *
  * @param options - Which variables may come from a file.
  * @returns The configuration, cast prefixes applied.
- * @throws When a `_FILE` variable points to a file that cannot be read.
+ * @throws When a `_FILE` variable points to a file that cannot be read, or a value with a cast prefix cannot be read
+ * (`number:80O0`); the error names the variable.
  */
 export const createEnv = (options: CreateEnvOptions = {}): Env => {
 	const fileVariables = new Set(options.fileVariables ?? []);
@@ -72,8 +74,13 @@ export const createEnv = (options: CreateEnvOptions = {}): Env => {
 			}
 		}
 
-		// 7. A cast prefix on a source value is applied; everything else is kept as the source gave it
-		output[key] = cast(value);
+		// 7. A cast prefix on a source value is applied; everything else is kept as the source gave it. A payload the
+		//    prefix cannot read is reported with the variable's name, which the cast alone does not know
+		try {
+			output[key] = cast(value);
+		} catch (error) {
+			throw new Error(`Environment variable "${key}": ${toErrorMessage(error)}`, { cause: error });
+		}
 	}
 
 	return output;

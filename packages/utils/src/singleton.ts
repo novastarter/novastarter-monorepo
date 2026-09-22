@@ -83,8 +83,9 @@ export const singleton = <T, Args extends unknown[] = []>(build: (...args: Args)
 		}
 
 		// 2. Arguments after the build would change nothing: refusing them is what keeps a caller from believing its
-		//    options took effect
-		if (args.length > 0) {
+		//    options took effect. An explicit `undefined` — a helper forwarding an optional parameter it was not
+		//    given — carries no options and passes
+		if (args.some((arg) => arg !== undefined)) {
 			throw new Error('singleton: the instance exists already; arguments are only taken by the call that builds it');
 		}
 

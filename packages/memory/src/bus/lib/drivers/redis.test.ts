@@ -273,6 +273,33 @@ describe('close', () => {
 	});
 });
 
+describe('message order', () => {
+	test('Hands messages to the subscribers in the order Redis sent them, even when one needs decompressing', async () => {
+		// A gzipped message decompresses asynchronously; a plain one right behind it must not overtake it
+		const seen: unknown[] = [];
+		bus['handlers'] = { [mockNamespacedChannel]: new Set([(payload) => void seen.push(payload)]) };
+
+		vi.mocked(isCompressed).mockReturnValueOnce(true).mockReturnValueOnce(false);
+
+		vi.mocked(decompress).mockImplementationOnce(
+			() => new Promise((resolve) => setTimeout(() => resolve(mockDecompressedUint8Array), 5)),
+		);
+
+		vi.mocked(deserialize).mockReturnValueOnce('first').mockReturnValueOnce('second');
+
+		const listener = vi.mocked(mockSubRedis.on).mock.calls.find(([event]) => event === 'messageBuffer')![1] as (
+			channel: Buffer,
+			message: Buffer,
+		) => void;
+
+		listener(mockNamespacedChannelBuffer, mockBuffer);
+		listener(mockNamespacedChannelBuffer, mockBuffer);
+
+		await bus['inbox'];
+		expect(seen).toStrictEqual(['first', 'second']);
+	});
+});
+
 describe('#messageBufferHandler', () => {
 	test('Returns early if no handlers are registered for channel', async () => {
 		bus['handlers'] = {};

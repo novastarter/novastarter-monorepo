@@ -1,3 +1,4 @@
+import { MAX_TIMER_DELAY, withTimeout } from '@novastarter/utils';
 import { LRUCache } from 'lru-cache';
 import { deserialize, serialize } from '../../../utils/index.js';
 import type { KvDriver } from '../../driver.js';
@@ -16,6 +17,15 @@ export type KvDriverLocalConfig = {
 	 * Time-to-live: keys expire after this many milliseconds.
 	 */
 	ttl?: number | undefined;
+
+	/**
+	 * How long `acquireLock` waits for a busy key before giving up, in milliseconds — the same budget the Redis store
+	 * spends on its retries, so code that hangs on one backend fails on the other the same way. From `0` to what a
+	 * timer can hold (`MAX_TIMER_DELAY` of `@novastarter/utils`); anything else is refused at construction.
+	 *
+	 * @defaultValue 5000
+	 */
+	lockTimeout?: number | undefined;
 };
 
 /**
@@ -45,18 +55,28 @@ export class KvDriverLocal implements KvDriver {
 	private readonly store: LRUCache<string, Uint8Array, unknown> | Map<string, Uint8Array>;
 
 	/**
-	 * The tail of the queue of holders per locked key: what the next `acquireLock` of that key waits for.
+	 * Per locked key, the tail of the queue of holders — what the next `acquireLock` of that key waits for — and how
+	 * many callers hold or wait for it.
 	 *
-	 * A key is absent when nobody holds or waits for its lock.
+	 * The count is what decides when the entry goes: the last release or give-up on a key removes it, whatever
+	 * order the callers gave up in, so the map never grows with keys nobody locks any more.
 	 *
 	 * @internal
 	 */
-	private readonly locks: Map<string, Promise<void>> = new Map();
+	private readonly locks: Map<string, { tail: Promise<void>; callers: number }> = new Map();
+
+	/**
+	 * How long `acquireLock` waits for its turn before giving up, in milliseconds.
+	 *
+	 * @internal
+	 */
+	private readonly lockTimeout: number;
 
 	/**
 	 * Create the store with optional size and time limits.
 	 *
 	 * @param config - Local configuration.
+	 * @throws RangeError when `lockTimeout` is not between `0` and what a timer can hold.
 	 */
 	constructor(config: KvDriverLocalConfig = {}) {
 		// 1. `LRUCache` refuses to be constructed without `max` or `ttl`, so fall back to a plain `Map` when neither
@@ -78,6 +98,16 @@ export class KvDriverLocal implements KvDriver {
 			this.store = new LRUCache(options as any);
 		} else {
 			this.store = new Map();
+		}
+
+		// 3. The same wait budget as the Redis store's retries, so a busy key fails the same way on both backends; a
+		//    budget a timer cannot hold is refused here rather than failing every `acquireLock` later
+		this.lockTimeout = config.lockTimeout ?? 5000;
+
+		if (!(this.lockTimeout >= 0 && this.lockTimeout <= MAX_TIMER_DELAY)) {
+			throw new RangeError(
+				`KvDriverLocal: "lockTimeout" must be between 0 and ${MAX_TIMER_DELAY} ms, got ${config.lockTimeout}`,
+			);
 		}
 	}
 
@@ -196,35 +226,62 @@ export class KvDriverLocal implements KvDriver {
 	 *
 	 * In-process only: the holders it orders are the callers of this store, the way the Redis lock orders the
 	 * processes sharing a server. A lock never expires on its own — there is no other process to protect from a
-	 * crashed holder — so `extend` has nothing to do, and a holder that never releases blocks the key for good.
+	 * crashed holder — so `extend` has nothing to do; a caller waits `lockTimeout` for its turn and then gives up,
+	 * the way the Redis store gives up after its retries, so a holder that never releases fails the others loudly
+	 * instead of hanging them.
 	 *
 	 * @param key - Key to lock.
 	 * @returns Handle to release the lock; `extend` is a no-op.
+	 * @throws Error when the key is still held once `lockTimeout` passed.
 	 */
 	async acquireLock(key: string): Promise<Lock> {
-		// 1. Queue behind whoever holds or waits for the key; `released` is what the next caller will wait for
-		const previous = this.locks.get(key) ?? Promise.resolve();
+		// 1. Queue behind whoever holds or waits for the key; `released` is what the next caller will wait for, and
+		//    this caller counts as one more on the key until it releases or gives up
+		const entry = this.locks.get(key) ?? { tail: Promise.resolve(), callers: 0 };
+		const previous = entry.tail;
 		let release!: () => void;
 
 		const released = new Promise<void>((resolve) => {
 			release = resolve;
 		});
 
-		const turn = previous.then(() => released);
-		this.locks.set(key, turn);
+		entry.tail = previous.then(() => released);
+		entry.callers += 1;
+		this.locks.set(key, entry);
 
-		// 2. The lock is held once every earlier holder released
-		await previous;
+		// 2. Whether this caller releases or gives up, it lets the next one in and leaves the key; the entry goes with
+		//    the last caller, whatever order the callers left in
+		const leave = (): void => {
+			release();
+			entry.callers -= 1;
 
-		// 3. Releasing lets the next holder in; the key is forgotten when nobody queued behind, so the map does not
-		//    grow with every key ever locked
+			if (entry.callers === 0) {
+				this.locks.delete(key);
+			}
+		};
+
+		let left = false;
+
+		// 3. The lock is held once every earlier holder released — within the wait budget. A caller that gives up
+		//    resolves its own turn at once, so the ones queued behind it wait only for the holders before it; the turn
+		//    stays in the chain, since removing it would let the next caller skip the holder still in place
+		try {
+			await withTimeout(previous, this.lockTimeout, {
+				error: () => new Error(`Lock "${key}" was not acquired within ${this.lockTimeout} ms`),
+			});
+		} catch (error) {
+			leave();
+
+			throw error;
+		}
+
+		// 4. Releasing lets the next holder in
 		return {
 			release: async () => {
-				// 1. Let the next holder in, then forget the key when this was the last turn queued for it
-				release();
-
-				if (this.locks.get(key) === turn) {
-					this.locks.delete(key);
+				// 1. Once only: a second release must not let a further caller in or count the holder out twice
+				if (!left) {
+					left = true;
+					leave();
 				}
 			},
 			extend: async () => {},
@@ -239,6 +296,7 @@ export class KvDriverLocal implements KvDriver {
 	 * @param key - Key to lock.
 	 * @param callback - Work to run under the lock.
 	 * @returns Whatever the callback resolves to.
+	 * @throws Error when the key is still held once `lockTimeout` passed; whatever the callback throws.
 	 */
 	async usingLock<T>(key: string, callback: () => Promise<T>): Promise<T> {
 		// 1. Take the lock, run, and release whatever happened, so a throwing callback does not block the key for good

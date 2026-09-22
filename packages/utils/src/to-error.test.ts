@@ -40,3 +40,15 @@ test('Wraps an object without a prototype instead of throwing', () => {
 	expect(toError(bare).message).toBe('[object Object]');
 	expect(toError(bare).cause).toBe(bare);
 });
+
+test('Never throws, even for a revoked Proxy, and wraps it', () => {
+	// 1. `instanceof` on a revoked Proxy throws; the helper wraps the value instead, so a `catch` clause can rely on it
+	const revocable = Proxy.revocable({}, {});
+	revocable.revoke();
+
+	const error = toError(revocable.proxy);
+
+	expect(error).toBeInstanceOf(Error);
+	expect(error.message).toBe('[unreadable value]');
+	expect(error.cause).toBe(revocable.proxy);
+});

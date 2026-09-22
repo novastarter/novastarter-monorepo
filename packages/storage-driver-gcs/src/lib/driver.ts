@@ -1,5 +1,5 @@
-import { type Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { PassThrough, pipeline, type Readable } from 'node:stream';
+import { pipeline as pipelinePromise } from 'node:stream/promises';
 import type {
 	Bucket,
 	CreateReadStreamOptions,
@@ -14,9 +14,11 @@ import {
 	type ReadOptions,
 	type Stat,
 	StorageFileNotFoundError,
+	toListPrefix,
+	toRelativePath,
 	type TusDriver,
 } from '@novastarter/storage';
-import { joinPath, normalizePath } from '@novastarter/utils';
+import { confinePath, joinPath } from '@novastarter/utils';
 
 /**
  * Smallest chunk size GCS accepts for a resumable upload: 256 KiB, `262_144` bytes.
@@ -129,7 +131,9 @@ export class StorageDriverGcs implements TusDriver {
 
 		// 2. Normalise the root once without a leading slash: object names are not paths, and a leading `/` would become
 		//    part of the name and produce objects nobody can find by the expected key
-		this.root = root ? normalizePath(root, { removeLeading: true }) : '';
+		//    `confinePath` also resolves `.` and `..` in the root, the way every key is resolved, so a root of `./media`
+		//    strips from listed keys as `media` does, and a root of `/` means the top of the bucket
+		this.root = root ? confinePath(root) : '';
 
 		// 3. Only the options that were given reach the client: an explicit `undefined` is not the same as an absent key
 		//    to the SDK's option types
@@ -164,9 +168,10 @@ export class StorageDriverGcs implements TusDriver {
 	 * @internal
 	 */
 	private fullPath(filepath: string) {
-		// 1. `joinPath` copes with an empty root and doubled slashes and always produces the forward slashes object
-		//    names use, whatever the platform's separator
-		return joinPath(this.root, filepath);
+		// 1. Pin the caller path under the root before joining: resolved against `/` first, a leading `..` has nothing
+		//    to climb and is dropped by `confinePath`, so `../other/secret` cannot address an object outside the location. `joinPath`
+		//    copes with an empty root and doubled slashes and always produces the forward slashes object names use
+		return joinPath(this.root, confinePath(filepath));
 	}
 
 	/**
@@ -184,6 +189,10 @@ export class StorageDriverGcs implements TusDriver {
 	/**
 	 * Stream an object's contents.
 	 *
+	 * The SDK opens the object lazily, when the stream is first read, so a missing object is not known when this call
+	 * answers: the stream errors instead, with the `StorageFileNotFoundError` every backend shares for a 404 and the
+	 * SDK's error otherwise.
+	 *
 	 * @param filepath - Object path relative to the root.
 	 * @param options - Optional byte range; `version` is not supported by this driver and is ignored.
 	 * @returns A readable stream of the object body.
@@ -199,7 +208,25 @@ export class StorageDriverGcs implements TusDriver {
 		if (range?.start !== undefined) streamOptions.start = range.start;
 		if (range?.end !== undefined) streamOptions.end = range.end;
 
-		return this.file(this.fullPath(filepath)).createReadStream(streamOptions);
+		// 2. The SDK's stream reports a missing object as a 404 error event once read; that event is translated into
+		//    the error every backend shares on the stream handed out, so a consumer tells a missing object from a
+		//    failed read the same way it does with the other drivers. The two are tied with `pipeline`, not `pipe`:
+		//    a consumer that destroys the stream it was handed — a client gone mid-download — then destroys the SDK's
+		//    stream and its HTTP response too, where `pipe` would only pause it and leave the socket open
+		const source = this.file(this.fullPath(filepath)).createReadStream(streamOptions);
+		const output = new PassThrough();
+
+		source.on('error', (error: Error & { code?: number }) => {
+			// 1. Only a 404 is translated; everything else passes through as the SDK reported it. Registered before
+			//    `pipeline` adds its own handler, so the translated error is the one the consumer sees
+			output.destroy(error.code === 404 ? new StorageFileNotFoundError({ filepath }, { cause: error }) : error);
+		});
+
+		pipeline(source, output, () => {
+			// 1. The outcome already reached the consumer through `output`; nothing is left to report here
+		});
+
+		return output;
 	}
 
 	/**
@@ -216,7 +243,7 @@ export class StorageDriverGcs implements TusDriver {
 		const stream = file.createWriteStream({ resumable: false });
 
 		// 2. `pipeline` propagates errors from either side and closes both streams, unlike a bare `pipe`
-		await pipeline(content, stream);
+		await pipelinePromise(content, stream);
 	}
 
 	/**
@@ -235,7 +262,8 @@ export class StorageDriverGcs implements TusDriver {
 	 *
 	 * @param filepath - Object path relative to the root.
 	 * @returns Size in bytes and modification date.
-	 * @throws The SDK error when the object is missing or the request fails.
+	 * @throws StorageFileNotFoundError when the object is missing.
+	 * @throws The SDK error for any other failure, such as denied credentials or a timeout.
 	 */
 	async stat(filepath: string): Promise<Stat> {
 		let metadata: FileMetadata;
@@ -252,9 +280,9 @@ export class StorageDriverGcs implements TusDriver {
 			throw error;
 		}
 
-		// 2. The SDK types `size` as `string | number` and `updated` as a string; GCS returns an ISO timestamp, so it is
-		//    converted into the `Date` the storage contract expects
-		return { size: metadata.size as number, modified: new Date(metadata.updated as string) };
+		// 2. The SDK types `size` as `string | number` and the JSON API sends a string, so it is converted into the
+		//    number the storage contract expects; `updated` is an ISO timestamp, converted into the `Date` it expects
+		return { size: Number(metadata.size), modified: new Date(metadata.updated as string) };
 	}
 
 	/**
@@ -302,7 +330,7 @@ export class StorageDriverGcs implements TusDriver {
 		// 1. Manual pagination in pages of 500: with `autoPaginate` the SDK would buffer the whole listing in memory
 		//    before returning, while yielding per page keeps memory flat for large buckets
 		let query: GetFilesOptions = {
-			prefix: this.fullPath(prefix),
+			prefix: toListPrefix(this.fullPath(prefix), prefix),
 			autoPaginate: false,
 			maxResults: 500,
 		};
@@ -311,9 +339,9 @@ export class StorageDriverGcs implements TusDriver {
 		while (query) {
 			const [files, nextQuery] = await this.bucket.getFiles(query);
 
-			// 3. Strip the root, so callers get paths in the form they pass in
+			// 3. Strip the root and its slash, so callers get paths in the form they pass in
 			for (const file of files) {
-				yield file.name.substring(this.root.length);
+				yield toRelativePath(this.root, file.name);
 			}
 
 			query = nextQuery as GetFilesOptions;
@@ -390,7 +418,7 @@ export class StorageDriverGcs implements TusDriver {
 			bytesUploaded += chunk.length;
 		});
 
-		await pipeline(content, stream);
+		await pipelinePromise(content, stream);
 
 		return bytesUploaded;
 	}

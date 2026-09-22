@@ -22,6 +22,7 @@ import { isReadableStream, processId, requireYaml } from '@novastarter/utils/nod
 | `getSimpleHash(str)`            | shared | Short, stable hex digest of a string for keys and ids — not cryptographic.                                            |
 | `isIn(value, tuple)`            | shared | Whether a string is a member of a readonly tuple, narrowing its type.                                                 |
 | `joinPath(...segments)`         | shared | `path.posix.join` without Node: forward slashes, `.` and `..` resolved; see below.                                    |
+| `confinePath(path)`             | shared | A caller path resolved as if rooted and made relative, so `..` cannot climb above the root it joins.                  |
 | `normalizePath(path)`           | shared | Forward-slash form of a path, repeated separators collapsed, trailing one dropped.                                    |
 | `parseJSON(text)`               | shared | `JSON.parse` that drops `__proto__` keys, so untrusted input cannot pollute prototypes.                               |
 | `retry(fn, options?)`           | shared | Run an operation again with a pause between attempts until it succeeds; see below.                                    |

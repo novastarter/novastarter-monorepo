@@ -72,6 +72,17 @@ describe('parseJSON', () => {
 	});
 });
 
+describe('parseJSON with escaped keys', () => {
+	it('drops a __proto__ key spelled with unicode escapes as well', () => {
+		// 1. `JSON.parse` resolves `\u005f` to `_` before the reviver sees the key; a substring check on the raw text
+		//    alone would take the fast path and leave an own `__proto__` property behind
+		const parsed = parseJSON('{"\\u005f_proto__": {"admin": true}, "name": "x"}');
+
+		expect(Object.hasOwn(parsed, '__proto__')).toBe(false);
+		expect(parsed).toStrictEqual({ name: 'x' });
+	});
+});
+
 describe('noproto', () => {
 	it('returns value for non-__proto__ keys', () => {
 		expect(noproto('key', 'value')).toBe('value');

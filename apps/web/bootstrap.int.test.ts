@@ -1,6 +1,7 @@
 /**
  * Integration test of the app bootstrap on the in-process drivers: the configuration under `config/` is registered
- * on the real managers and a job goes through the real queue.
+ * on the real managers and a job goes through the real queue. No service is needed — every driver is the in-process
+ * one — so the suite always runs.
  */
 import { useMail } from '@novastarter/mail';
 import { useBus, useCache, useKv, useLimiter } from '@novastarter/memory';
@@ -13,6 +14,7 @@ import { readEnv } from './env';
 
 afterEach(() => {
 	_state.booted = false;
+	_state.handlers = false;
 	readEnv.reset();
 	useQueue.reset();
 	useRedis.reset();
@@ -59,6 +61,8 @@ test('Registers every subsystem in-process without a Redis and runs a job end to
 });
 
 test('Boots once per process', () => {
+	// In-process drivers only: a `REDIS` set in the shell must not make this boot open a real client
+	vi.stubEnv('REDIS', '');
 	bootstrap();
 
 	const first = useQueue();
@@ -87,4 +91,46 @@ test('Shuts every manager down, leaving the registrations for a later boot', asy
 	expect(useKv().instantiated().size).toBe(0);
 	expect(useMail().hasLocation('default')).toBe(true);
 	expect(useStorage().hasLocation('default')).toBe(true);
+
+	// 3. Not booted any more: the next `bootstrap()` registers the locations afresh instead of being a no-op over
+	//    quit clients, and keeps the job handlers it registered the first time
+	expect(_state.booted).toBe(false);
+	bootstrap();
+	expect(_state.booted).toBe(true);
+	expect(_handlers.has('mail.send')).toBe(true);
+});
+
+test('Closes every manager and the Redis clients even when one refuses, then reports the refusal', async () => {
+	vi.stubEnv('REDIS', '');
+	bootstrap();
+
+	// 1. The mail manager refuses to close; the Redis clients, which close after the managers, and the un-boot must
+	//    not be skipped because of it — under a `Promise.all` they would be
+	const refusal = new Error('mail refuses');
+	vi.spyOn(useMail(), 'close').mockRejectedValue(refusal);
+	const redisClose = vi.spyOn(useRedis(), 'close');
+
+	await expect(shutdown()).rejects.toBe(refusal);
+	expect(redisClose).toHaveBeenCalledOnce();
+	expect(_state.booted).toBe(false);
+});
+
+test('Reports several refusals together', async () => {
+	vi.stubEnv('REDIS', '');
+	bootstrap();
+
+	vi.spyOn(useMail(), 'close').mockRejectedValue(new Error('mail refuses'));
+	vi.spyOn(useStorage(), 'close').mockRejectedValue(new Error('storage refuses'));
+
+	// 1. Two refusals make one `AggregateError`, so neither is lost
+	const error: unknown = await shutdown().catch((thrown: unknown) => thrown);
+
+	expect(error).toBeInstanceOf(AggregateError);
+
+	expect((error as AggregateError).errors.map((e: Error) => e.message).sort()).toEqual([
+		'mail refuses',
+		'storage refuses',
+	]);
+
+	expect(_state.booted).toBe(false);
 });

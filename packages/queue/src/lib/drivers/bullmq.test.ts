@@ -83,6 +83,19 @@ describe('toJobsOptions', () => {
 });
 
 describe('QueueDriverBullmq', () => {
+	test('close() waits for a queue still opening, so it is closed rather than left behind', async () => {
+		// The first use awaits the `bullmq` import; a close racing it must not resolve before that queue exists
+		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as any });
+
+		const enqueued = driver.enqueue(contract, { value: 'a' }, contract.options, 'id-1');
+		await driver.close();
+		await enqueued;
+
+		expect(FakeQueue.instances).toHaveLength(1);
+		expect(FakeQueue.instances[0]!.close).toHaveBeenCalledOnce();
+		expect(driver['queues'].size).toBe(0);
+	});
+
 	test('Opens one queue per name, adds the job under its action and closes them all', async () => {
 		const telemetry = { tracer: {}, contextManager: {} };
 
@@ -97,8 +110,11 @@ describe('QueueDriverBullmq', () => {
 		expect(createRedis).toHaveBeenCalledWith({ host: 'redis' }, { maxRetriesPerRequest: null });
 		expect(driver.connection).toMatchObject({ config: { host: 'redis' } });
 
-		const first = await driver.enqueue(contract, { value: 'a' }, contract.options, 'id-1');
-		const second = await driver.enqueue(contract, { value: 'b' }, { ...contract.options, delay: 50 });
+		// 2. Two first uses in the same tick share one opening: BullMQ's `Queue` is built once, not once per call
+		const [first, second] = await Promise.all([
+			driver.enqueue(contract, { value: 'a' }, contract.options, 'id-1'),
+			driver.enqueue(contract, { value: 'b' }, { ...contract.options, delay: 50 }),
+		]);
 
 		expect(first).toStrictEqual({ id: 'id-1', name: 'test.echo', queue: 'test' });
 		expect(second).toStrictEqual({ id: 'generated', name: 'test.echo', queue: 'test' });

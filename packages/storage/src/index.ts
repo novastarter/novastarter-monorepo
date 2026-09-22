@@ -8,6 +8,7 @@
  */
 export * from './driver.js';
 export * from './errors/index.js';
+export * from './lib/keys.js';
 export * from './lib/storage-manager.js';
 export * from './lib/supports-tus.js';
 export * from './lib/use-storage.js';

@@ -434,10 +434,20 @@ describe('acquireLock', () => {
 
 		kv['redlock'].acquire = vi.fn().mockResolvedValue(mockLock);
 
+		kv['redlock'].release = vi.fn(async (held: unknown) => {
+			await (held as { release: () => Promise<void> }).release();
+			return { attempts: [], start: 0 };
+		}) as never;
+
 		const lock = await kv.acquireLock(mockKey);
+		expect(withNamespace).toHaveBeenCalledWith(mockKey, `${mockNamespace}-locks`);
 		expect(kv['redlock'].acquire).toHaveBeenCalledWith([mockNamespacedKey], 5000);
 
+		// The release goes through Redlock without retries: a lock already gone must not be retried for 5 s; and it
+		// goes once, a second release of the handle is a no-op like the local store's
 		await lock.release();
+		await lock.release();
+		expect(kv['redlock'].release).toHaveBeenCalledExactlyOnceWith(mockLock, { retryCount: 0 });
 		expect(innerReleased).toBe(true);
 
 		await lock.extend(100);
@@ -451,6 +461,7 @@ describe('acquireLock', () => {
 		const first = { release: vi.fn(async () => {}), extend: vi.fn(async () => second) };
 
 		kv['redlock'].acquire = vi.fn().mockResolvedValue(first);
+		kv['redlock'].release = vi.fn(async () => ({ attempts: [], start: 0 })) as never;
 
 		const lock = await kv.acquireLock(mockKey);
 
@@ -460,8 +471,7 @@ describe('acquireLock', () => {
 
 		expect(first.extend).toHaveBeenCalledExactlyOnceWith(100);
 		expect(second.extend).toHaveBeenCalledExactlyOnceWith(200);
-		expect(third.release).toHaveBeenCalledOnce();
-		expect(first.release).not.toHaveBeenCalled();
+		expect(kv['redlock'].release).toHaveBeenCalledWith(third, { retryCount: 0 });
 	});
 });
 
@@ -471,6 +481,40 @@ describe('usingLock', () => {
 		kv['redlock'].using = vi.fn();
 
 		await kv.usingLock(mockKey, callback);
+		expect(withNamespace).toHaveBeenCalledWith(mockKey, `${mockNamespace}-locks`);
 		expect(kv['redlock'].using).toHaveBeenCalledWith([mockNamespacedKey], 5000, callback);
+	});
+});
+
+describe('redlock settings', () => {
+	test('Follows the client into its database and keeps the extension threshold below the lock timeout', () => {
+		// Redlock runs `SELECT` on the database it is told, 0 unless told; and `using` refuses a duration less than
+		// 100 ms above the auto-extension threshold, so a short lock timeout lowers the threshold
+		const inDb2 = new Redis();
+		(inDb2 as { options: { db?: number } }).options = { db: 2 };
+
+		const short = new KvDriverRedis({ namespace: mockNamespace, redis: inDb2, lockTimeout: 300 });
+
+		expect(short['redlock'].settings).toMatchObject({ db: 2, automaticExtensionThreshold: 200, retryCount: 6 });
+		expect(kv['redlock'].settings).toMatchObject({ db: 0, automaticExtensionThreshold: 500, retryCount: 100 });
+	});
+
+	test('Refuses a lock timeout under 200 ms or past a timer, and a client on a database Redlock cannot lock in', () => {
+		expect(() => new KvDriverRedis({ namespace: mockNamespace, redis: mockRedis, lockTimeout: 199 })).toThrow(
+			RangeError,
+		);
+
+		expect(() => new KvDriverRedis({ namespace: mockNamespace, redis: mockRedis, lockTimeout: Infinity })).toThrow(
+			RangeError,
+		);
+
+		expect(() => new KvDriverRedis({ namespace: mockNamespace, redis: mockRedis, lockTimeout: 200 })).not.toThrow();
+
+		const inDb16 = new Redis();
+		(inDb16 as { options: { db?: number } }).options = { db: 16 };
+
+		expect(() => new KvDriverRedis({ namespace: mockNamespace, redis: inDb16 })).toThrow(
+			'Redlock can only lock in databases 0 to 15',
+		);
 	});
 });

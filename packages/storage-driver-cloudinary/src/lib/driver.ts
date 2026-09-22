@@ -7,9 +7,11 @@ import {
 	type ReadOptions,
 	type Stat,
 	StorageFileNotFoundError,
+	toListPrefix,
+	toRelativePath,
 	type TusDriver,
 } from '@novastarter/storage';
-import { joinPath, normalizePath } from '@novastarter/utils';
+import { confinePath, joinPath, normalizePath } from '@novastarter/utils';
 import PQueue from 'p-queue';
 import type { RequestInit } from 'undici';
 import { fetch, FormData } from 'undici';
@@ -135,7 +137,9 @@ export class StorageDriverCloudinary implements TusDriver {
 
 		// 2. Normalise the root once without a leading slash: Cloudinary public ids are not paths, and a leading `/`
 		//    would become part of the id and produce assets nobody can find by the expected key
-		this.root = config.root ? normalizePath(config.root, { removeLeading: true }) : '';
+		//    `confinePath` also resolves `.` and `..` in the root, the way every key is resolved, so a root of `./media`
+		//    strips from listed keys as `media` does, and a root of `/` means the top of the bucket
+		this.root = config.root ? confinePath(config.root) : '';
 		this.apiKey = config.apiKey;
 		this.apiSecret = config.apiSecret;
 		this.cloudName = config.cloudName;
@@ -156,9 +160,10 @@ export class StorageDriverCloudinary implements TusDriver {
 	 * @internal
 	 */
 	private fullPath(filepath: string) {
-		// 1. Strip the leading slash again after joining: `joinPath` keeps one when the root is empty and the path
-		//    starts with `/`, and Cloudinary would treat it as part of the public id
-		return normalizePath(joinPath(this.root, filepath), { removeLeading: true });
+		// 1. Confine the caller path under the root before joining: a leading `..` is dropped, so `../other/secret`
+		//    cannot address a public id outside the location. The result is relative, so an empty root leaves no
+		//    leading slash for Cloudinary to take as part of the public id
+		return joinPath(this.root, confinePath(filepath));
 	}
 
 	/**
@@ -289,6 +294,8 @@ export class StorageDriverCloudinary implements TusDriver {
 	 * @param options - Optional byte range and Cloudinary version number.
 	 * @returns The response body as a Node stream.
 	 * @throws Error when the response is an error status or carries no body.
+	 * @throws StorageFileNotFoundError when Cloudinary answers 404.
+	 * @throws Error for any other error status or a missing body.
 	 */
 	async read(filepath: string, options?: ReadOptions): Promise<Readable> {
 		const { range, version } = options ?? {};
@@ -309,20 +316,24 @@ export class StorageDriverCloudinary implements TusDriver {
 
 		const requestInit: RequestInit = { method: 'GET' };
 
-		// 3. Translate the range into the HTTP header form: an omitted bound becomes an empty side, so `end` alone
-		//    yields `bytes=-N`, which the server reads as the last N bytes rather than the first
+		// 3. Translate the range into the HTTP header form: an omitted start is `0` — `{ end }` alone asks for the
+		//    first bytes up to `end`, where `bytes=-N` would mean the last N bytes — and an omitted end is left open
 		if (range) {
 			requestInit.headers = {
-				Range: `bytes=${range.start ?? ''}-${range.end ?? ''}`,
+				Range: `bytes=${range.start ?? 0}-${range.end ?? ''}`,
 			};
 		}
 
 		const response = await fetch(url, requestInit);
 
 		// 4. An error status or a missing body means there is nothing to stream; the body is cancelled first because
-		//    an unread body holds its connection open
+		//    an unread body holds its connection open; a 404 becomes the error every backend shares
 		if (response.status >= 400 || !response.body) {
 			await response.body?.cancel();
+
+			if (response.status === 404) {
+				throw new StorageFileNotFoundError({ filepath });
+			}
 
 			throw new Error(`No stream returned for file "${filepath}"`);
 		}
@@ -657,6 +668,7 @@ export class StorageDriverCloudinary implements TusDriver {
 	 * Remove an asset.
 	 *
 	 * @param filepath - Asset path relative to the root.
+	 * @throws Error carrying Cloudinary's message when the request fails.
 	 */
 	async delete(filepath: string): Promise<void> {
 		const fullPath = this.fullPath(filepath);
@@ -676,8 +688,10 @@ export class StorageDriverCloudinary implements TusDriver {
 
 		const signature = this.getFullSignature(parameters);
 
-		// 2. The response is not checked: a missing asset is treated as already deleted, matching the other drivers
-		await fetch(url, {
+		// 2. A missing asset is reported by Cloudinary as `200` with `result: 'not found'`, so it reads as already deleted,
+		//    as it does on the other drivers; an error status — a rotated secret, a rate limit, a 5xx — is a delete that did
+		//    not happen and is thrown, the way every other driver rejects a failed delete
+		const response = await fetch(url, {
 			method: 'POST',
 			body: toFormUrlEncoded({
 				...parameters,
@@ -687,6 +701,11 @@ export class StorageDriverCloudinary implements TusDriver {
 				'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
 			},
 		});
+
+		if (response.status >= 400) {
+			const json = (await response.json().catch(() => ({}))) as { error?: { message?: string } };
+			throw new Error(`Error deleting file "${filepath}": ${json.error?.message ?? `HTTP ${response.status}`}`);
+		}
 	}
 
 	/**
@@ -697,11 +716,13 @@ export class StorageDriverCloudinary implements TusDriver {
 	 * @throws Error carrying Cloudinary's message when the search fails.
 	 */
 	async *list(prefix = ''): AsyncGenerator<string, void, unknown> {
-		const fullPath = this.fullPath(prefix);
+		// 1. The whole root, or a caller folder, is searched with its trailing slash, so `media` does not match
+		//    `media-archive/…`
+		const fullPath = toListPrefix(this.fullPath(prefix), prefix);
 
 		let nextCursor = '';
 
-		// 1. The search API pages with a cursor; an empty cursor on the first call asks for the first page
+		// 2. The search API pages with a cursor; an empty cursor on the first call asks for the first page
 		do {
 			const response = await fetch(
 				`https://api.cloudinary.com/v1_1/${this.cloudName}/resources/search?expression=${fullPath}*&next_cursor=${nextCursor}`,
@@ -723,18 +744,19 @@ export class StorageDriverCloudinary implements TusDriver {
 				}[];
 			};
 
-			// 2. Cloudinary explains a failed search in the JSON body; pass the message on with the prefix
+			// 3. Cloudinary explains a failed search in the JSON body already read above — a body can be read once;
+			//    pass the message on with the prefix
 			if (response.status >= 400) {
-				const responseData = (await response.json()) as { error?: { message?: string } };
+				const responseData = json as unknown as { error?: { message?: string } };
 				throw new Error(`Can't list for prefix "${prefix}": ${responseData?.error?.message ?? 'Unknown'}`);
 			}
 
 			nextCursor = json.next_cursor;
 
 			for (const file of json.resources) {
-				// 3. Strip the root so callers get paths in the form they pass in; images and videos get their
-				//    extension back because their public id was stored without it
-				const filename = file.public_id.substring(this.root.length);
+				// 4. Strip the root and its slash so callers get paths in the form they pass in; images and videos get
+				//    their extension back because their public id was stored without it
+				const filename = toRelativePath(this.root, file.public_id);
 				if (file.resource_type === 'image' || file.resource_type === 'video') yield `${filename}.${file.format}`;
 				else yield filename;
 			}

@@ -35,3 +35,25 @@ test('Names an absent value instead of answering with nothing', () => {
 	expect(toErrorMessage(undefined)).toBe('undefined');
 	expect(toErrorMessage(null)).toBe('null');
 });
+
+test('Never throws, even for a revoked or hostile Proxy', () => {
+	// 1. A revoked Proxy throws on any operation, `instanceof` included; a Proxy with a throwing `get` trap defeats
+	//    both `String()` and the `Symbol.toStringTag` lookup of the fallback
+	const revocable = Proxy.revocable({}, {});
+	revocable.revoke();
+
+	const hostile = new Proxy(
+		{},
+		{
+			get() {
+				throw new Error('no');
+			},
+			getPrototypeOf() {
+				throw new Error('no');
+			},
+		},
+	);
+
+	expect(toErrorMessage(revocable.proxy)).toBe('[unreadable value]');
+	expect(typeof toErrorMessage(hostile)).toBe('string');
+});

@@ -265,6 +265,57 @@ describe('acquireLock', () => {
 		expect(kv['locks'].has('key')).toBe(false);
 	});
 
+	test('Gives up after lockTimeout and lets the callers behind it through', async () => {
+		vi.useFakeTimers();
+
+		try {
+			// 1. A holder that never releases: the next caller fails after the budget, with the key in the message
+			const impatient = new KvDriverLocal({ lockTimeout: 1000 });
+			const holder = await impatient.acquireLock('key');
+
+			const waiting = impatient.acquireLock('key');
+			const settled = waiting.catch((error: unknown) => error);
+
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(await settled).toMatchObject({ message: 'Lock "key" was not acquired within 1000 ms' });
+
+			// 2. A caller behind the one that gave up still waits for the holder, and gets in as soon as it releases —
+			//    the abandoned slot does not hold it up
+			const behind = impatient.acquireLock('key');
+			const behindSettled = vi.fn();
+			void behind.then(behindSettled);
+
+			await vi.advanceTimersByTimeAsync(0);
+			expect(behindSettled).not.toHaveBeenCalled();
+
+			await holder.release();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(behindSettled).toHaveBeenCalledOnce();
+			await (await behind).release();
+
+			// 3. Waiters that gave up, in whatever number and order, leave no entry behind once the holder releases
+			const again = await impatient.acquireLock('key');
+			const quitters = [impatient.acquireLock('key').catch(() => {}), impatient.acquireLock('key').catch(() => {})];
+			await vi.advanceTimersByTimeAsync(1000);
+			await Promise.all(quitters);
+			expect(impatient['locks'].has('key')).toBe(true);
+			await again.release();
+			expect(impatient['locks'].has('key')).toBe(false);
+
+			// 4. A second release of the same handle changes nothing
+			await again.release();
+			expect(impatient['locks'].has('key')).toBe(false);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	test('Refuses a lock timeout a timer cannot hold', () => {
+		expect(() => new KvDriverLocal({ lockTimeout: Number.NaN })).toThrow(RangeError);
+		expect(() => new KvDriverLocal({ lockTimeout: -1 })).toThrow(RangeError);
+		expect(() => new KvDriverLocal({ lockTimeout: Number.POSITIVE_INFINITY })).toThrow(RangeError);
+	});
+
 	test('Keeps locks of different keys independent', async () => {
 		const a = await kv.acquireLock('a');
 		const b = await kv.acquireLock('b');

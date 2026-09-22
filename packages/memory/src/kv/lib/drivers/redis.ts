@@ -1,3 +1,4 @@
+import { MAX_TIMER_DELAY } from '@novastarter/utils';
 import { Redlock } from '@sesamecare-oss/redlock';
 import type { Redis } from 'ioredis';
 import {
@@ -57,7 +58,11 @@ export type KvDriverRedisConfig = {
 	compressionMinSize?: number | undefined;
 
 	/**
-	 * How long an acquired lock is held, in milliseconds.
+	 * How long an acquired lock is held, in milliseconds, and about how long `acquireLock` waits for a busy one
+	 * before giving up. At least 200 and at most what a timer can hold: Redlock renews a lock `usingLock` holds
+	 * before it expires — 500 ms ahead, or less for a short timeout — and needs 100 ms of headroom between the two.
+	 *
+	 * @defaultValue 5000
 	 */
 	lockTimeout?: number | undefined;
 
@@ -110,7 +115,8 @@ export const SET_MAX_SCRIPT = `
  *
  * Values are JSON-serialized and, above a size threshold, gzip-compressed before they are written. Numbers are
  * stored as plain Redis integers instead, so `increment` and `setMax` can work on them natively. Locks are
- * distributed through Redlock.
+ * distributed through Redlock and live under a namespace of their own (`<namespace>-locks`), so locking a key and
+ * storing a value under it never collide, and `clear()` does not release the locks of a store it empties.
  *
  * @example
  * ```ts
@@ -168,6 +174,14 @@ export class KvDriverRedis implements KvDriver {
 	private readonly redlock;
 
 	/**
+	 * Namespace of the lock keys: the store's own with a `-locks` suffix, so a lock never shares its Redis key with
+	 * the value stored under the same name, and the `<namespace>:*` scan of `clear()` does not match it.
+	 *
+	 * @internal
+	 */
+	private readonly lockNamespace: string;
+
+	/**
 	 * Expiry applied to every written key, in milliseconds, or `undefined` for no expiry.
 	 *
 	 * @internal
@@ -178,6 +192,8 @@ export class KvDriverRedis implements KvDriver {
 	 * Create the store on top of an existing Redis connection.
 	 *
 	 * @param config - Redis configuration.
+	 * @throws RangeError when `lockTimeout` is under 200 ms or above what a timer can hold, or the client sits on a
+	 * database above 15, where Redlock cannot lock.
 	 */
 	constructor(config: KvDriverRedisConfig) {
 		// 1. Register the Lua command once per client; a client shared between several stores already has it. Locks
@@ -189,22 +205,46 @@ export class KvDriverRedis implements KvDriver {
 			});
 		}
 
-		// 2. Apply the documented defaults: compress, but only from 1 kB up; hold locks for 5 s
+		// 2. Apply the documented defaults: compress, but only from 1 kB up; hold locks for 5 s. Redlock renews a lock
+		//    `using` holds ahead of its expiry and needs 100 ms between renewal and expiry, so a timeout under 200 ms
+		//    leaves no room for that; a timeout a timer cannot hold — `Infinity` would retry for ever — is refused too
 		this.redis = config.redis as ExtendedRedis;
 		this.namespace = config.namespace;
 		this.compression = config.compression ?? true;
 		this.compressionMinSize = config.compressionMinSize ?? 1000;
-		this.lockTimeout = config.lockTimeout ?? 5000;
+		this.lockTimeout = Math.floor(config.lockTimeout ?? 5000);
 
-		// 3. Retry up to 100 times with ~50 ms between attempts, so `acquireLock` waits about 5 s for a busy lock
-		//    before giving up, in line with the default lock timeout
+		if (!(this.lockTimeout >= 200 && this.lockTimeout <= MAX_TIMER_DELAY)) {
+			throw new RangeError(
+				`KvDriverRedis: "lockTimeout" must be between 200 and ${MAX_TIMER_DELAY} ms, got ${config.lockTimeout}`,
+			);
+		}
+
+		// 3. Redlock's Lua runs `SELECT` on the database it is told, 0 unless told, so the client's own database is
+		//    passed along, or the locks would live in a different database than the values; a client without options
+		//    — a test double — counts as database 0. Redlock only knows databases 0 to 15 and would silently fall
+		//    back to 0 for a higher one, which is refused instead
+		const db = this.redis.options?.db ?? 0;
+
+		if (db > 15) {
+			throw new RangeError(`KvDriverRedis: Redlock can only lock in databases 0 to 15, the client is on ${db}`);
+		}
+
+		// 4. Retry every ~50 ms for about `lockTimeout`, so `acquireLock` waits for a busy lock as long as the local
+		//    store does before giving up. `using` renews a lock `automaticExtensionThreshold` ms before it expires and
+		//    refuses a duration less than 100 ms above that threshold, which is 500 ms unless told: for a short lock
+		//    timeout the threshold moves down to `lockTimeout - 100`, so a `lockTimeout` of 300 ms works instead of
+		//    throwing
 		this.redlock = new Redlock([this.redis], {
 			retryDelay: 50,
 			driftFactor: 0.01,
-			retryCount: 100,
+			retryCount: Math.ceil(this.lockTimeout / 50),
 			retryJitter: 20,
+			db,
+			automaticExtensionThreshold: Math.min(500, Math.max(0, this.lockTimeout - 100)),
 		});
 
+		this.lockNamespace = `${this.namespace}-locks`;
 		this.ttl = config.ttl;
 	}
 
@@ -343,19 +383,30 @@ export class KvDriverRedis implements KvDriver {
 	 * Acquire a distributed lock on the given key, waiting for it to become free.
 	 *
 	 * @param key - Key to lock.
-	 * @returns Handle to release or extend the lock.
+	 * @returns Handle to release or extend the lock; `release()` throws at once, without retrying, when the lock had
+	 * already expired — the holder outran its `lockTimeout` without extending — and does nothing the second time.
 	 * @throws When the lock cannot be acquired within the retry budget.
 	 */
 	async acquireLock(key: string): Promise<Lock> {
-		// 1. Redlock wants an integer duration, so floor a possibly fractional timeout
-		let lock = await this.redlock.acquire([withNamespace(key, this.namespace)], Math.floor(this.lockTimeout));
+		// 1. Wait for the lock under the locks namespace; the timeout was floored to the integer Redlock wants
+		let lock = await this.redlock.acquire([withNamespace(key, this.lockNamespace)], this.lockTimeout);
+		let released = false;
 
 		// 2. Wrap the Redlock lock in the backend-agnostic handle shape. Redlock's `extend()` invalidates the lock
 		//    object it was called on and answers with a new one, so the handle follows that new object: extending
-		//    through the old one a second time would throw "already expired" while Redis still holds the lock
+		//    through the old one a second time would throw "already expired" while Redis still holds the lock. The
+		//    release runs without retries: a lock that is gone — expired while the holder overran its timeout — is a
+		//    failed vote Redlock would otherwise retry for the whole acquire budget before reporting it
 		return {
 			release: async () => {
-				await lock.release();
+				// 1. Once only, like the local store's handle: a second release must not go to Redis for a lock this
+				//    holder already gave back and report it as gone
+				if (released) {
+					return;
+				}
+
+				released = true;
+				await this.redlock.release(lock, { retryCount: 0 });
 			},
 			extend: async (duration: number) => {
 				lock = await lock.extend(Math.floor(duration));
@@ -373,8 +424,10 @@ export class KvDriverRedis implements KvDriver {
 	 * @throws When the lock cannot be acquired within the retry budget.
 	 */
 	async usingLock<T>(key: string, callback: () => Promise<T>): Promise<T> {
-		// 1. Redlock's `using` also auto-extends the lock while the callback is still running
-		return this.redlock.using([withNamespace(key, this.namespace)], Math.floor(this.lockTimeout), callback);
+		// 1. Redlock's `using` also auto-extends the lock while the callback is still running. Its release uses the
+		//    acquire retry budget, so a lock gone at release time — expired after the callback blocked the event loop
+		//    past the timeout, or removed by hand — is reported only after about `lockTimeout` of retries
+		return this.redlock.using([withNamespace(key, this.lockNamespace)], this.lockTimeout, callback);
 	}
 
 	/**

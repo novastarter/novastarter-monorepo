@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { type Logger, useLogger } from '@novastarter/logger';
+import { toError } from '@novastarter/utils';
 import type { QueueDriver } from '../../driver.js';
 import type { EnqueuedJob, EnqueueOptions, JobContract, JobOptions } from '../../types.js';
 import { getJobHandler } from '../handlers.js';
@@ -65,8 +66,9 @@ export class QueueDriverLocal implements QueueDriver {
 				// 2. The same path a delivered job takes (`runJob` → `runContract`), so both parse and dispatch alike
 				await runContract(contract, payload, { id, name: contract.name, attempt: 1, enqueuedAt });
 			} catch (error) {
-				// 3. A failing job is the handler's problem to log in detail; here it is recorded and dropped, no retries
-				this.logger.error(error, `Job "${contract.name}" (${id}) failed`);
+				// 3. A failing job is the handler's problem to log in detail; here it is recorded and dropped, no retries.
+				//    Wrapped through `toError`, so a thrown string is not taken for the message and the job's name lost
+				this.logger.error(toError(error), `Job "${contract.name}" (${id}) failed`);
 			}
 		};
 
@@ -92,6 +94,8 @@ export class QueueDriverLocal implements QueueDriver {
 	 * Cancel the delayed jobs that have not run yet.
 	 */
 	async close(): Promise<void> {
+		// 1. Every pending timer goes, so a delayed job never fires after shutdown and nothing keeps the process alive;
+		//    the set is emptied along with them, since a cleared timer is nothing to clear again
 		for (const timer of this.timers) {
 			clearTimeout(timer);
 		}

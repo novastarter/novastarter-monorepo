@@ -1,6 +1,7 @@
 /**
  * Tests of `utils/sleep`: resolves after the given time, rejects early on abort.
  */
+import { getEventListeners } from 'node:events';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { MAX_TIMER_DELAY, sleep } from './sleep.js';
 
@@ -46,14 +47,18 @@ test('Rejects at once with a signal already aborted', async () => {
 	expect(vi.getTimerCount()).toBe(0);
 });
 
-test('Ignores an abort after the wait ended', async () => {
-	// 1. The abort listener is removed on resolution, so a late abort finds nothing to reject
+test('Removes its abort listener once the wait ended, so a long-lived signal keeps no reference', async () => {
+	// 1. The listener is there while the wait runs and gone on resolution, so a late abort finds nothing to call and a
+	//    signal shared by many waits does not accumulate one listener per finished wait
 	const controller = new AbortController();
 	const wait = sleep(100, controller.signal);
+
+	expect(getEventListeners(controller.signal, 'abort')).toHaveLength(1);
 
 	await vi.advanceTimersByTimeAsync(100);
 	await expect(wait).resolves.toBeUndefined();
 
+	expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
 	controller.abort();
 });
 

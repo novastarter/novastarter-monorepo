@@ -61,7 +61,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	// Fake timers and the extra contract of the timeout test are undone here, so a failed assertion in that test
+	// cannot leak them into the tests after it
+	vi.useRealTimers();
 	_contracts.delete('test.echo');
+	_contracts.delete('test.slow');
 	useQueue.reset();
 	FakeQueue.instances = [];
 	FakeWorker.instances = [];
@@ -196,9 +200,6 @@ describe('createWorker', () => {
 
 		await vi.advanceTimersByTimeAsync(5_000);
 		expect(await fallbackSettled).toMatchObject({ message: 'Job "test.echo" timed out after 5000 ms' });
-
-		_contracts.delete('test.slow');
-		vi.useRealTimers();
 	});
 
 	test('Refuses a job whose contract the worker does not know', async () => {

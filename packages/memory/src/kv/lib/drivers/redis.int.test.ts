@@ -102,6 +102,31 @@ describe.skipIf(!REDIS)('KvDriverRedis on Redis', () => {
 		await next.release();
 	});
 
+	test('A lock and a value under the same name do not collide', async () => {
+		// 1. Locking a key that holds a value used to fail after the retry budget, since the lock token went to the
+		//    same Redis key; the locks live in a namespace of their own now
+		await kv.set('shared', { n: 1 });
+
+		await kv.usingLock('shared', async () => {
+			expect(await kv.get('shared')).toStrictEqual({ n: 1 });
+			await kv.set('shared', { n: 2 });
+		});
+
+		expect(await kv.get('shared')).toStrictEqual({ n: 2 });
+
+		// 2. `clear()` empties the store but does not release a lock held under it
+		const lock = await kv.acquireLock('held');
+		await kv.clear();
+		expect(await redis.exists(`${namespace}-locks:held`)).toBe(1);
+		await lock.release();
+	});
+
+	test('usingLock with a short lock timeout is accepted', async () => {
+		const short = new KvDriverRedis({ redis, namespace: `${namespace}-short`, lockTimeout: 300 });
+
+		await expect(short.usingLock('quick', async () => 'done')).resolves.toBe('done');
+	});
+
 	test('usingLock lets one holder in at a time', async () => {
 		// 1. Two callers race for the same lock; the second one must see the first one's write, not run alongside it
 		const order: string[] = [];

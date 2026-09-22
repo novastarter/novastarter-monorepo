@@ -11,9 +11,11 @@ import {
 	type ReadOptions,
 	type Stat,
 	StorageFileNotFoundError,
+	toListPrefix,
+	toRelativePath,
 	type TusDriver,
 } from '@novastarter/storage';
-import { joinPath, normalizePath } from '@novastarter/utils';
+import { confinePath, joinPath } from '@novastarter/utils';
 
 /**
  * Largest chunk an append blob accepts per `Append Block` request.
@@ -146,7 +148,9 @@ export class StorageDriverAzure implements TusDriver {
 
 		// 4. Strip the leading slash from the root: blob names are not paths, and a leading `/` would become part of
 		//    the name and produce blobs nobody can find by the expected key
-		this.root = config.root ? normalizePath(config.root, { removeLeading: true }) : '';
+		//    `confinePath` also resolves `.` and `..` in the root, the way every key is resolved, so a root of `./media`
+		//    strips from listed keys as `media` does, and a root of `/` means the top of the bucket
+		this.root = config.root ? confinePath(config.root) : '';
 
 		// 5. Fail at construction rather than on the first chunk: the service rejects appended blocks above the limit,
 		//    and a misconfigured size would otherwise only surface mid-upload
@@ -164,8 +168,10 @@ export class StorageDriverAzure implements TusDriver {
 	 * @internal
 	 */
 	private fullPath(filepath: string) {
-		// 1. `joinPath` always produces the forward slashes blob names use, whatever the platform's separator
-		return joinPath(this.root, filepath);
+		// 1. Pin the caller path under the root before joining: resolved against `/` first, a leading `..` has nothing
+		//    to climb and is dropped by `confinePath`, so `../other/secret` cannot address a blob outside the location. `joinPath`
+		//    always produces the forward slashes blob names use, whatever the platform's separator
+		return joinPath(this.root, confinePath(filepath));
 	}
 
 	/**
@@ -175,6 +181,8 @@ export class StorageDriverAzure implements TusDriver {
 	 * @param options - Optional byte range; `version` is not supported by this driver and is ignored.
 	 * @returns The download body as a Node stream.
 	 * @throws Error when the SDK returns no body to stream.
+	 * @throws StorageFileNotFoundError when the blob does not exist.
+	 * @throws The SDK error for any other failure, or an `Error` when the SDK hands back no stream.
 	 */
 	async read(filepath: string, options?: ReadOptions): Promise<Readable> {
 		const { range } = options || {};
@@ -182,11 +190,23 @@ export class StorageDriverAzure implements TusDriver {
 		// 1. The SDK takes an offset and a count rather than a closed range, so `end` is turned into a count from the
 		//    start (inclusive, hence the `+ 1`); with no `end` the count stays undefined and the rest of the blob is
 		//    read. Presence, not truthiness: `end: 0` asks for the first byte, not for the whole blob
-		const { readableStreamBody } = await this.containerClient
-			.getBlobClient(this.fullPath(filepath))
-			.download(range?.start, range?.end !== undefined ? range.end - (range.start ?? 0) + 1 : undefined);
+		let readableStreamBody: NodeJS.ReadableStream | undefined;
 
-		// 2. `readableStreamBody` is only set in Node (browsers get `blobBody` instead), so its absence here means there
+		// 2. A 404 is the error every backend shares, so a caller tells a missing blob from a denied or failed read;
+		//    anything else says nothing about the blob and is rethrown
+		try {
+			({ readableStreamBody } = await this.containerClient
+				.getBlobClient(this.fullPath(filepath))
+				.download(range?.start, range?.end !== undefined ? range.end - (range.start ?? 0) + 1 : undefined));
+		} catch (error) {
+			if ((error as { statusCode?: number })?.statusCode === 404) {
+				throw new StorageFileNotFoundError({ filepath }, { cause: error });
+			}
+
+			throw error;
+		}
+
+		// 3. `readableStreamBody` is only set in Node (browsers get `blobBody` instead), so its absence here means there
 		//    is nothing to stream
 		if (!readableStreamBody) {
 			throw new Error(`No stream returned for file "${filepath}"`);
@@ -303,12 +323,12 @@ export class StorageDriverAzure implements TusDriver {
 		// 1. A flat listing walks every blob under the prefix regardless of virtual folders, which is what a recursive
 		//    listing expects
 		const blobs = this.containerClient.listBlobsFlat({
-			prefix: this.fullPath(prefix),
+			prefix: toListPrefix(this.fullPath(prefix), prefix),
 		});
 
-		// 2. Strip the root so callers get paths in the form they pass in
+		// 2. Strip the root and its slash so callers get paths in the form they pass in
 		for await (const blob of blobs) {
-			yield (blob.name as string).substring(this.root.length);
+			yield toRelativePath(this.root, blob.name as string);
 		}
 	}
 

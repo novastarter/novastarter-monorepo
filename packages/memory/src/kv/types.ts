@@ -14,6 +14,10 @@ export interface Lock {
 	/**
 	 * Give the lock back so other holders can acquire it.
 	 *
+	 * Once: a second call does nothing on either backend. On Redis it throws when the lock had already expired — the
+	 * holder outran its `lockTimeout` without extending — since another holder may have taken it meanwhile; the local
+	 * store, whose locks never expire, has no such case.
+	 *
 	 * @returns Resolves once the lock is released.
 	 */
 	release(): Promise<void>;

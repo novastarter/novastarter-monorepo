@@ -141,13 +141,23 @@ test('Escapes quotes in error messages', () => {
 });
 
 test('Drops a line the bus refuses instead of failing the stream or the process', async () => {
-	// The bus mirrors the log: a Redis outage must not turn every line into an unhandled rejection
-	const logStream = new LogsStream(false, messenger);
-	vi.mocked(messenger.publish).mockRejectedValueOnce(new Error('bus down'));
+	// The bus mirrors the log: a Redis outage must not turn every line into an unhandled rejection. A plain function
+	// stands in for the bus here — a `vi.fn` would attach its own handler to the promise and hide an unhandled one
+	const unhandled = vi.fn();
+	process.on('unhandledRejection', unhandled);
 
-	const callback = vi.fn();
-	expect(() => logStream._write(JSON.stringify(sample.log), '', callback)).not.toThrow();
-	expect(callback).toHaveBeenCalledWith();
+	try {
+		const refusing: LogsBus = { publish: () => Promise.reject(new Error('bus down')) };
+		const logStream = new LogsStream(false, refusing);
 
-	await new Promise((resolve) => setTimeout(resolve, 0));
+		const callback = vi.fn();
+		expect(() => logStream._write(JSON.stringify(sample.log), '', callback)).not.toThrow();
+		expect(callback).toHaveBeenCalledWith();
+
+		// Unhandled rejections are reported on a later turn of the event loop
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		expect(unhandled).not.toHaveBeenCalled();
+	} finally {
+		process.off('unhandledRejection', unhandled);
+	}
 });

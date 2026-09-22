@@ -25,8 +25,9 @@ export const normalizePath = (
 		removeLeading: boolean;
 	} = { removeLeading: false },
 ): string => {
-	// 1. A lone separator is the root directory, whichever style it came in
-	if (path === '\\' || path === '/') return '/';
+	// 1. A lone separator is the root directory, whichever style it came in — or nothing at all when the leading
+	//    slash is to go, the way a storage root of `/` means the top of the bucket
+	if (path === '\\' || path === '/') return removeLeading ? '' : '/';
 
 	// 2. Nothing to normalise in an empty or single-character path
 	if (path.length <= 1) {
@@ -52,9 +53,14 @@ export const normalizePath = (
 		segments.pop();
 	}
 
+	// 6. Nothing but separators — `//`, `/\` — is the root, like the lone separator above, not an empty path
+	if (segments.length === 1 && segments[0] === '' && prefix === '') {
+		return removeLeading ? '' : '/';
+	}
+
 	const normalizedPath = prefix + segments.join('/');
 
-	// 6. Strip the leading slash on request. The check looks at the input path, so only a forward-slash-rooted path
+	// 7. Strip the leading slash on request. The check looks at the input path, so only a forward-slash-rooted path
 	//    loses its slash; a backslash-rooted one keeps it
 	if (removeLeading && path.startsWith('/')) {
 		return normalizedPath.substring(1);

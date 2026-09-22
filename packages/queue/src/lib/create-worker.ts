@@ -1,5 +1,5 @@
 import { type Logger, useLogger } from '@novastarter/logger';
-import { withTimeout } from '@novastarter/utils';
+import { toError, withTimeout } from '@novastarter/utils';
 import type { Job, Worker, WorkerOptions } from 'bullmq';
 import { getJobContract } from '../contracts/index.js';
 import type { JobContext } from '../types.js';
@@ -158,21 +158,23 @@ export const createWorker = async (
 		},
 	);
 
-	// 5. Lifecycle to the log: what ran, what failed on which attempt, and connection trouble
+	// 5. Lifecycle to the log: what ran, what failed on which attempt, and connection trouble. BullMQ forwards a
+	//    rejection as it came, so a processor rejecting with a string would be taken for the message and the job's
+	//    name dropped; `toError` keeps both
 	worker.on('completed', (job) => {
 		logger.info(`Job "${queue}.${job.name}" (${job.id}) completed`);
 	});
 
 	worker.on('failed', (job, error) => {
 		if (job) {
-			logger.error(error, `Job "${queue}.${job.name}" (${job.id}) failed on attempt ${job.attemptsMade}`);
+			logger.error(toError(error), `Job "${queue}.${job.name}" (${job.id}) failed on attempt ${job.attemptsMade}`);
 		} else {
-			logger.error(error, `A job of queue "${queue}" failed before it could be read`);
+			logger.error(toError(error), `A job of queue "${queue}" failed before it could be read`);
 		}
 	});
 
 	worker.on('error', (error) => {
-		logger.error(error, `Worker of queue "${queue}" error`);
+		logger.error(toError(error), `Worker of queue "${queue}" error`);
 	});
 
 	// 6. The handle: the queue and the BullMQ worker for what the wrapper does not expose, and a close that drains

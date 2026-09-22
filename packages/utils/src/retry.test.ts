@@ -208,6 +208,22 @@ test('Never asks for a pause longer than a timer can hold', async () => {
 	expect(vi.mocked(sleep).mock.calls.map(([ms]) => ms)).toEqual([MAX_TIMER_DELAY, MAX_TIMER_DELAY]);
 });
 
+test('Ends with the abort reason, without calling onRetry, when the signal aborted during a failing attempt', async () => {
+	// 1. The attempt runs to its failure; by then the signal is gone, so no pause is reported and none is slept
+	const controller = new AbortController();
+	const onRetry = vi.fn();
+
+	const fn = vi.fn(async () => {
+		controller.abort(new Error('shutting down'));
+		throw new Error('attempt failed');
+	});
+
+	await expect(retry(fn, { signal: controller.signal, onRetry })).rejects.toThrow('shutting down');
+	expect(fn).toHaveBeenCalledOnce();
+	expect(onRetry).not.toHaveBeenCalled();
+	expect(sleep).not.toHaveBeenCalled();
+});
+
 test('Refuses a jitter outside 0 to 1 before running the operation', async () => {
 	// 1. A jitter above one could turn a pause negative; the misconfiguration is a RangeError, not a busy loop
 	const fn = failing(0);

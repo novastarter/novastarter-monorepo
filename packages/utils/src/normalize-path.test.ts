@@ -99,9 +99,10 @@ describe('normalizePath', () => {
 
 	describe('edge cases', () => {
 		it('handles path with only slashes', () => {
-			// 1. A run of separators splits into two empty segments; the trailing one is dropped and the remaining
-			//    empty segment joins to an empty string
-			expect(normalizePath('///')).toBe('');
+			// 1. A run of separators is the root, like a lone one: collapsing repeated separators must not lose it
+			expect(normalizePath('///')).toBe('/');
+			expect(normalizePath('/\\')).toBe('/');
+			expect(normalizePath('///', { removeLeading: true })).toBe('');
 		});
 
 		it('handles path starting with multiple slashes', () => {
@@ -124,6 +125,15 @@ describe('normalizePath', () => {
 
 		it('handles paths with spaces', () => {
 			expect(normalizePath('path/to/my file.txt')).toBe('path/to/my file.txt');
+		});
+	});
+
+	describe('lone separator', () => {
+		it('drops it too when the leading slash is to go', () => {
+			// 1. A root of `/` means the top of the bucket, which is the empty prefix, not a key starting with a slash
+			expect(normalizePath('/', { removeLeading: true })).toBe('');
+			expect(normalizePath('\\', { removeLeading: true })).toBe('');
+			expect(normalizePath('/')).toBe('/');
 		});
 	});
 });

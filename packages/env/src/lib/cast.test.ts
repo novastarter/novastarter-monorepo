@@ -79,10 +79,16 @@ describe('Casting', () => {
 		expect(cast('regex:value')).toBeInstanceOf(RegExp);
 	});
 
-	test('Casts a broken regex pattern to undefined instead of throwing', () => {
-		// The same shape as `number:` with no number: "no value", for the schema to report
+	test('Refuses a broken regex pattern, naming the value', () => {
+		// A typo in a prefixed value is a broken configuration, not a missing variable a schema default would cover
 		vi.mocked(getCastFlag).mockReturnValue('regex');
-		expect(cast('regex:(')).toBeUndefined();
+		expect(() => cast('regex:(')).toThrow('Cannot cast "regex:(" to a regular expression');
+	});
+
+	test('Refuses a number payload that is not a finite number, naming the value', () => {
+		vi.mocked(getCastFlag).mockReturnValue('number');
+		vi.mocked(toNumber).mockReturnValue(undefined);
+		expect(() => cast('number:80O0')).toThrow('Cannot cast "number:80O0" to a number');
 	});
 
 	test('Uses toArray for array types', () => {
@@ -107,7 +113,7 @@ describe('Casting', () => {
 		expect(cast('array:,')).toEqual([]);
 	});
 
-	test('Filters members that cast to undefined out of the array', () => {
+	test('Refuses an array member that cannot be cast instead of dropping it', () => {
 		vi.mocked(getCastFlag).mockImplementation((v) => {
 			if (String(v).startsWith('array')) return 'array';
 			if (String(v).startsWith('number')) return 'number';
@@ -117,8 +123,8 @@ describe('Casting', () => {
 		vi.mocked(toArray).mockReturnValue(['number:1', 'number:']);
 		vi.mocked(toNumber).mockReturnValueOnce(1).mockReturnValueOnce(undefined);
 
-		// 1. `number:` with no number is "no value", dropped like an empty member rather than kept as a hole
-		expect(cast('array:number:1,number:')).toEqual([1]);
+		// 1. `number:` with no number is a broken member; a list silently one shorter would pass a schema unnoticed
+		expect(() => cast('array:number:1,number:')).toThrow('Cannot cast "number:" to a number');
 	});
 
 	test('Uses tryParseJSON for json types, keeping the payload when it is not JSON', () => {
