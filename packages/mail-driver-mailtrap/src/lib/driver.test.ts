@@ -99,9 +99,12 @@ describe('MailDriverMailtrap', () => {
 			text: 'T',
 		});
 
-		// 2. Recipients went out as address objects
+		// 2. Recipients went out as address objects, the display name of a string form parsed, not dropped
 		expect(send).toHaveBeenCalledWith(
-			expect.objectContaining({ to: [{ email: 'ada@example.com' }, { email: 'bob@example.com' }], subject: 'S' }),
+			expect.objectContaining({
+				to: [{ email: 'ada@example.com', name: 'Ada' }, { email: 'bob@example.com' }],
+				subject: 'S',
+			}),
 		);
 
 		// 3. Every recipient counts as accepted
@@ -112,15 +115,18 @@ describe('MailDriverMailtrap', () => {
 		});
 	});
 
-	test('Lets a refusal of the API through', async () => {
-		// 1. The SDK's error passes through untouched
-		send.mockRejectedValueOnce(new Error("'to' address is required"));
+	test('Names the provider in a refusal, keeping the SDK error as the cause', async () => {
+		// 1. The SDK's `MailtrapError` is wrapped, not replaced: the cause keeps its list of Mailtrap's errors
+		const refusal = new Error("'to' address is required");
+
+		send.mockRejectedValueOnce(refusal);
 
 		const driver = new MailDriverMailtrap({ token: 't' });
 
-		await expect(driver.send({ to: 'a@example.com', from: 'me@acme.test', subject: 'S' })).rejects.toThrow(
-			"'to' address is required",
-		);
+		await expect(driver.send({ to: 'a@example.com', from: 'me@acme.test', subject: 'S' })).rejects.toMatchObject({
+			message: "Mailtrap: 'to' address is required",
+			cause: refusal,
+		});
 	});
 
 	test('Verifies by listing the accounts of the token', async () => {
@@ -134,8 +140,8 @@ describe('MailDriverMailtrap', () => {
 		getAllAccounts.mockResolvedValueOnce([]);
 		await expect(driver.verify()).rejects.toThrow('no account');
 
-		// 3. A refusal passes through
+		// 3. A refusal is wrapped with the provider's name, the SDK's error as the cause
 		getAllAccounts.mockRejectedValueOnce(new Error('Unauthorized'));
-		await expect(driver.verify()).rejects.toThrow('Unauthorized');
+		await expect(driver.verify()).rejects.toThrow('Mailtrap: Unauthorized');
 	});
 });

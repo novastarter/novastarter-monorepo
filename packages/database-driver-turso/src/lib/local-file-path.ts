@@ -8,6 +8,14 @@
  *
  * @param url - The `url` of a location.
  * @returns The path, or `undefined`.
+ * @example
+ * ```ts
+ * const path = localFilePath(config.url);
+ *
+ * if (path !== undefined) {
+ *     ensureDirectory(dirname(path));
+ * }
+ * ```
  */
 export const localFilePath = (url: string): string | undefined => {
 	// 1. Only the `file:` scheme names a path; the path ends where a query or a fragment begins

@@ -28,7 +28,6 @@
 		"@novastarter/constants": "workspace:*",
 		"@novastarter/utils": "workspace:*",
 		"lodash-es": "catalog:",
-		"nanoid": "catalog:",
 		"pino": "catalog:",
 		"pino-http": "catalog:",
 		"pino-pretty": "catalog:"

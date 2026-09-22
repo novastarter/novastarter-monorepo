@@ -29,7 +29,7 @@ import type { Response } from 'undici';
 import { fetch, FormData } from 'undici';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { IMAGE_EXTENSIONS, VIDEO_EXTENSIONS } from './constants.js';
+import { IMAGE_EXTENSIONS, MINIMUM_CHUNK_SIZE, VIDEO_EXTENSIONS } from './constants.js';
 import type { StorageDriverCloudinaryConfig } from './driver.js';
 import { StorageDriverCloudinary } from './driver.js';
 import * as toFormUrlEncodedUtil from './to-form-url-encoded.js';
@@ -1479,11 +1479,14 @@ describe('#list', () => {
 	});
 
 	test('Fetches search api results', async () => {
-		// 1. The search API takes a wildcard expression and basic auth; an empty cursor asks for the first page
+		// 1. The search API takes a wildcard expression and basic auth; an empty cursor asks for the first page. The
+		//    expression is encoded so a prefix with `&`, `#` or `+` cannot break the query
 		await driver.list(sample.path.input).next();
 
 		expect(fetch).toHaveBeenCalledWith(
-			`https://api.cloudinary.com/v1_1/${sample.config.cloudName}/resources/search?expression=${sample.path.inputFull}*&next_cursor=`,
+			`https://api.cloudinary.com/v1_1/${sample.config.cloudName}/resources/search?expression=${encodeURIComponent(
+				sample.path.inputFull,
+			)}*&next_cursor=`,
 			{
 				method: 'GET',
 				headers: {
@@ -1523,7 +1526,9 @@ describe('#list', () => {
 		expect(fetch).toHaveBeenCalledTimes(2);
 
 		expect(fetch).toHaveBeenCalledWith(
-			`https://api.cloudinary.com/v1_1/${sample.config.cloudName}/resources/search?expression=${sample.path.inputFull}*&next_cursor=${mockNextCursor}`,
+			`https://api.cloudinary.com/v1_1/${sample.config.cloudName}/resources/search?expression=${encodeURIComponent(
+				sample.path.inputFull,
+			)}*&next_cursor=${mockNextCursor}`,
 			{
 				method: 'GET',
 				headers: {
@@ -1586,6 +1591,16 @@ describe('#createChunkedUpload', () => {
 		expect(result).toBe(context);
 		expect(result.metadata).toStrictEqual({ timestamp: sample.timestamp, uploadId: sample.uploadId });
 	});
+
+	test('Creates the metadata map when the client sent none', async () => {
+		// 1. A POST without `Upload-Metadata` leaves the map undefined; recording the upload state must not throw a
+		//    TypeError, which would leave the TUS server without the context it persists
+		const context = { size: randNumber(), metadata: undefined };
+
+		const result = await driver.createChunkedUpload(sample.path.input, context);
+
+		expect(result.metadata).toStrictEqual({ timestamp: sample.timestamp, uploadId: sample.uploadId });
+	});
 });
 
 describe('#writeChunk', () => {
@@ -1622,6 +1637,44 @@ describe('#writeChunk', () => {
 		await driver.writeChunk(sample.path.input, Readable.from([BufferActual.from('abc')]), 0, context);
 
 		expect(vi.mocked(driver['uploadChunk']).mock.calls[0]![0].uploadId).toBe(sample.timestamp);
+	});
+
+	test('Copes with a context that carries no metadata map', async () => {
+		// 1. A context handed over without its map must not crash on reading the upload state; a missing session is the
+		//    API's error to report once the request goes out, not a TypeError of the driver
+		const bareContext = { size: 6, metadata: undefined };
+
+		await driver.writeChunk(sample.path.input, Readable.from([BufferActual.from('abc')]), 0, bareContext);
+
+		expect(bareContext.metadata).toStrictEqual({});
+	});
+
+	test('Refuses a chunk above the configured size', async () => {
+		// 1. The TUS server agrees to send at most the configured size per request; a larger chunk is refused before it
+		//    is sent, so Cloudinary never assembles bytes the upload did not agree to carry
+		const tusDriver = new StorageDriverCloudinary({
+			cloudName: sample.config.cloudName,
+			apiKey: sample.config.apiKey,
+			apiSecret: sample.config.apiSecret,
+			accessMode: sample.config.accessMode,
+			tus: { enabled: true, chunkSize: MINIMUM_CHUNK_SIZE },
+		});
+
+		tusDriver['fullPath'] = vi.fn().mockReturnValue(sample.path.inputFull);
+		tusDriver['getFolderPath'] = vi.fn().mockReturnValue('');
+		tusDriver['getResourceType'] = vi.fn().mockReturnValue(sample.resourceType);
+		tusDriver['getPublicId'] = vi.fn().mockReturnValue(sample.publicId.input);
+		tusDriver['getTimestamp'] = vi.fn().mockReturnValue(sample.timestamp);
+		tusDriver['getFullSignature'] = vi.fn().mockReturnValue(sample.fullSignature);
+		tusDriver['uploadChunk'] = vi.fn();
+
+		const oversized = BufferActual.alloc(MINIMUM_CHUNK_SIZE + 1);
+
+		await expect(tusDriver.writeChunk(sample.path.input, Readable.from([oversized]), 0, context)).rejects.toThrow(
+			`The chunk of ${MINIMUM_CHUNK_SIZE + 1} bytes exceeds the chunk size limit of ${MINIMUM_CHUNK_SIZE} bytes`,
+		);
+
+		expect(vi.mocked(tusDriver['uploadChunk'])).not.toHaveBeenCalled();
 	});
 
 	test('Declares an unknown total until the chunk that completes the upload', async () => {

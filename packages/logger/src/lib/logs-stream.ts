@@ -1,5 +1,5 @@
 import { Writable } from 'node:stream';
-import { nanoid } from 'nanoid';
+import { processId } from '@novastarter/utils/node';
 
 /**
  * How a log line is shaped before it is published: `basic` keeps level, time and message, `http` folds the request
@@ -11,7 +11,7 @@ export type PrettyType = 'basic' | 'http' | false;
  * Identifier of this process, attached to every published line so a reader of a multi-instance stream can tell the
  * nodes apart.
  */
-const nodeId = nanoid(8);
+const nodeId = processId();
 
 /**
  * The part of a message bus {@link LogsStream} needs: publishing a line on a channel.

@@ -2,7 +2,7 @@
  * Tests of `mail/lib/format-address`: the address forms the vendor drivers hand to their APIs.
  */
 import { describe, expect, test } from 'vitest';
-import { bareMailAddress, formatMailAddress, toMailAddressList } from './format-address.js';
+import { bareMailAddress, formatMailAddress, parseMailAddress, toMailAddressList } from './format-address.js';
 
 describe('formatMailAddress', () => {
 	test('Hands a string on as given and joins a plain name with its address', () => {
@@ -53,6 +53,37 @@ describe('bareMailAddress', () => {
 		// 2. A display-name form is unwrapped, whatever the name holds and with trailing whitespace tolerated
 		expect(bareMailAddress('Ada <ada@example.com>')).toBe('ada@example.com');
 		expect(bareMailAddress('"Smith, John" <john@example.com>  ')).toBe('john@example.com');
+	});
+});
+
+describe('parseMailAddress', () => {
+	test('Splits a display-name string into its two parts and keeps an object as is', () => {
+		// 1. A name in front of the angle brackets survives, so object-based APIs see what nodemailer-based ones do
+		expect(parseMailAddress('Ada <ada@example.com>')).toStrictEqual({ name: 'Ada', address: 'ada@example.com' });
+
+		expect(parseMailAddress({ name: 'Ada', address: 'ada@example.com' })).toStrictEqual({
+			name: 'Ada',
+			address: 'ada@example.com',
+		});
+
+		// 2. A bare string is its own address, with no name to carry
+		expect(parseMailAddress('ada@example.com')).toStrictEqual({ address: 'ada@example.com' });
+	});
+
+	test('Takes a quoted name with its escapes and brackets unwrapped', () => {
+		// 1. The quoted-string's quotes come off, with only the escaped quote and backslash unescaped, as RFC 5322 has it
+		expect(parseMailAddress('"Smith, John" <john@example.com>')).toStrictEqual({
+			name: 'Smith, John',
+			address: 'john@example.com',
+		});
+
+		expect(parseMailAddress('"Ada \\"The Countess\\" \\\\ Co" <ada@example.com>')).toStrictEqual({
+			name: 'Ada "The Countess" \\ Co',
+			address: 'ada@example.com',
+		});
+
+		// 2. A nameless bracketed form is the address alone
+		expect(parseMailAddress('<ada@example.com>')).toStrictEqual({ address: 'ada@example.com' });
 	});
 });
 

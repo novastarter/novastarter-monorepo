@@ -3,7 +3,32 @@
  * `messages.create()`.
  */
 import { describe, expect, test } from 'vitest';
-import { toMailgunFile, toMailgunMessage } from './to-mailgun-message.js';
+import {
+	MAILGUN_TAG_COUNT,
+	MAILGUN_TAG_LENGTH,
+	toMailgunFile,
+	toMailgunMessage,
+	toMailgunTags,
+} from './to-mailgun-message.js';
+
+describe('toMailgunTags', () => {
+	test('Cuts every label to the length limit, drops an empty one and caps the count, the category first', () => {
+		// 1. Mailgun refuses a message past its tag limits, so the labels are adapted instead: the category leads, an
+		//    empty tag drops out and the tail past the count limit is left off
+		expect(
+			toMailgunTags({ to: 'a@b.c', subject: 'x', category: 'marketing', tags: ['', 'welcome', 'v2', 'extra'] }),
+		).toStrictEqual(['marketing', 'welcome', 'v2', 'extra'].slice(0, MAILGUN_TAG_COUNT));
+
+		// 2. A tag past the 128-character name limit is cut to its prefix, not refused
+		expect(toMailgunTags({ to: 'a@b.c', subject: 'x', tags: ['x'.repeat(MAILGUN_TAG_LENGTH + 10)] })).toStrictEqual([
+			'transactional',
+			'x'.repeat(MAILGUN_TAG_LENGTH),
+		]);
+
+		// 3. A category alone fits, as does an empty tag list
+		expect(toMailgunTags({ to: 'a@b.c', subject: 'x' })).toStrictEqual(['transactional']);
+	});
+});
 
 describe('toMailgunFile', () => {
 	test('Keeps inline content and takes the content id as the filename', async () => {

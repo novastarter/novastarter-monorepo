@@ -29,18 +29,6 @@ export type PushDriverFcmConfig = {
 	ttl?: number | undefined;
 	/** Label the messages carry into the Firebase analytics, for the console's delivery reports. */
 	analyticsLabel?: string | undefined;
-	/**
-	 * A ready `Messaging`, for tests; one on the service account otherwise.
-	 *
-	 * @internal
-	 */
-	messaging?: Pick<Messaging, 'send'> | undefined;
-	/**
-	 * A ready credential, for tests; `cert()` of the service account otherwise.
-	 *
-	 * @internal
-	 */
-	credential?: Credential | undefined;
 };
 
 /**
@@ -105,11 +93,11 @@ export class PushDriverFcm implements PushDriver {
 	private readonly messaging: Pick<Messaging, 'send'>;
 
 	/**
-	 * The Firebase app of this location; `undefined` when a messaging client was injected.
+	 * The Firebase app of this location.
 	 *
 	 * @internal
 	 */
-	private readonly app: App | undefined;
+	private readonly app: App;
 
 	/**
 	 * Create a driver on a service account, with a Firebase app of its own.
@@ -122,7 +110,7 @@ export class PushDriverFcm implements PushDriver {
 		// 1. Missing credentials are a configuration error; reported by the options' names
 		const account = readServiceAccount(config);
 
-		if (!config.credential && (!account.projectId || !account.clientEmail || !account.privateKey)) {
+		if (!account.projectId || !account.clientEmail || !account.privateKey) {
 			throw new Error(
 				'The fcm push driver needs a service account: "serviceAccount", or "projectId", "clientEmail" and "privateKey"',
 			);
@@ -131,22 +119,20 @@ export class PushDriverFcm implements PushDriver {
 		this.config = config;
 
 		// 2. `cert()` validates the fields and parses the key, so a broken secret fails at startup
-		this.credential =
-			config.credential ??
-			cert({ projectId: account.projectId!, clientEmail: account.clientEmail!, privateKey: account.privateKey! });
+		this.credential = cert({
+			projectId: account.projectId,
+			clientEmail: account.clientEmail,
+			privateKey: account.privateKey,
+		});
 
-		// 3. Its own Firebase app, unless a messaging client was injected: the SDK keeps apps in a global registry by
-		//    name, and the default name would clash with a second location or with the app's own Firebase use
-		if (config.messaging) {
-			this.messaging = config.messaging;
-		} else {
-			this.app = initializeApp(
-				{ credential: this.credential, ...(account.projectId ? { projectId: account.projectId } : {}) },
-				`novastarter-push-${randomUUID()}`,
-			);
+		// 3. Its own Firebase app: the SDK keeps apps in a global registry by name, and the default name would clash
+		//    with a second location or with the app's own Firebase use
+		this.app = initializeApp(
+			{ credential: this.credential, ...(account.projectId ? { projectId: account.projectId } : {}) },
+			`novastarter-push-${randomUUID()}`,
+		);
 
-			this.messaging = getMessaging(this.app);
-		}
+		this.messaging = getMessaging(this.app);
 	}
 
 	/**
@@ -191,9 +177,7 @@ export class PushDriverFcm implements PushDriver {
 	 * Release the Firebase app — its HTTP agents keep the process alive otherwise.
 	 */
 	async close(): Promise<void> {
-		// 1. Only an app of our own is ours to delete; an injected messaging client belongs to whoever made it
-		if (this.app) {
-			await deleteApp(this.app);
-		}
+		// 1. The app is always ours; deleting it releases its agents
+		await deleteApp(this.app);
 	}
 }

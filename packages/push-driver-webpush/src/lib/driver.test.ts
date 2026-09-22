@@ -1,9 +1,10 @@
 /**
- * Tests of the Web Push driver with `sendNotification` stubbed; the VAPID signing runs for real. The option mapping
- * and the error translation have their own tests next to `to-request-options.ts` and `describe-error.ts`.
+ * Tests of the Web Push driver with `web-push`'s `sendNotification` stubbed; the VAPID signing runs for real. The
+ * option mapping and the error translation have their own tests next to `to-request-options.ts` and
+ * `describe-error.ts`.
  */
 import { PushTargetGoneError } from '@novastarter/push';
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import webpush, { WebPushError } from 'web-push';
 import defaultExport from '../index.js';
 import { PushDriverWebPush } from './driver.js';
@@ -24,15 +25,38 @@ const subject = 'mailto:ops@example.com';
 const subscription = { endpoint: 'https://push.example/abc', keys: { p256dh: 'p', auth: 'a' } };
 
 /**
- * A driver on a stubbed `sendNotification`.
+ * Spy standing in for `web-push`'s `sendNotification()`, so a test can script the push service's answer.
+ *
+ * Hoisted because `vi.mock` factories run before the imports of this file are evaluated.
+ */
+const sendNotification = vi.hoisted(() => vi.fn());
+
+vi.mock('web-push', async (importOriginal) => {
+	// The types know no default export, but the library is CommonJS: at runtime the namespace carries the module
+	// itself as `default`
+	const actual = (await importOriginal()) as Record<string, unknown> & { default: Record<string, unknown> };
+
+	return {
+		...actual,
+		// The driver's default import and its named export are both routed to the stub
+		default: { ...actual.default, sendNotification },
+		sendNotification,
+	};
+});
+
+afterEach(() => {
+	vi.clearAllMocks();
+});
+
+/**
+ * A driver on the stubbed library.
  *
  * @param config - Overrides.
  * @returns The driver and the stub.
  */
 const build = (config: Record<string, unknown> = {}) => {
 	// 1. The stub records the request; the VAPID signing of `verify()` still runs on the real keys
-	const sendNotification = vi.fn();
-	const driver = new PushDriverWebPush({ ...keys, subject, sendNotification, ...config });
+	const driver = new PushDriverWebPush({ ...keys, subject, ...config });
 
 	return { driver, sendNotification };
 };

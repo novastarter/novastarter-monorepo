@@ -28,6 +28,8 @@ let sample: {
 };
 
 beforeEach(() => {
+	// 1. A full sample: the thresholds under test, plus readings on both sides of them, so a test flips only the
+	//    field it cares about
 	sample = {
 		config: {
 			sampleInterval: 1000,
@@ -45,6 +47,7 @@ beforeEach(() => {
 		currentElu: { idle: 1200, active: 1000, utilization: 0.45 },
 	};
 
+	// 2. The histogram is a stub: its `mean` stands in for the event-loop delay reading
 	mockIntervalHistogram = {
 		enable: vi.fn(),
 		disable: vi.fn(),
@@ -52,11 +55,14 @@ beforeEach(() => {
 		mean: sample.meanEventLoopDelay,
 	} as unknown as IntervalHistogram;
 
+	// 3. The timer is a stub too; `refresh` is what the monitor re-arms on every sample, `unref` what keeps it from
+	//    holding the event loop
 	mockTimer = {
 		refresh: vi.fn(),
 		unref: vi.fn(),
 	} as unknown as NodeJS.Timeout;
 
+	// 4. The monitor under test is built only after the stubs, so its constructor wires itself to them
 	vi.mocked(setTimeout).mockReturnValue(mockTimer);
 	vi.mocked(monitorEventLoopDelay).mockReturnValue(mockIntervalHistogram);
 
@@ -64,11 +70,13 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	// 1. Every mock is rebuilt by the next test's setup, so nothing may carry over
 	vi.resetAllMocks();
 });
 
 describe('#constructor', () => {
 	test('Defaults the options', () => {
+		// 1. With no options every threshold is off: only what the caller sets is enforced
 		monitor = new PressureMonitor();
 
 		expect(monitor['options']).toEqual({
@@ -82,12 +90,15 @@ describe('#constructor', () => {
 	});
 
 	test('Creates histogram', () => {
+		// 1. The constructor builds the delay histogram at the configured resolution and starts sampling at once
 		expect(monitorEventLoopDelay).toHaveBeenCalledWith({ resolution: sample.config.resolution });
 		expect(monitor['histogram']).toBe(mockIntervalHistogram);
 		expect(mockIntervalHistogram.enable).toHaveBeenCalledOnce();
 	});
 
 	test('Starts a timeout', () => {
+		// 1. Sampling re-arms on a timer at the configured interval, unref'd so the monitor alone never keeps the
+		//    process alive
 		expect(setTimeout).toHaveBeenCalledOnce();
 		expect(setTimeout).toHaveBeenCalledWith(monitor['updateUsage'], sample.config.sampleInterval);
 		expect(monitor['timeout']).toBe(mockTimer);
@@ -95,6 +106,8 @@ describe('#constructor', () => {
 	});
 
 	test('Takes a base utilization reading so the first sample skips the start-up load', () => {
+		// 1. The first delta is measured against a base taken at construction, so the load of booting does not read
+		//    as pressure
 		vi.spyOn(performance, 'eventLoopUtilization').mockReturnValue(sample.previousElu);
 
 		monitor = new PressureMonitor(sample.config);
@@ -106,6 +119,7 @@ describe('#constructor', () => {
 
 describe('#overloaded', () => {
 	test('Returns false if all settings are false', () => {
+		// 1. With every threshold off there is nothing to be over
 		monitor = new PressureMonitor({
 			maxMemoryHeapUsed: false,
 			maxMemoryRss: false,
@@ -117,21 +131,25 @@ describe('#overloaded', () => {
 	});
 
 	test('Returns true if mem heap used exceeds threshold', () => {
+		// 1. One reading past one threshold is enough, whichever threshold it is
 		monitor['memoryHeapUsed'] = (sample.config.maxMemoryHeapUsed as number) + 1;
 		expect(monitor.overloaded).toBe(true);
 	});
 
 	test('Returns true if mem rss exceeds threshold', () => {
+		// 1. One reading past one threshold is enough, whichever threshold it is
 		monitor['memoryRss'] = (sample.config.maxMemoryRss as number) + 1;
 		expect(monitor.overloaded).toBe(true);
 	});
 
 	test('Returns true if event loop delay exceeds threshold', () => {
+		// 1. One reading past one threshold is enough, whichever threshold it is
 		monitor['eventLoopDelay'] = (sample.config.maxEventLoopDelay as number) + 1;
 		expect(monitor.overloaded).toBe(true);
 	});
 
 	test('Returns true if event utilization exceeds threshold', () => {
+		// 1. One reading past one threshold is enough, whichever threshold it is
 		monitor['eventLoopUtilization'] = (sample.config.maxEventLoopUtilization as number) + 1;
 		expect(monitor.overloaded).toBe(true);
 	});
@@ -139,8 +157,10 @@ describe('#overloaded', () => {
 
 describe('#updateUsage', () => {
 	beforeEach(() => {
+		// 1. The two samplers are replaced, so the call is counted without sampling anything
 		monitor['updateMemoryUsage'] = vi.fn();
 		monitor['updateEventLoopUsage'] = vi.fn();
+
 		monitor['updateUsage']();
 	});
 
@@ -157,10 +177,12 @@ describe('#updateUsage', () => {
 	});
 
 	test('Neither samples nor re-arms the timer once closed', () => {
+		// 1. Only what runs after `close()` may be observed, so the calls the setup already made are cleared
 		vi.mocked(mockTimer.refresh).mockClear();
 		vi.mocked(monitor['updateMemoryUsage']).mockClear();
 		vi.mocked(monitor['updateEventLoopUsage']).mockClear();
 
+		// 2. A sample attempted after close must do nothing at all
 		monitor.close();
 		monitor['updateUsage']();
 
@@ -172,6 +194,7 @@ describe('#updateUsage', () => {
 
 describe('#updateMemoryUsage', () => {
 	beforeEach(() => {
+		// 1. `memoryUsage` answers the sample readings, so the monitor stores exactly those
 		vi.mocked(memoryUsage).mockReturnValue({ rss: sample.rss, heapUsed: sample.heapUsed } as NodeJS.MemoryUsage);
 		monitor['updateMemoryUsage']();
 	});
@@ -188,6 +211,8 @@ describe('#updateMemoryUsage', () => {
 
 describe('#updateEventLoopUsage', () => {
 	beforeEach(() => {
+		// 1. The delta is measured against the base of the previous sample: the first spy answer is the current
+		//    reading, the second the computed utilization of the window between the two
 		monitor['lastEventLoopUtilization'] = sample.previousElu;
 
 		vi.spyOn(performance, 'eventLoopUtilization')
@@ -198,6 +223,8 @@ describe('#updateEventLoopUsage', () => {
 	});
 
 	test('Sets eventLoopUtilization to the ratio since the previous sample, not since process start', () => {
+		// 1. The current reading is taken bare, then applied to the previous base — the ratio of the window, not of
+		//    the whole process lifetime
 		expect(performance.eventLoopUtilization).toHaveBeenCalledTimes(2);
 		expect(performance.eventLoopUtilization).toHaveBeenNthCalledWith(1);
 		expect(performance.eventLoopUtilization).toHaveBeenNthCalledWith(2, sample.currentElu, sample.previousElu);
@@ -205,14 +232,17 @@ describe('#updateEventLoopUsage', () => {
 	});
 
 	test('Keeps the latest reading as the base of the next delta', () => {
+		// 1. Each window builds on the last, so the base moves with every sample
 		expect(monitor['lastEventLoopUtilization']).toBe(sample.currentElu);
 	});
 
 	test('Sets eventLoopDelay based on histogram mean', () => {
+		// 1. The histogram counts nanoseconds; the reading is whole milliseconds
 		expect(monitor['eventLoopDelay']).toBe(Math.round(sample.meanEventLoopDelay / 1e6));
 	});
 
 	test('Resets the histogram interval', () => {
+		// 1. The interval is zeroed per sample, so each mean covers one window
 		expect(mockIntervalHistogram.reset).toHaveBeenCalledOnce();
 	});
 });
@@ -232,11 +262,13 @@ describe('#close', () => {
 	});
 
 	test('Keeps the verdict of the last sample readable', () => {
+		// 1. Closing stops the sampling, not the verdict: what was over stays over
 		monitor['memoryRss'] = (sample.config.maxMemoryRss as number) + 1;
 		expect(monitor.overloaded).toBe(true);
 	});
 
 	test('Is harmless when called twice', () => {
+		// 1. A second close repeats neither the timer clear nor the histogram disable
 		monitor.close();
 
 		expect(clearTimeout).toHaveBeenCalledOnce();

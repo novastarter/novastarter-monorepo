@@ -5,7 +5,19 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import defaultExport from '../index.js';
 import { MailDriverMailjet } from './driver.js';
 
+/**
+ * Spy standing in for the request the SDK's `post().request()` chain makes, shared by every client so a test can
+ * script Mailjet's answer.
+ *
+ * @internal
+ */
 const request = vi.fn();
+
+/**
+ * Spy standing in for the SDK client's `post()`, routed to the shared request spy.
+ *
+ * @internal
+ */
 const post = vi.fn(() => ({ request }));
 
 vi.mock('node-mailjet', () => ({
@@ -64,7 +76,17 @@ describe('MailDriverMailjet', () => {
 
 		await expect(driver.send(message)).rejects.toThrow('Mailjet: Sender not validated');
 
-		// 4. A missing secret is refused by name
+		// 4. A transport failure names the provider, the SDK's error as the cause
+		const failure = new Error('socket hang up');
+
+		request.mockRejectedValueOnce(failure);
+
+		await expect(driver.send(message)).rejects.toMatchObject({
+			message: 'Mailjet: socket hang up',
+			cause: failure,
+		});
+
+		// 5. A missing secret is refused by name
 		expect(() => new MailDriverMailjet({ apiKey: 'k', apiSecret: '' })).toThrow(/"apiSecret"/);
 		expect(defaultExport).toBe(MailDriverMailjet);
 	});

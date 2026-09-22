@@ -5,7 +5,8 @@ import {
 	type MailResult,
 	toMailAddressList,
 } from '@novastarter/mail';
-import { MailService } from '@sendgrid/mail';
+import { type ClientResponse, MailService } from '@sendgrid/mail';
+import { describeError } from './describe-error.js';
 import { toSendgridMail } from './to-sendgrid-mail.js';
 
 /**
@@ -89,14 +90,23 @@ export class MailDriverSendgrid implements MailDriver {
 	 *
 	 * @param message - Rendered message.
 	 * @returns SendGrid's message id from the `x-message-id` header; every recipient as accepted.
-	 * @throws SendGrid's error (with `response.body` describing the rejection) when the API refuses.
+	 * @throws An error naming SendGrid with the SDK's error as the cause (`response.body` describes the rejection)
+	 * when the API refuses.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
 		// 1. The API answers with headers only; the message id lives in one of them
-		const [response] = await this.client.send(await toSendgridMail(message, this.sandbox));
+		let response: ClientResponse;
+
+		try {
+			[response] = await this.client.send(await toSendgridMail(message, this.sandbox));
+		} catch (error) {
+			// 2. The SDK throws its `ResponseError` on a refusal; wrapped so the log names the provider
+			throw describeError(error);
+		}
+
 		const messageId = response.headers['x-message-id'];
 
-		// 2. SendGrid takes a message whole or refuses it, so every recipient counts as accepted
+		// 3. SendGrid takes a message whole or refuses it, so every recipient counts as accepted
 		return {
 			messageId: typeof messageId === 'string' ? messageId : undefined,
 			accepted: toMailAddressList(message.to).map(bareMailAddress),

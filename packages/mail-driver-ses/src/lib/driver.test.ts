@@ -151,4 +151,18 @@ describe('MailDriverSes', () => {
 			}),
 		);
 	});
+
+	test('Names the provider in a refusal, keeping the error as the cause', async () => {
+		// 1. A refusal of the transport or the SDK is wrapped, not replaced: the cause keeps its details
+		const refusal = new Error('Message rejected: Email address is not verified.');
+
+		sendMail.mockRejectedValueOnce(refusal);
+
+		const driver = new MailDriverSes();
+
+		await expect(driver.send({ to: 'a@b.c', from: 'x@y.z', subject: 'x', text: 'x' })).rejects.toMatchObject({
+			message: 'SES: Message rejected: Email address is not verified.',
+			cause: refusal,
+		});
+	});
 });

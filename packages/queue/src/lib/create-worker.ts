@@ -4,6 +4,7 @@ import type { Job, Worker, WorkerOptions } from 'bullmq';
 import { getJobContract } from '../contracts/index.js';
 import type { JobContext } from '../types.js';
 import { QueueDriverBullmq } from './drivers/bullmq.js';
+import { loadBullmq } from './load-bullmq.js';
 import { useQueue } from './use-queue.js';
 
 /**
@@ -105,8 +106,9 @@ export const createWorker = async (
 	}
 
 	// 2. `bullmq` is loaded here and not at the top of the module, so a producer that never starts a worker never
-	//    pays for it; the logger falls back to the process one
-	const { Worker } = await import('bullmq');
+	//    pays for it; the load fails with the install hint when the optional peer is missing, not a bare
+	//    "Cannot find package". The logger falls back to the process one
+	const { Worker } = await loadBullmq();
 	const logger = options.logger ?? useLogger();
 
 	// 3. Without a connection of its own the worker consumes the location the producer of this process enqueues on,

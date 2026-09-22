@@ -119,14 +119,20 @@ describe('ranges', () => {
 });
 
 describe('substrings', () => {
-	test('maps contains and ncontains with the substring', () => {
+	test('maps contains, icontains and ncontains with the substring', () => {
 		// 1. The extended Joi puts the substring into the context, so it is passed through as is
 		expect(joiValidationErrorItemToErrorExtensions(item('string.contains', { substring: 'x' }))).toMatchObject({
 			type: 'contains',
 			substring: 'x',
 		});
 
-		// 2. `ncontains` ends with `contains` too and must win over it
+		// 2. `icontains` ends with `contains`; the whole rule name is compared, so it keeps its own operator
+		expect(joiValidationErrorItemToErrorExtensions(item('string.icontains', { substring: 'x' }))).toMatchObject({
+			type: 'icontains',
+			substring: 'x',
+		});
+
+		// 3. `ncontains` ends with `contains` too and must not be swallowed by the contains branch
 		expect(joiValidationErrorItemToErrorExtensions(item('string.ncontains', { substring: 'x' }))).toMatchObject({
 			type: 'ncontains',
 			substring: 'x',

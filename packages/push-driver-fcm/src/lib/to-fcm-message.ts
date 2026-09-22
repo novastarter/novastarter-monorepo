@@ -1,25 +1,6 @@
-import type { PushMessage } from '@novastarter/push';
+import { type PushMessage, toCollapseId } from '@novastarter/push';
 import type { TokenMessage } from 'firebase-admin/messaging';
-import { APNS_COLLAPSE_ID_MAX_LENGTH } from './constants.js';
 import type { PushDriverFcmConfig } from './driver.js';
-
-/**
- * Cut a tag to what APNs takes as `apns-collapse-id`: at most {@link APNS_COLLAPSE_ID_MAX_LENGTH} bytes of UTF-8,
- * ending on a character boundary.
- *
- * @param tag - The message's tag.
- * @returns The tag, or its longest prefix within the limit; `undefined` without a tag.
- */
-export const toCollapseId = (tag: string | undefined): string | undefined => {
-	// 1. No tag, no header
-	if (!tag) return undefined;
-
-	// 2. APNs counts bytes, not characters, and a header cut inside a multi-byte character is not UTF-8 at all;
-	//    `encodeInto()` writes whole code points only, so what it read is the boundary to cut at
-	const { read } = new TextEncoder().encodeInto(tag, new Uint8Array(APNS_COLLAPSE_ID_MAX_LENGTH));
-
-	return tag.slice(0, read);
-};
 
 /**
  * Translate a message into FCM's `Message` for a token, with the platform blocks that carry what the common
@@ -28,8 +9,8 @@ export const toCollapseId = (tag: string | undefined): string | undefined => {
  * `data` goes out as given, with the click target under `url` for native clients; the web block gets the icon,
  * badge, image and tag and — for an `https:` target only, since FCM refuses anything else — the link. The image
  * reaches the common block and the APNs block only as an absolute `http(s):` URL, the one form FCM accepts there; a
- * relative one is delivered to the web block alone. A ttl of `0` is "now or never" on every platform; the tag is cut
- * to APNs's 64 bytes for its collapse id.
+ * relative one is delivered to the web block alone. A ttl of `0` is "now or never" on every platform; the tag is
+ * sanitised by {@link toCollapseId} for the APNs collapse id, whose limit APNs enforces on what FCM relays.
  *
  * @param message - The message, with its `token`.
  * @param config - The location's TTL and analytics label.

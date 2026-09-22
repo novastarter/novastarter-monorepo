@@ -391,6 +391,31 @@ describe('#delete', () => {
 	});
 });
 
+describe('#deleteChunkedUpload', () => {
+	let mockFile: {
+		delete: Mock;
+	};
+
+	beforeEach(() => {
+		// 1. The handle factory is stubbed, so the termination can be asserted without any request
+		mockFile = {
+			delete: vi.fn(),
+		};
+
+		driver['file'] = vi.fn().mockReturnValue(mockFile);
+	});
+
+	test('Deletes the object under the final path, ignoring a missing one', async () => {
+		await driver.deleteChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} });
+
+		// 1. The handle must be asked for the resolved name, not the caller's path; an unfinished session has no object
+		//    in the bucket, so the SDK's 404 for it must not reject the termination
+		expect(driver['file']).toHaveBeenCalledWith(sample.path.inputFull);
+		expect(mockFile.delete).toHaveBeenCalledOnce();
+		expect(mockFile.delete).toHaveBeenCalledWith({ ignoreNotFound: true });
+	});
+});
+
 describe('#stat', () => {
 	let mockFile: {
 		getMetadata: Mock;

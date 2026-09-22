@@ -7,6 +7,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { DatabaseDriverSqlite, MEMORY_FILE } from './driver.js';
@@ -69,5 +70,48 @@ describe('DatabaseDriverSqlite in memory', () => {
 		driver.db.run(sql`INSERT INTO notes (text) VALUES ('hello')`);
 
 		expect(driver.db.all(sql`SELECT text FROM notes`)).toStrictEqual([{ text: 'hello' }]);
+	});
+});
+
+describe('DatabaseDriverSqlite on a read-only file', () => {
+	const logger = { error: vi.fn(), debug: vi.fn() };
+	let directory: string;
+	let file: string;
+
+	beforeAll(async () => {
+		// 1. A real file, then opened readonly: better-sqlite3 refuses WAL there with SQLITE_READONLY, the case the
+		//    default must not trigger
+		directory = await mkdtemp(join(tmpdir(), 'novastarter-sqlite-'));
+		file = join(directory, 'readonly.db');
+
+		new Database(file).close();
+	});
+
+	afterAll(async () => {
+		await rm(directory, { recursive: true, force: true });
+	});
+
+	test('Opens a read-only file without WAL', async () => {
+		const driver = new DatabaseDriverSqlite({ file, options: { readonly: true }, logger: logger as never });
+
+		// 1. Read back through the handle Drizzle exposes: the journal is SQLite's default, not WAL
+		expect(driver.db.$client.pragma('journal_mode', { simple: true })).toBe('delete');
+		await expect(driver.ping()).resolves.toBeUndefined();
+
+		await driver.close();
+	});
+
+	test("An explicit WAL on a read-only file raises SQLite's own error", () => {
+		// 1. The driver does what it is told, and SQLite refuses; the handle is closed, so the failure leaves nothing
+		//    behind. The error is better-sqlite3's own — the code is SQLite's, the message human-readable
+		let thrown: unknown;
+
+		try {
+			new DatabaseDriverSqlite({ file, options: { readonly: true }, wal: true, logger: logger as never });
+		} catch (error) {
+			thrown = error;
+		}
+
+		expect(thrown).toMatchObject({ code: 'SQLITE_READONLY', message: 'attempt to write a readonly database' });
 	});
 });

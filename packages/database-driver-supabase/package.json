@@ -26,13 +26,13 @@
 	},
 	"dependencies": {
 		"@novastarter/database": "workspace:*",
-		"@novastarter/database-driver-postgres": "workspace:*"
+		"@novastarter/database-driver-postgres": "workspace:*",
+		"@types/pg": "catalog:"
 	},
 	"devDependencies": {
 		"@ngneat/falso": "catalog:",
 		"@novastarter/tsconfig": "workspace:*",
 		"@types/node": "catalog:",
-		"@types/pg": "catalog:",
 		"@vitest/coverage-v8": "catalog:",
 		"drizzle-orm": "catalog:",
 		"tsdown": "catalog:",

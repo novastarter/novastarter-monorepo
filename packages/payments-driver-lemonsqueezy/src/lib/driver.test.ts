@@ -4,34 +4,15 @@
  * its documented payloads. The client, the signature check and the mappings have their own test files next to them.
  */
 import { createHmac } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
 import { describe, expect, test } from 'vitest';
-import type { LsSubscriptionAttributes, LsSubscriptionInvoiceAttributes, LsWebhookPayload } from '../types.js';
+import { fixture, fixtureText } from '../fixtures/index.js';
+import type { LsSubscriptionAttributes, LsSubscriptionInvoiceAttributes } from '../types.js';
 import type { ApiFetch } from './api.js';
 import { PaymentsDriverLemonSqueezy } from './driver.js';
 
 /** The secret the fixtures are signed with. */
 const WEBHOOK_SECRET = 'lemon-signing-secret';
-
-/**
- * A fixture, as text — the bytes a signature covers.
- *
- * @param name - The file, named after the Lemon Squeezy event it carries.
- * @returns The JSON text.
- */
-const fixtureText = (name: string): string =>
-	readFileSync(new URL(`../fixtures/${name}.json`, import.meta.url), 'utf8');
-
-/**
- * A fixture, parsed.
- *
- * @typeParam A - The attributes of the resource the fixture carries.
- * @param name - The fixture.
- * @returns The delivery.
- */
-const fixture = <A = unknown>(name: string): LsWebhookPayload<A> =>
-	JSON.parse(fixtureText(name)) as LsWebhookPayload<A>;
 
 /**
  * The `X-Signature` of a body.

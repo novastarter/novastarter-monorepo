@@ -6,8 +6,27 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import defaultExport from '../index.js';
 import { MailDriverPostmark } from './driver.js';
 
+/**
+ * Spy standing in for `ServerClient.sendEmail()`, shared by every instance so a test can script Postmark's answer and
+ * inspect the request.
+ *
+ * @internal
+ */
 const sendEmail = vi.fn();
+
+/**
+ * Spy standing in for `ServerClient.getServer()`, the call `verify()` makes.
+ *
+ * @internal
+ */
 const getServer = vi.fn();
+
+/**
+ * Spy recording every `ServerClient` construction, so a test can check the token and configuration the driver built
+ * the client with.
+ *
+ * @internal
+ */
 const construct = vi.fn();
 
 vi.mock('postmark', () => ({
@@ -98,15 +117,17 @@ describe('MailDriverPostmark', () => {
 		});
 	});
 
-	test('Lets a refusal of the API through', async () => {
-		// 1. The SDK's error keeps its code and status for the caller
-		sendEmail.mockRejectedValueOnce(Object.assign(new Error('Inactive recipient'), { code: 406, statusCode: 422 }));
+	test('Names the provider in a refusal, keeping the SDK error as the cause', async () => {
+		// 1. The SDK's error is wrapped, not replaced: the cause keeps its code and status for the caller
+		const refusal = Object.assign(new Error('Inactive recipient'), { code: 406, statusCode: 422 });
+
+		sendEmail.mockRejectedValueOnce(refusal);
 
 		const driver = new MailDriverPostmark({ serverToken: 'token' });
 
 		await expect(driver.send({ to: 'a@example.com', from: 'me@acme.test', subject: 'S' })).rejects.toMatchObject({
-			message: 'Inactive recipient',
-			code: 406,
+			message: 'Postmark: Inactive recipient',
+			cause: refusal,
 		});
 	});
 
@@ -117,8 +138,8 @@ describe('MailDriverPostmark', () => {
 		getServer.mockResolvedValueOnce({ ID: 1, Name: 'Production' });
 		await expect(driver.verify()).resolves.toBeUndefined();
 
-		// 2. A refusal passes through
+		// 2. A refusal passes with the provider's name, the SDK's error as the cause
 		getServer.mockRejectedValueOnce(new Error('Bad token'));
-		await expect(driver.verify()).rejects.toThrow('Bad token');
+		await expect(driver.verify()).rejects.toThrow('Postmark: Bad token');
 	});
 });

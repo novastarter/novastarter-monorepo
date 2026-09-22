@@ -6,6 +6,12 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import defaultExport from '../index.js';
 import { MailDriverResend } from './driver.js';
 
+/**
+ * Spy standing in for `Emails.send()`, shared by every instance so a test can script Resend's answer and inspect the
+ * payload the driver hands over.
+ *
+ * @internal
+ */
 const send = vi.fn();
 
 vi.mock('resend', () => ({

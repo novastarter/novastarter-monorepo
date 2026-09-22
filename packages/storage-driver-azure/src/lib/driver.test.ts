@@ -1,7 +1,7 @@
 /**
  * Tests of `storage-driver-azure/lib/driver`.
  */
-import { PassThrough } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
 import { BlobServiceClient, type ContainerClient, StorageSharedKeyCredential } from '@azure/storage-blob';
 import {
 	randAlphaNumeric,
@@ -661,5 +661,54 @@ describe('#list', () => {
 		}
 
 		expect(output).toStrictEqual([mockFile]);
+	});
+});
+
+describe('#writeChunk', () => {
+	let mockAppendBlock: Mock;
+
+	beforeEach(() => {
+		// 1. The append call is recorded, so the chunk the driver sends can be asserted without any request
+		mockAppendBlock = vi.fn().mockResolvedValue(undefined);
+
+		driver['containerClient'] = {
+			getAppendBlobClient: vi.fn().mockReturnValue({ appendBlock: mockAppendBlock }),
+		} as unknown as ContainerClient;
+	});
+
+	test('Appends the buffered chunk at the resolved blob name', async () => {
+		const result = await driver.writeChunk(sample.path.input, Readable.from([Buffer.from(sample.text)]), 0, {
+			size: sample.file.size,
+			metadata: {},
+		});
+
+		// 1. The chunk lands as one block under the resolved name, and the offset advances by the bytes appended
+		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
+		expect(driver['containerClient'].getAppendBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
+		expect(mockAppendBlock).toHaveBeenCalledWith(Buffer.from(sample.text), Buffer.byteLength(sample.text));
+		expect(result).toBe(Buffer.byteLength(sample.text));
+	});
+
+	test('Refuses a chunk above the configured size', async () => {
+		// 1. The TUS server agreed to send at most the configured size per request; a larger chunk is refused before
+		//    the service would reject the append mid-upload
+		const tusDriver = new StorageDriverAzure({
+			containerName: sample.config.containerName,
+			accountKey: sample.config.accountKey,
+			accountName: sample.config.accountName,
+			tus: { enabled: true, chunkSize: 1 },
+		});
+
+		tusDriver['fullPath'] = driver['fullPath'];
+		tusDriver['containerClient'] = driver['containerClient'];
+
+		await expect(
+			tusDriver.writeChunk(sample.path.input, Readable.from([Buffer.from(sample.text)]), 0, {
+				size: sample.file.size,
+				metadata: {},
+			}),
+		).rejects.toThrow(`The chunk of ${Buffer.byteLength(sample.text)} bytes exceeds the chunk size limit of 1 bytes`);
+
+		expect(mockAppendBlock).not.toHaveBeenCalled();
 	});
 });

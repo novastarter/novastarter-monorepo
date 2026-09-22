@@ -17,26 +17,34 @@ vi.mock('node:module', async (importOriginal) => {
 	};
 });
 
+/** Mocked `require`, returned by the mocked `createRequire` so the module under test picks it up. */
 let mockRequire: NodeRequire;
 
 beforeEach(() => {
+	// 1. A require double whose default export is an empty factory, and an isPlainObject stub that accepts it, so a
+	//    test only states what it changes
 	mockRequire = vi.fn() as unknown as NodeRequire;
 	vi.mocked(mockRequire).mockReturnValue(() => ({}));
 	vi.mocked(createRequire).mockReturnValue(mockRequire);
+	vi.mocked(isPlainObject).mockReturnValue(true);
 });
 
 afterEach(() => {
+	// 1. Both the require double and the isPlainObject stub must not leak into the next test
 	vi.clearAllMocks();
 });
 
 test('Reads file with node require', () => {
+	// 1. The whole loader is synchronous require, so the path is handed to require as is
 	readConfigurationFromJavaScript('./test/path.js');
 	expect(mockRequire).toHaveBeenCalledWith('./test/path.js');
 });
 
 test('Executes function if default export is a function type', () => {
+	// 1. A factory receives the raw environment, and its result passes the same plain-object check as a data export
 	const fn = vi.fn().mockReturnValue({ test: 'foo' });
 	vi.mocked(mockRequire).mockReturnValue(fn);
+	vi.mocked(isPlainObject).mockReturnValue(true);
 
 	const config = readConfigurationFromJavaScript('./test/path.js');
 
@@ -44,24 +52,36 @@ test('Executes function if default export is a function type', () => {
 	expect(config).toEqual({ test: 'foo' });
 });
 
+test('Throws an error if a function export does not return a plain object', () => {
+	// 1. A factory returning nothing would otherwise flow into the merge as `undefined`; the loader must refuse it
+	//    with the same error a bad data export gets
+	vi.mocked(mockRequire).mockReturnValue(() => undefined);
+	vi.mocked(isPlainObject).mockReturnValue(false);
+
+	expect(() => readConfigurationFromJavaScript('./test/path.js')).toThrowErrorMatchingInlineSnapshot(
+		`[Error: Invalid JS configuration file export type. Requires one of "function", "object", received: "undefined"]`,
+	);
+});
+
 test('Returns exported thing if it is a plain object', () => {
+	// 1. A data export is validated and returned by reference, no copy — the merge downstream reads it once
 	const config = { test: 'foo' };
 	vi.mocked(mockRequire).mockReturnValue(config);
-	vi.mocked(isPlainObject).mockReturnValue(true);
 
 	expect(readConfigurationFromJavaScript('./test/path.js')).toBe(config);
 });
 
 test('Returns default key from exported module', () => {
+	// 1. ESM-transpiled files nest the export under `default`; that indirection is peeled off before the checks
 	const config = { test: 'foo' };
 	const mod = { default: config };
 	vi.mocked(mockRequire).mockReturnValue(mod);
-	vi.mocked(isPlainObject).mockReturnValue(true);
 
 	expect(readConfigurationFromJavaScript('./test/path.js')).toBe(config);
 });
 
 test('Throws an error if the exported value is not a function or plain object', () => {
+	// 1. A scalar export names `undefined` because the value never survives the `object` / `function` gate
 	vi.mocked(mockRequire).mockReturnValue(123);
 
 	expect(() => readConfigurationFromJavaScript('./test/path.js')).toThrowErrorMatchingInlineSnapshot(

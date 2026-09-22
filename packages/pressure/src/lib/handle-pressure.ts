@@ -14,12 +14,35 @@ export type PressureHandler = RequestHandler & {
 };
 
 /**
+ * Copy an error so one request's handling of it cannot affect the next.
+ *
+ * The copy carries the prototype, the message and every own property of the original — a `code`, typed
+ * `extensions`, a `cause` — so an `instanceof` check or a field read answers exactly as it would on the original,
+ * while a mutation lands on the copy alone.
+ *
+ * @param error - Error to copy.
+ * @returns The copy, or `undefined` when no error was given.
+ */
+const cloneError = (error: Error | undefined): Error | undefined => {
+	// 1. No error given means the caller set none; the middleware substitutes its generic default instead
+	if (error === undefined) return undefined;
+
+	// 2. A fresh object on the original's prototype, with its own properties copied over, is indistinguishable from
+	//    the original for reading yet writes nothing back to it
+	return Object.create(Object.getPrototypeOf(error), Object.getOwnPropertyDescriptors(error));
+};
+
+/**
  * Create an Express middleware that rejects requests while the process is overloaded.
  *
  * One {@link PressureMonitor} is created per middleware instance and shared by every request passing through it.
  * When it reports overload the request is handed to the error handler with `options.error` (or a generic
  * `Error`); otherwise the request continues normally. The monitor is reachable as `handler.monitor`, so an app
  * that is torn down can close it.
+ *
+ * The error may be an `Error` or a factory returning one, the pattern {@link withTimeout} of `@novastarter/utils`
+ * uses: a factory is called per rejected request, and an `Error` is cloned per request, so an error handler that
+ * mutates what it receives leaks nothing into the next overloaded request.
  *
  * @param options - Monitor thresholds plus an optional `error` to forward and a `Retry-After` header value.
  * @returns Express request handler with its monitor attached.
@@ -36,7 +59,7 @@ export type PressureHandler = RequestHandler & {
  * ```
  */
 export const handlePressure = (
-	options: PressureMonitorOptions & { error?: Error; retryAfter?: string },
+	options: PressureMonitorOptions & { error?: Error | (() => Error); retryAfter?: string },
 ): PressureHandler => {
 	// 1. Create the monitor once, outside the handler, so its sampling timer is not restarted for each request
 	const monitor = new PressureMonitor(options);
@@ -50,8 +73,12 @@ export const handlePressure = (
 				res.header('Retry-After', options.retryAfter);
 			}
 
-			// 3. Forwarding an error to `next` lets the app's error handler decide the status and body
-			return next(options.error ?? new Error('Pressure limit exceeded'));
+			// 3. Forwarding an error to `next` lets the app's error handler decide the status and body; the error
+			//    is resolved per request — a factory is called, an `Error` is cloned — so a handler that mutates it
+			//    cannot share that state with the next overloaded request
+			const error = typeof options.error === 'function' ? options.error() : cloneError(options.error);
+
+			return next(error ?? new Error('Pressure limit exceeded'));
 		}
 
 		// 4. Under normal load the middleware is transparent

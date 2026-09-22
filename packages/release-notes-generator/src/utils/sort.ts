@@ -23,7 +23,13 @@ export function sortByExternalOrder<T, O extends T[K][], K extends keyof T>(orde
 			return -1;
 		}
 
-		// 3. Only `b` listed or neither: keep the existing order, so unlisted items are never shuffled
+		// 3. Only `b` listed: the mirror image, so the comparator stays symmetric and sorts unlisted items after
+		//    the listed ones no matter which side they arrive on
+		if (indexOfB >= 0) {
+			return 1;
+		}
+
+		// 4. Neither listed: keep the existing order, so unlisted items are never shuffled
 		return 0;
 	};
 }

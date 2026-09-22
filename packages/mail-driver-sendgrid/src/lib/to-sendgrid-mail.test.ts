@@ -3,17 +3,53 @@
  * `send()`.
  */
 import { describe, expect, test } from 'vitest';
-import { toSendgridAddress, toSendgridAttachment, toSendgridMail } from './to-sendgrid-mail.js';
+import {
+	SENDGRID_CATEGORY_COUNT,
+	SENDGRID_CATEGORY_LENGTH,
+	toSendgridAddress,
+	toSendgridAttachment,
+	toSendgridCategories,
+	toSendgridMail,
+} from './to-sendgrid-mail.js';
+
+describe('toSendgridCategories', () => {
+	test('Cuts every label to the length limit, drops an empty one and caps the count, the category first', () => {
+		// 1. SendGrid refuses a message past its category limits, so the labels are adapted instead: the category
+		//    leads, an empty tag drops out and the tail past ten is left off
+		const tags = Array.from({ length: SENDGRID_CATEGORY_COUNT + 3 }, (_, index) => `tag-${index}`);
+
+		expect(toSendgridCategories({ to: 'a@b.c', subject: 'x', category: 'marketing', tags })).toStrictEqual([
+			'marketing',
+			...tags.slice(0, SENDGRID_CATEGORY_COUNT - 1).map((_, index) => `tag-${index}`),
+		]);
+
+		// 2. A tag past the 255-character name limit is cut to its prefix, not refused
+		expect(
+			toSendgridCategories({ to: 'a@b.c', subject: 'x', tags: ['x'.repeat(SENDGRID_CATEGORY_LENGTH + 10)] }),
+		).toStrictEqual(['transactional', 'x'.repeat(SENDGRID_CATEGORY_LENGTH)]);
+
+		// 3. An empty tag drops out; the category alone fits
+		expect(toSendgridCategories({ to: 'a@b.c', subject: 'x', tags: ['', 'welcome'] })).toStrictEqual([
+			'transactional',
+			'welcome',
+		]);
+	});
+});
 
 describe('toSendgridAddress', () => {
-	test('Unwraps a display-name string and keeps the name of an object', () => {
-		// 1. SendGrid wants the bare address in `email`; the display name of a string form is dropped, an object keeps its own
-		expect(toSendgridAddress('Bob <bob@example.com>')).toStrictEqual({ email: 'bob@example.com' });
+	test('Parses a display-name string and keeps the name of an object', () => {
+		// 1. SendGrid takes name and address apart; a display-name string is parsed, so its name is kept
+		expect(toSendgridAddress('Bob <bob@example.com>')).toStrictEqual({
+			email: 'bob@example.com',
+			name: 'Bob',
+		});
 
 		expect(toSendgridAddress({ name: 'Ada', address: 'ada@example.com' })).toStrictEqual({
 			email: 'ada@example.com',
 			name: 'Ada',
 		});
+
+		expect(toSendgridAddress('ada@example.com')).toStrictEqual({ email: 'ada@example.com' });
 	});
 });
 
@@ -79,7 +115,10 @@ describe('toSendgridMail', () => {
 				true,
 			),
 		).toStrictEqual({
-			to: [{ email: 'ada@example.com', name: 'Ada' }, { email: 'bob@example.com' }],
+			to: [
+				{ email: 'ada@example.com', name: 'Ada' },
+				{ email: 'bob@example.com', name: 'Bob' },
+			],
 			from: { email: 'no-reply@acme.test', name: 'Acme' },
 			cc: [{ email: 'cc@example.com' }],
 			replyTo: { email: 'support@acme.test' },

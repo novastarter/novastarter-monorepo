@@ -12,12 +12,20 @@ import { MailDriverFile } from './file.js';
  */
 let dir: string;
 
+/**
+ * The temporary parent `mkdtemp` created, removed whole after each test so nothing is left in the system's temp dir.
+ */
+let parent: string;
+
 beforeEach(async () => {
-	dir = join(await mkdtemp(join(tmpdir(), 'novastarter-mail-')), 'outbox');
+	// 1. The outbox lives one level down, so the driver has to create it
+	parent = await mkdtemp(join(tmpdir(), 'novastarter-mail-'));
+	dir = join(parent, 'outbox');
 });
 
 afterEach(async () => {
-	await rm(dir, { recursive: true, force: true });
+	// 1. The parent goes with the outbox: `mkdtemp`'s directory is ours to clean up, not the system's
+	await rm(parent, { recursive: true, force: true });
 });
 
 describe('MailDriverFile', () => {

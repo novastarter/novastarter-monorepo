@@ -6,7 +6,19 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import defaultExport from '../index.js';
 import { MailDriverSendgrid } from './driver.js';
 
+/**
+ * Spy standing in for `MailService.send()`, shared by every instance so a test can script SendGrid's answer and
+ * inspect the payload the driver hands over.
+ *
+ * @internal
+ */
 const send = vi.fn();
+
+/**
+ * Spy standing in for `MailService.setApiKey()`, so a test can check the key the driver received.
+ *
+ * @internal
+ */
 const setApiKey = vi.fn();
 
 vi.mock('@sendgrid/mail', () => ({
@@ -54,9 +66,15 @@ describe('MailDriverSendgrid', () => {
 			response: '202',
 		});
 
-		// 3. The SDK's error passes through untouched; a missing key is refused by name
-		send.mockRejectedValueOnce(new Error('Forbidden'));
-		await expect(driver.send({ to: 'a@b.c', from: 'x@y.z', subject: 'x', text: 'x' })).rejects.toThrow('Forbidden');
+		// 3. A refusal names the provider, the SDK's error as the cause; a missing key is refused by name
+		const failure = new Error('Forbidden');
+
+		send.mockRejectedValueOnce(failure);
+
+		await expect(driver.send({ to: 'a@b.c', from: 'x@y.z', subject: 'x', text: 'x' })).rejects.toMatchObject({
+			message: 'SendGrid: Forbidden',
+			cause: failure,
+		});
 
 		expect(() => new MailDriverSendgrid({ apiKey: '' })).toThrow(/"apiKey"/);
 		expect(defaultExport).toBe(MailDriverSendgrid);

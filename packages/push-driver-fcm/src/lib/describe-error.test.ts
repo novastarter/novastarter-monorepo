@@ -16,15 +16,20 @@ const firebaseError = (code: string, message: string): Error => Object.assign(ne
 
 describe('describeError', () => {
 	test('Reports the dead-token codes and an invalid-argument about the token as gone, naming the code', () => {
-		// 1. The two codes Firebase says to delete the token on; the code is the reason the caller can log
-		const gone = describeError(
-			firebaseError('messaging/registration-token-not-registered', 'Requested entity was not found.'),
+		// 1. The two codes Firebase says to delete the token on; the code is the reason the caller can log, the SDK's
+		//    error the cause
+		const unregistered = firebaseError(
+			'messaging/registration-token-not-registered',
+			'Requested entity was not found.',
 		);
+
+		const gone = describeError(unregistered);
 
 		expect(gone).toBeInstanceOf(PushTargetGoneError);
 
 		expect(gone).toMatchObject({
 			extensions: { platform: 'fcm', reason: 'messaging/registration-token-not-registered' },
+			cause: unregistered,
 		});
 
 		expect(describeError(firebaseError('messaging/invalid-registration-token', 'Invalid token'))).toBeInstanceOf(
@@ -32,11 +37,12 @@ describe('describeError', () => {
 		);
 
 		// 2. A malformed token comes back as `invalid-argument`, told apart from a bad payload by the message
-		expect(
-			describeError(
-				firebaseError('messaging/invalid-argument', 'The registration token is not a valid FCM registration token'),
-			),
-		).toBeInstanceOf(PushTargetGoneError);
+		const invalid = firebaseError(
+			'messaging/invalid-argument',
+			'The registration token is not a valid FCM registration token',
+		);
+
+		expect(describeError(invalid)).toMatchObject({ cause: invalid });
 	});
 
 	test('Names the code of any other refusal, keeping the SDK error as the cause', () => {

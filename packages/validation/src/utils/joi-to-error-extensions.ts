@@ -2,9 +2,19 @@ import type { ValidationErrorItem } from 'joi';
 import type { FailedValidationErrorExtensions } from '../errors/failed-validation.js';
 
 /**
+ * Rules of the extended Joi for the contains family, matched on the whole rule name.
+ *
+ * `ncontains` and `icontains` both literally end with `contains`, so a suffix match reports all three as `contains`;
+ * the name is compared whole, as the affix family below does.
+ *
+ * @internal
+ */
+const substringRules: ReadonlySet<string> = new Set(['contains', 'icontains', 'ncontains']);
+
+/**
  * Rules of the extended Joi whose name is the operator itself and whose context carries the compared `substring`.
  *
- * `contains` and `ncontains` are matched separately by suffix, as before; these are the prefix / suffix family.
+ * These are the prefix / suffix family; the contains family is matched separately above.
  *
  * @internal
  */
@@ -38,11 +48,12 @@ const distinctCount = (values: unknown[]): number => {
 /**
  * Translate one Joi validation detail into the extensions of a `FailedValidationError`.
  *
- * Joi names a failed rule `<type>.<rule>` (`number.greater`, `any.only`, `string.starts_with`), so the rule is
- * matched on its suffix regardless of the value type. The compared value(s) come out of `context`, whose keys
- * differ per rule (`valids`, `invalids`, `limit`, `substring`). A value of the wrong type maps to `required`, since
- * that is the closest thing the client can say about it. The substring rules are the ones registered on the
- * extended `Joi` of this package; a named pattern built by hand is not recognised.
+ * Joi names a failed rule `<type>.<rule>` (`number.greater`, `any.only`, `string.starts_with`), so the stock rules
+ * are matched on their suffix regardless of the value type, while the extended string rules are matched on the whole
+ * rule name, since `ncontains` and `icontains` end with `contains`. The compared value(s) come out of `context`,
+ * whose keys differ per rule (`valids`, `invalids`, `limit`, `substring`). A value of the wrong type maps to
+ * `required`, since that is the closest thing the client can say about it. The substring rules are the ones
+ * registered on the extended `Joi` of this package; a named pattern built by hand is not recognised.
  *
  * @param validationErrorItem - One entry of `ValidationError.details`.
  * @param path - Keys leading to the validated object, prepended to the item's own path for nested payloads.
@@ -136,23 +147,17 @@ export const joiValidationErrorItemToErrorExtensions = (
 		extensions.valid = validationErrorItem.context?.['limit'];
 	}
 
-	// 5. Substring rules added by the extended Joi in `generateJoi`; `ncontains` also ends with `contains`, so it is
-	//    checked second and wins
-	if (joiType.endsWith('contains')) {
-		extensions.type = 'contains';
-		extensions.substring = validationErrorItem.context?.['substring'];
-	}
-
-	if (joiType.endsWith('ncontains')) {
-		extensions.type = 'ncontains';
-		extensions.substring = validationErrorItem.context?.['substring'];
-	}
-
-	// 6. Prefix / suffix rules of the extended Joi: the rule name is the operator and the substring is the original
-	//    argument, straight from the rule context. The name is compared whole, since `nstarts_with` ends with
-	//    `starts_with`
+	// 5. Substring rules of the extended Joi: the rule name is the operator and the substring is the original
+	//    argument, straight from the rule context. The name is compared whole, since `ncontains` and `icontains` end
+	//    with `contains` and would otherwise all report as `contains`
 	const rule = joiType.slice(joiType.lastIndexOf('.') + 1);
 
+	if (joiType.startsWith('string.') && substringRules.has(rule)) {
+		extensions.type = rule as FailedValidationErrorExtensions['type'];
+		extensions.substring = validationErrorItem.context?.['substring'];
+	}
+
+	// 6. Prefix / suffix rules of the extended Joi, same shape as the substring rules above
 	if (joiType.startsWith('string.') && affixRules.has(rule)) {
 		extensions.type = rule as FailedValidationErrorExtensions['type'];
 		extensions.substring = validationErrorItem.context?.['substring'];

@@ -11,10 +11,9 @@
 		"changeset": "changeset",
 		"version-packages": "pnpm --filter @novastarter/release-notes-generator build && changeset version",
 		"test": "turbo run test",
-		"test:coverage": "pnpm --recursive test:coverage"
+		"test:coverage": "turbo run test:coverage"
 	},
 	"devDependencies": {
-		"@changesets/changelog-github": "catalog:",
 		"@changesets/cli": "catalog:",
 		"@eslint/js": "catalog:",
 		"@novastarter/release-notes-generator": "workspace:*",

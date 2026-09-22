@@ -9,6 +9,8 @@
  * @returns The same keys with string values.
  */
 export const toMetadata = (customData: Record<string, unknown> | null | undefined): Record<string, string> =>
+	// 1. `meta.custom_data` arrives `null` when the checkout sent none; an empty object keeps the kit's shapes free of
+	//    nullable metadata. Objects are written as their JSON text, everything else the way `String()` renders it
 	Object.fromEntries(
 		Object.entries(customData ?? {}).map(([key, value]) => [
 			key,

@@ -219,9 +219,11 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 		const operator = Object.keys(value)[0];
 		const compareValue = Object.values(value)[0];
 
-		// 5. Lazily pick the base schema per type, so a previously built schema for the key is extended, not replaced.
-		//    The string base gets `min(0)`, because Joi's stock string rejects `''` with `string.empty` before any rule
-		//    runs; a form field left blank must reach the substring rule and fail (or pass) on that rule instead
+		// 5. Lazily pick the base schema for the operator at hand. The schema map is built fresh on every call and only
+		//    the first operator of the value applies, so `schema[key]` is always unset here; each operator composes its
+		//    own schema for the key from the typed base. The string base gets `min(0)`, because Joi's stock string
+		//    rejects `''` with `string.empty` before any rule runs; a form field left blank must reach the substring
+		//    rule and fail (or pass) on that rule instead
 		const getAnySchema = () => schema[key] ?? Joi.any();
 		const getStringSchema = () => (schema[key] ?? Joi.string().min(0)) as StringSchema;
 		const getNumberSchema = () => (schema[key] ?? Joi.number()) as NumberSchema;
@@ -424,11 +426,14 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			schema[key] = getAnySchema().invalid('');
 		}
 
-		// 13. `_between` is numeric only when both bounds are safe numbers; otherwise the bounds are read as dates.
-		//     `_nbetween` is the complement, hence `less(low)` combined with `greater(high)`
+		// 13. `_between` is numeric only when the compare value is an array of safe numbers; otherwise array bounds are
+		//     read as dates. A compare value that is not an array cannot hold two bounds, so the rule becomes
+		//     `equal(true)`, which fails for any real value, as with the substring operators above
 		if (operator === '_between') {
-			if (
-				(compareValue as any).every((value: any) => {
+			if (Array.isArray(compareValue) === false) {
+				schema[key] = Joi.any().equal(true);
+			} else if (
+				(compareValue as (string | number | Date)[]).every((value) => {
 					const val = Number(value instanceof Date ? NaN : value);
 					return !Number.isNaN(val) && Math.abs(val) <= Number.MAX_SAFE_INTEGER;
 				})
@@ -441,27 +446,35 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			}
 		}
 
+		// 14. `_nbetween` is the complement of the range: below the low bound or above the high bound. Joi ANDs the
+		//     rules of one schema, so "or" needs two alternatives; a non-array compare value fails like the one above
 		if (operator === '_nbetween') {
-			if (
-				(compareValue as any).every((value: any) => {
+			if (Array.isArray(compareValue) === false) {
+				schema[key] = Joi.any().equal(true);
+			} else if (
+				(compareValue as (string | number | Date)[]).every((value) => {
 					const val = Number(value instanceof Date ? NaN : value);
 					return !Number.isNaN(val) && Math.abs(val) <= Number.MAX_SAFE_INTEGER;
 				})
 			) {
 				const values = compareValue as [number, number];
-				schema[key] = getNumberSchema().less(Number(values[0])).greater(Number(values[1]));
+
+				schema[key] = Joi.alternatives().try(
+					getNumberSchema().less(Number(values[0])),
+					getNumberSchema().greater(Number(values[1])),
+				);
 			} else {
 				const values = compareValue as [string, string];
-				schema[key] = getDateSchema().less(values[0]).greater(values[1]);
+				schema[key] = Joi.alternatives().try(getDateSchema().less(values[0]), getDateSchema().greater(values[1]));
 			}
 		}
 
-		// 14. `_submitted` only asks for the field to be present, whatever its value
+		// 15. `_submitted` only asks for the field to be present, whatever its value
 		if (operator === '_submitted') {
 			schema[key] = getAnySchema().required();
 		}
 
-		// 15. `_regex` accepts the pattern bare or wrapped in slashes; the string base of step 5 already lets an empty
+		// 16. `_regex` accepts the pattern bare or wrapped in slashes; the string base of step 5 already lets an empty
 		//     string reach the pattern
 		if (operator === '_regex') {
 			if (compareValue === null || compareValue === undefined) {
@@ -475,10 +488,10 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 		}
 	}
 
-	// 16. An operator this function does not know leaves the field unconstrained rather than failing the payload
+	// 17. An operator this function does not know leaves the field unconstrained rather than failing the payload
 	schema[key] = schema[key] ?? Joi.any();
 
-	// 17. Presence is opt-in, so a filter can describe a partial update without every field being sent
+	// 18. Presence is opt-in, so a filter can describe a partial update without every field being sent
 	if (options.requireAll) {
 		schema[key] = schema[key]!.required();
 	}

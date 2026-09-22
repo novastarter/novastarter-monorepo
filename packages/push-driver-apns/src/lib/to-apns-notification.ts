@@ -1,6 +1,5 @@
-import type { PushMessage } from '@novastarter/push';
+import { type PushMessage, toCollapseId } from '@novastarter/push';
 import { Notification, type NotificationOptions, Priority } from 'apns2';
-import { APNS_COLLAPSE_ID_MAX_LENGTH } from './constants.js';
 import type { PushDriverApnsConfig } from './driver.js';
 
 /**
@@ -16,24 +15,6 @@ export const toApnsPriority = (urgency: PushMessage['urgency']): Priority => {
 	if (urgency === 'low' || urgency === 'very-low') return Priority.low;
 
 	return Priority.throttled;
-};
-
-/**
- * A collapse tag as the `apns-collapse-id` header takes it: at most {@link APNS_COLLAPSE_ID_MAX_LENGTH} bytes of
- * letters, digits and `_ . : -`.
- *
- * @param tag - Free text.
- * @returns The tag with every other code point replaced by `_`, cut to the limit; `undefined` for an empty one.
- */
-export const toCollapseId = (tag: string | undefined): string | undefined => {
-	// 1. No tag, no header
-	if (!tag) return undefined;
-
-	// 2. The header goes out verbatim: the HTTP client refuses a value outside Latin-1 before the request leaves, and
-	//    Apple's limit is 64 bytes, not characters. Every code point outside the safe alphabet becomes one `_` — the
-	//    `u` flag keeps an emoji from turning into two — which leaves pure ASCII, where a character is a byte and the
-	//    cut can split no code point
-	return tag.replace(/[^A-Za-z0-9_.:-]/gu, '_').slice(0, APNS_COLLAPSE_ID_MAX_LENGTH);
 };
 
 /**

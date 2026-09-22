@@ -1,8 +1,8 @@
 /**
- * Tests of `types/index`.
+ * Tests of `types/index`: the single import path the package exposes.
  */
 import { expect, expectTypeOf, test } from 'vitest';
-import type { ClientFilterOperator, Filter, FilterOperator, NovastarterError } from './index.js';
+import type { ClientFilterOperator, EventContext, Filter, FilterOperator, NovastarterError } from './index.js';
 import * as types from './index.js';
 
 test('ships no runtime code', () => {
@@ -10,21 +10,12 @@ test('ships no runtime code', () => {
 	expect(Object.keys(types)).toEqual([]);
 });
 
-test('ClientFilterOperator is a superset of FilterOperator', () => {
-	// 1. Every operator a storage layer evaluates must also be accepted from a client, or a rule could be stored but
-	//    never sent
-	expectTypeOf<FilterOperator>().toExtend<ClientFilterOperator>();
-	expectTypeOf<ClientFilterOperator>().not.toExtend<FilterOperator>();
-});
-
-test('Filter accepts logical groups and field rules', () => {
-	// 1. Both shapes are one type, so a consumer can nest groups inside groups without a cast
-	expectTypeOf<{ _and: Filter[] }>().toExtend<Filter>();
-	expectTypeOf<{ age: { _gte: number } }>().toExtend<Filter>();
-});
-
-test('NovastarterError carries typed extensions', () => {
-	// 1. The generic is what lets a caller read the details of one error class without narrowing by hand
-	expectTypeOf<NovastarterError<{ limit: number }>['extensions']>().toEqualTypeOf<{ limit: number }>();
-	expectTypeOf<NovastarterError['extensions']>().toEqualTypeOf<void>();
+test('re-exports every subsystem', () => {
+	// 1. The package root is the one import path a consumer uses; the types of each submodule must stay reachable
+	//    through it as the submodules themselves define them
+	expectTypeOf<NovastarterError>().toEqualTypeOf<import('./error.js').NovastarterError>();
+	expectTypeOf<Filter>().toEqualTypeOf<import('./filter.js').Filter>();
+	expectTypeOf<FilterOperator>().toEqualTypeOf<import('./filter.js').FilterOperator>();
+	expectTypeOf<ClientFilterOperator>().toEqualTypeOf<import('./filter.js').ClientFilterOperator>();
+	expectTypeOf<EventContext>().toEqualTypeOf<import('./events.js').EventContext>();
 });

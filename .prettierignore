@@ -4,3 +4,8 @@ pnpm-lock.yaml
 /.changeset/pre.json
 /.changeset/*.md
 apps/*/drizzle/
+.next/
+out/
+build/
+.turbo/
+next-env.d.ts

@@ -8,6 +8,7 @@
  */
 export * from './driver.js';
 export * from './errors/index.js';
+export * from './lib/collapse-id.js';
 export * from './lib/drivers/index.js';
 export * from './lib/platform-of.js';
 export * from './lib/push-manager.js';

@@ -29,14 +29,15 @@ export const toInvoice = (invoice: LsResource<LsSubscriptionInvoiceAttributes>):
 	const status = INVOICE_STATUS[attributes.status] ?? 'open';
 	const paid = status === 'paid';
 
-	// 2. The amounts follow the status: all or nothing, with a void invoice owing nothing
+	// 2. The amounts follow the status: all or nothing, with a void invoice owing nothing. The provider sends the
+	//    currency in upper case, while the kit's contract reads it in lower case
 	return {
 		id: invoice.id,
 		number: null,
 		customerId: String(attributes.customer_id),
 		subscriptionId: String(attributes.subscription_id),
 		status,
-		total: { amount: attributes.total, currency: attributes.currency },
+		total: { amount: attributes.total, currency: attributes.currency.toLowerCase() },
 		amountPaid: paid ? attributes.total : 0,
 		amountDue: paid || status === 'void' ? 0 : attributes.total,
 		createdAt: new Date(attributes.created_at),

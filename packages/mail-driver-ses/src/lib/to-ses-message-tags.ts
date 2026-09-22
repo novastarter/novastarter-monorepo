@@ -17,6 +17,8 @@ export const SES_MESSAGE_TAG_LENGTH = 256;
  * input.
  */
 export const toSesMessageTag = (value: string): string =>
+	// 1. SES matches a name against `^[a-zA-Z0-9_-]{1,256}$` and refuses the whole message over one miss, so anything
+	//    outside the set becomes `_` and the tail past the limit is cut; `toSesMessageTags` drops a result left empty
 	value.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, SES_MESSAGE_TAG_LENGTH);
 
 /**

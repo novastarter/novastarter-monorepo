@@ -119,9 +119,10 @@ export class Emitter {
 		meta: Record<string, any>,
 		context: EventContext | null = null,
 	): Promise<T> {
+		// 1. One name or several are normalised into a list up front, so the rest of the run treats both alike
 		const events = Array.isArray(event) ? event : [event];
 
-		// 1. Listeners are resolved up front, so a handler registering another one mid-run does not join this run
+		// 2. Listeners are resolved up front, so a handler registering another one mid-run does not join this run
 		const eventListeners = events.map((event) => ({
 			event,
 			listeners: this.filterEmitter.listeners(event) as FilterHandler<T>[],
@@ -129,7 +130,7 @@ export class Emitter {
 
 		let updatedPayload = payload;
 
-		// 2. Sequential on purpose: every filter sees the result of the previous one
+		// 3. Sequential on purpose: every filter sees the result of the previous one
 		for (const { event, listeners } of eventListeners) {
 			for (const listener of listeners) {
 				const result = await listener(updatedPayload, { event, ...meta }, context ?? this.getDefaultContext());
