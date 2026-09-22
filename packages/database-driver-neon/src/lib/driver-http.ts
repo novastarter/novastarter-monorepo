@@ -1,12 +1,14 @@
 import { type HTTPTransactionOptions, neon, type NeonQueryFunction } from '@neondatabase/serverless';
 import {
+	type DatabaseCapabilities,
 	type DatabaseDriver,
 	type DatabaseDriverCommonConfig,
 	type MigrateOptions,
+	resolveLogger,
 	toDrizzleOptions,
 	toMigrationConfig,
+	toUnavailableError,
 } from '@novastarter/database';
-import { useLogger } from '@novastarter/logger';
 import { sql } from 'drizzle-orm';
 import { drizzle, type NeonHttpDatabase } from 'drizzle-orm/neon-http';
 import { migrate } from 'drizzle-orm/neon-http/migrator';
@@ -85,6 +87,19 @@ export class DatabaseDriverNeonHttp<
 	readonly db: NeonHttpDatabase<Schema> & { $client: NeonHttpClient };
 
 	/**
+	 * What the dialect and the transport can do: no session over HTTP, so `db.transaction()` throws and `db.batch()`
+	 * is the one transaction.
+	 */
+	readonly capabilities: DatabaseCapabilities = { transactions: false };
+
+	/**
+	 * The location's name, for the log lines and the error `ping()` throws; the manager fills it in.
+	 *
+	 * @internal
+	 */
+	private readonly label: string | undefined;
+
+	/**
 	 * Create a driver over a query function, building one when given a connection string.
 	 *
 	 * @param config - Connection, `neon()` options, schema and logging options.
@@ -108,19 +123,25 @@ export class DatabaseDriverNeonHttp<
 			client = neon(config.connection, config.options);
 		}
 
-		// 3. Drizzle over the function, with the schema and, when asked for, the query logger
-		this.db = drizzle(client, toDrizzleOptions(config, config.logger ?? useLogger()));
+		// 3. Drizzle over the function, with the schema and, when asked for, the query logger bound to the label
+		this.label = config.label;
+		this.db = drizzle(client, toDrizzleOptions(config, resolveLogger(config)));
 	}
 
 	/**
 	 * Run `select 1` over HTTP.
 	 *
 	 * @returns Once the database answered.
-	 * @throws What the request raised when it could not.
+	 * @throws DatabaseUnavailableError naming the location, with what the request raised as its `cause`.
 	 */
 	async ping(): Promise<void> {
 		// 1. The cheapest statement a server answers; through Drizzle, so the same path the queries take is proven
-		await this.db.execute(sql`select 1`);
+		try {
+			await this.db.execute(sql`select 1`);
+		} catch (error) {
+			// 2. One error for every backend, 503, naming the location; the request's error stays as `cause`
+			throw toUnavailableError(error, this.label);
+		}
 	}
 
 	/**

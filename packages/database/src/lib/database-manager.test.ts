@@ -68,9 +68,26 @@ describe('#registerLocation', () => {
 
 		manager.location('test-location');
 
+		// 3. The options arrive with the location's name as their label, what the driver's log lines carry
 		expect(mockDriver).toHaveBeenCalledOnce();
-		expect(mockDriver).toHaveBeenCalledWith({ connection: 'postgresql://localhost/app' });
+		expect(mockDriver).toHaveBeenCalledWith({ connection: 'postgresql://localhost/app', label: 'test-location' });
 		expect(manager.instantiated().get('test-location')).toBeInstanceOf(mockDriver);
+	});
+
+	test("Keeps a label the caller chose and leaves the caller's object untouched", () => {
+		const mockDriver = vi.fn();
+		const manager = new DatabaseManager();
+
+		manager.registerDriver('test-driver', mockDriver);
+
+		// 1. The caller's config is not mutated: a config object reused for two locations must not carry the first name
+		const config = { driver: 'test-driver' as const, options: { label: 'primary' } };
+
+		manager.registerLocation('test-location', config);
+		manager.location('test-location');
+
+		expect(mockDriver).toHaveBeenCalledWith({ label: 'primary' });
+		expect(config).toStrictEqual({ driver: 'test-driver', options: { label: 'primary' } });
 	});
 });
 

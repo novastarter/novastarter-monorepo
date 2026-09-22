@@ -1,17 +1,18 @@
 import type { DatabaseDrivers } from '@novastarter/database';
 import type { LocationConfig } from '@novastarter/utils';
 import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core';
+import * as schema from '../db/schema';
 import type { AppEnv } from '../env';
 
 /**
  * What `useDatabase().location()` hands out: the Drizzle database the five Postgres drivers the app ships share —
- * node-postgres, Supabase, both Neon transports and PGlite all extend `PgDatabase`. `$client` differs per driver (a
- * `pg` pool, a Neon pool, a query function, a PGlite instance) and is not part of it. The schema type joins as the
- * second parameter — `PgDatabase<PgQueryResultHKT, typeof schema>` — once the app defines its tables.
+ * node-postgres, Supabase, both Neon transports and PGlite all extend `PgDatabase` — typed with the app's schema, so
+ * `db.query.users` and the query builder know the tables. `$client` differs per driver (a `pg` pool, a Neon pool, a
+ * query function, a PGlite instance) and is not part of it.
  */
 declare module '@novastarter/database' {
 	interface DatabaseLocations {
-		default: PgDatabase<PgQueryResultHKT>;
+		default: PgDatabase<PgQueryResultHKT, typeof schema>;
 	}
 }
 
@@ -32,6 +33,7 @@ export const databaseConfig = (env: AppEnv): LocationConfig<DatabaseDrivers> => 
 			driver: 'pglite',
 			options: {
 				connection: env.DATABASE_PGLITE_DIR,
+				schema,
 			},
 		};
 	}
@@ -43,6 +45,7 @@ export const databaseConfig = (env: AppEnv): LocationConfig<DatabaseDrivers> => 
 			options: {
 				url: env.DATABASE_URL,
 				ca: env.DATABASE_SSL_CA,
+				schema,
 			},
 		};
 	}
@@ -53,6 +56,7 @@ export const databaseConfig = (env: AppEnv): LocationConfig<DatabaseDrivers> => 
 			driver: env.DATABASE_DRIVER,
 			options: {
 				connection: env.DATABASE_URL,
+				schema,
 			},
 		};
 	}
@@ -62,6 +66,7 @@ export const databaseConfig = (env: AppEnv): LocationConfig<DatabaseDrivers> => 
 		driver: 'postgres',
 		options: {
 			connection: env.DATABASE_URL,
+			schema,
 		},
 	};
 };

@@ -16,6 +16,16 @@ const optional = <T extends z.ZodType>(schema: T) => {
 };
 
 /**
+ * A flag: the spellings `z.stringbool()` reads (`true`, `1`, `yes`, `on` and their opposites), or a boolean the
+ * `boolean:` cast of `@novastarter/env` already made; unset or empty is `false`.
+ *
+ * @returns The schema of a boolean variable.
+ */
+const flag = () => {
+	return optional(z.union([z.boolean(), z.stringbool()])).default(false);
+};
+
+/**
  * Schema of the variables this app reads: what each one is, its default, and what counts as valid.
  *
  * `useEnv()` hands over strings (plus the cast prefixes and `_FILE` secrets it resolved); the schema turns them into
@@ -39,6 +49,8 @@ export const envSchema = z.object({
 	 * and created when missing; `memory://` for one that lives as long as the process.
 	 */
 	DATABASE_PGLITE_DIR: z.string().default('./data/pglite'),
+	/** Apply the pending migrations of `drizzle/` when the server starts; off unless set. */
+	DATABASE_MIGRATE: flag(),
 	/**
 	 * Which driver carries `DATABASE_URL`: plain node-postgres, Supabase with its TLS defaults, Neon over WebSocket
 	 * (`neon`) or over HTTP (`neon-http`, one fetch per query, no transactions).

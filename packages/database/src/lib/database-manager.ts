@@ -1,5 +1,6 @@
-import { DEFAULT_LOCATION, DriverManager } from '@novastarter/utils';
+import { DEFAULT_LOCATION, DriverManager, type LocationConfig } from '@novastarter/utils';
 import type { DatabaseDriver } from '../driver.js';
+import type { DatabaseDriverCommonConfig } from '../types.js';
 
 /**
  * Database drivers by the name they are registered under, mapped to the options their constructor takes.
@@ -31,6 +32,17 @@ export interface DatabaseLocations {}
 export type LocationDb<Name extends string> = Name extends keyof DatabaseLocations ? DatabaseLocations[Name] : unknown;
 
 /**
+ * The shape every entry of the location union shares, read through instead of the union itself.
+ *
+ * The union is `never` while the driver map is empty — before a driver package augments it — and spreading a
+ * discriminated union widens it into a cross product TypeScript refuses; the shared shape is what the label is added
+ * to.
+ *
+ * @internal
+ */
+type AnyLocation = { driver: string; options: DatabaseDriverCommonConfig };
+
+/**
  * Registry that maps named database locations to driver instances.
  *
  * The {@link DriverManager} of the kit for relational databases: drivers are registered as classes and locations as
@@ -55,6 +67,30 @@ export type LocationDb<Name extends string> = Name extends keyof DatabaseLocatio
  * ```
  */
 export class DatabaseManager extends DriverManager<DatabaseDriver, DatabaseDrivers> {
+	/**
+	 * Register a location, labelling its options with the location's name.
+	 *
+	 * The driver never learns which location it serves otherwise; the label is what its log lines and its
+	 * {@link DatabaseUnavailableError} name. A label the caller set wins.
+	 *
+	 * @param name - Location name.
+	 * @param config - Driver name and options.
+	 * @throws Error when `config.driver` names a driver that has not been registered.
+	 */
+	override registerLocation(name: string, config: LocationConfig<DatabaseDrivers>): void {
+		// 1. Read the options through the shared shape: the union cannot be spread without widening it
+		const location = config as AnyLocation;
+
+		// 2. A shallow copy with the label filled in, so the caller's object stays as it was
+		const labelled: AnyLocation = {
+			...location,
+			options: { ...location.options, label: location.options.label ?? name },
+		};
+
+		// 3. Back to the union the base class checks; nothing changed at runtime but one key
+		super.registerLocation(name, labelled as LocationConfig<DatabaseDrivers>);
+	}
+
 	/**
 	 * Return the driver of a location, typed by {@link DatabaseLocations}.
 	 *

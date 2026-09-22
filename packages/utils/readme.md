@@ -20,6 +20,7 @@ import { isReadableStream, processId, requireYaml } from '@novastarter/utils/nod
 | `defaults(obj, def)`            | shared | Fill the missing optional keys of an options object from a defaults object.                                           |
 | `formatTitle(str, separator?)`  | shared | Turn any string into Title Case; see below.                                                                           |
 | `getSimpleHash(str)`            | shared | Short, stable hex digest of a string for keys and ids — not cryptographic.                                            |
+| `hasMethods(value, methods)`    | shared | Whether a value carries every named method, narrowing it to their type — `instanceof` across library copies.          |
 | `isIn(value, tuple)`            | shared | Whether a string is a member of a readonly tuple, narrowing its type.                                                 |
 | `joinPath(...segments)`         | shared | `path.posix.join` without Node: forward slashes, `.` and `..` resolved; see below.                                    |
 | `confinePath(path)`             | shared | A caller path resolved as if rooted and made relative, so `..` cannot climb above the root it joins.                  |

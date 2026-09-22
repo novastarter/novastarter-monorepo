@@ -12,5 +12,4 @@ export {
 	type DatabaseDriverNeonHttpOptions,
 	type NeonHttpClient,
 } from './lib/driver-http.js';
-export { isPool } from './lib/is-pool.js';
 export default DatabaseDriverNeon;

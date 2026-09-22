@@ -1,16 +1,19 @@
 import { Pool, type PoolConfig } from '@neondatabase/serverless';
 import {
+	type DatabaseCapabilities,
 	type DatabaseDriver,
 	type DatabaseDriverCommonConfig,
 	type MigrateOptions,
+	resolveLogger,
 	toDrizzleOptions,
 	toMigrationConfig,
+	toUnavailableError,
 } from '@novastarter/database';
-import { type Logger, useLogger } from '@novastarter/logger';
+import type { Logger } from '@novastarter/logger';
+import { hasMethods } from '@novastarter/utils';
 import { sql } from 'drizzle-orm';
 import { drizzle, type NeonDatabase } from 'drizzle-orm/neon-serverless';
 import { migrate } from 'drizzle-orm/neon-serverless/migrator';
-import { isPool } from './is-pool.js';
 
 /**
  * Options accepted by {@link DatabaseDriverNeon}.
@@ -74,6 +77,18 @@ export class DatabaseDriverNeon<
 	readonly db: NeonDatabase<Schema> & { $client: Pool };
 
 	/**
+	 * What the dialect and the transport can do: sessions, so `db.transaction()` works.
+	 */
+	readonly capabilities: DatabaseCapabilities = { transactions: true };
+
+	/**
+	 * The location's name, for the log lines and the error `ping()` throws; the manager fills it in.
+	 *
+	 * @internal
+	 */
+	private readonly label: string | undefined;
+
+	/**
 	 * The pool every query runs on.
 	 *
 	 * @internal
@@ -107,12 +122,14 @@ export class DatabaseDriverNeon<
 			throw new Error('The neon database driver needs a "connection"');
 		}
 
-		this.logger = config.logger ?? useLogger();
+		this.label = config.label;
+		this.logger = resolveLogger(config);
 
-		// 2. A given pool belongs to whoever created it; a string or options become a pool of the driver's own
-		this.ownsPool = !isPool(config.connection);
+		// 2. A given pool belongs to whoever created it — told by the methods the driver calls, since a pool from
+		//    another copy of the SDK fails `instanceof`; a string or options become a pool of the driver's own
+		this.ownsPool = !hasMethods<Pool>(config.connection, ['connect', 'end']);
 
-		this.pool = isPool(config.connection)
+		this.pool = hasMethods<Pool>(config.connection, ['connect', 'end'])
 			? config.connection
 			: new Pool(typeof config.connection === 'string' ? { connectionString: config.connection } : config.connection);
 
@@ -133,11 +150,16 @@ export class DatabaseDriverNeon<
 	 * Run `select 1` on the pool.
 	 *
 	 * @returns Once the database answered.
-	 * @throws What the connection raised when it could not.
+	 * @throws DatabaseUnavailableError naming the location, with what the connection raised as its `cause`.
 	 */
 	async ping(): Promise<void> {
 		// 1. The cheapest statement a server answers; through Drizzle, so the same path the queries take is proven
-		await this.db.execute(sql`select 1`);
+		try {
+			await this.db.execute(sql`select 1`);
+		} catch (error) {
+			// 2. One error for every backend, 503, naming the location; the backend's error stays as `cause`
+			throw toUnavailableError(error, this.label);
+		}
 	}
 
 	/**

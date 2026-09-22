@@ -1,13 +1,15 @@
-import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import {
+	type DatabaseCapabilities,
 	type DatabaseDriver,
 	type DatabaseDriverCommonConfig,
+	ensureDirectory,
 	type MigrateOptions,
+	resolveLogger,
 	toDrizzleOptions,
 	toMigrationConfig,
+	toUnavailableError,
 } from '@novastarter/database';
-import { useLogger } from '@novastarter/logger';
 import Database from 'better-sqlite3';
 import { sql } from 'drizzle-orm';
 import { type BetterSQLite3Database, drizzle } from 'drizzle-orm/better-sqlite3';
@@ -91,6 +93,18 @@ export class DatabaseDriverSqlite<
 	readonly db: BetterSQLite3Database<Schema> & { $client: Database.Database };
 
 	/**
+	 * What the dialect and the transport can do: sessions, so `db.transaction()` works.
+	 */
+	readonly capabilities: DatabaseCapabilities = { transactions: true };
+
+	/**
+	 * The location's name, for the log lines and the error `ping()` throws; the manager fills it in.
+	 *
+	 * @internal
+	 */
+	private readonly label: string | undefined;
+
+	/**
 	 * The open database handle every query runs on.
 	 *
 	 * @internal
@@ -116,7 +130,7 @@ export class DatabaseDriverSqlite<
 		const inMemory = config.file === MEMORY_FILE;
 
 		if (!inMemory) {
-			mkdirSync(dirname(config.file), { recursive: true });
+			ensureDirectory(dirname(config.file));
 		}
 
 		this.database =
@@ -134,19 +148,25 @@ export class DatabaseDriverSqlite<
 			this.database.pragma('journal_mode = WAL');
 		}
 
-		// 5. Drizzle over the handle, with the schema and, when asked for, the query logger
-		this.db = drizzle(this.database, toDrizzleOptions(config, config.logger ?? useLogger()));
+		// 5. Drizzle over the handle, with the schema and, when asked for, the query logger bound to the label
+		this.label = config.label;
+		this.db = drizzle(this.database, toDrizzleOptions(config, resolveLogger(config)));
 	}
 
 	/**
 	 * Run `select 1` on the database.
 	 *
 	 * @returns Once the statement ran; before the promise resolves, since better-sqlite3 is synchronous.
-	 * @throws What better-sqlite3 raised when the database could not answer.
+	 * @throws DatabaseUnavailableError naming the location, with what better-sqlite3 raised as its `cause`.
 	 */
 	async ping(): Promise<void> {
 		// 1. The cheapest statement; through Drizzle, so the same path the queries take is proven
-		this.db.run(sql`select 1`);
+		try {
+			this.db.run(sql`select 1`);
+		} catch (error) {
+			// 2. One error for every backend, 503, naming the location; better-sqlite3's error stays as `cause`
+			throw toUnavailableError(error, this.label);
+		}
 	}
 
 	/**

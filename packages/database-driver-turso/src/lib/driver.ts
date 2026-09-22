@@ -1,18 +1,20 @@
-import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { type Client, type Config, createClient } from '@libsql/client';
 import {
+	type DatabaseCapabilities,
 	type DatabaseDriver,
 	type DatabaseDriverCommonConfig,
+	ensureDirectory,
 	type MigrateOptions,
+	resolveLogger,
 	toDrizzleOptions,
 	toMigrationConfig,
+	toUnavailableError,
 } from '@novastarter/database';
-import { useLogger } from '@novastarter/logger';
+import { hasMethods } from '@novastarter/utils';
 import { sql } from 'drizzle-orm';
 import { drizzle, type LibSQLDatabase } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';
-import { isClient } from './is-client.js';
 import { localFilePath } from './local-file-path.js';
 
 /**
@@ -88,6 +90,19 @@ export class DatabaseDriverTurso<
 	readonly db: LibSQLDatabase<Schema> & { $client: Client };
 
 	/**
+	 * What the dialect and the transport can do: interactive transactions over every transport, so
+	 * `db.transaction()` works.
+	 */
+	readonly capabilities: DatabaseCapabilities = { transactions: true };
+
+	/**
+	 * The location's name, for the log lines and the error `ping()` throws; the manager fills it in.
+	 *
+	 * @internal
+	 */
+	private readonly label: string | undefined;
+
+	/**
 	 * The client every query runs on.
 	 *
 	 * @internal
@@ -113,15 +128,19 @@ export class DatabaseDriverTurso<
 		//    URL of `undefined`, far from the configuration at fault
 		if (
 			!config.connection ||
-			(!isClient(config.connection) && typeof config.connection !== 'string' && !config.connection.url)
+			(!hasMethods<Client>(config.connection, ['execute', 'close']) &&
+				typeof config.connection !== 'string' &&
+				!config.connection.url)
 		) {
 			throw new Error('The turso database driver needs a "connection"');
 		}
 
-		// 2. A given client belongs to whoever created it; a URL or a config become a client of the driver's own
-		this.ownsClient = !isClient(config.connection);
+		// 2. A given client belongs to whoever created it — told by the methods the driver calls, since a client from
+		//    another copy of the SDK fails `instanceof`; a URL or a config become a client of the driver's own
+		this.ownsClient = !hasMethods<Client>(config.connection, ['execute', 'close']);
+		this.label = config.label;
 
-		if (isClient(config.connection)) {
+		if (hasMethods<Client>(config.connection, ['execute', 'close'])) {
 			this.client = config.connection;
 		} else {
 			// 3. A local file wants its directory: libsql opens the file as soon as the client is created, and SQLite
@@ -132,25 +151,30 @@ export class DatabaseDriverTurso<
 			const path = localFilePath(clientConfig.url);
 
 			if (path !== undefined) {
-				mkdirSync(dirname(path), { recursive: true });
+				ensureDirectory(dirname(path));
 			}
 
 			this.client = createClient(clientConfig);
 		}
 
-		// 4. Drizzle over the client, with the schema and, when asked for, the query logger
-		this.db = drizzle(this.client, toDrizzleOptions(config, config.logger ?? useLogger()));
+		// 4. Drizzle over the client, with the schema and, when asked for, the query logger bound to the label
+		this.db = drizzle(this.client, toDrizzleOptions(config, resolveLogger(config)));
 	}
 
 	/**
 	 * Run `select 1` on the client.
 	 *
 	 * @returns Once the database answered.
-	 * @throws What libsql raised when it could not.
+	 * @throws DatabaseUnavailableError naming the location, with what libsql raised as its `cause`.
 	 */
 	async ping(): Promise<void> {
 		// 1. The cheapest statement; through Drizzle, so the same path the queries take is proven
-		await this.db.run(sql`select 1`);
+		try {
+			await this.db.run(sql`select 1`);
+		} catch (error) {
+			// 2. One error for every backend, 503, naming the location; libsql's error stays as `cause`
+			throw toUnavailableError(error, this.label);
+		}
 	}
 
 	/**

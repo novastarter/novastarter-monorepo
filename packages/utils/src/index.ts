@@ -8,6 +8,7 @@ export * from './defaults.js';
 export * from './driver-manager.js';
 export * from './format-title/index.js';
 export * from './get-simple-hash.js';
+export * from './has-methods.js';
 export * from './is-in.js';
 export * from './join-path.js';
 export * from './location-manager.js';

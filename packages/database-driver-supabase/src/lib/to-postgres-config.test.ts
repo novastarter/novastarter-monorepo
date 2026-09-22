@@ -71,13 +71,14 @@ describe('toPostgresConfig', () => {
 		const logger = { error: vi.fn() } as never;
 
 		expect(
-			toPostgresConfig({ url: sample.url, schema, casing: 'snake_case', logger, queryLogging: true }),
+			toPostgresConfig({ url: sample.url, schema, casing: 'snake_case', logger, queryLogging: true, label: 'main' }),
 		).toStrictEqual({
 			connection: { connectionString: sample.url, ssl: true },
 			schema,
 			casing: 'snake_case',
 			logger,
 			queryLogging: true,
+			label: 'main',
 		});
 	});
 });

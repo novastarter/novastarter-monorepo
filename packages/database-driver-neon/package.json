@@ -28,6 +28,7 @@
 		"@neondatabase/serverless": "catalog:",
 		"@novastarter/database": "workspace:*",
 		"@novastarter/logger": "workspace:*",
+		"@novastarter/utils": "workspace:*",
 		"drizzle-orm": "catalog:"
 	},
 	"devDependencies": {

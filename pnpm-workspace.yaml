@@ -10,6 +10,7 @@ minimumReleaseAgeExclude:
   - '@turbo/windows-arm64@2.11.1'
   - turbo@2.11.1
   - drizzle-orm@0.45.3
+  - drizzle-kit@0.31.11
 catalog:
   '@aws-sdk/client-s3': 3.1111.0
   '@aws-sdk/client-sesv2': 3.1129.0
@@ -54,6 +55,7 @@ catalog:
   croner: 10.0.1
   dotenv: 17.2.3
   drizzle-orm: 0.45.3
+  drizzle-kit: 0.31.11
   eslint: 10.9.1
   eslint-config-prettier: 10.1.8
   eslint-plugin-import-x: 4.17.1
@@ -89,6 +91,7 @@ catalog:
   semver: 7.7.3
   stripe: 22.6.2
   tsdown: 0.15.11
+  tsx: 4.23.15
   tus-js-client: 4.3.1
   turbo: 2.11.1
   typescript: 5.9.3

@@ -1,4 +1,4 @@
-import type { MigrateOptions } from './types.js';
+import type { DatabaseCapabilities, MigrateOptions } from './types.js';
 
 /**
  * Contract every database driver implements: a connection to one database, exposed as a Drizzle database.
@@ -27,10 +27,16 @@ export declare class DatabaseDriver<Db = unknown> {
 	readonly db: Db;
 
 	/**
+	 * What the dialect and the transport can do; see {@link DatabaseCapabilities}.
+	 */
+	readonly capabilities: DatabaseCapabilities;
+
+	/**
 	 * One round trip to the database, so a bootstrap or a health check can prove the location is reachable.
 	 *
 	 * @returns Once the database answered.
-	 * @throws What the connection raised when it could not.
+	 * @throws DatabaseUnavailableError (code `DATABASE_UNAVAILABLE`, status 503) naming the location, with what the
+	 * connection raised as its `cause`.
 	 */
 	ping(): Promise<void>;
 

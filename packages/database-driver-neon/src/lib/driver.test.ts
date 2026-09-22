@@ -3,6 +3,7 @@
  */
 import { Pool } from '@neondatabase/serverless';
 import { randDirectoryPath, randDomainName, randPassword, randUserName, randWord } from '@ngneat/falso';
+import { DatabaseUnavailableError } from '@novastarter/database';
 import { useLogger } from '@novastarter/logger';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/neon-serverless';
@@ -27,7 +28,7 @@ vi.mock('drizzle-orm/neon-serverless/migrator', () => ({ migrate: vi.fn() }));
 let sample: {
 	url: string;
 	folder: string;
-	logger: { error: ReturnType<typeof vi.fn>; debug: ReturnType<typeof vi.fn> };
+	logger: { error: ReturnType<typeof vi.fn>; debug: ReturnType<typeof vi.fn>; child: ReturnType<typeof vi.fn> };
 	processLogger: { error: ReturnType<typeof vi.fn>; debug: ReturnType<typeof vi.fn> };
 	db: { execute: ReturnType<typeof vi.fn> };
 };
@@ -46,7 +47,7 @@ beforeEach(() => {
 	sample = {
 		url: `postgresql://${randUserName()}:${randPassword()}@ep-${randWord()}.${randDomainName()}/neondb?sslmode=require`,
 		folder: randDirectoryPath(),
-		logger: { error: vi.fn(), debug: vi.fn() },
+		logger: { error: vi.fn(), debug: vi.fn(), child: vi.fn().mockReturnThis() },
 		processLogger: { error: vi.fn(), debug: vi.fn() },
 		db: { execute: vi.fn() },
 	};
@@ -160,6 +161,42 @@ describe('#constructor', () => {
 	});
 });
 
+describe('#capabilities', () => {
+	test('Declares whether transactions work', () => {
+		// 1. Sessions, so `db.transaction()` works; the flag is what an app reads instead of the driver name
+		const driver = new DatabaseDriverNeon({ connection: sample.url, logger: sample.logger as never });
+
+		expect(driver.capabilities).toStrictEqual({ transactions: true });
+	});
+});
+
+describe('#label', () => {
+	test('Binds the label to the logger, so the query log names the location', () => {
+		// 1. A labelled driver logs through a child carrying `database`; the query logger inherits it
+		const child = { error: vi.fn(), debug: vi.fn() };
+		const logger = { ...sample.logger, child: vi.fn().mockReturnValue(child) };
+
+		new DatabaseDriverNeon({ connection: sample.url, label: 'main', queryLogging: true, logger: logger as never });
+
+		expect(logger.child).toHaveBeenCalledExactlyOnceWith({ database: 'main' });
+
+		const options = vi.mocked(drizzle).mock.calls[0]![1]!;
+
+		(options.logger as { logQuery(query: string, params: unknown[]): void }).logQuery('select 1', []);
+
+		expect(child.debug).toHaveBeenCalledExactlyOnceWith({ query: 'select 1', params: [] }, 'Database query');
+		expect(sample.logger.debug).not.toHaveBeenCalled();
+	});
+
+	test('Leaves the logger as it is without a label', () => {
+		const logger = { ...sample.logger, child: vi.fn() };
+
+		new DatabaseDriverNeon({ connection: sample.url, logger: logger as never });
+
+		expect(logger.child).not.toHaveBeenCalled();
+	});
+});
+
 describe('#ping', () => {
 	test('Runs select 1 through Drizzle', async () => {
 		const driver = new DatabaseDriverNeon({ connection: sample.url, logger: sample.logger as never });
@@ -170,13 +207,32 @@ describe('#ping', () => {
 		expect(sample.db.execute).toHaveBeenCalledExactlyOnceWith(sql`select 1`);
 	});
 
-	test('Rethrows what the query raised', async () => {
-		const driver = new DatabaseDriverNeon({ connection: sample.url, logger: sample.logger as never });
+	test('Wraps what the query raised in DatabaseUnavailableError, naming the location', async () => {
+		const driver = new DatabaseDriverNeon({ connection: sample.url, label: 'main', logger: sample.logger as never });
 		const error = new Error('connection refused');
 
 		sample.db.execute.mockRejectedValue(error);
 
-		await expect(driver.ping()).rejects.toBe(error);
+		// 1. One error for every backend: recognisable, 503, the location in the message, the backend's error as cause
+		const thrown: unknown = await driver.ping().catch((caught: unknown) => caught);
+
+		expect(thrown).toBeInstanceOf(DatabaseUnavailableError);
+
+		expect(thrown).toMatchObject({
+			code: 'DATABASE_UNAVAILABLE',
+			status: 503,
+			message: 'Database "main" is unavailable: connection refused',
+			extensions: { database: 'main', reason: 'connection refused' },
+			cause: error,
+		});
+	});
+
+	test('Reads without a location for a driver built by hand', async () => {
+		const driver = new DatabaseDriverNeon({ connection: sample.url, logger: sample.logger as never });
+
+		sample.db.execute.mockRejectedValue(new Error('connection refused'));
+
+		await expect(driver.ping()).rejects.toThrow('The database is unavailable: connection refused');
 	});
 });
 

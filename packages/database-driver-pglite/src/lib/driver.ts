@@ -1,13 +1,16 @@
-import { mkdirSync } from 'node:fs';
 import { PGlite, type PGliteOptions } from '@electric-sql/pglite';
 import {
+	type DatabaseCapabilities,
 	type DatabaseDriver,
 	type DatabaseDriverCommonConfig,
+	ensureDirectory,
 	type MigrateOptions,
+	resolveLogger,
 	toDrizzleOptions,
 	toMigrationConfig,
+	toUnavailableError,
 } from '@novastarter/database';
-import { type Logger, useLogger } from '@novastarter/logger';
+import type { Logger } from '@novastarter/logger';
 import { sql } from 'drizzle-orm';
 import { drizzle, type PgliteDatabase } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
@@ -113,6 +116,18 @@ export class DatabaseDriverPglite<
 	readonly db: PgliteDatabase<Schema> & { $client: PGlite };
 
 	/**
+	 * What the dialect and the transport can do: one session, so `db.transaction()` works.
+	 */
+	readonly capabilities: DatabaseCapabilities = { transactions: true };
+
+	/**
+	 * The location's name, for the log lines and the error `ping()` throws; the manager fills it in.
+	 *
+	 * @internal
+	 */
+	private readonly label: string | undefined;
+
+	/**
 	 * The instance every query runs on.
 	 *
 	 * @internal
@@ -138,7 +153,7 @@ export class DatabaseDriverPglite<
 	 *
 	 * @param config - Data directory or instance, PGlite options, schema and logging options.
 	 * @throws Error when `connection` is missing.
-	 * @throws What `mkdirSync` raised when the directory could not be created.
+	 * @throws What the filesystem raised when the directory could not be created.
 	 */
 	constructor(config: DatabaseDriverPgliteConfig<Schema>) {
 		// 1. Refuse a missing connection up front: an empty string would silently be a database in memory whose
@@ -147,7 +162,8 @@ export class DatabaseDriverPglite<
 			throw new Error('The pglite database driver needs a "connection"');
 		}
 
-		this.logger = config.logger ?? useLogger();
+		this.label = config.label;
+		this.logger = resolveLogger(config);
 
 		// 2. A given instance belongs to whoever created it; a data directory becomes an instance of the driver's own
 		this.ownsClient = typeof config.connection === 'string';
@@ -159,7 +175,7 @@ export class DatabaseDriverPglite<
 			const directory = dataDirectory(config.connection);
 
 			if (directory !== undefined) {
-				mkdirSync(directory, { recursive: true });
+				ensureDirectory(directory);
 			}
 
 			// 4. The options only when given, so PGlite sees no key it would take as a value
@@ -183,11 +199,16 @@ export class DatabaseDriverPglite<
 	 * Run `select 1` on the instance; the first call waits for the boot.
 	 *
 	 * @returns Once the database answered.
-	 * @throws What the boot or the query raised.
+	 * @throws DatabaseUnavailableError naming the location, with what the boot or the query raised as its `cause`.
 	 */
 	async ping(): Promise<void> {
 		// 1. The cheapest statement; through Drizzle, so the same path the queries take is proven
-		await this.db.execute(sql`select 1`);
+		try {
+			await this.db.execute(sql`select 1`);
+		} catch (error) {
+			// 2. One error for every backend, 503, naming the location; the boot's or the query's error stays as `cause`
+			throw toUnavailableError(error, this.label);
+		}
 	}
 
 	/**

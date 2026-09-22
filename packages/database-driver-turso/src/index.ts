@@ -5,6 +5,5 @@
 import { DatabaseDriverTurso } from './lib/driver.js';
 
 export { DatabaseDriverTurso, type DatabaseDriverTursoConfig, MEMORY_URL } from './lib/driver.js';
-export { isClient } from './lib/is-client.js';
 export { localFilePath } from './lib/local-file-path.js';
 export default DatabaseDriverTurso;

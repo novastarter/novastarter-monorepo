@@ -1,12 +1,14 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import {
+	type DatabaseCapabilities,
 	type DatabaseDriver,
 	type DatabaseDriverCommonConfig,
 	type MigrateOptions,
+	resolveLogger,
 	toDrizzleOptions,
 	toMigrationConfig,
+	toUnavailableError,
 } from '@novastarter/database';
-import { useLogger } from '@novastarter/logger';
 import { sql } from 'drizzle-orm';
 import { drizzle, type DrizzleD1Database } from 'drizzle-orm/d1';
 import { migrate } from 'drizzle-orm/d1/migrator';
@@ -79,6 +81,19 @@ export class DatabaseDriverD1<
 	readonly db: DrizzleD1Database<Schema> & { $client: D1Database };
 
 	/**
+	 * What the dialect and the transport can do: D1 refuses the `begin` Drizzle sends, so `db.batch()` is the one
+	 * transaction.
+	 */
+	readonly capabilities: DatabaseCapabilities = { transactions: false };
+
+	/**
+	 * The location's name, for the log lines and the error `ping()` throws; the manager fills it in.
+	 *
+	 * @internal
+	 */
+	private readonly label: string | undefined;
+
+	/**
 	 * Create a driver over a binding.
 	 *
 	 * @param config - Binding, schema and logging options.
@@ -91,19 +106,25 @@ export class DatabaseDriverD1<
 			throw new Error('The d1 database driver needs a "binding"');
 		}
 
-		// 2. Drizzle over the binding, with the schema and, when asked for, the query logger
-		this.db = drizzle(config.binding, toDrizzleOptions(config, config.logger ?? useLogger()));
+		// 2. Drizzle over the binding, with the schema and, when asked for, the query logger bound to the label
+		this.label = config.label;
+		this.db = drizzle(config.binding, toDrizzleOptions(config, resolveLogger(config)));
 	}
 
 	/**
 	 * Run `select 1` on the binding.
 	 *
 	 * @returns Once the database answered.
-	 * @throws What D1 raised when it could not.
+	 * @throws DatabaseUnavailableError naming the location, with what D1 raised as its `cause`.
 	 */
 	async ping(): Promise<void> {
 		// 1. The cheapest statement; through Drizzle, so the same path the queries take is proven
-		await this.db.run(sql`select 1`);
+		try {
+			await this.db.run(sql`select 1`);
+		} catch (error) {
+			// 2. One error for every backend, 503, naming the location; D1's error stays as `cause`
+			throw toUnavailableError(error, this.label);
+		}
 	}
 
 	/**

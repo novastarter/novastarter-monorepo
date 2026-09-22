@@ -1,17 +1,19 @@
 import {
+	type DatabaseCapabilities,
 	type DatabaseDriver,
 	type DatabaseDriverCommonConfig,
 	type MigrateOptions,
+	resolveLogger,
 	toDrizzleOptions,
 	toMigrationConfig,
+	toUnavailableError,
 } from '@novastarter/database';
-import { type Logger, useLogger } from '@novastarter/logger';
+import { hasMethods } from '@novastarter/utils';
 import { sql } from 'drizzle-orm';
 import type { Mode } from 'drizzle-orm/mysql-core';
 import { drizzle, type MySql2Database } from 'drizzle-orm/mysql2';
 import { migrate } from 'drizzle-orm/mysql2/migrator';
 import { createPool, type Pool, type PoolOptions } from 'mysql2/promise';
-import { isPool } from './is-pool.js';
 
 /**
  * Options accepted by {@link DatabaseDriverMysql}.
@@ -80,6 +82,18 @@ export class DatabaseDriverMysql<
 	readonly db: MySql2Database<Schema> & { $client: Pool };
 
 	/**
+	 * What the dialect and the transport can do: sessions, so `db.transaction()` works.
+	 */
+	readonly capabilities: DatabaseCapabilities = { transactions: true };
+
+	/**
+	 * The location's name, for the log lines and the error `ping()` throws; the manager fills it in.
+	 *
+	 * @internal
+	 */
+	private readonly label: string | undefined;
+
+	/**
 	 * The pool every query runs on.
 	 *
 	 * @internal
@@ -106,13 +120,16 @@ export class DatabaseDriverMysql<
 			throw new Error('The mysql database driver needs a "connection"');
 		}
 
-		const logger: Logger = config.logger ?? useLogger();
+		this.label = config.label;
 
-		// 2. A given pool belongs to whoever created it; a URI or options become a pool of the driver's own. The URI
+		const logger = resolveLogger(config);
+
+		// 2. A given pool belongs to whoever created it — told by the methods the driver calls, since a pool from
+		//    another copy of `mysql2` fails `instanceof`; a URI or options become a pool of the driver's own. The URI
 		//    goes in as the `uri` option, the one form `createPool` takes for both shapes
-		this.ownsPool = !isPool(config.connection);
+		this.ownsPool = !hasMethods<Pool>(config.connection, ['getConnection', 'end']);
 
-		this.pool = isPool(config.connection)
+		this.pool = hasMethods<Pool>(config.connection, ['getConnection', 'end'])
 			? config.connection
 			: createPool(typeof config.connection === 'string' ? { uri: config.connection } : config.connection);
 
@@ -132,11 +149,16 @@ export class DatabaseDriverMysql<
 	 * Run `select 1` on the pool.
 	 *
 	 * @returns Once the database answered.
-	 * @throws What the connection raised when it could not.
+	 * @throws DatabaseUnavailableError naming the location, with what the connection raised as its `cause`.
 	 */
 	async ping(): Promise<void> {
 		// 1. The cheapest statement a server answers; through Drizzle, so the same path the queries take is proven
-		await this.db.execute(sql`select 1`);
+		try {
+			await this.db.execute(sql`select 1`);
+		} catch (error) {
+			// 2. One error for every backend, 503, naming the location; the backend's error stays as `cause`
+			throw toUnavailableError(error, this.label);
+		}
 	}
 
 	/**

@@ -16,6 +16,18 @@ export type MigrateOptions = {
 };
 
 /**
+ * What a driver's dialect and transport can do, so an application picks `db.transaction()` or `db.batch()` by fact
+ * rather than by driver name.
+ */
+export type DatabaseCapabilities = {
+	/**
+	 * Whether `db.transaction()` works: `false` over Neon's HTTP transport, which holds no session, and on Cloudflare
+	 * D1, which refuses the `begin` Drizzle sends; `db.batch()` is the one transaction those two offer.
+	 */
+	readonly transactions: boolean;
+};
+
+/**
  * How Drizzle maps the property names of a schema to column names when a column declares none.
  */
 export type DatabaseCasing = 'snake_case' | 'camelCase';
@@ -69,4 +81,9 @@ export type DatabaseDriverCommonConfig<Schema extends Record<string, unknown> = 
 	logger?: Logger | undefined;
 	/** Log every query with its parameters at `debug` through `logger`. @defaultValue false */
 	queryLogging?: boolean | undefined;
+	/**
+	 * The location's name, carried by every log line (`database`) and by {@link DatabaseUnavailableError};
+	 * {@link DatabaseManager.registerLocation} fills it in, so a location never has to.
+	 */
+	label?: string | undefined;
 };

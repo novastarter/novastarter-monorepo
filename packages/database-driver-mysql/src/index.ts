@@ -5,5 +5,4 @@
 import { DatabaseDriverMysql } from './lib/driver.js';
 
 export { DatabaseDriverMysql, type DatabaseDriverMysqlConfig } from './lib/driver.js';
-export { isPool } from './lib/is-pool.js';
 export default DatabaseDriverMysql;

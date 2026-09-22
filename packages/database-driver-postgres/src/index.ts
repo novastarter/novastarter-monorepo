@@ -5,5 +5,4 @@
 import { DatabaseDriverPostgres } from './lib/driver.js';
 
 export { DatabaseDriverPostgres, type DatabaseDriverPostgresConfig } from './lib/driver.js';
-export { isPool } from './lib/is-pool.js';
 export default DatabaseDriverPostgres;
