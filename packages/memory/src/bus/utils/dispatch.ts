@@ -23,6 +23,8 @@ const failing: WeakMap<MessageHandler<never>, Set<string>> = new WeakMap();
  * a warning — through `toError`, so a thrown string still reaches the log — and the other handlers still run. A bus
  * is fire-and-forget: nobody awaits a subscriber, so this is the one place its failure can be seen. Repeated
  * failures of one subscriber on one channel are logged once, until it succeeds there again; see {@link failing}.
+ * The subscribers are read once, before the first one runs: a handler that subscribes or unsubscribes from inside
+ * changes who receives the next message, never who receives this one.
  *
  * @typeParam T - Payload type.
  * @param channel - Channel the message came in on, for the log line.
@@ -35,10 +37,17 @@ export const dispatch = <T>(channel: string, handlers: Iterable<MessageHandler<T
 		return;
 	}
 
-	// 2. Every handler runs inside its own `try`, and its answer — a promise, a thenable or nothing — goes through
+	// 2. The fan-out goes over a snapshot, as `EventEmitter` copies its listeners before emitting: the drivers hand in
+	//    their live `Set`, which a handler may change from inside by subscribing or unsubscribing. A `Set` visits an
+	//    entry added during iteration, so a handler subscribed from within would receive the message published before
+	//    it existed, and one that unsubscribes and re-subscribes itself would be called again for the same message,
+	//    without end
+	const snapshot = Array.from(handlers);
+
+	// 3. Every handler runs inside its own `try`, and its answer — a promise, a thenable or nothing — goes through
 	//    `Promise.resolve` so a rejection is caught the same way, and one failing subscriber neither stops the
 	//    fan-out nor surfaces as an unhandled rejection
-	for (const handler of handlers) {
+	for (const handler of snapshot) {
 		try {
 			Promise.resolve(handler(payload)).then(
 				() => recovered(channel, handler),
@@ -89,6 +98,8 @@ const recovered = (channel: string, handler: MessageHandler<never>): void => {
 		return;
 	}
 
+	// 2. Forget the channel, and the handler altogether once no channel is left, so a long-lived subscriber does not
+	//    keep an empty set alive in the map
 	channels.delete(channel);
 
 	if (channels.size === 0) {

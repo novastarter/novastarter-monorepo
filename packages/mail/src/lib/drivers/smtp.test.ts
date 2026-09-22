@@ -6,6 +6,9 @@ import nodemailer from 'nodemailer';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { MailDriverSmtp } from './smtp.js';
 
+/**
+ * nodemailer transport double, answering a mixed accepted/rejected report the way the SMTP transport does.
+ */
 const transporter = {
 	sendMail: vi.fn(async () => ({
 		messageId: '<id@acme>',
@@ -25,13 +28,11 @@ afterEach(() => {
 
 describe('MailDriverSmtp', () => {
 	test('Builds the transport from the location options, with auth only when credentials are given', () => {
-		// 1. A host alone: port 587, no TLS from the first byte, no auth
+		// 1. A host alone: neither port nor secure is forced, so nodemailer's own pair of defaults applies, no auth
 		new MailDriverSmtp({ host: 'smtp.example.com' });
 
 		expect(nodemailer.createTransport).toHaveBeenLastCalledWith({
 			host: 'smtp.example.com',
-			port: 587,
-			secure: false,
 			ignoreTLS: false,
 		});
 
@@ -60,6 +61,31 @@ describe('MailDriverSmtp', () => {
 
 		// 3. The error names the option, so the reader knows what to register
 		expect(() => new MailDriverSmtp({ host: '' })).toThrow(/"host"/);
+	});
+
+	test('Lets nodemailer derive the port from secure and secure from the port', () => {
+		// 1. `secure` alone: no port is forced, so nodemailer picks 465 instead of speaking TLS to 587
+		new MailDriverSmtp({ host: 'smtp.example.com', secure: true });
+
+		expect(nodemailer.createTransport).toHaveBeenLastCalledWith({
+			host: 'smtp.example.com',
+			secure: true,
+			ignoreTLS: false,
+		});
+
+		// 2. Port 465 alone: no `secure: false` is forced, so nodemailer turns TLS on for the implicit-TLS port
+		new MailDriverSmtp({ host: 'smtp.example.com', port: 465 });
+
+		expect(nodemailer.createTransport).toHaveBeenLastCalledWith({
+			host: 'smtp.example.com',
+			port: 465,
+			ignoreTLS: false,
+		});
+
+		// 3. An explicit `secure: false` is still passed on: STARTTLS on 465 is unusual but the caller's call
+		new MailDriverSmtp({ host: 'smtp.example.com', port: 465, secure: false });
+
+		expect(nodemailer.createTransport).toHaveBeenLastCalledWith(expect.objectContaining({ secure: false }));
 	});
 
 	test('Sends the translated message and translates the answer; verify goes to the transport', async () => {

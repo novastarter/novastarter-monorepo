@@ -94,6 +94,7 @@ export class PushManager extends DriverManager<PushDriver, PushDrivers> {
 	 * @returns The routes; an empty object when none were registered.
 	 */
 	routes(): PushRoutes {
+		// 1. Handed out as is, not copied: the routes are replaced whole by `registerRoutes()`, never mutated in place
 		return this.pushRoutes;
 	}
 }

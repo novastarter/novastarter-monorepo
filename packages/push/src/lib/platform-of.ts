@@ -16,12 +16,14 @@ export const platformOf = (message: Pick<PushMessage, 'subscription' | 'token' |
 		throw new InvalidPayloadError({ reason: 'A push message targets either a subscription or a token, not both' });
 	}
 
+	// 2. A blank token would be posted as a real one and refused by the push service; caught here as the payload's
+	//    fault, before a driver mistakes the refusal for a gone target
 	if (message.token) {
 		if (typeof message.token !== 'string' || message.token.trim() === '') {
 			throw new InvalidPayloadError({ reason: 'The push token is empty' });
 		}
 
-		// 2. A token looks the same on every platform; the message says which one, FCM being the one before APNs came
+		// 3. A token looks the same on every platform; the message says which one, FCM being the one before APNs came
 		const platform = message.platform ?? 'fcm';
 
 		if (!TOKEN_PLATFORMS.includes(platform)) {
@@ -31,11 +33,12 @@ export const platformOf = (message: Pick<PushMessage, 'subscription' | 'token' |
 		return platform;
 	}
 
+	// 4. Neither target: nothing to route, so the message is refused instead of guessing a platform
 	if (!message.subscription) {
 		throw new InvalidPayloadError({ reason: 'A push message needs a subscription or a token' });
 	}
 
-	// 3. Web push needs the endpoint to post to and both keys to encrypt with; a subscription stored without them
+	// 5. Web push needs the endpoint to post to and both keys to encrypt with; a subscription stored without them
 	//    cannot be delivered to and is reported as the payload's problem
 	const { endpoint, keys } = message.subscription;
 

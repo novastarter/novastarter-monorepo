@@ -1,7 +1,7 @@
-import type { IntervalHistogram } from 'node:perf_hooks';
+import type { EventLoopUtilization, IntervalHistogram } from 'node:perf_hooks';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { memoryUsage } from 'node:process';
-import { setTimeout } from 'node:timers';
+import { clearTimeout, setTimeout } from 'node:timers';
 import { defaults } from '@novastarter/utils';
 
 /**
@@ -11,17 +11,44 @@ import { defaults } from '@novastarter/utils';
  * enforced.
  */
 export type PressureMonitorOptions = {
-	/** Largest tolerated mean event loop delay in milliseconds, or `false` to ignore delay. */
+	/**
+	 * Largest tolerated mean event loop delay in milliseconds, or `false` to ignore delay.
+	 *
+	 * @defaultValue `false`
+	 */
 	maxEventLoopDelay?: number | false;
-	/** Largest tolerated event loop utilization, a ratio between `0` and `1`, or `false` to ignore utilization. */
+	/**
+	 * Largest tolerated event loop utilization, a ratio between `0` and `1`, or `false` to ignore utilization.
+	 *
+	 * The ratio covers the interval between two samples, not the whole process lifetime, so a spike after a long
+	 * quiet period crosses the limit within one `sampleInterval`.
+	 *
+	 * @defaultValue `false`
+	 */
 	maxEventLoopUtilization?: number | false;
-	/** Largest tolerated V8 heap usage in bytes, or `false` to ignore heap usage. */
+	/**
+	 * Largest tolerated V8 heap usage in bytes, or `false` to ignore heap usage.
+	 *
+	 * @defaultValue `false`
+	 */
 	maxMemoryHeapUsed?: number | false;
-	/** Largest tolerated resident set size in bytes, or `false` to ignore RSS. */
+	/**
+	 * Largest tolerated resident set size in bytes, or `false` to ignore RSS.
+	 *
+	 * @defaultValue `false`
+	 */
 	maxMemoryRss?: number | false;
-	/** Milliseconds between two samples of the metrics above. */
+	/**
+	 * Milliseconds between two samples of the metrics above.
+	 *
+	 * @defaultValue `250`
+	 */
 	sampleInterval?: number;
-	/** Sampling rate of the event loop delay histogram in milliseconds. */
+	/**
+	 * Sampling rate of the event loop delay histogram in milliseconds.
+	 *
+	 * @defaultValue `10`
+	 */
 	resolution?: number;
 };
 
@@ -30,7 +57,8 @@ export type PressureMonitorOptions = {
  *
  * Metrics are refreshed on a timer, so reading {@link PressureMonitor.overloaded} is a cheap comparison against the
  * last sample rather than a live measurement. The timer is unref'd and therefore never keeps the process alive on
- * its own.
+ * its own, but the delay histogram keeps sampling until {@link PressureMonitor.close} is called; a monitor that is
+ * created and dropped repeatedly, as in a test suite or under hot reload, has to be closed.
  *
  * @example
  * ```ts
@@ -39,6 +67,8 @@ export type PressureMonitorOptions = {
  * if (monitor.overloaded) {
  * 	throw new Error('Pressure limit exceeded');
  * }
+ *
+ * monitor.close();
  * ```
  */
 export class PressureMonitor {
@@ -64,11 +94,18 @@ export class PressureMonitor {
 	private eventLoopDelay = 0;
 
 	/**
-	 * Event loop utilization ratio from the latest sample.
+	 * Event loop utilization ratio over the interval between the two latest samples.
 	 *
 	 * @internal
 	 */
 	private eventLoopUtilization = 0;
+
+	/**
+	 * Cumulative utilization reading taken at the previous sample; the base the next delta is computed against.
+	 *
+	 * @internal
+	 */
+	private lastEventLoopUtilization: EventLoopUtilization;
 
 	/**
 	 * Caller options with every missing key filled in from the defaults.
@@ -92,6 +129,13 @@ export class PressureMonitor {
 	private timeout: NodeJS.Timeout;
 
 	/**
+	 * Whether {@link PressureMonitor.close} ran; a closed monitor never re-arms its timer.
+	 *
+	 * @internal
+	 */
+	private closed = false;
+
+	/**
 	 * Start sampling right away using the given thresholds.
 	 *
 	 * @param options - Thresholds and sampling settings; see {@link PressureMonitorOptions} for the defaults.
@@ -111,16 +155,22 @@ export class PressureMonitor {
 		this.histogram = monitorEventLoopDelay({ resolution: this.options.resolution });
 		this.histogram.enable();
 
-		// 3. Bind once, so the same function reference can be handed to the timer and later refreshed
+		// 3. Node reports utilization accumulated since the loop started; taking a base reading now lets the first
+		//    sample cover only its own interval instead of the whole start-up
+		this.lastEventLoopUtilization = performance.eventLoopUtilization();
+
+		// 4. Bind once, so the same function reference can be handed to the timer and later refreshed
 		this.updateUsage = this.updateUsage.bind(this);
 		this.timeout = setTimeout(this.updateUsage, this.options.sampleInterval);
 
-		// 4. A monitor must never keep an otherwise finished process alive
+		// 5. A monitor must never keep an otherwise finished process alive
 		this.timeout.unref();
 	}
 
 	/**
 	 * Whether any enabled threshold was exceeded by the latest sample.
+	 *
+	 * After {@link PressureMonitor.close} the verdict of the last sample taken stays readable but is never updated.
 	 *
 	 * @returns `true` as soon as one limit is crossed, `false` when every enabled metric is within bounds.
 	 */
@@ -150,16 +200,41 @@ export class PressureMonitor {
 	}
 
 	/**
+	 * Stop sampling and release the delay histogram.
+	 *
+	 * The unref'd timer alone would not keep the process alive, but the histogram's native sampler and the re-armed
+	 * timer keep doing work for as long as the process runs; closing is what stops them. Closing twice is harmless.
+	 */
+	close(): void {
+		// 1. A second close has nothing left to release
+		if (this.closed) {
+			return;
+		}
+
+		// 2. Flag first, so a sample that is somehow still invoked afterwards does not re-arm the timer
+		this.closed = true;
+
+		// 3. Drop the pending sample and stop the native sampler behind the histogram
+		clearTimeout(this.timeout);
+		this.histogram.disable();
+	}
+
+	/**
 	 * Take a fresh sample of every metric and schedule the next one.
 	 *
 	 * @internal
 	 */
 	private updateUsage() {
-		// 1. Sample memory and event loop metrics together, so `overloaded` compares values from the same instant
+		// 1. A closed monitor has a disabled histogram and no timer to re-arm; the stale sample stays as it is
+		if (this.closed) {
+			return;
+		}
+
+		// 2. Sample memory and event loop metrics together, so `overloaded` compares values from the same instant
 		this.updateMemoryUsage();
 		this.updateEventLoopUsage();
 
-		// 2. Refreshing the existing timer avoids allocating a new one per sample and keeps the `unref` in place
+		// 3. Refreshing the existing timer avoids allocating a new one per sample and keeps the `unref` in place
 		this.timeout.refresh();
 	}
 
@@ -176,13 +251,16 @@ export class PressureMonitor {
 	}
 
 	/**
-	 * Store the current event loop utilization and mean delay, then reset the delay histogram.
+	 * Store the event loop utilization since the previous sample and the mean delay, then reset the delay histogram.
 	 *
 	 * @internal
 	 */
 	private updateEventLoopUsage() {
-		// 1. Utilization is a ratio Node computes since the previous call, so no conversion is needed
-		this.eventLoopUtilization = performance.eventLoopUtilization().utilization;
+		// 1. A bare `eventLoopUtilization()` is cumulative since the loop started and would flatten every spike into a
+		//    lifetime average; passing the previous reading makes Node return the ratio over the last interval only
+		const current = performance.eventLoopUtilization();
+		this.eventLoopUtilization = performance.eventLoopUtilization(current, this.lastEventLoopUtilization).utilization;
+		this.lastEventLoopUtilization = current;
 
 		// 2. The histogram reports nanoseconds; thresholds are in milliseconds, hence the 1e6 division
 		this.eventLoopDelay = Math.round(this.histogram.mean / 1e6);

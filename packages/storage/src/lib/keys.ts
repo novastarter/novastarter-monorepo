@@ -3,8 +3,10 @@
  *
  * A folder is asked for with a trailing slash: an empty caller prefix means the whole root, and one that ends in `/`
  * means that folder, so `media` becomes `media/` and does not match `media-archive/…`, whose keys merely share the
- * root as a string. A prefix that names a partial key, such as `av`, is left as it is, since matching `avatars/` and
- * `avatar.png` alike is what the caller asked for.
+ * root as a string. A prefix that ends in a `.` or `..` segment names a folder too — `.`, `..` and `avatars/..` all
+ * resolve to the root, `avatars/.` to `avatars/` — since a path joiner resolves them the way a shell does and the full
+ * key no longer shows they were there. A prefix that names a partial key, such as `av`, is left as it is, since
+ * matching `avatars/` and `avatar.png` alike is what the caller asked for.
  *
  * @param fullPrefix - The caller's prefix resolved under the root, the way the driver resolves every path; empty for
  * the top of the bucket.
@@ -18,6 +20,9 @@
  * toListPrefix('media/avatars', 'avatars/');
  * // => 'media/avatars/'
  *
+ * toListPrefix('media', 'avatars/..');
+ * // => 'media/'
+ *
  * toListPrefix('av', 'av');
  * // => 'av'
  * ```
@@ -28,8 +33,16 @@ export const toListPrefix = (fullPrefix: string, prefix: string): string => {
 		return '';
 	}
 
-	// 2. A folder — the whole root, or a caller prefix ending in `/` — gets its slash back, which path joining drops
-	return prefix === '' || prefix.endsWith('/') ? `${fullPrefix}/` : fullPrefix;
+	// 2. Folder-ness is read from the last segment of the raw prefix, not from the full key: the full key was built
+	//    from the resolved prefix, where `.` and `..` have already collapsed, so `..` or `avatars/..` and a bare
+	//    `media` root look the same there. Judged by a trailing slash alone they were listed as the partial key
+	//    `media` and matched `media-archive/…`, keys outside the location. Backslashes count as separators, the way
+	//    the path joiner that built the full key reads them
+	const lastSegment = prefix.split(/[/\\]/).at(-1) ?? '';
+	const folder = lastSegment === '' || lastSegment === '.' || lastSegment === '..';
+
+	// 3. A folder gets its slash back, which path joining drops
+	return folder ? `${fullPrefix}/` : fullPrefix;
 };
 
 /**

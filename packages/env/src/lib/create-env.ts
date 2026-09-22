@@ -32,10 +32,14 @@ export interface CreateEnvOptions {
  * them unless they carry a cast prefix; the application's schema turns the strings of the environment into the types
  * it needs.
  *
+ * A variable of `fileVariables` set both inline and as `<NAME>_FILE` is refused: the sources enumerate in no
+ * documented order, so letting the last one win would pick the secret by chance and differ between deployments.
+ *
  * @param options - Which variables may come from a file.
  * @returns The configuration, cast prefixes applied.
- * @throws When a `_FILE` variable points to a file that cannot be read, or a value with a cast prefix cannot be read
- * (`number:80O0`); the error names the variable.
+ * @throws When a variable of `fileVariables` is set both as `<NAME>` and `<NAME>_FILE`, when a `_FILE` variable
+ * points to a file that cannot be read (the fs error is the `cause`), or when a value with a cast prefix cannot be
+ * read (`number:80O0`); the error names the variable.
  */
 export const createEnv = (options: CreateEnvOptions = {}): Env => {
 	const fileVariables = new Set(options.fileVariables ?? []);
@@ -57,24 +61,38 @@ export const createEnv = (options: CreateEnvOptions = {}): Env => {
 		// 3. A `*_FILE` variable of the application's schema holds a path, not the value; unknown names are left alone
 		//    so a third-party `FOO_FILE` is never read as a secret
 		if (isFileKey(key) && fileVariables.has(removeFileSuffix(key)) && typeof value === 'string') {
+			const name = removeFileSuffix(key);
+
+			// 4. The plain variable and its `_FILE` twin land under one name, and `process.env` enumerates in the order
+			//    the variables were passed, so the survivor would differ between deployments; refuse the pair instead
+			//    of picking a secret by chance
+			if (Object.hasOwn(rawConfiguration, name)) {
+				throw new Error(`Environment variables "${name}" and "${key}" are both set; keep one of them.`);
+			}
+
 			try {
-				// 4. A cast prefix applies to the file contents, not the path, so it is peeled off and re-applied
+				// 5. A cast prefix applies to the file contents, not the path, so it is peeled off and re-applied
 				const castFlag = getCastFlag(value);
 				const castPrefix = castFlag ? castFlag + ':' : '';
 				const filePath = castFlag ? value.replace(castPrefix, '') : value;
 
-				// 5. Read the secret as text
+				// 6. Read the secret as text
 				const fileContent = readFileSync(filePath, { encoding: 'utf8' });
 
-				// 6. Store under the option name and feed the prefix back in, so casting treats it like an inline value
-				key = removeFileSuffix(key);
+				// 7. Store under the option name and feed the prefix back in, so casting treats it like an inline value
+				key = name;
 				value = castPrefix + fileContent;
-			} catch {
-				throw new Error(`Failed to read value from file "${value}", defined in environment variable "${key}".`);
+			} catch (error) {
+				// 8. The fs error carries the code and path the operator needs (`EACCES`, `ENOENT`), so it stays as the
+				//    cause and its message is quoted, while the wrapper adds the variable the fs alone does not know
+				throw new Error(
+					`Failed to read value from file "${value}", defined in environment variable "${key}": ${toErrorMessage(error)}`,
+					{ cause: error },
+				);
 			}
 		}
 
-		// 7. A cast prefix on a source value is applied; everything else is kept as the source gave it. A payload the
+		// 9. A cast prefix on a source value is applied; everything else is kept as the source gave it. A payload the
 		//    prefix cannot read is reported with the variable's name, which the cast alone does not know
 		try {
 			output[key] = cast(value);

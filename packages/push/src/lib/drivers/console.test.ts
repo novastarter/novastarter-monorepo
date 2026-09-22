@@ -4,6 +4,9 @@
 import { describe, expect, test, vi } from 'vitest';
 import { PushDriverConsole } from './console.js';
 
+/**
+ * A browser subscription with everything `platformOf()` checks for; its endpoint is what the log line names.
+ */
 const subscription = { endpoint: 'https://push.example/abc', keys: { p256dh: 'p', auth: 'a' } };
 
 describe('PushDriverConsole', () => {

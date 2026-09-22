@@ -43,8 +43,9 @@ copied onto the subscription by Polar); the portal is `customerSessions.create`,
 product change and a seat change are two `subscriptions.update` calls (`prorate`, `none` → `next_period`, `invoice`);
 cancellation is at period end (`cancelAtPeriodEnd`) or right away (`revoke`), the reason as the customer's cancellation
 comment. Invoices are `orders.list`, most recent first: a paid order is a paid invoice, taken as paid when created; the
-hosted and PDF links are `null` (Polar renders invoices on request in its customer portal). The sandbox
-(`server: 'sandbox'`) has its own tokens and products.
+invoice's total is the order's `total_amount`, while `amountPaid` / `amountDue` follow `due_amount` — what Polar
+collects once the customer's balance is applied; the hosted and PDF links are `null` (Polar renders invoices on request
+in its customer portal). The sandbox (`server: 'sandbox'`) has its own tokens and products.
 
 Webhooks are verified by the SDK's `validateEvent` (Standard Webhooks: `webhook-id`, `webhook-timestamp`,
 `webhook-signature`) with the endpoint's secret; the `webhook-id` is the event id. `checkout.updated` with status
@@ -52,7 +53,9 @@ Webhooks are verified by the SDK's `validateEvent` (Standard Webhooks: `webhook-
 catch-all) → `subscription.updated` — the specific `active`, `canceled`, `uncanceled` and `past_due` events repeat it
 and are dropped; `subscription.revoked` → `subscription.deleted`; `order.paid` → `invoice.paid`. Polar has no
 `invoice.failed`: a failed renewal arrives as `subscription.updated` with status `past_due`. An event type the SDK does
-not know yet is verified and dropped.
+not know yet is verified and dropped; an event of a known type whose payload the SDK's schema rejects, or a signed body
+that is not JSON, is refused with `InvalidPayloadError` (400) rather than dropped, so a change on Polar's side is
+reported instead of silently losing every delivery of that type.
 
 ## Options
 

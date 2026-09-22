@@ -1,6 +1,7 @@
 import { useEmitter } from '@novastarter/emitter';
 import { InvalidPayloadError } from '@novastarter/errors';
 import { useLogger } from '@novastarter/logger';
+import { toError } from '@novastarter/utils';
 import { PushTargetGoneError } from '../errors/index.js';
 import type { PushMessage, PushPlatform, PushResult } from '../types.js';
 import { platformOf } from './platform-of.js';
@@ -58,7 +59,8 @@ export interface PushSendOptions {
  *
  * 1. Refuses a message without a title, without a target, with both targets, or with a subscription missing its
  *    endpoint or keys.
- * 2. Runs the `push.send` filter, so the app can rewrite or drop it.
+ * 2. Runs the `push.send` filter, so the app can rewrite or drop it. The rewrite is checked the same way and routed
+ *    by its own target, so a redirect to a test phone goes through the token location, not the original one.
  * 3. Picks the location: the option, else the message's own, else the route of the platform, else the location named
  *    after the platform. There is no fallback chain — a subscription is bound to one key pair, a token to one project.
  * 4. Sends, and emits `push.sent` with the result, `push.gone` when the target is dead, or `push.failed` and throws.
@@ -67,7 +69,8 @@ export interface PushSendOptions {
  * @param options - Per-call overrides.
  * @returns The driver's result with the location and platform that delivered, or `null` when a `push.send` filter
  * dropped the message.
- * @throws InvalidPayloadError for a message without a title, without a target, or with an unusable subscription.
+ * @throws InvalidPayloadError for a message without a title, without a target, or with an unusable subscription — as
+ * it came in, or as a `push.send` handler rewrote it.
  * @throws PushTargetGoneError when the target no longer exists — delete it, do not retry.
  * @throws Error when no location delivers to the target's platform, when the chosen location does not, or when the
  * push service refused or could not be reached, the driver's error as `cause`.
@@ -88,19 +91,27 @@ export const sendPush = async (message: PushMessage, options: PushSendOptions = 
 	const manager = usePush();
 	const logger = useLogger();
 
-	// 1. A notification without a title shows as an empty box; the target is checked before any work is done
-	if (typeof message.title !== 'string' || !message.title.trim()) {
-		throw new InvalidPayloadError({ reason: 'The push message has no title' });
-	}
+	// 1. The title and the target are checked before any work is done, so a broken message never reaches a handler
+	assertTitle(message);
 
-	const platform = platformOf(message);
+	const incoming = platformOf(message);
 
-	// 2. A filter handler may rewrite the message — a prefix, a redirect to a test device — or veto it
-	const prepared = await useEmitter().emitFilter<PushMessage | null>(PUSH_SEND_FILTER, message, { platform });
+	// 2. A filter handler may rewrite the message — a prefix, a redirect to a test device — or veto it; the meta names
+	//    the platform the message came in with
+	const prepared = await useEmitter().emitFilter<PushMessage | null>(PUSH_SEND_FILTER, message, {
+		platform: incoming,
+	});
 
 	if (!prepared) return null;
 
-	// 3. One location, resolved for the platform; a token cannot go through a web push location, so a wrong one is
+	// 3. The rewrite is checked and routed by its own target, not by the original's: a redirect to a test phone has to
+	//    go through the token location, and a handler that dropped the target or blanked the title is refused here
+	//    rather than by a driver of the wrong platform
+	assertTitle(prepared);
+
+	const platform = platformOf(prepared);
+
+	// 4. One location, resolved for the platform; a token cannot go through a web push location, so a wrong one is
 	//    refused rather than tried
 	const location = resolveLocation(manager, options.location ?? prepared.location, platform);
 	const driver = manager.location(location);
@@ -109,6 +120,7 @@ export const sendPush = async (message: PushMessage, options: PushSendOptions = 
 		throw new Error(`Push location "${location}" does not deliver to ${platform}`);
 	}
 
+	// 5. One send, then `push.sent` with the target and the title, so a listener can log without re-deriving them
 	const target = platform === 'webpush' ? prepared.subscription?.endpoint : prepared.token;
 
 	try {
@@ -119,7 +131,7 @@ export const sendPush = async (message: PushMessage, options: PushSendOptions = 
 
 		return sent;
 	} catch (error) {
-		// 4. A gone target is not a failure to retry: reported as its own event and passed on as is
+		// 6. A gone target is not a failure to retry: reported as its own event and passed on as is
 		if (error instanceof PushTargetGoneError) {
 			logger.info(`Push target on "${location}" is gone (${error.extensions.reason}): ${target}`);
 			useEmitter().emitAction(PUSH_GONE_EVENT, { location, platform, target, reason: error.extensions.reason });
@@ -127,11 +139,26 @@ export const sendPush = async (message: PushMessage, options: PushSendOptions = 
 			throw error;
 		}
 
-		// 5. Anything else is the push service refusing or being unreachable; the driver's error travels as the cause
-		logger.warn(error, `Push location "${location}" failed to send to ${target}`);
+		// 7. Anything else is the push service refusing or being unreachable; the driver's error travels as the cause.
+		//    pino takes a non-object first argument as the message, so a driver rejecting with a string would replace
+		//    the line and drop the location; `toError` keeps both
+		logger.warn(toError(error), `Push location "${location}" failed to send to ${target}`);
 		useEmitter().emitAction(PUSH_FAILED_EVENT, { location, platform, target, title: prepared.title });
 
 		throw new Error(`Push location "${location}" failed to send`, { cause: error });
+	}
+};
+
+/**
+ * Refuse a message whose title is missing or blank.
+ *
+ * @param message - The message, as it came in or as a `push.send` handler rewrote it.
+ * @throws InvalidPayloadError for a title that is not a string or is whitespace only.
+ */
+const assertTitle = (message: PushMessage): void => {
+	// 1. A notification without a title shows as an empty box on every platform; refused as the payload's fault
+	if (typeof message.title !== 'string' || !message.title.trim()) {
+		throw new InvalidPayloadError({ reason: 'The push message has no title' });
 	}
 };
 

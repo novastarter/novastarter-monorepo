@@ -7,7 +7,8 @@ import type { ExtensionsMap } from './types.js';
  * The check is structural (`name === 'NovastarterError'`) instead of `instanceof`, because every `createError` call
  * yields its own class and the error may have been created by another copy of this package.
  *
- * @typeParam T - Extensions type to narrow to when it cannot be derived from `code`.
+ * @typeParam T - Extensions type to narrow to when it cannot be derived from `code`; pass it for codes outside
+ * {@link ExtensionsMap}, otherwise the extensions stay `unknown`.
  * @typeParam C - Code being checked, used to look the extensions up in {@link ExtensionsMap}.
  * @param value - Any value.
  * @param code - Error code to require, compared case-insensitively.
@@ -16,6 +17,10 @@ import type { ExtensionsMap } from './types.js';
  * ```ts
  * if (isNovastarterError(error, ErrorCode.RequestsExceeded)) {
  *     error.extensions.reset; // typed as Date
+ * }
+ *
+ * if (isNovastarterError<{ thing: string }>(error, 'INVALID_THING')) {
+ *     error.extensions.thing; // typed as string
  * }
  * ```
  */

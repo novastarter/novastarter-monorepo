@@ -38,6 +38,7 @@ test('Resolves with the value when the operation finishes before the deadline', 
 });
 
 test('Rejects with what the operation rejected with', async () => {
+	// 1. The operation's own error comes through untouched, and the deadline timer is cleared with it
 	const wait = withTimeout(Promise.reject(new Error('boom')), 1000);
 
 	await expect(wait).rejects.toThrow('boom');

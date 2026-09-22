@@ -5,8 +5,9 @@ import type { EnqueuedJob, EnqueueOptions, JobContract, JobOptions, QueueStats }
  * workers (`bullmq`).
  *
  * Declared as an ambient class rather than an interface so that `typeof QueueDriver` describes a constructor for
- * {@link QueueManager.registerDriver}; no runtime code exists behind it. The payload arrives parsed — `enqueue()`
- * checks it against the contract before the driver sees it.
+ * {@link QueueManager.registerDriver}; no runtime code exists behind it. The payload arrives validated, not
+ * transformed: `enqueue()` checks it against the contract before the driver sees it, and `runJob()` parses it again
+ * where the job runs, so defaults and transforms of the schema are applied exactly once, at the run.
  */
 export declare class QueueDriver {
 	/**
@@ -19,11 +20,15 @@ export declare class QueueDriver {
 	/**
 	 * Take a job.
 	 *
+	 * A driver that holds connections or timers refuses the call once {@link QueueDriver.close} ran, rather than
+	 * arming a timer or opening a connection the shutdown will never release.
+	 *
 	 * @param contract - The job's contract.
-	 * @param payload - Parsed payload.
+	 * @param payload - Validated payload, as the caller passed it; the run parses it.
 	 * @param options - Effective options: the contract's merged with the call's.
 	 * @param id - Job id, derived by `enqueue()` from `unique` or `jobId`, `undefined` for a fresh one.
 	 * @returns The job's identity.
+	 * @throws Error when the driver is closed.
 	 */
 	enqueue(
 		contract: JobContract,

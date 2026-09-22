@@ -1,4 +1,10 @@
-import { formatMailAddress, type MailAttachment, type MailMessage, toMailAddressList } from '@novastarter/mail';
+import {
+	formatMailAddress,
+	type MailAttachment,
+	type MailMessage,
+	readAttachment,
+	toMailAddressList,
+} from '@novastarter/mail';
 import type { CreateEmailOptions } from 'resend';
 
 /**
@@ -10,19 +16,30 @@ import type { CreateEmailOptions } from 'resend';
 export const toResendTag = (value: string): string => value.replace(/[^A-Za-z0-9_-]/g, '_');
 
 /**
- * An attachment the way Resend takes it.
+ * An attachment the way Resend takes it: base64 content, with the content id for `cid:` references.
+ *
+ * Resend's `content` string is base64 and its `path` is a hosted URL it downloads itself, so neither of ours can be
+ * forwarded as given: text content is encoded and a local `path` is read here, like the other API drivers do.
  *
  * @param attachment - Ours.
- * @returns Resend's: inline content or a path (Resend fetches URLs), with the content id for `cid:` references.
+ * @returns Resend's.
+ * @throws Error for an attachment with neither content nor path.
  */
-const toResendAttachment = (attachment: MailAttachment): NonNullable<CreateEmailOptions['attachments']>[number] => ({
-	// 1. Content and path both pass through as given: Resend reads a path itself, so nothing is read here
-	filename: attachment.filename,
-	...(attachment.content !== undefined ? { content: attachment.content } : {}),
-	...(attachment.path !== undefined ? { path: attachment.path } : {}),
-	...(attachment.contentType !== undefined ? { contentType: attachment.contentType } : {}),
-	...(attachment.cid !== undefined ? { contentId: attachment.cid } : {}),
-});
+export const toResendAttachment = async (
+	attachment: MailAttachment,
+): Promise<NonNullable<CreateEmailOptions['attachments']>[number]> => {
+	// 1. Resend base64-decodes a string `content`, so text is turned into bytes first; a path is read since Resend
+	//    only fetches URLs
+	const content = await readAttachment(attachment);
+
+	// 2. Optional fields are only set when present, so the request carries no `undefined` keys
+	return {
+		filename: attachment.filename,
+		content: content.toString('base64'),
+		...(attachment.contentType !== undefined ? { contentType: attachment.contentType } : {}),
+		...(attachment.cid !== undefined ? { contentId: attachment.cid } : {}),
+	};
+};
 
 /**
  * Translate a message into Resend's `emails.send()` payload.
@@ -31,9 +48,9 @@ const toResendAttachment = (attachment: MailAttachment): NonNullable<CreateEmail
  *
  * @param message - Ours, with `from` set (`sendMail()` fills it in).
  * @returns Resend's.
- * @throws Error when `from` is missing — Resend requires it.
+ * @throws Error when `from` is missing — Resend requires it — or when an attachment has neither content nor path.
  */
-export const toResendEmail = (message: MailMessage): CreateEmailOptions => {
+export const toResendEmail = async (message: MailMessage): Promise<CreateEmailOptions> => {
 	// 1. The API refuses a message without a sender; say so before the request goes out
 	if (!message.from) {
 		throw new Error('Resend needs a "from" address');
@@ -60,7 +77,11 @@ export const toResendEmail = (message: MailMessage): CreateEmailOptions => {
 	if (message.bcc) email.bcc = message.bcc.map(formatMailAddress);
 	if (message.replyTo) email.replyTo = formatMailAddress(message.replyTo);
 	if (message.headers) email.headers = message.headers;
-	if (message.attachments) email.attachments = message.attachments.map(toResendAttachment);
+
+	// 5. Attachments are read in parallel: every one is encoded in full before the request is built
+	if (message.attachments) {
+		email.attachments = await Promise.all(message.attachments.map(toResendAttachment));
+	}
 
 	return email;
 };

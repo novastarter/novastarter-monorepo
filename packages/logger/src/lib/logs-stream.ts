@@ -80,8 +80,16 @@ export class LogsStream extends Writable {
 
 		const log = JSON.parse(chunk);
 
-		// 2. An HTTP line carries request and response objects; they are folded into a single readable message
-		if (this.pretty === 'http' && log.req?.method && log.req?.url && log.res?.statusCode && log.responseTime) {
+		// 2. An HTTP line carries request and response objects; they are folded into a single readable message. The
+		//    duration is tested for presence, not truth: pino-http counts whole milliseconds, so a request served in
+		//    under one reports `0`, and it must fold like any other
+		if (
+			this.pretty === 'http' &&
+			log.req?.method &&
+			log.req?.url &&
+			log.res?.statusCode != null &&
+			log.responseTime != null
+		) {
 			this.publish(
 				JSON.stringify({
 					log: {

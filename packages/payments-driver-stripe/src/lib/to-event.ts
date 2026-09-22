@@ -28,8 +28,11 @@ export const toCompletedCheckout = (session: Stripe.Checkout.Session): Completed
 /**
  * A verified Stripe event as the kit's event, or `null` for one the kit does not act on.
  *
- * - `checkout.session.completed` and `checkout.session.async_payment_succeeded` (a delayed payment method that
- *   settled) → `checkout.completed`, for subscription checkouts only.
+ * - `checkout.session.completed` and `checkout.session.async_payment_succeeded` → `checkout.completed`, for
+ *   subscription checkouts whose `payment_status` is not `unpaid`. A delayed payment method (SEPA or ACH debit, a
+ *   bank transfer) completes the session before the money moved: that `completed` is dropped, the session is
+ *   announced once by `async_payment_succeeded` when it settles, and `async_payment_failed` is dropped too — nothing
+ *   was announced, so there is nothing to undo.
  * - `customer.subscription.created` → `subscription.created`; `customer.subscription.updated`, `.paused` and
  *   `.resumed` → `subscription.updated`; `customer.subscription.deleted` → `subscription.deleted`.
  * - `invoice.paid` → `invoice.paid`; `invoice.payment_failed` → `invoice.failed`.
@@ -49,6 +52,12 @@ export const toEvent = (event: Stripe.Event): PaymentsEvent | null => {
 		case 'checkout.session.async_payment_succeeded':
 			// 3. One-off payments are not subscriptions; the kit's billing is subscriptions only
 			if (event.data.object.mode !== 'subscription') return null;
+
+			// 4. `checkout.completed` means the customer paid. A session completed on a delayed payment method is still
+			//    `unpaid`, and announcing it would provision a plan nobody paid for; `async_payment_succeeded` carries
+			//    the same session as `paid` once it settled, so the purchase is announced exactly once, and a session
+			//    that never settles (`async_payment_failed`) is never announced
+			if (event.data.object.payment_status === 'unpaid') return null;
 
 			return { ...base, type: 'checkout.completed', checkout: toCompletedCheckout(event.data.object) };
 

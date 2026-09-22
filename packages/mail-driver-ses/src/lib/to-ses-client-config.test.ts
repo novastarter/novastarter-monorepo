@@ -26,17 +26,19 @@ describe('toSesClientConfig', () => {
 	});
 
 	test('Refuses half a credential pair instead of falling back to the SDK chain', () => {
+		// 1. A key id alone is a configuration error, never an intent to let the SDK chain fill in the secret
 		expect(() => toSesClientConfig({ accessKeyId: 'AKIA' })).toThrow(
 			'The ses mail driver needs "accessKeyId" and "secretAccessKey" together',
 		);
 
+		// 2. The same for a secret alone, so the check holds whichever half was lost on the way
 		expect(() => toSesClientConfig({ secretAccessKey: 'secret' })).toThrow(
 			'The ses mail driver needs "accessKeyId" and "secretAccessKey" together',
 		);
 	});
 
 	test('Refuses a session token without the pair it belongs to', () => {
-		// Alone it would be dropped silently and the SDK chain would sign with whatever it finds
+		// 1. Alone it would be dropped silently and the SDK chain would sign with whatever it finds
 		expect(() => toSesClientConfig({ sessionToken: 'tok' })).toThrow(
 			'The ses mail driver needs "accessKeyId" and "secretAccessKey" along with "sessionToken"',
 		);

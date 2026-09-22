@@ -10,6 +10,15 @@ import type { MailAttachment } from '../types.js';
  * @param attachment - Attachment of a message.
  * @returns Its content: the given bytes, the given text as UTF-8, or the file at `path`.
  * @throws Error for an attachment with neither `content` nor `path`.
+ * @example
+ * ```ts
+ * const attachments = await Promise.all(
+ * 	(message.attachments ?? []).map(async (attachment) => ({
+ * 		filename: attachment.filename,
+ * 		content: (await readAttachment(attachment)).toString('base64'),
+ * 	})),
+ * );
+ * ```
  */
 export const readAttachment = async (attachment: MailAttachment): Promise<Buffer> => {
 	// 1. Inline content wins over a path; text is encoded as UTF-8, the way every provider expects it

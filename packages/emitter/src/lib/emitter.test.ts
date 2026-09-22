@@ -103,7 +103,8 @@ describe('emitAction', () => {
 	test('Logs a warning instead of rejecting when an async handler fails', async () => {
 		const error = new Error('boom');
 
-		// The common case: a handler that rejects; the wrapper `onAction` adds turns a synchronous throw into the same
+		// 1. The common case: a handler that rejects; the wrapper `onAction` adds turns a synchronous throw into the
+		//    same shape
 		emitter.onAction('items.create', async () => {
 			throw error;
 		});
@@ -116,8 +117,8 @@ describe('emitAction', () => {
 	});
 
 	test('Logs a handler that throws synchronously and still runs the handlers after it', async () => {
-		// eventemitter2 calls the handlers in a plain loop: unwrapped, a throw before the first `await` would escape
-		// `emitAsync` and skip every handler registered after the throwing one
+		// 1. eventemitter2 calls the handlers in a plain loop: unwrapped, a throw before the first `await` would escape
+		//    `emitAsync` and skip every handler registered after the throwing one
 		const error = new Error('sync boom');
 		const after = vi.fn();
 
@@ -137,7 +138,7 @@ describe('emitAction', () => {
 	});
 
 	test('Logs every failing handler, not only the first', async () => {
-		// `emitAsync` is a `Promise.all`: unwrapped, the second rejection would never reach the log
+		// 1. `emitAsync` is a `Promise.all`: unwrapped, the second rejection would never reach the log
 		emitter.onAction('items.create', async () => {
 			throw new Error('first');
 		});
@@ -162,7 +163,7 @@ describe('emitAction', () => {
 	});
 
 	test('offAction removes the handler onAction registered, on whichever event', async () => {
-		// One handler on two events: removing it from the first must not touch the second, and vice versa
+		// 1. One handler on two events: removing it from the first must not touch the second, and vice versa
 		const handler = vi.fn();
 
 		emitter.onAction('items.create', handler);
@@ -180,7 +181,7 @@ describe('emitAction', () => {
 	});
 
 	test('Wraps a thrown non-Error so its text reaches the log', async () => {
-		// A string in first position would be pino's message and the text after it dropped; `toError` keeps both
+		// 1. A string in first position would be pino's message and the text after it dropped; `toError` keeps both
 		emitter.onAction('items.create', async () => {
 			throw 'nope';
 		});

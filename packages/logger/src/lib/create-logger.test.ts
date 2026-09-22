@@ -7,7 +7,7 @@
 import { pino } from 'pino';
 import { build as pinoPretty } from 'pino-pretty';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { buildLevelFormatters, createLogger, getLoggerLevelValue } from './create-logger.js';
+import { buildLevelFormatters, buildRedactOptions, createLogger, getLoggerLevelValue } from './create-logger.js';
 import type { LogsStream } from './logs-stream.js';
 
 vi.mock('pino-pretty');
@@ -38,6 +38,43 @@ describe('getLoggerLevelValue', () => {
 
 	test('Falls back to info for an unknown level', () => {
 		expect(getLoggerLevelValue('nope')).toBe(30);
+	});
+});
+
+describe('buildRedactOptions', () => {
+	test('Redacts the built-in paths with the default censor when the caller passes nothing', () => {
+		expect(buildRedactOptions(undefined)).toStrictEqual({
+			paths: ['req.headers.authorization', 'req.headers.cookie', 'res.headers["set-cookie"]', 'req.query.access_token'],
+			censor: expect.any(String),
+		});
+	});
+
+	test('Adds the paths of the array form to the built-in ones', () => {
+		// 1. A repeated built-in path is not listed twice
+		expect(buildRedactOptions(['password', 'req.headers.cookie'])).toStrictEqual({
+			paths: [
+				'req.headers.authorization',
+				'req.headers.cookie',
+				'res.headers["set-cookie"]',
+				'req.query.access_token',
+				'password',
+			],
+			censor: expect.any(String),
+		});
+	});
+
+	test('Keeps the censor and remove of the object form next to the built-in paths', () => {
+		expect(buildRedactOptions({ paths: ['password'], censor: '***', remove: true })).toStrictEqual({
+			paths: [
+				'req.headers.authorization',
+				'req.headers.cookie',
+				'res.headers["set-cookie"]',
+				'req.query.access_token',
+				'password',
+			],
+			censor: '***',
+			remove: true,
+		});
 	});
 });
 
@@ -103,6 +140,41 @@ describe('createLogger', () => {
 			{ level: 'info', stream: process.stdout },
 			{ level: 'trace', stream },
 		]);
+	});
+
+	test('Keeps the built-in redaction when the caller passes its own redact paths', () => {
+		// 1. lodash merges arrays index by index; the caller's list must add to the credentials, not overwrite them
+		createLogger({ pino: { redact: { paths: ['password'] } } });
+
+		expect(pino).toHaveBeenCalledWith(
+			expect.objectContaining({
+				redact: {
+					paths: [
+						'req.headers.authorization',
+						'req.headers.cookie',
+						'res.headers["set-cookie"]',
+						'req.query.access_token',
+						'password',
+					],
+					censor: expect.any(String),
+				},
+			}),
+			expect.anything(),
+		);
+	});
+
+	test('Keeps the built-in redaction and the censor when the caller passes the array form', () => {
+		createLogger({ pino: { redact: ['password'] } });
+
+		expect(pino).toHaveBeenCalledWith(
+			expect.objectContaining({
+				redact: {
+					paths: expect.arrayContaining(['req.headers.authorization', 'password']),
+					censor: expect.any(String),
+				},
+			}),
+			expect.anything(),
+		);
 	});
 
 	test('Merges the pino options and the level map in', () => {

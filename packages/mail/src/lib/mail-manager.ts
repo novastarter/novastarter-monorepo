@@ -114,6 +114,8 @@ export class MailManager extends DriverManager<MailDriver, MailDrivers> {
 	 * @returns The routes; an empty object when none were registered.
 	 */
 	routes(): MailRoutes {
+		// 1. Handed out by reference, not copied: `sendMail()` reads it on every call, so a later `registerRoutes` is
+		//    seen at once and the limiters keep their identity
 		return this.mailRoutes;
 	}
 }

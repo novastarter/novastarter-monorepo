@@ -31,7 +31,7 @@ export const processId = (): string => {
 	const parts = [hostname(), process.pid, new Date().getTime()];
 	const hash = createHash('md5').update(parts.join(''));
 
-	// 3. Store and hand out the hex digest
+	// 3. Keep the digest: it embeds the start time, so recomputing it later would hand out a different id mid-process
 	_cache.id = hash.digest('hex');
 
 	return _cache.id;

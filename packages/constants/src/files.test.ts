@@ -5,7 +5,7 @@ import { expect, test } from 'vitest';
 import { DEFAULT_CHUNK_SIZE, JAVASCRIPT_FILE_EXTS } from './files.js';
 
 test('Lists the JavaScript extensions a config file may have', () => {
-	// 1. `@novastarter/env` probes these in order, so both the members and their order are part of the contract
+	// 1. `@novastarter/env` picks the JS reader by membership in this list, so the members are the contract; the exact literal also pins the documented `@defaultValue`
 	expect(JAVASCRIPT_FILE_EXTS).toEqual(['js', 'mjs', 'cjs']);
 });
 

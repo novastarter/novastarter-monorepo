@@ -126,6 +126,27 @@ test('Folds request fields into one message when pretty is http', () => {
 	);
 });
 
+test('Folds a request served in under a millisecond, whose responseTime is 0', () => {
+	// 1. pino-http counts whole milliseconds, so a fast request reports `0`; a truthiness check would drop it to the
+	//    basic shape and lose method, URL and status
+	const logStream = new LogsStream('http', messenger);
+	const fast = { ...sample.httpLog, res: { statusCode: 200 }, responseTime: 0 };
+
+	logStream._write(JSON.stringify(fast), '', () => {});
+
+	expect(messenger.publish).toBeCalledWith(
+		'logs',
+		JSON.stringify({
+			log: {
+				level: fast.level,
+				time: fast.time,
+				msg: `${fast.req.method} ${fast.req.url} 200 0ms`,
+			},
+			nodeId: 'a-nanoid',
+		}),
+	);
+});
+
 test('Escapes quotes in error messages', () => {
 	const logStream = new LogsStream('basic', messenger);
 
@@ -141,8 +162,9 @@ test('Escapes quotes in error messages', () => {
 });
 
 test('Drops a line the bus refuses instead of failing the stream or the process', async () => {
-	// The bus mirrors the log: a Redis outage must not turn every line into an unhandled rejection. A plain function
-	// stands in for the bus here — a `vi.fn` would attach its own handler to the promise and hide an unhandled one
+	// 1. The bus mirrors the log: a Redis outage must not turn every line into an unhandled rejection. A plain
+	//    function stands in for the bus here — a `vi.fn` would attach its own handler to the promise and hide an
+	//    unhandled one
 	const unhandled = vi.fn();
 	process.on('unhandledRejection', unhandled);
 
@@ -154,7 +176,7 @@ test('Drops a line the bus refuses instead of failing the stream or the process'
 		expect(() => logStream._write(JSON.stringify(sample.log), '', callback)).not.toThrow();
 		expect(callback).toHaveBeenCalledWith();
 
-		// Unhandled rejections are reported on a later turn of the event loop
+		// 2. Unhandled rejections are reported on a later turn of the event loop
 		await new Promise((resolve) => setTimeout(resolve, 10));
 		expect(unhandled).not.toHaveBeenCalled();
 	} finally {

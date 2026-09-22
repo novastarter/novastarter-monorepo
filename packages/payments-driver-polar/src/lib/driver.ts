@@ -144,6 +144,7 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	 *
 	 * @param input - Email, name, metadata.
 	 * @returns The customer.
+	 * @throws Polar's `PolarError` when the request is refused, or its `HTTPClientError` when Polar cannot be reached.
 	 */
 	async createCustomer(input: CreateCustomerInput): Promise<PaymentsCustomer> {
 		// 1. Optional fields are only sent when given, so Polar keeps its defaults otherwise
@@ -170,6 +171,7 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	 *
 	 * @param input - Customer, product, seats, redirects, trial, metadata.
 	 * @returns The checkout and its page.
+	 * @throws Polar's `PolarError` when the request is refused, or its `HTTPClientError` when Polar cannot be reached.
 	 */
 	async createCheckoutSession(input: CreateCheckoutSessionInput): Promise<CheckoutSession> {
 		// 1. One product per checkout; the trial is expressed in days and the cancel URL is Polar's return URL
@@ -195,6 +197,7 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	 *
 	 * @param input - Customer and return URL.
 	 * @returns The portal page.
+	 * @throws Polar's `PolarError` when the request is refused, or its `HTTPClientError` when Polar cannot be reached.
 	 */
 	async createPortalSession(input: CreatePortalSessionInput): Promise<PortalSession> {
 		// 1. A customer session is what opens the portal; the URL is all the caller needs
@@ -211,6 +214,7 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	 *
 	 * @param subscriptionId - Polar's id.
 	 * @returns The subscription, normalised.
+	 * @throws Polar's `PolarError` when the request is refused, or its `HTTPClientError` when Polar cannot be reached.
 	 */
 	async getSubscription(subscriptionId: string): Promise<Subscription> {
 		// 1. The model carries the product and the periods, which is all the mapping reads
@@ -226,6 +230,7 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	 * @param input - Subscription, new product and/or seats, proration.
 	 * @returns The subscription after the change.
 	 * @throws Error when neither a price nor a seat count is given.
+	 * @throws Polar's `PolarError` when the request is refused, or its `HTTPClientError` when Polar cannot be reached.
 	 */
 	async updateSubscription(input: UpdateSubscriptionInput): Promise<Subscription> {
 		const prorationBehavior = PRORATION[input.proration ?? 'prorate'];
@@ -262,6 +267,7 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	 *
 	 * @param input - Subscription, when, why.
 	 * @returns The subscription after the request.
+	 * @throws Polar's `PolarError` when the request is refused, or its `HTTPClientError` when Polar cannot be reached.
 	 */
 	async cancelSubscription(input: CancelSubscriptionInput): Promise<Subscription> {
 		// 1. The reason is recorded on Polar's side either way, as the customer's cancellation comment
@@ -286,6 +292,7 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	 *
 	 * @param input - Customer and how many.
 	 * @returns The invoices, normalised.
+	 * @throws Polar's `PolarError` when the request is refused, or its `HTTPClientError` when Polar cannot be reached.
 	 */
 	async listInvoices(input: ListInvoicesInput): Promise<Invoice[]> {
 		// 1. Newest first, one page; the limit is passed through when given
@@ -305,7 +312,9 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	 * @param headers - The request headers, lower-cased.
 	 * @returns The event, or `null` for one the kit does not act on — including an event type this SDK does not know
 	 * yet, once its signature verified.
-	 * @throws InvalidPayloadError without the Standard Webhooks headers, or for a body that is not a Polar event.
+	 * @throws InvalidPayloadError without the Standard Webhooks headers, for a body that is not JSON or not a Polar
+	 * event, or for an event of a type this SDK knows whose payload its schema rejects — reported rather than dropped,
+	 * so a change on Polar's side does not silently swallow every delivery of that type.
 	 * @throws InvalidCredentialsError when the signature does not verify, or the timestamp is outside the tolerance.
 	 */
 	async parseWebhook(rawBody: string, headers: WebhookHeaders): Promise<PaymentsEvent | null> {
@@ -332,11 +341,29 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 			}
 
 			// 4. The SDK verifies before it parses, so a validation error here is a verified event this SDK cannot
-			//    read: a type it does not know yet is dropped, a body that is not an event at all is refused
+			//    read. Only an event of a type the SDK does not know is dropped — Polar adds types over time; a known
+			//    type whose payload fails the schema is refused, since dropping it would silently lose every delivery
+			//    of that type until the SDK is updated, and a body that is not an event at all is refused as well
 			if (error instanceof SDKValidationError) {
-				if (isEventLike(rawBody)) return null;
+				const type = eventTypeOf(rawBody);
 
-				throw new InvalidPayloadError({ reason: error.message });
+				if (type !== undefined && isUnknownEventType(error)) return null;
+
+				throw new InvalidPayloadError(
+					{
+						reason:
+							type === undefined
+								? 'The body is not a Polar event'
+								: `The "${type}" event does not match this SDK's schema`,
+					},
+					{ cause: error },
+				);
+			}
+
+			// 5. The verifier parses the body once the signature matched, so a body that is not JSON surfaces here as
+			//    a bare SyntaxError: a payload problem the sender has to fix, not a failure of the driver
+			if (error instanceof SyntaxError) {
+				throw new InvalidPayloadError({ reason: 'The body is not JSON' }, { cause: error });
 			}
 
 			throw error;
@@ -355,18 +382,36 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 }
 
 /**
- * Whether a body is a JSON object with a `type` — the shape of every Polar event, known to this SDK or not.
+ * The `type` of a body that is a JSON object with a string `type` — the shape of every Polar event, known to this SDK
+ * or not.
  *
  * @param rawBody - The body text.
- * @returns `true` for an event-shaped body.
+ * @returns The event type, or `undefined` for a body that is not event-shaped.
  */
-const isEventLike = (rawBody: string): boolean => {
+const eventTypeOf = (rawBody: string): string | undefined => {
 	// 1. A body that is not JSON, or not an object with a string `type`, is not an event of any version
 	try {
 		const parsed: unknown = JSON.parse(rawBody);
+		const type = typeof parsed === 'object' && parsed !== null ? (parsed as { type?: unknown }).type : undefined;
 
-		return typeof parsed === 'object' && parsed !== null && typeof (parsed as { type?: unknown }).type === 'string';
+		return typeof type === 'string' ? type : undefined;
 	} catch {
-		return false;
+		return undefined;
 	}
+};
+
+/**
+ * Whether a validation error is the SDK's own "unknown event type" refusal, the one failure of `validateEvent` that
+ * means the event is well-formed but newer than this SDK.
+ *
+ * The SDK wraps every parse failure in an outer `SDKValidationError`; for an unknown type the cause is an inner
+ * `SDKValidationError` whose raw message names it, while a known type whose payload fails its schema carries the
+ * schema's `ZodError` as the cause. The two are told apart here so only the former is dropped.
+ *
+ * @param error - The error `validateEvent` threw.
+ * @returns `true` for an unknown event type.
+ */
+const isUnknownEventType = (error: SDKValidationError): boolean => {
+	// 1. The inner error's `rawMessage` is the SDK's message before it appends the cause, so the prefix is stable
+	return error.cause instanceof SDKValidationError && String(error.cause.rawMessage).startsWith('Unknown event type');
 };

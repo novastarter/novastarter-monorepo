@@ -13,7 +13,7 @@
 		"tax_amount": 0,
 		"total_amount": 9500,
 		"applied_balance_amount": 0,
-		"due_amount": 0,
+		"due_amount": 9500,
 		"refunded_amount": 0,
 		"refunded_tax_amount": 0,
 		"currency": "usd",

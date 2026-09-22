@@ -8,6 +8,7 @@ import {
 } from '@novastarter/mail';
 import nodemailer, { type Transporter } from 'nodemailer';
 import { toSesClientConfig } from './to-ses-client-config.js';
+import { toSesMessageTags } from './to-ses-message-tags.js';
 
 /**
  * Options accepted by {@link MailDriverSes}.
@@ -39,7 +40,9 @@ declare module '@novastarter/mail' {
 /**
  * Driver for [Amazon SES](https://aws.amazon.com/ses/), through nodemailer's SES transport on the SESv2 SDK.
  *
- * The category and the tags become SES message tags, which show up in the sending events.
+ * The category and the tags become SES message tags, which show up in the sending events. SES takes only ASCII
+ * letters, digits, `_` and `-` in a tag, at most 256 of them, so every tag is sanitised on the way
+ * (`welcome flow` becomes `welcome_flow`) and one left with no name is dropped, rather than failing the whole send.
  *
  * @example
  * ```ts
@@ -105,16 +108,12 @@ export class MailDriverSes implements MailDriver {
 	 * @throws The SDK's error when SES refuses.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
-		// 1. Tags and the configuration set ride on the `ses` field nodemailer merges into the SendEmailCommand
-		const tags = [
-			{ Name: 'category', Value: message.category ?? 'transactional' },
-			...(message.tags ?? []).map((tag) => ({ Name: tag, Value: '1' })),
-		];
-
+		// 1. Tags and the configuration set ride on the `ses` field nodemailer merges into the SendEmailCommand; the tags
+		//    are sanitised first, since SES refuses the whole message over one name outside its character set
 		const info = await this.transporter.sendMail({
 			...toNodemailerMessage(message),
 			ses: {
-				EmailTags: tags,
+				EmailTags: toSesMessageTags(message),
 				...(this.configurationSet ? { ConfigurationSetName: this.configurationSet } : {}),
 			},
 		} as Parameters<Transporter['sendMail']>[0]);

@@ -19,6 +19,12 @@ export interface NodemailerInfo {
  *
  * @param info - nodemailer's result.
  * @returns Ours.
+ * @example
+ * ```ts
+ * async send(message: MailMessage): Promise<MailResult> {
+ * 	return toMailResult(await this.transporter.sendMail(toNodemailerMessage(message)));
+ * }
+ * ```
  */
 export const toMailResult = (info: NodemailerInfo): MailResult => {
 	// 1. nodemailer reports recipients as strings or as address objects depending on the transport

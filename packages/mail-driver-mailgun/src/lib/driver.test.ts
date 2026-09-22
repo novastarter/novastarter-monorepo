@@ -1,109 +1,40 @@
 /**
- * Tests of the Mailgun driver with the SDK mocked.
+ * Tests of the Mailgun driver class with the SDK mocked; the message mapper has its own tests in
+ * `to-mailgun-message.test.ts`.
  */
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import defaultExport from '../index.js';
 import { DEFAULT_MAILGUN_HOST } from './constants.js';
 import { MailDriverMailgun } from './driver.js';
-import { toMailgunFile, toMailgunMessage } from './to-mailgun-message.js';
 
 const create = vi.fn();
 const get = vi.fn();
 const client = vi.fn(() => ({ messages: { create }, domains: { get } }));
 
 vi.mock('mailgun.js', () => ({
+	/**
+	 * Stand-in for the `Mailgun` class of `mailgun.js`: hands out a client whose messages and domains APIs are the
+	 * shared spies, so each test can script Mailgun's answer and inspect the request.
+	 */
 	default: class {
+		/**
+		 * Client factory the driver calls, recorded so the tests can check the key, region and timeout it received.
+		 *
+		 * @internal
+		 */
 		client = client;
 
+		/**
+		 * Take the FormData implementation the way the real SDK does.
+		 *
+		 * @param formData - The FormData class the driver passes; unused by the mock.
+		 */
 		constructor(public formData: unknown) {}
 	},
 }));
 
 afterEach(() => {
 	vi.clearAllMocks();
-});
-
-describe('toMailgunFile', () => {
-	test('Keeps inline content and takes the content id as the filename', async () => {
-		// 1. Mailgun matches `cid:` references by filename, so the content id stands in for it
-		expect(await toMailgunFile({ filename: 'logo.png', content: Buffer.from('png'), cid: 'logo' })).toStrictEqual({
-			filename: 'logo',
-			data: Buffer.from('png'),
-		});
-	});
-
-	test('Reads a path', async () => {
-		// 1. This very file is the attachment; a Buffer proves the path was read
-		const file = await toMailgunFile({ filename: 'self.ts', path: new URL(import.meta.url).pathname });
-
-		expect(file.filename).toBe('self.ts');
-		expect(Buffer.isBuffer(file.data)).toBe(true);
-	});
-
-	test('Throws without content or path', async () => {
-		// 1. An attachment without a source is refused by name
-		await expect(toMailgunFile({ filename: 'x' })).rejects.toThrow('neither content nor path');
-	});
-});
-
-describe('toMailgunMessage', () => {
-	test('Maps the message into Mailgun form fields, inline files apart', async () => {
-		// 1. Headers become `h:` fields, tags `o:tag`; text content is read into a Buffer like every attachment
-		expect(
-			await toMailgunMessage(
-				{
-					to: [{ name: 'Ada', address: 'ada@example.com' }],
-					cc: ['cc@example.com'],
-					bcc: ['bcc@example.com'],
-					from: { name: 'Acme', address: 'no-reply@acme.test' },
-					replyTo: 'Support <support@acme.test>',
-					subject: 'Hi',
-					html: '<p>Hi</p>',
-					text: 'Hi',
-					headers: { 'X-Campaign': 'welcome' },
-					attachments: [
-						{ filename: 'a.txt', content: 'hello', contentType: 'text/plain' },
-						{ filename: 'logo.png', content: Buffer.from('png'), contentType: 'image/png', cid: 'logo' },
-					],
-					category: 'marketing',
-					tags: ['welcome', 'v2'],
-				},
-				true,
-			),
-		).toStrictEqual({
-			from: 'Acme <no-reply@acme.test>',
-			to: ['Ada <ada@example.com>'],
-			cc: ['cc@example.com'],
-			bcc: ['bcc@example.com'],
-			subject: 'Hi',
-			html: '<p>Hi</p>',
-			text: 'Hi',
-			'o:tag': ['marketing', 'welcome', 'v2'],
-			'o:testmode': true,
-			'h:Reply-To': 'Support <support@acme.test>',
-			'h:X-Campaign': 'welcome',
-			attachment: [{ filename: 'a.txt', data: Buffer.from('hello'), contentType: 'text/plain' }],
-			inline: [{ filename: 'logo', data: Buffer.from('png'), contentType: 'image/png' }],
-		});
-	});
-
-	test('Defaults the tag to the transactional category and leaves the optional fields out', async () => {
-		// 1. Nothing optional given: nothing optional sent, the category is still a tag
-		expect(
-			await toMailgunMessage({ to: 'a@example.com', from: 'me@acme.test', subject: 'S', text: 'T' }),
-		).toStrictEqual({
-			from: 'me@acme.test',
-			to: ['a@example.com'],
-			subject: 'S',
-			text: 'T',
-			'o:tag': ['transactional'],
-		});
-	});
-
-	test('Requires a sender', async () => {
-		// 1. A message without a sender is refused by name
-		await expect(toMailgunMessage({ to: 'a@example.com', subject: 'S' })).rejects.toThrow('"from"');
-	});
 });
 
 describe('MailDriverMailgun', () => {

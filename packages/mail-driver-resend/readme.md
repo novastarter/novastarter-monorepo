@@ -34,8 +34,10 @@ Anywhere later: `sendMail(message)` routes through the location, or `useMail().l
 routes.
 
 Through the official `resend` SDK; the category and the tags become Resend tags (`category=<category>`, `<tag>=1`),
-which the dashboard filters by. The SDK reports a refusal as a value; the driver turns it into a throw naming the
-provider, so `sendMail()` falls back.
+which the dashboard filters by. Attachments go base64-encoded — text content is encoded and a local `path` is read by
+the driver, since Resend only fetches URLs — inline when they carry a content id. The SDK reports a refusal as a value;
+the driver turns it into a throw naming the provider with that value as the `cause`, so `sendMail()` falls back and the
+caller can still read Resend's status code.
 
 ## Options
 

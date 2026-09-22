@@ -7,6 +7,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { MailDriverFile } from './file.js';
 
+/**
+ * Fresh outbox directory per test, inside a temporary parent, so the driver's own `mkdir` is exercised.
+ */
 let dir: string;
 
 beforeEach(async () => {
@@ -46,6 +49,28 @@ describe('MailDriverFile', () => {
 		expect(eml).toContain('To: Ada <ada@example.com>');
 		expect(eml).toContain('Hello Ada');
 		expect(eml).toContain('filename=hello.txt');
+	});
+
+	test('Keeps a message id with path characters inside the directory', async () => {
+		const driver = new MailDriverFile({ dir });
+
+		// 1. A caller's `Message-ID` may hold `/` and `..`; both would send `join()` elsewhere, so they become `_`
+		const result = await driver.send({
+			to: 'ada@example.com',
+			from: 'no-reply@acme.test',
+			subject: 'Order',
+			text: 'x',
+			headers: { 'Message-ID': '<../../order/123@acme.test>' },
+		});
+
+		const files = await readdir(dir);
+
+		expect(files).toHaveLength(1);
+		expect(files[0]).toMatch(/^\d+-.._.._order_123_acme\.test\.eml$/);
+		expect(result.response).toBe(join(dir, files[0]!));
+
+		// 2. The parent of the outbox got nothing: the file did not escape
+		expect(await readdir(join(dir, '..'))).toStrictEqual(['outbox']);
 	});
 
 	test('Refuses to start without a directory', () => {

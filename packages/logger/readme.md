@@ -75,13 +75,13 @@ const logger = createLogger({
 
 `createLogger()`:
 
-| Option       | Default | Description                                                                     |
-| ------------ | ------- | ------------------------------------------------------------------------------- |
-| `level`      | `info`  | Lowest level written: `fatal`, `error`, `warn`, `info`, `debug`, `trace`.       |
-| `style`      | `raw`   | `pretty` for humans, `raw` for JSON lines.                                      |
-| `levels`     | —       | `{ warn: 'WARNING' }` — adds a `severity` field for collectors that expect one. |
-| `pino`       | —       | Merged into the pino options, e.g. `{ name: 'api' }`.                           |
-| `logsStream` | —       | Extra destination, with its own `level`.                                        |
+| Option       | Default | Description                                                                      |
+| ------------ | ------- | -------------------------------------------------------------------------------- |
+| `level`      | `info`  | Lowest level written: `fatal`, `error`, `warn`, `info`, `debug`, `trace`.        |
+| `style`      | `raw`   | `pretty` for humans, `raw` for JSON lines.                                       |
+| `levels`     | —       | `{ warn: 'WARNING' }` — adds a `severity` field for collectors that expect one.  |
+| `pino`       | —       | Merged into the pino options, e.g. `{ name: 'api' }`; `redact` adds to the list. |
+| `logsStream` | —       | Extra destination, with its own `level`.                                         |
 
 `createHttpLogger()`:
 
@@ -89,9 +89,9 @@ const logger = createLogger({
 | ------------- | ------- | ----------------------------------------------------------- |
 | `logger`      | —       | Required: the logger the request lines are written through. |
 | `ignorePaths` | —       | Paths it stays quiet about, e.g. `['/server/ping']`.        |
-| `http`        | —       | Merged into the pino-http options.                          |
+| `http`        | —       | Merged into the pino-http options, `serializers` included.  |
 
 `req.headers.authorization`, `req.headers.cookie`, `res.headers["set-cookie"]` and `access_token` in the query string
-are always redacted (`REDACTED_PATHS`). `resolveLogStyle(env)` is the rule for the style: an explicit `LOG_STYLE` wins,
-otherwise `NODE_ENV=production` means `raw` — a log collector parses JSON and chokes on a pretty line — and everything
-else means `pretty`.
+are always redacted (`REDACTED_PATHS`); a `pino.redact` of the application's adds paths to that list, it cannot remove
+one. `resolveLogStyle(env)` is the rule for the style: an explicit `LOG_STYLE` wins, otherwise `NODE_ENV=production`
+means `raw` — a log collector parses JSON and chokes on a pretty line — and everything else means `pretty`.

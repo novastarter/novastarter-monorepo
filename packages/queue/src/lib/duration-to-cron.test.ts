@@ -1,5 +1,6 @@
 /**
- * Tests of `queue/lib/duration-to-cron` and `validate-cron`.
+ * Tests of `queue/lib/duration-to-cron`; `validateCron` checks the output and has tests of its own in
+ * `validate-cron.test.ts`.
  */
 import { describe, expect, test } from 'vitest';
 import { durationToCron } from './duration-to-cron.js';
@@ -24,20 +25,5 @@ describe('durationToCron', () => {
 		for (const duration of [3600, 7200, 3 * 3600, 25200, 60]) {
 			expect(validateCron(durationToCron(duration))).toBe(true);
 		}
-	});
-});
-
-describe('validateCron', () => {
-	test.each([
-		['0 3 * * *', true],
-		['*/5 * * * *', true],
-		['30 0 3 * * *', true],
-		['@daily', true],
-		['', false],
-		['every day', false],
-		['0 3 * *', false],
-		['0 0 3 * * * 2026', false],
-	])('%s → %s', (rule, expected) => {
-		expect(validateCron(rule)).toBe(expected);
 	});
 });

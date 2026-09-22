@@ -4,7 +4,7 @@ import type { Lock } from '../../../kv/types.js';
 import type { CacheDriver } from '../../driver.js';
 
 /**
- * Options of {@link CacheDriverRedis}, the `redis` driver.
+ * Options of {@link CacheDriverRedis}, the `redis` driver: those of `KvDriverRedis`, which does the work.
  */
 export type CacheDriverRedisConfig = {
 	/**
@@ -33,6 +33,14 @@ export type CacheDriverRedisConfig = {
 	 * Time-to-live: keys expire after this many milliseconds.
 	 */
 	ttl?: number | undefined;
+
+	/**
+	 * How long an acquired lock is held, in milliseconds, and about how long `acquireLock` waits for a busy one
+	 * before giving up. At least 200 and at most what a timer can hold; anything else is refused at construction.
+	 *
+	 * @defaultValue 5000
+	 */
+	lockTimeout?: number | undefined;
 
 	/**
 	 * Existing or new Redis connection to use with this cache.
@@ -66,6 +74,8 @@ export class CacheDriverRedis implements CacheDriver {
 	 * Create the cache on top of an existing Redis connection.
 	 *
 	 * @param config - Redis configuration.
+	 * @throws RangeError when `lockTimeout` is under 200 ms or above what a timer can hold, or the client sits on a
+	 * database above 15, where Redlock cannot lock.
 	 */
 	constructor(config: CacheDriverRedisConfig) {
 		// 1. The cache reuses the Kv store, so serialization, compression and locking live in one place
@@ -80,7 +90,8 @@ export class CacheDriverRedis implements CacheDriver {
 	 * @returns Cached value, or `undefined` when the key does not exist.
 	 */
 	async get<T = unknown>(key: string): Promise<T | undefined> {
-		// 1. Delegate to the store
+		// 1. The store reads the raw bytes, gunzips what was compressed and parses the JSON; the cache adds no step, so
+		//    a value a Kv wrote under the same namespace reads the same
 		return await this.store.get<T>(key);
 	}
 
@@ -92,7 +103,8 @@ export class CacheDriverRedis implements CacheDriver {
 	 * @param value - Value to save. Can be any JavaScript primitive, plain object or array.
 	 */
 	async set<T = unknown>(key: string, value: T): Promise<void> {
-		// 1. Delegate to the store
+		// 1. The store namespaces the key, gzips a value above `compressionMinSize` and sets the `PX` expiry in the same
+		//    round trip as the write
 		return await this.store.set(key, value);
 	}
 
@@ -102,7 +114,8 @@ export class CacheDriverRedis implements CacheDriver {
 	 * @param key - Key to remove.
 	 */
 	async delete(key: string): Promise<void> {
-		// 1. Delegate to the store
+		// 1. The store unlinks the key off the Redis main thread; this cache holds no local copy that would need
+		//    dropping alongside
 		return await this.store.delete(key);
 	}
 
@@ -113,7 +126,8 @@ export class CacheDriverRedis implements CacheDriver {
 	 * @returns `true` when the key exists.
 	 */
 	async has(key: string): Promise<boolean> {
-		// 1. Delegate to the store
+		// 1. An `EXISTS` round trip is the only truth about a key shared between processes; there is no local copy to
+		//    answer from
 		return await this.store.has(key);
 	}
 
@@ -121,7 +135,8 @@ export class CacheDriverRedis implements CacheDriver {
 	 * Remove all keys in this cache's namespace.
 	 */
 	async clear(): Promise<void> {
-		// 1. Delegate to the store
+		// 1. The store scans its namespace and unlinks in one pipeline; held locks live under `<namespace>-locks` and
+		//    survive it
 		await this.store.clear();
 	}
 
@@ -130,9 +145,11 @@ export class CacheDriverRedis implements CacheDriver {
 	 *
 	 * @param key - Key to lock.
 	 * @returns Handle to release or extend the lock.
+	 * @throws Error when the lock is still held once the retry budget — about `lockTimeout` — is spent.
 	 */
 	async acquireLock(key: string): Promise<Lock> {
-		// 1. Delegate to the store
+		// 1. The lock is the store's Redlock lock: visible to every process on the server, held for `lockTimeout` and
+		//    extendable, which a lock in this process's memory could not offer
 		return await this.store.acquireLock(key);
 	}
 
@@ -143,9 +160,12 @@ export class CacheDriverRedis implements CacheDriver {
 	 * @param key - Key to lock.
 	 * @param callback - Work to run under the lock.
 	 * @returns Whatever the callback resolves to.
+	 * @throws Error when the lock is still held once the retry budget — about `lockTimeout` — is spent; whatever the
+	 * callback throws.
 	 */
 	async usingLock<T>(key: string, callback: () => Promise<T>): Promise<T> {
-		// 1. Delegate to the store
+		// 1. The store's Redlock `using` renews the lock while the callback runs and releases it afterwards, so a long
+		//    callback keeps its exclusivity without the cache tracking the expiry
 		return await this.store.usingLock(key, callback);
 	}
 }

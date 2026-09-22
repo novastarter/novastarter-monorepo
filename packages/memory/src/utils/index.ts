@@ -3,6 +3,7 @@
  */
 export * from './buffer-to-uint8array.js';
 export * from './compress.js';
+export * from './escape-glob.js';
 export * from './is-compressed.js';
 export * from './serialize.js';
 export * from './string-to-uint8array.js';

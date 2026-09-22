@@ -68,6 +68,8 @@ export class MailDriverFile implements MailDriver {
 	 *
 	 * @param message - Rendered message.
 	 * @returns The envelope recipients as accepted.
+	 * @throws nodemailer's error when the message cannot be built, or Node's when the directory or the file cannot be
+	 * written.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
 		// 1. nodemailer builds the complete message — headers, MIME parts, attachments — the way a server would get it
@@ -77,8 +79,12 @@ export class MailDriverFile implements MailDriver {
 		//    litter the working directory
 		await mkdir(this.dir, { recursive: true });
 
-		// 3. Sortable by time, unique by message id; the id's angle brackets and `@` are not file-name friendly
-		const id = String(info.messageId ?? Date.now()).replace(/[<>@]/g, '');
+		// 3. Sortable by time, unique by message id. The id may be a caller's `Message-ID` header, where `/` and `..` are
+		//    legal, so everything outside a plain file-name alphabet becomes `_`: the file then always lands in `dir`
+		const id = String(info.messageId ?? Date.now())
+			.replace(/^<|>$/g, '')
+			.replace(/[^A-Za-z0-9._-]/g, '_');
+
 		const file = join(this.dir, `${Date.now()}-${id}.eml`);
 
 		await writeFile(file, info.message as Buffer);

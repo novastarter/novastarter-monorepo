@@ -136,12 +136,14 @@ export class MailDriverMailgun implements MailDriver {
 	 * @throws Error carrying Mailgun's status and details when the API refuses; the SDK's error is the cause.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
+		// 1. The payload is built first, so a message the mapper refuses (no sender, unreadable attachment) never
+		//    reaches the API and the failure names our field rather than Mailgun's
 		const data = await toMailgunMessage(message, this.testMode);
 
-		// 1. The SDK throws its `APIError` on any non-2xx; wrapped so the log names the provider
+		// 2. The SDK throws its `APIError` on any non-2xx; wrapped so the log names the provider
 		const result = await this.client.messages.create(this.domain, data).catch(rethrowMailgunError);
 
-		// 2. Mailgun takes a message whole or refuses it, so every recipient counts as accepted
+		// 3. Mailgun takes a message whole or refuses it, so every recipient counts as accepted
 		return {
 			messageId: result.id?.replace(/^<|>$/g, ''),
 			accepted: toMailAddressList(message.to).map(bareMailAddress),
@@ -156,9 +158,11 @@ export class MailDriverMailgun implements MailDriver {
 	 * @throws Error when the API refuses the key, does not know the domain, or the domain is not active.
 	 */
 	async verify(): Promise<void> {
+		// 1. Reading the domain exercises the key and the domain in one request without sending anything; a refusal
+		//    is wrapped like a send failure so the log names the provider
 		const domain = await this.client.domains.get(this.domain).catch(rethrowMailgunError);
 
-		// 1. An unverified domain sends nothing; Mailgun answers 200 for it all the same
+		// 2. An unverified domain sends nothing; Mailgun answers 200 for it all the same
 		if (domain.state !== 'active') {
 			throw new Error(`Mailgun domain "${this.domain}" is ${domain.state}, not active`);
 		}

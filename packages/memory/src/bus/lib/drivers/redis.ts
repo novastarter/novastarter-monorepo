@@ -125,6 +125,26 @@ export class BusDriverRedis implements BusDriver {
 	private inbox: Promise<void> = Promise.resolve();
 
 	/**
+	 * The handing of the messages published so far to the connection, one after the other.
+	 *
+	 * Compressing is asynchronous, so a small plain message published right after a large one would otherwise reach
+	 * Redis first, while the large one is still in zlib's thread pool; chaining every publish onto the previous one
+	 * keeps the order the caller published in, the same guarantee {@link BusDriverRedis.inbox} gives on the way in.
+	 * A publish waits for the one before it to be handed to the connection, not for Redis to answer it, so the
+	 * commands still pipeline.
+	 *
+	 * @internal
+	 */
+	private outbox: Promise<void> = Promise.resolve();
+
+	/**
+	 * Whether {@link BusDriverRedis.close} was called; a subscription can neither start nor complete afterwards.
+	 *
+	 * @internal
+	 */
+	private closed = false;
+
+	/**
 	 * Create the bus on top of an existing Redis connection.
 	 *
 	 * @param config - Redis configuration.
@@ -153,20 +173,41 @@ export class BusDriverRedis implements BusDriver {
 	/**
 	 * Publish a payload to every subscriber of the channel, in every process.
 	 *
+	 * Messages reach Redis in the order they were published, whether or not the caller awaits each one: a large
+	 * payload being gzipped does not let the small one published right after it overtake.
+	 *
 	 * @typeParam T - Payload type.
 	 * @param channel - Channel to publish to.
 	 * @param payload - Value sent to the subscribers.
+	 * @throws `TypeError` when the payload cannot be serialised, such as a `BigInt` or a cyclic object; the error
+	 * Redis answered the `PUBLISH` with.
 	 */
 	async publish<T = unknown>(channel: string, payload: T): Promise<void> {
-		// 1. Serialize and, when large enough to be worth it, compress
-		let binaryArray = serialize(payload);
+		// 1. The reply is kept apart from the chain: the chain moves on as soon as the command is handed to the
+		//    connection, so a slow answer from Redis delays no later publish, only this caller
+		let reply: Promise<number> | undefined;
 
-		if (this.compression === true && binaryArray.byteLength >= this.compressionMinSize) {
-			binaryArray = await compress(binaryArray);
-		}
+		// 2. Serialise, compress when large enough to be worth it and hand the bytes to the connection, all behind the
+		//    publish before it, so an asynchronous compression cannot reorder the stream; ioredis queues the command
+		//    synchronously, which is why the chain may move on right after the call
+		const issued = this.outbox.then(async () => {
+			// 1. Serialise first, so a payload the wire cannot carry fails the caller before anything is sent, and
+			//    compress only from the size where the savings pay for the CPU time
+			let binaryArray = serialize(payload);
 
-		// 2. Publish under the namespaced channel name as raw bytes
-		await this.pub.publish(withNamespace(channel, this.namespace), uint8ArrayToBuffer(binaryArray));
+			if (this.compression === true && binaryArray.byteLength >= this.compressionMinSize) {
+				binaryArray = await compress(binaryArray);
+			}
+
+			// 2. Bytes, not a string: a gzipped payload would be mangled by ioredis' UTF-8 encoding
+			reply = this.pub.publish(withNamespace(channel, this.namespace), uint8ArrayToBuffer(binaryArray));
+		});
+
+		// 3. A failing publish is the caller's business alone; the chain must stay usable for the next one
+		this.outbox = issued.catch(() => {});
+
+		await issued;
+		await reply;
 	}
 
 	/**
@@ -175,19 +216,28 @@ export class BusDriverRedis implements BusDriver {
 	 * @typeParam T - Payload type the callback expects.
 	 * @param channel - Channel to subscribe to.
 	 * @param callback - Invoked with every payload published on the channel.
+	 * @throws The error Redis answered the `SUBSCRIBE` with; the callback is not registered then, so the call can be
+	 * retried. `Error` when the bus was closed, before the call or while Redis was being asked: the callback is gone
+	 * with the connection and would never be called.
 	 */
 	async subscribe<T = unknown>(channel: string, callback: MessageHandler<T>): Promise<void> {
-		// 1. Handlers are keyed by the namespaced name, the form Redis reports incoming messages under
+		// 1. A closed bus subscribes to nothing: its connection is gone, so the caller is told rather than handed a
+		//    callback that would never fire
+		this.assertOpen();
+
+		// 2. Handlers are keyed by the namespaced name, the form Redis reports incoming messages under
 		const namespaced = withNamespace(channel, this.namespace);
 
 		const existingSet = this.handlers[namespaced];
 
-		// 2. Only the first callback triggers a Redis `SUBSCRIBE`; later ones join the existing set — and wait for the
+		// 3. Only the first callback triggers a Redis `SUBSCRIBE`; later ones join the existing set — and wait for the
 		//    `SUBSCRIBE` still under way, if any, so a caller that joined while Redis was being asked learns of a
-		//    failure too instead of being told its handler is in place when the set is about to go
+		//    failure too instead of being told its handler is in place when the set is about to go. A `close()` that
+		//    landed meanwhile dropped the set as well, and is reported the same way
 		if (existingSet !== undefined) {
 			existingSet.add(callback);
 			await this.pending[namespaced];
+			this.assertOpen();
 
 			return;
 		}
@@ -196,7 +246,7 @@ export class BusDriverRedis implements BusDriver {
 		set.add(callback);
 		this.handlers[namespaced] = set;
 
-		// 3. A `SUBSCRIBE` that fails leaves no set behind: with one in place, a retry would take the branch above and
+		// 4. A `SUBSCRIBE` that fails leaves no set behind: with one in place, a retry would take the branch above and
 		//    add its callback without ever asking Redis again, so the channel would stay silent for good. The promise
 		//    is shared with the callers that join meanwhile and forgotten once settled. Both removals check identity:
 		//    an `unsubscribe` and a fresh `subscribe` may have replaced the set and the promise while this one was in
@@ -222,6 +272,10 @@ export class BusDriverRedis implements BusDriver {
 				delete this.pending[namespaced];
 			}
 		}
+
+		// 5. Redis took the subscription, but a `close()` that landed while it was on the wire has quit the connection
+		//    and dropped the set: the caller is told, not left with a resolved promise and no subscription behind it
+		this.assertOpen();
 	}
 
 	/**
@@ -232,7 +286,7 @@ export class BusDriverRedis implements BusDriver {
 	 * @param callback - The callback that was passed to `subscribe`.
 	 */
 	async unsubscribe<T = unknown>(channel: string, callback: MessageHandler<T>): Promise<void> {
-		// 1. Look the channel up under its namespaced name
+		// 1. Handlers are keyed by the namespaced name, the form Redis reports incoming messages under
 		const namespaced = withNamespace(channel, this.namespace);
 
 		const set = this.handlers[namespaced];
@@ -260,11 +314,31 @@ export class BusDriverRedis implements BusDriver {
 	 * @returns Once the server acknowledged the quit.
 	 */
 	async close(): Promise<void> {
-		// 1. Only the duplicate is the driver's own; its subscriptions end with it, so the handlers and any `SUBSCRIBE`
+		// 1. Closed first, so a `subscribe()` racing the quit — its `SUBSCRIBE` on the wire, answered before the queued
+		//    `QUIT` — rejects instead of resolving with its handler already dropped
+		this.closed = true;
+
+		// 2. Only the duplicate is the driver's own; its subscriptions end with it, so the handlers and any `SUBSCRIBE`
 		//    still under way can go too
 		this.handlers = {};
 		this.pending = {};
 		await this.sub.quit();
+	}
+
+	/**
+	 * Refuse to go on once the bus is closed.
+	 *
+	 * Called before a subscription starts and again after every wait inside it, since `close()` may have landed
+	 * while Redis was being asked.
+	 *
+	 * @throws `Error` when {@link BusDriverRedis.close} was called.
+	 * @internal
+	 */
+	private assertOpen(): void {
+		// 1. One message for both moments, before the call and during it: the outcome for the caller is the same
+		if (this.closed) {
+			throw new Error('The bus is closed; it subscribes to nothing any more');
+		}
 	}
 
 	/**

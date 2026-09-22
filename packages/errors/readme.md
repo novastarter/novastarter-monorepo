@@ -24,12 +24,16 @@ const InvalidThingError = createError<{ thing: string }>(
 try {
 	throw new InvalidThingError({ thing: 'foo' });
 } catch (error) {
-	if (isNovastarterError(error, 'INVALID_THING')) {
+	if (isNovastarterError<{ thing: string }>(error, 'INVALID_THING')) {
 		error.status; // 400
 		error.extensions.thing; // 'foo'
 	}
 }
 ```
+
+The guard knows the extensions of the codes in `ErrorCode`, so `isNovastarterError(error, ErrorCode.InvalidPayload)`
+types `error.extensions` on its own. For a code of your own it cannot, so pass the extensions type as shown above;
+without it `error.extensions` is `unknown`.
 
 The classes of the kit:
 

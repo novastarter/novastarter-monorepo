@@ -1,6 +1,7 @@
 /**
  * Tests of `memory/kv/lib/drivers/redis`.
  */
+import { ExecutionError } from '@sesamecare-oss/redlock';
 import { Redis } from 'ioredis';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
@@ -8,12 +9,13 @@ import {
 	compress,
 	decompress,
 	deserialize,
+	escapeGlob,
 	isCompressed,
 	serialize,
 	uint8ArrayToBuffer,
 	withNamespace,
 } from '../../../utils/index.js';
-import { type ExtendedRedis, KvDriverRedis, SET_MAX_SCRIPT } from './redis.js';
+import { type ExtendedRedis, INCREMENT_SCRIPT, KvDriverRedis, SET_MAX_SCRIPT } from './redis.js';
 
 vi.mock('ioredis');
 vi.mock('../../../utils/index.js');
@@ -30,6 +32,8 @@ let mockValue: string;
 let kv: KvDriverRedis;
 
 beforeEach(() => {
+	// 1. One namespaced key and one byte payload stand in for every value; the utils are automocked, so what they
+	//    answer is pinned here and the tests assert on the calls the driver makes
 	mockKey = 'test-key';
 	mockNamespace = 'test';
 	mockNamespacedKey = 'namespaced:test-key';
@@ -41,6 +45,7 @@ beforeEach(() => {
 
 	mockValue = 'test';
 
+	// 2. Compression off by default, so the byte path is the plain one; the tests that need it build their own store
 	mockRedis = new Redis();
 
 	kv = new KvDriverRedis({
@@ -50,6 +55,7 @@ beforeEach(() => {
 	});
 
 	vi.mocked(withNamespace).mockReturnValue(mockNamespacedKey);
+	vi.mocked(escapeGlob).mockImplementation((text) => text);
 	vi.mocked(bufferToUint8Array).mockReturnValue(mockUint8Array);
 	vi.mocked(uint8ArrayToBuffer).mockReturnValue(mockBuffer as any);
 	vi.mocked(compress).mockResolvedValue(mockCompressedUint8Array);
@@ -59,17 +65,20 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	// 1. Calls are cleared, not the implementations: `beforeEach` sets the answers again for the next test
 	vi.clearAllMocks();
 });
 
 describe('constructor', () => {
 	test('Sets internal flags based on config', () => {
+		// 1. The config lands on the fields the methods read, unchanged
 		expect(kv['redis']).toBe(mockRedis);
 		expect(kv['namespace']).toBe(mockNamespace);
 		expect(kv['compression']).toBe(false);
 	});
 
 	test('Defaults compression settings', () => {
+		// 1. Without a word about compression the store gzips, but only from 1 kB up
 		const kv = new KvDriverRedis({
 			namespace: mockNamespace,
 			redis: mockRedis,
@@ -79,18 +88,25 @@ describe('constructor', () => {
 		expect(kv['compressionMinSize']).toBe(1000);
 	});
 
-	test('Defines redis setMax command if it does not exist yet', () => {
+	test('Defines the setMax and increment commands if they do not exist yet', () => {
+		// 1. Both scripts go on the client; locks go through Redlock, which ships its own release script, so no
+		//    command of the driver's own is defined for them
 		expect(kv['redis'].defineCommand).toHaveBeenCalledWith('setMax', {
 			numberOfKeys: 1,
 			lua: SET_MAX_SCRIPT,
 		});
 
-		// Locks go through Redlock, which ships its own release script; no command of the driver's own
-		expect(kv['redis'].defineCommand).toHaveBeenCalledOnce();
+		expect(kv['redis'].defineCommand).toHaveBeenCalledWith('increment', {
+			numberOfKeys: 1,
+			lua: INCREMENT_SCRIPT,
+		});
+
+		expect(kv['redis'].defineCommand).toHaveBeenCalledTimes(2);
 	});
 
-	test('Skips defining the command if it already exists on redis', () => {
-		const mockRedis = { defineCommand: vi.fn(), setMax: vi.fn() } as unknown as ExtendedRedis;
+	test('Skips defining a command that already exists on redis', () => {
+		// 1. A client shared with another store already carries the commands; defining them twice is pointless
+		const mockRedis = { defineCommand: vi.fn(), setMax: vi.fn(), increment: vi.fn() } as unknown as ExtendedRedis;
 
 		new KvDriverRedis({ redis: mockRedis, namespace: mockNamespace, compression: false });
 
@@ -100,6 +116,7 @@ describe('constructor', () => {
 
 describe('get', () => {
 	test('Gets namespaced buffer', async () => {
+		// 1. The raw-bytes read goes to the namespaced key; the string API would mangle a compressed payload
 		await kv.get(mockKey);
 
 		expect(withNamespace).toHaveBeenCalledWith(mockKey, mockNamespace);
@@ -107,6 +124,7 @@ describe('get', () => {
 	});
 
 	test('Returns undefined for null values from Redis', async () => {
+		// 1. A nil reply is the missing-key answer of Redis; the driver's is `undefined`, like the local store's
 		vi.mocked(kv['redis'].getBuffer).mockResolvedValue(null);
 
 		const result = await kv.get(mockKey);
@@ -115,6 +133,7 @@ describe('get', () => {
 	});
 
 	test('Returns deserialized buffer', async () => {
+		// 1. The reply is viewed as bytes and parsed; nothing else happens to it with compression off
 		vi.mocked(kv['redis'].getBuffer).mockResolvedValue(mockBuffer);
 
 		const result = await kv.get(mockKey);
@@ -125,6 +144,7 @@ describe('get', () => {
 	});
 
 	test('Decompresses value when compress has been set and value is gzip compressed', async () => {
+		// 1. Compression is decided per value on write, so the gzip header of the reply is what triggers gunzip
 		kv = new KvDriverRedis({
 			namespace: mockNamespace,
 			redis: mockRedis,
@@ -144,6 +164,7 @@ describe('get', () => {
 	});
 
 	test('Skips decompression if compression is enabled but value is not compressed', async () => {
+		// 1. A small value was written uncompressed; gunzipping it would fail, so the header check must say no
 		kv = new KvDriverRedis({
 			namespace: mockNamespace,
 			redis: mockRedis,
@@ -164,16 +185,31 @@ describe('get', () => {
 });
 
 describe('set', () => {
-	test('Saves numeric values as-is', async () => {
+	test('Saves finite numeric values as-is', async () => {
+		// 1. A number is written raw, so `INCRBY` and the `setMax` script can read it
 		const mockValue = 15;
 
 		await kv.set(mockKey, mockValue);
 
 		expect(withNamespace).toHaveBeenCalledWith(mockKey, mockNamespace);
 		expect(kv['redis'].set).toHaveBeenCalledWith(mockNamespacedKey, mockValue);
+		expect(serialize).not.toHaveBeenCalled();
 	});
 
+	test.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+		'Serializes %s instead of writing it raw',
+		async (value) => {
+			// 1. Written raw, the text `NaN` or `Infinity` is not JSON and every later `get` would throw; the JSON path
+			//    stores `null`, as the local store does
+			await kv.set(mockKey, value);
+
+			expect(serialize).toHaveBeenCalledWith(value);
+			expect(kv['redis'].set).toHaveBeenCalledWith(mockNamespacedKey, mockBuffer);
+		},
+	);
+
 	test('Sets the serialized value as buffer on the namespaced key', async () => {
+		// 1. Everything but a number goes through JSON and is handed to ioredis as a buffer
 		await kv.set(mockKey, mockValue);
 
 		expect(serialize).toHaveBeenCalledWith(mockValue);
@@ -183,6 +219,7 @@ describe('set', () => {
 	});
 
 	test('Compresses the value before saving when compression is enabled and value is large enough', async () => {
+		// 1. A threshold of zero makes every value large enough, so the gzip step is the one under test
 		kv = new KvDriverRedis({
 			namespace: mockNamespace,
 			redis: mockRedis,
@@ -200,6 +237,7 @@ describe('set', () => {
 	});
 
 	test('Skips compression for values that are too small', async () => {
+		// 1. The empty payload sits under the 5-byte threshold, so gzip would cost more than it saves
 		kv = new KvDriverRedis({
 			namespace: mockNamespace,
 			redis: mockRedis,
@@ -217,6 +255,7 @@ describe('set', () => {
 	});
 
 	test('Custom TTL', async () => {
+		// 1. The expiry travels with the write as `PX`, one round trip for both
 		const mockValue = 15;
 		const mockTTL = 3600000;
 
@@ -232,6 +271,7 @@ describe('set', () => {
 	});
 
 	test('Custom TTL with compression', async () => {
+		// 1. The byte path sets the same `PX` expiry as the number path
 		kv = new KvDriverRedis({
 			namespace: mockNamespace,
 			redis: mockRedis,
@@ -248,6 +288,7 @@ describe('set', () => {
 
 describe('delete', () => {
 	test('Calls Redis unlink for given key', async () => {
+		// 1. `UNLINK` rather than `DEL`, so a large value is freed off the main thread
 		await kv.delete(mockKey);
 		expect(withNamespace).toHaveBeenCalledWith(mockKey, mockNamespace);
 		expect(kv['redis'].unlink).toHaveBeenCalledWith(mockNamespacedKey);
@@ -256,6 +297,7 @@ describe('delete', () => {
 
 describe('has', () => {
 	test('Returns true for exists status 1', async () => {
+		// 1. `EXISTS` counts matching keys; one key asked, so `1` means present
 		vi.mocked(kv['redis'].exists).mockResolvedValueOnce(1);
 
 		const res = await kv.has(mockKey);
@@ -266,6 +308,7 @@ describe('has', () => {
 	});
 
 	test('Returns false for exists status 0', async () => {
+		// 1. A count of zero is the only "missing" answer
 		vi.mocked(kv['redis'].exists).mockResolvedValueOnce(0);
 
 		const res = await kv.has(mockKey);
@@ -277,65 +320,82 @@ describe('has', () => {
 });
 
 describe('increment', () => {
-	test('Calls Redis incrby with given amount', async () => {
-		const mockAmount = 15;
+	test('Runs the increment script with the given amount and answers with its reply', async () => {
+		// 1. ioredis attaches a defined command as a method, which the automock does not know; it is added by hand
+		const increment = vi.fn().mockResolvedValue(42);
+		(kv['redis'] as any).increment = increment;
 
-		await kv.increment(mockKey, mockAmount);
+		const res = await kv.increment(mockKey, 15);
 
 		expect(withNamespace).toHaveBeenCalledWith(mockKey, mockNamespace);
-		expect(kv['redis'].incrby).toHaveBeenCalledWith(mockNamespacedKey, mockAmount);
+		expect(increment).toHaveBeenCalledExactlyOnceWith(mockNamespacedKey, 15);
+		expect(res).toBe(42);
 	});
 
-	test('Returns incremented value from Redis', async () => {
-		const mockAmount = 15;
-		const mockResult = 42;
+	test('Defaults the amount to 1', async () => {
+		// 1. A bare `increment` is the common counter bump
+		const increment = vi.fn().mockResolvedValue(1);
+		(kv['redis'] as any).increment = increment;
 
-		vi.mocked(kv['redis'].incrby).mockResolvedValue(mockResult);
+		await kv.increment(mockKey);
 
-		const res = await kv.increment(mockKey, mockAmount);
-
-		expect(res).toBe(mockResult);
+		expect(increment).toHaveBeenCalledExactlyOnceWith(mockNamespacedKey, 1);
 	});
 
-	test('Sets the expiry in the same transaction when a ttl is configured', async () => {
-		// A key created by `INCRBY` alone would live for good; the transaction pairs it with `PEXPIRE`
+	test('Hands the ttl to the script when one is configured', async () => {
+		// 1. The script sets the expiry after `INCRBY`; a key created by `INCRBY` alone would live for good
 		const withTtl = new KvDriverRedis({ namespace: mockNamespace, redis: mockRedis, ttl: 5000 });
-
-		const exec = vi.fn().mockResolvedValue([
-			[null, 42],
-			[null, 1],
-		]);
-
-		const pexpire = vi.fn(() => ({ exec }));
-		const incrby = vi.fn(() => ({ pexpire }));
-		vi.mocked(mockRedis.multi).mockReturnValue({ incrby } as any);
+		const increment = vi.fn().mockResolvedValue(42);
+		(withTtl['redis'] as any).increment = increment;
 
 		const res = await withTtl.increment(mockKey, 2);
 
-		expect(incrby).toHaveBeenCalledWith(mockNamespacedKey, 2);
-		expect(pexpire).toHaveBeenCalledWith(mockNamespacedKey, 5000);
+		expect(increment).toHaveBeenCalledExactlyOnceWith(mockNamespacedKey, 2, 5000);
 		expect(res).toBe(42);
-		expect(mockRedis.incrby).not.toHaveBeenCalled();
 	});
 
-	test('Throws the error of the INCRBY reply inside the transaction', async () => {
-		// A transaction resolves with the failure inside the reply; it must surface like a plain `incrby` rejection
-		const withTtl = new KvDriverRedis({ namespace: mockNamespace, redis: mockRedis, ttl: 5000 });
+	test.each([0.5, Number.NaN, Number.POSITIVE_INFINITY])(
+		'Refuses the amount %s before the round trip',
+		async (amount) => {
+			// 1. `INCRBY` takes integers only; the refusal is the local store's, so both backends fail alike and no
+			//    request goes out
+			const increment = vi.fn();
+			(kv['redis'] as any).increment = increment;
 
-		const exec = vi.fn().mockResolvedValue([
-			[new Error('ERR value is not an integer or out of range'), null],
-			[null, 1],
-		]);
+			await expect(kv.increment(mockKey, amount)).rejects.toThrow(RangeError);
 
-		vi.mocked(mockRedis.multi).mockReturnValue({ incrby: () => ({ pexpire: () => ({ exec }) }) } as any);
+			await expect(kv.increment(mockKey, amount)).rejects.toThrow(
+				`The amount for key "${mockKey}" must be an integer, got ${amount}`,
+			);
 
-		await expect(withTtl.increment(mockKey)).rejects.toThrow('ERR value is not an integer or out of range');
+			expect(increment).not.toHaveBeenCalled();
+		},
+	);
+
+	test('Throws the error of the local store for a value INCRBY cannot read, with the reply as cause', async () => {
+		// 1. The reply error of Redis is the backend's own wording; the caller gets the shared message and can still
+		//    reach the reply through `cause`
+		const reply = new Error('ERR value is not an integer or out of range');
+		(kv['redis'] as any).increment = vi.fn().mockRejectedValue(reply);
+
+		const error = await kv.increment(mockKey).catch((caught: unknown) => caught);
+
+		expect(error).toBeInstanceOf(Error);
+		expect(error).toMatchObject({ message: `The value for key "${mockKey}" is not an integer.`, cause: reply });
+	});
+
+	test('Passes any other failure through unchanged', async () => {
+		// 1. A connection error is not a bad value and must not be reported as one
+		const reply = new Error('Connection is closed.');
+		(kv['redis'] as any).increment = vi.fn().mockRejectedValue(reply);
+
+		await expect(kv.increment(mockKey)).rejects.toBe(reply);
 	});
 });
 
 describe('setMax', () => {
 	test('Calls custom setMax on Redis instance', async () => {
-		// ioredis makes custom functions available as methods, but those aren't typeable
+		// 1. ioredis makes custom functions available as methods, but those aren't typeable
 		(kv['redis'] as any).setMax = vi.fn();
 
 		const mockAmount = 15;
@@ -347,7 +407,7 @@ describe('setMax', () => {
 	});
 
 	test('Returns true if setMax returns 1', async () => {
-		// ioredis makes custom functions available as methods, but those aren't typeable
+		// 1. `1` is the script's "stored"
 		(kv['redis'] as any).setMax = vi.fn().mockResolvedValue(1);
 
 		const mockAmount = 15;
@@ -358,7 +418,7 @@ describe('setMax', () => {
 	});
 
 	test('Returns false if setMax returns 0', async () => {
-		// ioredis makes custom functions available as methods, but those aren't typeable
+		// 1. `0` is the script's "not larger"
 		(kv['redis'] as any).setMax = vi.fn().mockResolvedValue(0);
 
 		const mockAmount = 15;
@@ -369,6 +429,7 @@ describe('setMax', () => {
 	});
 
 	test('Hands the ttl to the script when one is configured', async () => {
+		// 1. The expiry travels into the script, so a key `setMax` creates expires like one `set` wrote
 		const withTtl = new KvDriverRedis({ namespace: mockNamespace, redis: mockRedis, ttl: 5000 });
 		(withTtl['redis'] as any).setMax = vi.fn().mockResolvedValue(1);
 
@@ -378,18 +439,39 @@ describe('setMax', () => {
 	});
 
 	test('Returns false if setMax returns null', async () => {
-		// Redis answers a Lua `false` with nil, which ioredis reads as `null`: not stored either way
+		// 1. Redis answers a Lua `false` with nil, which ioredis reads as `null`: not stored either way
 		(kv['redis'] as any).setMax = vi.fn().mockResolvedValue(null);
 
 		const res = await kv.setMax(mockKey, 15);
 
 		expect(res).toBe(false);
 	});
+
+	test('Throws the error of the local store when the script reports a non-number under the key', async () => {
+		// 1. `-1` is the script's "no number to compare with"; a `false` would read as "not larger" and hide the
+		//    bad value, so it is the same error the local store throws
+		(kv['redis'] as any).setMax = vi.fn().mockResolvedValue(-1);
+
+		await expect(kv.setMax(mockKey, 15)).rejects.toThrow(`The value for key "${mockKey}" is not a number.`);
+	});
+
+	test.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+		'Refuses %s before the round trip',
+		async (value) => {
+			// 1. Lua's `tonumber` cannot read the text these become, and the script would die comparing nil; the
+			//    refusal is the local store's, so both backends fail alike
+			const setMax = vi.fn();
+			(kv['redis'] as any).setMax = setMax;
+
+			await expect(kv.setMax(mockKey, value)).rejects.toThrow(RangeError);
+			expect(setMax).not.toHaveBeenCalled();
+		},
+	);
 });
 
 describe('clear', () => {
 	test('Uses stream for iterating over keys, unlinks them in a pipeline, skips empty batches', async () => {
-		// A `SCAN` step may match nothing and still answer with an empty batch; `UNLINK` without keys is an error
+		// 1. A `SCAN` step may match nothing and still answer with an empty batch; `UNLINK` without keys is an error
 		kv['redis'].scanStream = vi.fn().mockReturnValue({
 			async *[Symbol.asyncIterator]() {
 				yield [mockKey];
@@ -408,25 +490,48 @@ describe('clear', () => {
 
 		await kv.clear();
 
+		// 2. Two of the three mocked `scanStream` batches carry keys; the empty one is skipped, and everything goes
+		//    out in one pipeline
 		expect(kv['redis'].pipeline).toHaveBeenCalledOnce();
 		expect(withNamespace).toHaveBeenCalledWith('*', mockNamespace);
-		// Two of the three mocked `scanStream` batches carry keys; the empty one is skipped
 		expect(unlinkFn).toHaveBeenCalledTimes(2);
 		expect(execFn).toHaveBeenCalledOnce();
+	});
+
+	test('Escapes the namespace in the SCAN pattern', async () => {
+		// 1. `MATCH` reads `*`, `?`, `[`, `]` and `\` as operators; a namespace holding one must reach it escaped, or
+		//    `clear()` unlinks another store's keys and leaves its own
+		const glob = new KvDriverRedis({ namespace: 'tenant[1]', redis: mockRedis, compression: false });
+		vi.mocked(escapeGlob).mockReturnValue('tenant\\[1\\]');
+
+		glob['redis'].scanStream = vi.fn().mockReturnValue({
+			async *[Symbol.asyncIterator]() {},
+		});
+
+		glob['redis'].pipeline = vi.fn().mockReturnValue({ unlink: vi.fn(), exec: vi.fn() });
+
+		await glob.clear();
+
+		expect(escapeGlob).toHaveBeenCalledWith('tenant[1]');
+		expect(withNamespace).toHaveBeenCalledWith('*', 'tenant\\[1\\]');
+		expect(glob['redis'].scanStream).toHaveBeenCalledWith({ match: mockNamespacedKey });
 	});
 });
 
 describe('acquireLock', () => {
 	test('Delegates to redlock acquire and awaits', async () => {
+		// 1. A Redlock lock double that records whether its own release and extend ran
 		let innerReleased = false;
 		let innerExtended = false;
 
 		const mockLock = {
 			release: vi.fn().mockImplementation(async () => {
+				// 1. A short wait, so the handle is proven to await the release rather than fire and forget it
 				await new Promise((resolve) => setTimeout(resolve, 10));
 				innerReleased = true;
 			}),
 			extend: vi.fn().mockImplementation(async () => {
+				// 1. The same for the extension
 				await new Promise((resolve) => setTimeout(resolve, 10));
 				innerExtended = true;
 			}),
@@ -435,27 +540,30 @@ describe('acquireLock', () => {
 		kv['redlock'].acquire = vi.fn().mockResolvedValue(mockLock);
 
 		kv['redlock'].release = vi.fn(async (held: unknown) => {
+			// 1. Redlock's `release` releases the lock it is handed and answers with the execution stats
 			await (held as { release: () => Promise<void> }).release();
 			return { attempts: [], start: 0 };
 		}) as never;
 
+		// 2. The lock is asked for under the locks namespace, for the configured timeout
 		const lock = await kv.acquireLock(mockKey);
 		expect(withNamespace).toHaveBeenCalledWith(mockKey, `${mockNamespace}-locks`);
 		expect(kv['redlock'].acquire).toHaveBeenCalledWith([mockNamespacedKey], 5000);
 
-		// The release goes through Redlock without retries: a lock already gone must not be retried for 5 s; and it
-		// goes once, a second release of the handle is a no-op like the local store's
+		// 3. The release goes through Redlock without retries: a lock already gone must not be retried for 5 s; and it
+		//    goes once, a second release of the handle is a no-op like the local store's
 		await lock.release();
 		await lock.release();
 		expect(kv['redlock'].release).toHaveBeenCalledExactlyOnceWith(mockLock, { retryCount: 0 });
 		expect(innerReleased).toBe(true);
 
+		// 4. Extending goes to the Redlock lock as well
 		await lock.extend(100);
 		expect(innerExtended).toBe(true);
 	});
 
 	test('Extends and releases through the lock redlock answered with, not the one it invalidated', async () => {
-		// Redlock's `extend()` returns a new lock and marks the old one expired; a second extend must go to the new one
+		// 1. Redlock's `extend()` returns a new lock and marks the old one expired; a second extend must go to the new one
 		const third = { release: vi.fn(async () => {}), extend: vi.fn(async () => third) };
 		const second = { release: vi.fn(async () => {}), extend: vi.fn(async () => third) };
 		const first = { release: vi.fn(async () => {}), extend: vi.fn(async () => second) };
@@ -469,27 +577,88 @@ describe('acquireLock', () => {
 		await lock.extend(200);
 		await lock.release();
 
+		// 2. Each extend went to the current lock, floored to the integer Redlock wants; the release to the last one
 		expect(first.extend).toHaveBeenCalledExactlyOnceWith(100);
 		expect(second.extend).toHaveBeenCalledExactlyOnceWith(200);
 		expect(kv['redlock'].release).toHaveBeenCalledWith(third, { retryCount: 0 });
 	});
+
+	test('Throws the error of the local store once the retry budget is spent, with the Redlock failure as cause', async () => {
+		// 1. Redlock reports a busy lock as a quorum failure naming neither key nor budget; the caller gets the message
+		//    the local store uses, key and budget included, and can still reach the votes through `cause`
+		const failure = new ExecutionError('The operation was unable to achieve a quorum during its retry window.', []);
+		kv['redlock'].acquire = vi.fn().mockRejectedValue(failure);
+
+		const error = await kv.acquireLock(mockKey).catch((caught: unknown) => caught);
+
+		expect(error).toBeInstanceOf(Error);
+		expect(error).not.toBeInstanceOf(ExecutionError);
+		expect(error).toMatchObject({ message: `Lock "${mockKey}" was not acquired within 5000 ms`, cause: failure });
+	});
+
+	test('Passes any other acquire failure through unchanged', async () => {
+		// 1. A connection error is not a busy lock and must not be reported as one
+		const failure = new Error('Connection is closed.');
+		kv['redlock'].acquire = vi.fn().mockRejectedValue(failure);
+
+		await expect(kv.acquireLock(mockKey)).rejects.toBe(failure);
+	});
 });
 
 describe('usingLock', () => {
-	test('Delegates to redlock using', async () => {
-		const callback = vi.fn();
-		kv['redlock'].using = vi.fn();
+	test('Delegates to redlock using and runs the callback through it', async () => {
+		// 1. The lock is asked for under the locks namespace, for the configured timeout; the routine handed to
+		//    Redlock is the driver's wrapper, which runs the callback once Redlock acquired the lock
+		const callback = vi.fn().mockResolvedValue('result');
 
-		await kv.usingLock(mockKey, callback);
+		kv['redlock'].using = vi.fn(async (_resources: unknown, _duration: unknown, routine: unknown) =>
+			(routine as () => Promise<unknown>)(),
+		) as never;
+
+		await expect(kv.usingLock(mockKey, callback)).resolves.toBe('result');
 		expect(withNamespace).toHaveBeenCalledWith(mockKey, `${mockNamespace}-locks`);
-		expect(kv['redlock'].using).toHaveBeenCalledWith([mockNamespacedKey], 5000, callback);
+		expect(kv['redlock'].using).toHaveBeenCalledWith([mockNamespacedKey], 5000, expect.any(Function));
+		expect(callback).toHaveBeenCalledOnce();
+	});
+
+	test('Throws the error of the local store when the lock cannot be acquired', async () => {
+		// 1. A quorum failure before the callback ran is the acquire giving up; it gets the shared message
+		const failure = new ExecutionError('The operation was unable to achieve a quorum during its retry window.', []);
+		kv['redlock'].using = vi.fn().mockRejectedValue(failure);
+
+		const callback = vi.fn();
+		const error = await kv.usingLock(mockKey, callback).catch((caught: unknown) => caught);
+
+		expect(callback).not.toHaveBeenCalled();
+		expect(error).toMatchObject({ message: `Lock "${mockKey}" was not acquired within 5000 ms`, cause: failure });
+	});
+
+	test('Passes a failure after the callback ran through unchanged, like the error of the callback itself', async () => {
+		// 1. A quorum failure once the callback ran comes from the release, not from the acquire: the lock was held,
+		//    so it must not be reported as never acquired
+		const failure = new ExecutionError('The operation was unable to achieve a quorum during its retry window.', []);
+
+		kv['redlock'].using = vi.fn(async (_resources: unknown, _duration: unknown, routine: unknown) => {
+			// 1. The routine runs to the end; the failure is the release's, raised afterwards
+			await (routine as () => Promise<unknown>)();
+			throw failure;
+		}) as never;
+
+		await expect(kv.usingLock(mockKey, vi.fn().mockResolvedValue('done'))).rejects.toBe(failure);
+
+		// 2. The callback's own error passes through as well
+		kv['redlock'].using = vi.fn(async (_resources: unknown, _duration: unknown, routine: unknown) =>
+			(routine as () => Promise<unknown>)(),
+		) as never;
+
+		await expect(kv.usingLock(mockKey, vi.fn().mockRejectedValue(new Error('boom')))).rejects.toThrow('boom');
 	});
 });
 
 describe('redlock settings', () => {
 	test('Follows the client into its database and keeps the extension threshold below the lock timeout', () => {
-		// Redlock runs `SELECT` on the database it is told, 0 unless told; and `using` refuses a duration less than
-		// 100 ms above the auto-extension threshold, so a short lock timeout lowers the threshold
+		// 1. Redlock runs `SELECT` on the database it is told, 0 unless told; and `using` refuses a duration less than
+		//    100 ms above the auto-extension threshold, so a short lock timeout lowers the threshold
 		const inDb2 = new Redis();
 		(inDb2 as { options: { db?: number } }).options = { db: 2 };
 
@@ -500,6 +669,7 @@ describe('redlock settings', () => {
 	});
 
 	test('Refuses a lock timeout under 200 ms or past a timer, and a client on a database Redlock cannot lock in', () => {
+		// 1. Under 200 ms Redlock has no headroom to renew; past a timer the retries would never end
 		expect(() => new KvDriverRedis({ namespace: mockNamespace, redis: mockRedis, lockTimeout: 199 })).toThrow(
 			RangeError,
 		);
@@ -510,6 +680,7 @@ describe('redlock settings', () => {
 
 		expect(() => new KvDriverRedis({ namespace: mockNamespace, redis: mockRedis, lockTimeout: 200 })).not.toThrow();
 
+		// 2. Redlock silently falls back to database 0 above 15, which would put the locks elsewhere than the values
 		const inDb16 = new Redis();
 		(inDb16 as { options: { db?: number } }).options = { db: 16 };
 

@@ -19,25 +19,41 @@ export const ORDER_STATUS: Record<string, InvoiceStatus> = {
 /**
  * A Polar order as the kit's invoice — Polar has orders where Stripe has invoices, one per charge.
  *
- * An order is paid in full or not at all, so `amountPaid` / `amountDue` follow `paid`; Polar records no separate
- * payment time, so a paid order is taken as paid when it was created (Polar charges as it creates the order). The
- * hosted and PDF links stay `null`: Polar renders invoices on request through its customer portal.
+ * The total is the order's face value (`totalAmount`); what Polar actually collects is `dueAmount`, the total after
+ * the customer's balance is applied, so `amountPaid` / `amountDue` follow `dueAmount` and `paid` — an order is paid in
+ * full or not at all. Polar records no separate payment time, so a paid order is taken as paid when it was created
+ * (Polar charges as it creates the order). The hosted and PDF links stay `null`: Polar renders invoices on request
+ * through its customer portal.
  *
  * @param order - Polar's.
  * @returns The normalised invoice.
  */
-export const toInvoice = (order: Order): Invoice => ({
-	id: order.id,
-	number: order.invoiceNumber ?? null,
-	customerId: order.customerId,
-	subscriptionId: order.subscriptionId ?? null,
-	status: ORDER_STATUS[String(order.status)] ?? 'open',
-	total: { amount: order.totalAmount, currency: order.currency },
-	amountPaid: order.paid ? order.totalAmount : 0,
-	amountDue: order.paid ? 0 : order.totalAmount,
-	createdAt: order.createdAt,
-	dueAt: null,
-	paidAt: order.paid ? order.createdAt : null,
-	hostedUrl: null,
-	pdfUrl: null,
-});
+export const toInvoice = (order: Order): Invoice => {
+	// 1. Polar's statuses map onto the kit's; one it does not know yet reads as still open rather than failing the list
+	const status = ORDER_STATUS[String(order.status)] ?? 'open';
+
+	// 2. `dueAmount` is `totalAmount` plus the applied balance — the minor units Polar charges or will charge — so it
+	//    is what was paid or is owed, while the total keeps the face value the customer sees on the invoice
+	const amountPaid = order.paid ? order.dueAmount : 0;
+	const amountDue = order.paid ? 0 : order.dueAmount;
+
+	// 3. Polar keeps no payment timestamp of its own and charges as it creates the order, so creation is the best
+	//    reading of when a paid order was paid
+	const paidAt = order.paid ? order.createdAt : null;
+
+	return {
+		id: order.id,
+		number: order.invoiceNumber ?? null,
+		customerId: order.customerId,
+		subscriptionId: order.subscriptionId ?? null,
+		status,
+		total: { amount: order.totalAmount, currency: order.currency },
+		amountPaid,
+		amountDue,
+		createdAt: order.createdAt,
+		dueAt: null,
+		paidAt,
+		hostedUrl: null,
+		pdfUrl: null,
+	};
+};

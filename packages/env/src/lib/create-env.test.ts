@@ -165,13 +165,70 @@ test('Throws error if file could not be read', () => {
 
 	vi.mocked(removeFileSuffix).mockReturnValue('TEST');
 
+	// 1. The fs error is what tells the operator why: its code and path must survive as the cause, its text in the message
+	const refusal = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+
 	vi.mocked(readFileSync).mockImplementation(() => {
-		throw new Error('nah');
+		throw refusal;
 	});
 
-	expect(() => createEnv({ fileVariables: ['TEST'] })).toThrowErrorMatchingInlineSnapshot(
-		`[Error: Failed to read value from file "./test/path", defined in environment variable "TEST_FILE".]`,
+	expect(() => createEnv({ fileVariables: ['TEST'] })).toThrow(
+		expect.objectContaining({
+			message:
+				'Failed to read value from file "./test/path", defined in environment variable "TEST_FILE": EACCES: permission denied',
+			cause: refusal,
+		}),
 	);
+});
+
+test('Refuses a variable set both inline and through its `_FILE` twin, whichever comes first', () => {
+	vi.mocked(isFileKey).mockImplementation((key) => {
+		return key === 'TEST_FILE';
+	});
+
+	vi.mocked(removeFileSuffix).mockReturnValue('TEST');
+
+	// 1. The two orders stand for the two `environ` orders a deployment may pass; both must fail the same way, and
+	//    before any file is touched, so no secret is read only to be thrown away
+	const pairs = [
+		{ TEST: 'inline', TEST_FILE: './test/path' },
+		{ TEST_FILE: './test/path', TEST: 'inline' },
+	];
+
+	for (const pair of pairs) {
+		vi.mocked(readConfigurationFromFile).mockReturnValue({});
+		vi.mocked(readConfigurationFromProcess).mockReturnValue(pair);
+
+		expect(() => createEnv({ fileVariables: ['TEST'] })).toThrow(
+			'Environment variables "TEST" and "TEST_FILE" are both set; keep one of them.',
+		);
+	}
+
+	// 2. The pair is refused across sources too: an inline value in the process and a path in the config file
+	vi.mocked(readConfigurationFromProcess).mockReturnValue({ TEST: 'inline' });
+	vi.mocked(readConfigurationFromFile).mockReturnValue({ TEST_FILE: './test/path' });
+
+	expect(() => createEnv({ fileVariables: ['TEST'] })).toThrow(
+		'Environment variables "TEST" and "TEST_FILE" are both set; keep one of them.',
+	);
+
+	expect(readFileSync).not.toHaveBeenCalled();
+});
+
+test('Lets a `_FILE` variable override a default of the same name', () => {
+	// 1. Defaults are the floor every source overrides, so a mounted secret next to a default is no conflict
+	vi.mocked(isFileKey).mockImplementation((key) => {
+		return key === 'DEFAULT_FILE';
+	});
+
+	vi.mocked(removeFileSuffix).mockReturnValue('DEFAULT');
+	vi.mocked(readFileSync).mockReturnValue('file-content');
+	vi.mocked(readConfigurationFromFile).mockReturnValue({});
+	vi.mocked(readConfigurationFromProcess).mockReturnValue({ DEFAULT_FILE: './test/path' });
+
+	const env = createEnv({ fileVariables: ['DEFAULT'] });
+
+	expect(env['DEFAULT']).toBe('file-content');
 });
 
 test('Casts regular values', () => {

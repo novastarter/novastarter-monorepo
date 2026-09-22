@@ -6,8 +6,15 @@ import type { MailAddress, MailMessage } from '../types.js';
  *
  * @param address - Ours.
  * @returns A string or `{ name, address }`, which nodemailer formats and encodes itself.
+ * @example
+ * ```ts
+ * toNodemailerAddress({ name: 'Ada', address: 'ada@example.com' });
+ * // => { name: 'Ada', address: 'ada@example.com' }
+ * ```
  */
-export const toNodemailerAddress = (address: MailAddress): string | { name: string; address: string } => address;
+export const toNodemailerAddress = (address: MailAddress): string | { name: string; address: string } =>
+	// 1. Both shapes are nodemailer's own, so nothing is formatted here and its quoting and encoding apply
+	address;
 
 /**
  * Translate a message into nodemailer's `SendMailOptions`.
@@ -17,6 +24,12 @@ export const toNodemailerAddress = (address: MailAddress): string | { name: stri
  *
  * @param message - Ours.
  * @returns nodemailer's.
+ * @example
+ * ```ts
+ * async send(message: MailMessage): Promise<MailResult> {
+ * 	return toMailResult(await this.transporter.sendMail(toNodemailerMessage(message)));
+ * }
+ * ```
  */
 export const toNodemailerMessage = (message: MailMessage): SendMailOptions => {
 	// 1. The required fields first; `to` keeps its shape, nodemailer takes a single address or a list

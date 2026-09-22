@@ -24,10 +24,13 @@ export const _handlers: Map<string, JobHandler> = new Map();
  */
 export const registerJobHandlers = (handlers: JobHandlers): void => {
 	for (const [name, handler] of Object.entries(handlers) as [JobName, JobHandler][]) {
+		// 1. A second handler for one job is refused rather than replacing the first: silently overriding would let
+		//    two modules each believe they own the job, and only the loader order would decide which runs
 		if (_handlers.has(name)) {
 			throw new Error(`Job "${name}" already has a handler`);
 		}
 
+		// 2. Kept by name, which is what `getJobHandler` looks up from the contract
 		_handlers.set(name, handler);
 	}
 };

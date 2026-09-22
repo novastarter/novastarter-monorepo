@@ -163,23 +163,37 @@ export class KvDriverLocal implements KvDriver {
 	}
 
 	/**
-	 * Increment the stored number by the given amount.
+	 * Increment the stored integer by the given amount.
+	 *
+	 * Integers only, like the Redis store's `INCRBY`: a fraction, `NaN` or a stored `null` would work here and fail
+	 * there, so they are refused here too, with the same errors.
 	 *
 	 * @param key - Key to increment; a missing key counts as `0`.
-	 * @param amount - Amount to add. Defaults to `1`.
+	 * @param amount - Integer to add. Defaults to `1`.
 	 * @returns Updated value.
-	 * @throws `Error` when the stored value is not a number.
+	 * @throws RangeError when `amount` is not an integer.
+	 * @throws Error when the stored value is not an integer.
 	 */
 	increment(key: string, amount: number = 1): number {
-		// 1. Start from zero for a missing key, so counters need no explicit initialisation
-		const currentVal = this.get(key) ?? 0;
-
-		// 2. Refuse to add to a non-number instead of producing `NaN` or string concatenation
-		if (typeof currentVal !== 'number') {
-			throw new Error(`The value for key "${key}" is not a number.`);
+		// 1. A fractional or non-finite amount is refused before the store is touched, as Redis refuses it for
+		//    `INCRBY`; a counter that works without a server and fails with one is worse than one failing in both
+		if (!Number.isInteger(amount)) {
+			throw new RangeError(`The amount for key "${key}" must be an integer, got ${amount}`);
 		}
 
-		// 3. Everything runs synchronously, so concurrent callers cannot interleave between read and write
+		// 2. Only a missing key counts as zero, so counters need no initialisation; a stored `null` or an empty
+		//    payload — `set(key, undefined)` — deserializes to something the next step refuses, the way `INCRBY`
+		//    refuses it on Redis, instead of being silently overwritten with a fresh counter
+		const stored = this.store.get(key);
+		const currentVal = stored === undefined ? 0 : deserialize(stored);
+
+		// 3. Refuse to add to anything but an integer — a string, `null`, a fraction — instead of producing `NaN`, a
+		//    concatenation or a value Redis could not hold; the key keeps its value and its expiry
+		if (typeof currentVal !== 'number' || !Number.isInteger(currentVal)) {
+			throw new Error(`The value for key "${key}" is not an integer.`);
+		}
+
+		// 4. Everything runs synchronously, so concurrent callers cannot interleave between read and write
 		const newVal = currentVal + amount;
 
 		this.set(key, newVal);
@@ -191,27 +205,38 @@ export class KvDriverLocal implements KvDriver {
 	 * Save the given number only when it is larger than the stored one.
 	 *
 	 * @param key - Key to save.
-	 * @param value - Number to save when it beats the current value.
+	 * @param value - Finite number to save when it beats the current value.
 	 * @returns `true` when the value was saved.
-	 * @throws `Error` when the stored value is not a number.
+	 * @throws RangeError when `value` is `NaN` or infinite.
+	 * @throws Error when the stored value is not a number.
 	 */
 	setMax(key: string, value: number): boolean {
-		// 1. A missing key has nothing to beat, so any number — zero or negative included — is stored, the way the
-		//    Redis script does it; a `0` baseline would refuse `setMax('k', -5)` on one backend and take it on the other
-		const currentVal = this.get(key);
+		// 1. `NaN` and the infinities compare with nothing and would be stored as JSON `null`, which every later
+		//    `setMax` on the key would then refuse as "not a number"; refused up front, as the Redis store refuses them
+		if (!Number.isFinite(value)) {
+			throw new RangeError(`The value for key "${key}" must be a finite number, got ${value}`);
+		}
 
-		if (currentVal === undefined) {
+		// 2. A missing key has nothing to beat, so any number — zero or negative included — is stored, the way the
+		//    Redis script does it; a `0` baseline would refuse `setMax('k', -5)` on one backend and take it on the other.
+		//    Read from the store rather than through `get`, so an empty payload counts as a stored value to refuse, not
+		//    as a missing key, as it does on Redis
+		const stored = this.store.get(key);
+
+		if (stored === undefined) {
 			this.set(key, value);
 
 			return true;
 		}
 
-		// 2. Comparing against a non-number would be meaningless, so refuse it
+		// 3. Comparing against a non-number would be meaningless, so refuse it
+		const currentVal = deserialize(stored);
+
 		if (typeof currentVal !== 'number') {
 			throw new Error(`The value for key "${key}" is not a number.`);
 		}
 
-		// 3. Equal values are not "larger", so they are rejected as well
+		// 4. Equal values are not "larger", so they are rejected as well
 		if (currentVal >= value) {
 			return false;
 		}

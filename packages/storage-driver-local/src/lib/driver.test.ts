@@ -1,7 +1,7 @@
 /**
  * Tests of `storage-driver-local/lib/driver`.
  */
-import type { Dir, WriteStream } from 'node:fs';
+import type { Dir, ReadStream, WriteStream } from 'node:fs';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { access, copyFile, mkdir, opendir, rename, stat, unlink } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -169,6 +169,15 @@ describe('#ensureDir', () => {
 });
 
 describe('#read', () => {
+	let mockSource: PassThrough;
+
+	beforeEach(() => {
+		// 1. `createReadStream` is auto-mocked and would return nothing; the driver wires the file stream into the one
+		//    it hands out, so a real stream has to stand in for the file
+		mockSource = new PassThrough();
+		vi.mocked(createReadStream).mockImplementation(() => mockSource as unknown as ReadStream);
+	});
+
 	test('Calls createReadStream with full path', async () => {
 		// 1. Without a range the options object must stay empty, so the stream reads the whole file
 		await driver.read(sample.path.input);
@@ -185,7 +194,7 @@ describe('#read', () => {
 	});
 
 	test('Forwards a zero end, which asks for the first byte', async () => {
-		// `end: 0` is a bound like any other; dropped by a truthiness check it would read the whole file
+		// 1. `end: 0` is a bound like any other; dropped by a truthiness check it would read the whole file
 		await driver.read(sample.path.input, { range: { start: 0, end: 0 } });
 
 		expect(createReadStream).toHaveBeenCalledWith(sample.path.inputFull, { start: 0, end: 0 });
@@ -203,6 +212,66 @@ describe('#read', () => {
 		await driver.read(sample.path.input, { range: sample.range });
 
 		expect(createReadStream).toHaveBeenCalledWith(sample.path.inputFull, sample.range);
+	});
+
+	test('Streams the file through, so its data arrives as is', async () => {
+		const stream = await driver.read(sample.path.input);
+
+		// 1. The file stream is piped into the one handed out, so every byte written to the file side comes out unchanged
+		const chunks: Buffer[] = [];
+		const done = new Promise<void>((resolve) => stream.on('end', resolve));
+		stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+		mockSource.end(sample.text);
+		await done;
+
+		expect(Buffer.concat(chunks).toString()).toBe(sample.text);
+	});
+
+	test('Reports a missing file on the stream as StorageFileNotFoundError, keeping the cause', async () => {
+		// 1. The file is opened lazily, so ENOENT surfaces on the stream, not on the `read()` call; the consumer must
+		//    still get the error every backend shares, with the filesystem error attached for diagnosis
+		const cause = Object.assign(new Error('no such file'), { code: 'ENOENT' });
+
+		const stream = await driver.read(sample.path.input);
+		const failed = new Promise<unknown>((resolve) => stream.on('error', resolve));
+		mockSource.emit('error', cause);
+
+		const error = await failed;
+
+		expect(error).toBeInstanceOf(StorageFileNotFoundError);
+		expect(error).toMatchObject({ extensions: { filepath: sample.path.input }, cause });
+	});
+
+	test('Reports a parent that is a file as StorageFileNotFoundError', async () => {
+		// 1. ENOTDIR is what the filesystem answers when a directory segment of the path is actually a file; the file
+		//    cannot exist there, so it is "not found" like ENOENT
+		const stream = await driver.read(sample.path.input);
+		const failed = new Promise<unknown>((resolve) => stream.on('error', resolve));
+		mockSource.emit('error', Object.assign(new Error('not a directory'), { code: 'ENOTDIR' }));
+
+		expect(await failed).toBeInstanceOf(StorageFileNotFoundError);
+	});
+
+	test('Passes any other file stream error through as it is', async () => {
+		// 1. A permission error says nothing about whether the file exists, so it must not be reported as "not found"
+		const denied = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+
+		const stream = await driver.read(sample.path.input);
+		const failed = new Promise<unknown>((resolve) => stream.on('error', resolve));
+		mockSource.emit('error', denied);
+
+		expect(await failed).toBe(denied);
+	});
+
+	test('Destroying the handed-out stream destroys the file stream too, so a gone client frees the descriptor', async () => {
+		const stream = await driver.read(sample.path.input);
+		const closed = new Promise<void>((resolve) => mockSource.on('close', () => resolve()));
+
+		// 1. `pipe` would only pause the file stream and keep the file open; `pipeline` tears it down
+		stream.destroy();
+		await closed;
+
+		expect(mockSource.destroyed).toBe(true);
 	});
 });
 
@@ -281,11 +350,9 @@ describe('#exists', () => {
 		expect(result).toBe(false);
 	});
 
-	/**
-	 * Reporting an unreadable path as "the file isn't there" makes callers act on a wrong answer, for
-	 * example by serving a permission error for a file that does exist.
-	 */
 	test('Throws if the path could not be checked', async () => {
+		// 1. Reporting an unreadable path as "the file isn't there" makes callers act on a wrong answer, for example by
+		//    serving a permission error for a file that does exist
 		const error = Object.assign(new Error('permission denied'), { code: 'EACCES' });
 
 		vi.mocked(access).mockRejectedValueOnce(error);
@@ -354,6 +421,13 @@ describe('#write', () => {
 		driver['ensureDir'] = vi.fn();
 	});
 
+	/**
+	 * Path the write stream was opened on: the temporary sibling the driver writes to before the final `rename`.
+	 */
+	function writtenPath(): string {
+		return String(vi.mocked(createWriteStream).mock.calls[0]?.[0]);
+	}
+
 	test('Makes sure destination location exists', async () => {
 		// 1. `dirname` is auto-mocked; a fixed return value shows the parent of the resolved target is created
 		const mockDirname = randDirectoryPath();
@@ -365,11 +439,24 @@ describe('#write', () => {
 		expect(driver['ensureDir']).toHaveBeenCalledWith(mockDirname);
 	});
 
-	test('Creates write stream to file path when a readstream is passed', async () => {
-		// 1. The write stream must target the resolved path, with no extra options that would change its mode
+	test('Creates the write stream on a temporary sibling of the target path', async () => {
 		await driver.write(sample.path.input, sample.stream);
 
-		expect(createWriteStream).toHaveBeenCalledWith(sample.path.inputFull);
+		// 1. The temporary file sits next to the target, so the final `rename` stays on one filesystem, and carries a
+		//    random suffix, so two concurrent writes of the same path never share it
+		expect(createWriteStream).toHaveBeenCalledOnce();
+		expect(writtenPath().startsWith(`${sample.path.inputFull}.`)).toBe(true);
+		expect(writtenPath()).toMatch(/\.[0-9a-f]{12}\.tmp$/);
+	});
+
+	test('Uses a different temporary path for every write', async () => {
+		// 1. Two writes of the same path must not collide on disk
+		await driver.write(sample.path.input, sample.stream);
+		await driver.write(sample.path.input, sample.stream);
+
+		const [first, second] = vi.mocked(createWriteStream).mock.calls.map((call) => call[0]);
+
+		expect(first).not.toBe(second);
 	});
 
 	test('Passes read stream to write stream in pipeline', async () => {
@@ -380,6 +467,38 @@ describe('#write', () => {
 		await driver.write(sample.path.input, sample.stream);
 
 		expect(pipeline).toHaveBeenCalledWith(sample.stream, mockWriteStream);
+	});
+
+	test('Renames the temporary file over the target once the pipeline resolved', async () => {
+		await driver.write(sample.path.input, sample.stream);
+
+		// 1. The rename is what publishes the content; it must follow the pipeline, never run beside it
+		expect(rename).toHaveBeenCalledWith(writtenPath(), sample.path.inputFull);
+
+		expect(vi.mocked(rename).mock.invocationCallOrder[0]).toBeGreaterThan(
+			vi.mocked(pipeline).mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+		);
+	});
+
+	test('Removes the temporary file and rethrows when the pipeline fails, leaving the target untouched', async () => {
+		// 1. A source failing mid-way used to leave a truncated file under the final name; now nothing reaches the
+		//    target and the partial file is gone, which is what the object stores do
+		const error = new Error('source failed');
+		vi.mocked(pipeline).mockRejectedValueOnce(error);
+
+		await expect(driver.write(sample.path.input, sample.stream)).rejects.toBe(error);
+
+		expect(unlink).toHaveBeenCalledWith(writtenPath());
+		expect(rename).not.toHaveBeenCalled();
+	});
+
+	test('A failing cleanup does not hide the write error', async () => {
+		// 1. The caller needs the reason the write failed; a temporary file that could not be removed is secondary
+		const error = new Error('source failed');
+		vi.mocked(pipeline).mockRejectedValueOnce(error);
+		vi.mocked(unlink).mockRejectedValueOnce(Object.assign(new Error('busy'), { code: 'EBUSY' }));
+
+		await expect(driver.write(sample.path.input, sample.stream)).rejects.toBe(error);
 	});
 });
 
@@ -513,5 +632,34 @@ describe('#listGenerator', () => {
 
 		// 2. Only the file is yielded; the directory itself never appears in the listing
 		expect(output).toStrictEqual([mockFile]);
+	});
+
+	test('Finishes without items when the prefix directory does not exist', async () => {
+		// 1. The root is only created on the first write, so a listing of a fresh location must end empty rather than
+		//    reject, as it does on an object store with no keys under the prefix
+		vi.mocked(opendir).mockRejectedValueOnce(Object.assign(new Error('no such directory'), { code: 'ENOENT' }));
+
+		const iterator = driver['listGenerator'](`${randDirectoryPath()}/`);
+
+		await expect(iterator.next()).resolves.toStrictEqual({ done: true, value: undefined });
+	});
+
+	test('Finishes without items when a segment of the prefix is a file', async () => {
+		// 1. ENOTDIR means the prefix runs through a file, so no file can sit under it
+		vi.mocked(opendir).mockRejectedValueOnce(Object.assign(new Error('not a directory'), { code: 'ENOTDIR' }));
+
+		const iterator = driver['listGenerator'](`${randDirectoryPath()}/`);
+
+		await expect(iterator.next()).resolves.toStrictEqual({ done: true, value: undefined });
+	});
+
+	test('Rethrows any other error from opening the directory', async () => {
+		// 1. A permission error says nothing about which files are there, so an empty listing would be a wrong answer
+		const error = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+		vi.mocked(opendir).mockRejectedValueOnce(error);
+
+		const iterator = driver['listGenerator'](`${randDirectoryPath()}/`);
+
+		await expect(iterator.next()).rejects.toBe(error);
 	});
 });

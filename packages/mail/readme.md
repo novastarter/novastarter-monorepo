@@ -90,13 +90,15 @@ releases the drivers built so far at shutdown — the pooled SMTP connections, s
    sender throws `InvalidPayloadError`.
 3. Trims the html line by line — some clients misbehave past 75 characters of leading whitespace.
 4. Picks the chain: `domains` by the sender's domain wins over `transactional` / `marketing` by `category`; without
-   routes every location in registration order is the chain. Names the manager does not know are dropped.
+   routes every location in registration order is the chain. Names the manager does not know are dropped, and a rule
+   left with no name at all is passed over for the next one.
 5. Tries the chain in order. A location whose limiter is spent is skipped, and so is one whose driver throws (logged as
    a warning).
 6. Emits `mail.sent` with the location and the result, or `mail.failed` and throws: the limiter's `HitRateLimitError`
    when the limit was all that stood in the way, otherwise an `Error` with the last failure as `cause`.
 
-An explicit `location` short-circuits the routes. The routes carry everything the chain needs:
+An explicit `location` short-circuits the routes; it has to be registered, a name nobody registered throws before
+anything is sent or logged. The routes carry everything the chain needs:
 
 ```ts
 import { useLimiter } from '@novastarter/memory';
@@ -150,16 +152,16 @@ in a mail client.
 
 `smtp` sends through any SMTP server with nodemailer.
 
-| Option             | Required | Description                                                 |
-| ------------------ | -------- | ----------------------------------------------------------- |
-| `host`             | yes      | The server.                                                 |
-| `port`             | —        | 587 unless given (465 with `secure`).                       |
-| `secure`           | —        | TLS from the first byte (port 465), as opposed to STARTTLS. |
-| `ignoreTls`        | —        | Do not upgrade to TLS even when the server offers it.       |
-| `user`, `password` | —        | Credentials; set together, or neither for an open relay.    |
-| `name`             | —        | Hostname sent in `HELO`.                                    |
-| `pool`             | —        | Keep connections open between messages.                     |
-| `tls`              | —        | Node TLS options, passed straight through.                  |
+| Option             | Required | Description                                                                            |
+| ------------------ | -------- | -------------------------------------------------------------------------------------- |
+| `host`             | yes      | The server.                                                                            |
+| `port`             | —        | 587 unless given (465 with `secure`).                                                  |
+| `secure`           | —        | TLS from the first byte, as opposed to STARTTLS; on unless given when the port is 465. |
+| `ignoreTls`        | —        | Do not upgrade to TLS even when the server offers it.                                  |
+| `user`, `password` | —        | Credentials; set together, or neither for an open relay.                               |
+| `name`             | —        | Hostname sent in `HELO`.                                                               |
+| `pool`             | —        | Keep connections open between messages.                                                |
+| `tls`              | —        | Node TLS options, passed straight through.                                             |
 
 ## Writing a driver
 

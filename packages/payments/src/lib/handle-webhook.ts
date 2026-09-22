@@ -1,7 +1,7 @@
 import { useEmitter } from '@novastarter/emitter';
 import { ErrorCode, isNovastarterError } from '@novastarter/errors';
 import { useLogger } from '@novastarter/logger';
-import { DEFAULT_LOCATION } from '@novastarter/utils';
+import { DEFAULT_LOCATION, toError } from '@novastarter/utils';
 import type { PaymentsEvent, WebhookHeaders } from '../types.js';
 import { usePayments } from './use-payments.js';
 
@@ -101,8 +101,10 @@ export const handleWebhook = async (
 			throw error;
 		}
 
-		// 3. Anything else is the provider's SDK or the driver failing; the driver's error travels as the cause
-		logger.warn(error, `Payments location "${location}" failed to parse a webhook`);
+		// 3. Anything else is the provider's SDK or the driver failing; the driver's error travels as the cause. Pino
+		//    takes a non-object first argument for the message, so a driver rejecting with a string would replace the
+		//    line and drop the location; `toError` keeps both
+		logger.warn(toError(error), `Payments location "${location}" failed to parse a webhook`);
 		useEmitter().emitAction(PAYMENTS_FAILED_EVENT, { location, reason: 'error' });
 
 		throw new Error(`Payments location "${location}" failed to parse a webhook`, { cause: error });

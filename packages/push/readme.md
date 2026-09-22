@@ -100,7 +100,8 @@ drivers built so far — the FCM app, the APNs HTTP/2 sessions — for a clean s
 1. Refuses a message without a title, without a target, with both targets, or with a subscription missing its `https:`
    endpoint or its `p256dh` / `auth` keys (`InvalidPayloadError`).
 2. Runs the `push.send` filter of `@novastarter/emitter` — a handler may rewrite the message (a redirect to a test
-   device) or return `null` to drop it; `sendPush()` then answers `null`.
+   device) or return `null` to drop it; `sendPush()` then answers `null`. The rewrite is checked like the original and
+   routed by its own target, so a subscription redirected to a token goes through the token's location.
 3. Picks the location: the option, else the message's `location`, else the route of the target's platform, else the
    location named after the platform (`webpush`, `fcm`, `apns`). A name nobody registered, or one whose driver does not
    deliver to the platform, throws. There is no fallback chain — a browser subscription only works with the VAPID key

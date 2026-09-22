@@ -43,7 +43,8 @@ custom data and comes back on every event of the order and the subscription; a c
 leads to the store) and trials are the variant's; the portal is the customer's signed link, valid a day; a subscription
 is cancelled at the end of its paid period only (`cancelled` is the grace period — the kit's `active` with
 `cancelAtPeriodEnd`; `expired` is `canceled`); invoices are the subscription invoices of the customer's subscriptions,
-most recent first, with the hosted link and no PDF. Test mode is a property of the API key; there is no option for it.
+most recent first, with the hosted link and no PDF — every subscription of the customer is collected, page by page,
+before the invoices are read. Test mode is a property of the API key; there is no option for it.
 
 Webhooks are verified by the hex HMAC-SHA256 of the body under the signing secret (`X-Signature`), compared in constant
 time. `order_created` → `checkout.completed`; `subscription_created` → `subscription.created`; `subscription_updated`,
@@ -53,10 +54,10 @@ time. `order_created` → `checkout.completed`; `subscription_created` → `subs
 
 ## Options
 
-| Option          | Required | Description                                                                                    |
-| --------------- | -------- | ---------------------------------------------------------------------------------------------- |
-| `apiKey`        | yes      | API key from Settings → API in the Lemon Squeezy dashboard.                                    |
-| `webhookSecret` | yes      | Signing secret entered when the webhook was created (Settings → Webhooks).                     |
-| `storeId`       | yes      | The store the checkouts and customers belong to (Settings → Stores, the numeric id).           |
-| `apiUrl`        | no       | Another base URL of the API — a stand-in for tests. Default `https://api.lemonsqueezy.com/v1`. |
-| `timeout`       | no       | Request timeout in milliseconds. Default `30000`.                                              |
+| Option          | Required | Description                                                                                                                    |
+| --------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `apiKey`        | yes      | API key from Settings → API in the Lemon Squeezy dashboard.                                                                    |
+| `webhookSecret` | yes      | Signing secret entered when the webhook was created (Settings → Webhooks).                                                     |
+| `storeId`       | yes      | The store the checkouts and customers belong to (Settings → Stores, the numeric id).                                           |
+| `apiUrl`        | no       | Another base URL of the API — a stand-in for tests. Default `https://api.lemonsqueezy.com/v1`.                                 |
+| `timeout`       | no       | Request timeout in milliseconds, a whole number up to `2147483647`; anything else is refused at registration. Default `30000`. |

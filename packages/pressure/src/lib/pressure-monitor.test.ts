@@ -4,7 +4,7 @@
 import type { EventLoopUtilization, IntervalHistogram } from 'node:perf_hooks';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { memoryUsage } from 'node:process';
-import { setTimeout } from 'node:timers';
+import { clearTimeout, setTimeout } from 'node:timers';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { PressureMonitorOptions } from './pressure-monitor.js';
 import { PressureMonitor } from './pressure-monitor.js';
@@ -23,6 +23,8 @@ let sample: {
 	heapUsed: number;
 	eventLoopUtilization: number;
 	meanEventLoopDelay: number;
+	previousElu: EventLoopUtilization;
+	currentElu: EventLoopUtilization;
 };
 
 beforeEach(() => {
@@ -39,6 +41,8 @@ beforeEach(() => {
 		heapUsed: 400000000,
 		eventLoopUtilization: 0.3,
 		meanEventLoopDelay: 150000000,
+		previousElu: { idle: 1000, active: 200, utilization: 0.17 },
+		currentElu: { idle: 1200, active: 1000, utilization: 0.45 },
 	};
 
 	mockIntervalHistogram = {
@@ -88,6 +92,15 @@ describe('#constructor', () => {
 		expect(setTimeout).toHaveBeenCalledWith(monitor['updateUsage'], sample.config.sampleInterval);
 		expect(monitor['timeout']).toBe(mockTimer);
 		expect(mockTimer.unref).toHaveBeenCalledOnce();
+	});
+
+	test('Takes a base utilization reading so the first sample skips the start-up load', () => {
+		vi.spyOn(performance, 'eventLoopUtilization').mockReturnValue(sample.previousElu);
+
+		monitor = new PressureMonitor(sample.config);
+
+		expect(performance.eventLoopUtilization).toHaveBeenCalledWith();
+		expect(monitor['lastEventLoopUtilization']).toBe(sample.previousElu);
 	});
 });
 
@@ -142,6 +155,19 @@ describe('#updateUsage', () => {
 	test('Refreshes the timer', () => {
 		expect(mockTimer.refresh).toHaveBeenCalledOnce();
 	});
+
+	test('Neither samples nor re-arms the timer once closed', () => {
+		vi.mocked(mockTimer.refresh).mockClear();
+		vi.mocked(monitor['updateMemoryUsage']).mockClear();
+		vi.mocked(monitor['updateEventLoopUsage']).mockClear();
+
+		monitor.close();
+		monitor['updateUsage']();
+
+		expect(monitor['updateMemoryUsage']).not.toHaveBeenCalled();
+		expect(monitor['updateEventLoopUsage']).not.toHaveBeenCalled();
+		expect(mockTimer.refresh).not.toHaveBeenCalled();
+	});
 });
 
 describe('#updateMemoryUsage', () => {
@@ -160,18 +186,26 @@ describe('#updateMemoryUsage', () => {
 	});
 });
 
-describe('#updateEventLoopsUsage', () => {
+describe('#updateEventLoopUsage', () => {
 	beforeEach(() => {
-		vi.spyOn(performance, 'eventLoopUtilization').mockReturnValue({
-			utilization: sample.eventLoopUtilization,
-		} as EventLoopUtilization);
+		monitor['lastEventLoopUtilization'] = sample.previousElu;
+
+		vi.spyOn(performance, 'eventLoopUtilization')
+			.mockReturnValueOnce(sample.currentElu)
+			.mockReturnValueOnce({ idle: 200, active: 800, utilization: sample.eventLoopUtilization });
 
 		monitor['updateEventLoopUsage']();
 	});
 
-	test('Sets eventLoopUtilization based on perf output', () => {
-		expect(performance.eventLoopUtilization).toHaveBeenCalledOnce();
+	test('Sets eventLoopUtilization to the ratio since the previous sample, not since process start', () => {
+		expect(performance.eventLoopUtilization).toHaveBeenCalledTimes(2);
+		expect(performance.eventLoopUtilization).toHaveBeenNthCalledWith(1);
+		expect(performance.eventLoopUtilization).toHaveBeenNthCalledWith(2, sample.currentElu, sample.previousElu);
 		expect(monitor['eventLoopUtilization']).toBe(sample.eventLoopUtilization);
+	});
+
+	test('Keeps the latest reading as the base of the next delta', () => {
+		expect(monitor['lastEventLoopUtilization']).toBe(sample.currentElu);
 	});
 
 	test('Sets eventLoopDelay based on histogram mean', () => {
@@ -180,5 +214,32 @@ describe('#updateEventLoopsUsage', () => {
 
 	test('Resets the histogram interval', () => {
 		expect(mockIntervalHistogram.reset).toHaveBeenCalledOnce();
+	});
+});
+
+describe('#close', () => {
+	beforeEach(() => {
+		monitor.close();
+	});
+
+	test('Clears the pending sample', () => {
+		expect(clearTimeout).toHaveBeenCalledOnce();
+		expect(clearTimeout).toHaveBeenCalledWith(mockTimer);
+	});
+
+	test('Disables the histogram so its native sampler stops', () => {
+		expect(mockIntervalHistogram.disable).toHaveBeenCalledOnce();
+	});
+
+	test('Keeps the verdict of the last sample readable', () => {
+		monitor['memoryRss'] = (sample.config.maxMemoryRss as number) + 1;
+		expect(monitor.overloaded).toBe(true);
+	});
+
+	test('Is harmless when called twice', () => {
+		monitor.close();
+
+		expect(clearTimeout).toHaveBeenCalledOnce();
+		expect(mockIntervalHistogram.disable).toHaveBeenCalledOnce();
 	});
 });

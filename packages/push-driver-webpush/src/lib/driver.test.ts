@@ -1,16 +1,26 @@
 /**
- * Tests of the Web Push driver with `sendNotification` stubbed; the VAPID signing runs for real.
+ * Tests of the Web Push driver with `sendNotification` stubbed; the VAPID signing runs for real. The option mapping
+ * and the error translation have their own tests next to `to-request-options.ts` and `describe-error.ts`.
  */
 import { PushTargetGoneError } from '@novastarter/push';
 import { describe, expect, test, vi } from 'vitest';
 import webpush, { WebPushError } from 'web-push';
 import defaultExport from '../index.js';
-import { describeError } from './describe-error.js';
 import { PushDriverWebPush } from './driver.js';
-import { toRequestOptions, toTopic } from './to-request-options.js';
 
+/**
+ * A real VAPID pair, so `verify()` signs for real.
+ */
 const keys = webpush.generateVAPIDKeys();
+
+/**
+ * A `mailto:` subject, the form every push service accepts.
+ */
 const subject = 'mailto:ops@example.com';
+
+/**
+ * A browser subscription with placeholder keys; the stub never encrypts for them.
+ */
 const subscription = { endpoint: 'https://push.example/abc', keys: { p256dh: 'p', auth: 'a' } };
 
 /**
@@ -26,39 +36,6 @@ const build = (config: Record<string, unknown> = {}) => {
 
 	return { driver, sendNotification };
 };
-
-describe('toTopic / toRequestOptions', () => {
-	test('Makes a Topic header of the tag and maps ttl, urgency and the location defaults', () => {
-		// 1. The tag is cut to the URL-safe alphabet and the length limit; an empty result is no header at all
-		expect(toTopic('invoice.paid:42')).toBe('invoice_paid_42');
-		expect(toTopic('x'.repeat(40))).toHaveLength(32);
-		expect(toTopic('')).toBeUndefined();
-		expect(toTopic('::')).toBe('__');
-
-		// 2. Every option maps to the library's key; the message's ttl wins, the location's fills in
-		expect(
-			toRequestOptions(
-				{ subscription, title: 'Hi', tag: 'a b', ttl: 60, urgency: 'high' },
-				{ ...keys, subject, timeout: 5000, proxy: 'http://proxy:3128' },
-			),
-		).toStrictEqual({
-			vapidDetails: { subject, ...keys },
-			contentEncoding: 'aes128gcm',
-			urgency: 'high',
-			TTL: 60,
-			topic: 'a_b',
-			timeout: 5000,
-			proxy: 'http://proxy:3128',
-		});
-
-		expect(toRequestOptions({ subscription, title: 'Hi' }, { ...keys, subject, ttl: 3600 })).toStrictEqual({
-			vapidDetails: { subject, ...keys },
-			contentEncoding: 'aes128gcm',
-			urgency: 'normal',
-			TTL: 3600,
-		});
-	});
-});
 
 describe('PushDriverWebPush', () => {
 	test('Refuses missing keys or a subject that is neither mailto: nor https:', () => {
@@ -92,7 +69,7 @@ describe('PushDriverWebPush', () => {
 		await expect(driver.send({ token: 'tok', title: 'Hi' })).rejects.toThrow(/needs a subscription/);
 	});
 
-	test('Reports a 404 / 410 as a gone target and any other answer or failure as an error with the cause', async () => {
+	test('Reports a gone target and any other answer or failure as an error with the cause', async () => {
 		const { driver, sendNotification } = build();
 
 		// 1. A 410 is the subscription's end: the error the caller deletes it on
@@ -118,13 +95,9 @@ describe('PushDriverWebPush', () => {
 			cause: refused,
 		});
 
-		// 3. A network failure is prefixed and passed on; a 404 is as gone as a 410
+		// 3. A network failure is prefixed and passed on
 		sendNotification.mockRejectedValueOnce(new Error('Socket timeout'));
 		await expect(driver.send({ subscription, title: 'Hi' })).rejects.toThrow('Web push: Socket timeout');
-
-		expect(describeError(new WebPushError('x', 404, {}, '', 'https://e'))).toMatchObject({
-			extensions: { platform: 'webpush', reason: '404 from https://e' },
-		});
 	});
 
 	test('Verifies the key pair by signing, failing on keys that are not a pair', async () => {

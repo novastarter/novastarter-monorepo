@@ -1,6 +1,7 @@
 import { RateLimiterMemory } from 'rate-limiter-flexible';
 import type { LimiterDriver } from '../../driver.js';
 import type { LimiterDriverConfigBase } from '../../types.js';
+import { assertBudget } from '../../utils/assert-budget.js';
 import { consume } from '../../utils/consume.js';
 
 /**
@@ -42,9 +43,15 @@ export class LimiterDriverLocal implements LimiterDriver {
 	 * Create the limiter with its points and window.
 	 *
 	 * @param config - Local configuration.
+	 * @throws `RangeError` when `duration` is not a whole number of seconds of at least 1, or `points` is not a whole
+	 * number of at least 0.
 	 */
 	constructor(config: LimiterDriverLocalConfig) {
-		// 1. Hand the budget to the library and remember the points for error reporting
+		// 1. The memory store would honour a sub-second window that the Redis store cannot; refusing it here keeps one
+		//    configuration meaning the same on both backends
+		assertBudget('LimiterDriverLocal', config);
+
+		// 2. Hand the budget to the library and remember the points for error reporting
 		this.limiter = new RateLimiterMemory({
 			duration: config.duration,
 			points: config.points,
@@ -70,7 +77,8 @@ export class LimiterDriverLocal implements LimiterDriver {
 	 * @param key - IP address, URL path or any other string identifying the caller.
 	 */
 	async delete(key: string): Promise<void> {
-		// 1. Delegate to the library
+		// 1. The library owns the per-key window and its expiry timer, so the reset has to go through it rather than
+		//    any state of our own
 		await this.limiter.delete(key);
 	}
 }

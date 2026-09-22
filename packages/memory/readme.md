@@ -92,25 +92,28 @@ useKv().registerDriver('memcached', KvDriverMemcached);
 
 ## Kv
 
-A key-value store with `get`, `set`, `delete`, `has`, `increment` and `setMax` (store only a larger number; a Lua script
-on Redis) and locks (`acquireLock`, `usingLock`): in-process, one holder per key at a time, on the local backend;
-distributed through Redlock on Redis, under a namespace of their own (`<namespace>-locks`). Local options: `maxKeys`,
-`ttl`, `lockTimeout` (how long `acquireLock` waits for a busy key, 5 s). Redis options: `redis`, `namespace`, `ttl`,
-`compression` (gzip values above `compressionMinSize`, on by default), `lockTimeout` (how long a lock is held and about
-how long `acquireLock` waits for a busy one, 5 s; at least 200 ms).
+A key-value store with `get`, `set`, `delete`, `has`, `increment` (integers only, on both backends) and `setMax` (store
+only a larger number; a Lua script on Redis) and locks (`acquireLock`, `usingLock`): in-process, one holder per key at a
+time, on the local backend; distributed through Redlock on Redis, under a namespace of their own (`<namespace>-locks`).
+What fails on one backend fails on the other with the same error: a non-integer under `increment`, a non-number under
+`setMax`, a lock still held once `lockTimeout` is spent (`Lock "k" was not acquired within N ms`). Local options:
+`maxKeys`, `ttl`, `lockTimeout` (how long `acquireLock` waits for a busy key, 5 s). Redis options: `redis`, `namespace`,
+`ttl`, `compression` (gzip values above `compressionMinSize`, 1 kB, on by default), `lockTimeout` (how long a lock is
+held and about how long `acquireLock` waits for a busy one, 5 s; at least 200 ms).
 
 ## Cache
 
-A Kv with an LRU behind it. Local options: `maxKeys`, `ttl`. Redis options: those of the Kv. `multi` keeps a local cache
-in front of a Redis one and clears the local copies of every process through the bus when a key changes:
-`{ local: { … }, redis: { … } }`.
+A Kv with an LRU behind it. Local options: those of the Kv (`maxKeys`, `ttl`, `lockTimeout`). Redis options: those of
+the Kv. `multi` keeps a local cache in front of a Redis one and clears the local copies of every process through the bus
+when a key changes: `{ local: { … }, redis: { … } }`; the local `ttl` defaults to the Redis one and may not exceed it,
+so a key Redis let expire is not served from memory either.
 
 ## Bus
 
 A pub/sub abstraction: `publish(channel, payload)` and `subscribe(channel, handler)`. A handler may be async; the bus
 waits for none of them, and one that throws or rejects is logged as a warning while the others still run. The local
 backend only serves handlers of the same process, which adds no benefit next to having one API for both. Redis options:
-`redis`, `namespace`, `compression`.
+`redis`, `namespace`, `compression` (gzip payloads above `compressionMinSize`, 1 kB, on by default).
 
 ## Limiter
 

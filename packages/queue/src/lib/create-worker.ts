@@ -1,5 +1,5 @@
 import { type Logger, useLogger } from '@novastarter/logger';
-import { toError, withTimeout } from '@novastarter/utils';
+import { MAX_TIMER_DELAY, toError, withTimeout } from '@novastarter/utils';
 import type { Job, Worker, WorkerOptions } from 'bullmq';
 import { getJobContract } from '../contracts/index.js';
 import type { JobContext } from '../types.js';
@@ -7,9 +7,10 @@ import { QueueDriverBullmq } from './drivers/bullmq.js';
 import { useQueue } from './use-queue.js';
 
 /**
- * What runs a job on the worker side: the parsed payload and the run's context, like a `JobHandler`.
+ * What runs a job on the worker side: the payload as enqueued and the run's context, like a `JobHandler`.
  *
- * The thin worker of the kit forwards both to the web app; a fat one calls the handler itself.
+ * The thin worker of the kit forwards both to the web app, whose `runJob()` parses the payload with the contract's
+ * defaults and transforms applied; a fat one calls `runJob()` itself.
  */
 export type WorkerProcessor = (payload: unknown, context: JobContext) => Promise<void>;
 
@@ -27,7 +28,10 @@ export interface CreateWorkerOptions {
 	concurrency?: number | undefined;
 	/** Prefix of the Redis keys, the same the producer used; the location's unless given. */
 	prefix?: string | undefined;
-	/** Fallback timeout in milliseconds for contracts that set none. */
+	/**
+	 * Fallback timeout in milliseconds for contracts that set none, from `0` to `MAX_TIMER_DELAY` of
+	 * `@novastarter/utils`; anything else is refused when the worker is created.
+	 */
 	timeout?: number | undefined;
 	/**
 	 * BullMQ's telemetry add-on (`bullmq-otel`): every run becomes a span, continuing the trace the producer
@@ -84,19 +88,28 @@ export class JobTimeoutError extends Error {
  * @param options - Connection, concurrency, timeout, telemetry and logger.
  * @returns The running worker.
  * @throws Error when no connection is given and the queue's location is not a `bullmq` one — there is nothing to
- * consume from.
+ * consume from; `RangeError` for a `timeout` that is negative, `NaN` or above `MAX_TIMER_DELAY`, which would fail
+ * every run instead of limiting it.
  */
 export const createWorker = async (
 	queue: string,
 	processor: WorkerProcessor,
 	options: CreateWorkerOptions = {},
 ): Promise<QueueWorker> => {
-	// 1. `bullmq` is loaded here and not at the top of the module, so a producer that never starts a worker never
+	// 1. A fallback timeout no timer can hold is refused once, here, rather than by `withTimeout` on every job whose
+	//    contract sets none — each of which BullMQ would then retry with backoff for nothing
+	if (options.timeout !== undefined && !(options.timeout >= 0 && options.timeout <= MAX_TIMER_DELAY)) {
+		throw new RangeError(
+			`The "timeout" of the worker of queue "${queue}" is ${options.timeout}; it must be between 0 and ${MAX_TIMER_DELAY} ms`,
+		);
+	}
+
+	// 2. `bullmq` is loaded here and not at the top of the module, so a producer that never starts a worker never
 	//    pays for it; the logger falls back to the process one
 	const { Worker } = await import('bullmq');
 	const logger = options.logger ?? useLogger();
 
-	// 2. Without a connection of its own the worker consumes the location the producer of this process enqueues on,
+	// 3. Without a connection of its own the worker consumes the location the producer of this process enqueues on,
 	//    which is the one place the queue's Redis, prefix and telemetry are known; any other kind of location has
 	//    nothing a worker could consume from
 	let location: QueueDriverBullmq | undefined;
@@ -115,11 +128,11 @@ export const createWorker = async (
 		connection = options.connection;
 	}
 
-	// 3. What the options leave out comes from the location, when there is one
+	// 4. What the options leave out comes from the location, when there is one
 	const prefix = options.prefix ?? location?.prefix;
 	const telemetry = options.telemetry ?? location?.telemetry;
 
-	// 4. Open the worker on the queue; the processor rebuilds the job name and enforces the timeout around every run.
+	// 5. Open the worker on the queue; the processor rebuilds the job name and enforces the timeout around every run.
 	//    Options BullMQ would take literally, `concurrency: undefined` included, are only set when given
 	const worker = new Worker(
 		queue,
@@ -135,10 +148,11 @@ export const createWorker = async (
 				enqueuedAt: new Date(job.timestamp),
 			};
 
-			// 2. The contract's timeout, then the worker's default; none means the job may take as long as it needs
+			// 2. The contract's timeout, then the worker's default; none means the job may take as long as it needs.
+			//    Only `undefined` means none: both were range-checked where they were set, so any number is a limit
 			const timeout = contract.options.timeout ?? options.timeout;
 
-			if (!timeout) {
+			if (timeout === undefined) {
 				await processor(job.data, context);
 				return;
 			}
@@ -158,7 +172,7 @@ export const createWorker = async (
 		},
 	);
 
-	// 5. Lifecycle to the log: what ran, what failed on which attempt, and connection trouble. BullMQ forwards a
+	// 6. Lifecycle to the log: what ran, what failed on which attempt, and connection trouble. BullMQ forwards a
 	//    rejection as it came, so a processor rejecting with a string would be taken for the message and the job's
 	//    name dropped; `toError` keeps both
 	worker.on('completed', (job) => {
@@ -177,7 +191,7 @@ export const createWorker = async (
 		logger.error(toError(error), `Worker of queue "${queue}" error`);
 	});
 
-	// 6. The handle: the queue and the BullMQ worker for what the wrapper does not expose, and a close that drains
+	// 7. The handle: the queue and the BullMQ worker for what the wrapper does not expose, and a close that drains
 	return {
 		queue,
 		worker,

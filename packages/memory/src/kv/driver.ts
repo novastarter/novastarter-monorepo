@@ -40,11 +40,19 @@ export interface KvDriver {
 	has(key: string): MaybePromise<boolean>;
 
 	/**
-	 * Increment the stored number by the given amount.
+	 * Increment the stored integer by the given amount.
+	 *
+	 * Integers only, on both backends: Redis keeps a counter as a plain integer for `INCRBY`, and the local store
+	 * refuses what Redis would refuse, so a counter that works without a server works with one. Only a missing key
+	 * counts as `0`; a key holding anything but an integer — a string, `null`, a fraction — is refused and left as it
+	 * was, expiry included.
 	 *
 	 * @param key - Key to increment in the store; a missing key counts as `0`.
-	 * @param amount - Amount to add. Defaults to `1`.
+	 * @param amount - Integer to add. Defaults to `1`.
 	 * @returns Updated value.
+	 * @throws RangeError when `amount` is not an integer.
+	 * @throws Error when the stored value is not an integer: `The value for key "k" is not an integer.` on either
+	 * backend.
 	 */
 	increment(key: string, amount?: number): MaybePromise<number>;
 
@@ -52,8 +60,10 @@ export interface KvDriver {
 	 * Save the given number only when it is larger than the stored one.
 	 *
 	 * @param key - Key to save in the store.
-	 * @param value - Number to save when it beats the current value.
+	 * @param value - Finite number to save when it beats the current value.
 	 * @returns `true` when the value was saved.
+	 * @throws RangeError when `value` is `NaN` or infinite, which compares with nothing.
+	 * @throws Error when the stored value is not a number: `The value for key "k" is not a number.` on either backend.
 	 */
 	setMax(key: string, value: number): MaybePromise<boolean>;
 
@@ -65,7 +75,8 @@ export interface KvDriver {
 	 *
 	 * @param key - Key to lock.
 	 * @returns Handle to release or extend the lock.
-	 * @throws When the lock is still held once the driver's wait budget — its `lockTimeout` — is spent.
+	 * @throws Error when the lock is still held once the driver's wait budget — its `lockTimeout` — is spent:
+	 * `Lock "k" was not acquired within N ms` on either backend, with the backend's own failure as `cause` on Redis.
 	 */
 	acquireLock(key: string): MaybePromise<Lock>;
 
@@ -76,8 +87,8 @@ export interface KvDriver {
 	 * @param key - Key to lock.
 	 * @param callback - Work to run under the lock.
 	 * @returns Whatever the callback resolves to.
-	 * @throws When the lock is still held once the driver's wait budget — its `lockTimeout` — is spent; whatever the
-	 * callback throws.
+	 * @throws Error when the lock is still held once the driver's wait budget — its `lockTimeout` — is spent, with
+	 * the same message as `acquireLock`; whatever the callback throws.
 	 */
 	usingLock<T>(key: string, callback: () => Promise<T>): MaybePromise<T>;
 

@@ -1,58 +1,14 @@
 /**
  * Tests of the Polar driver: the resources stubbed on a real client, the webhooks signed the way Polar signs them
- * (Standard Webhooks) and read from fixtures that pass the SDK's own schemas.
+ * (Standard Webhooks) and read from fixtures that pass the SDK's own schemas. The mappings the driver hands its
+ * answers through have their own test files next to them.
  */
-import { createHmac } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
 import { Polar } from '@polar-sh/sdk';
-import { validateEvent } from '@polar-sh/sdk/webhooks';
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { fixtureText, parsed, sign, WEBHOOK_SECRET } from '../fixtures/index.js';
 import { PaymentsDriverPolar } from './driver.js';
-import { toEvent } from './to-event.js';
 import { toInvoice } from './to-invoice.js';
-import { toMetadata } from './to-metadata.js';
-import { toSubscription } from './to-subscription.js';
-
-/** The secret the fixtures are signed with. */
-const WEBHOOK_SECRET = 'polar-webhook-secret';
-
-/**
- * A fixture, as text — the bytes a signature covers.
- *
- * @param name - The file, named after the Polar event type it carries.
- * @returns The JSON text.
- */
-const fixtureText = (name: string): string =>
-	readFileSync(new URL(`../fixtures/${name}.json`, import.meta.url), 'utf8');
-
-/**
- * Standard Webhooks headers for a body: `v1,<base64 hmac of "id.timestamp.body">` with the raw secret as the key,
- * which is what Polar's `validateEvent` expects after it base64-encodes the secret for the library.
- *
- * @param body - The body text.
- * @param secret - The signing secret; the right one unless given.
- * @param id - The delivery id.
- * @returns The three headers.
- */
-const sign = (body: string, secret = WEBHOOK_SECRET, id = 'msg_2abc') => {
-	const timestamp = String(Math.floor(Date.now() / 1000));
-	const signature = `v1,${createHmac('sha256', secret).update(`${id}.${timestamp}.${body}`).digest('base64')}`;
-
-	return { 'webhook-id': id, 'webhook-timestamp': timestamp, 'webhook-signature': signature };
-};
-
-/**
- * A fixture through the SDK's own parser, for the mapping tests.
- *
- * @param name - The fixture.
- * @returns What `validateEvent` hands the driver.
- */
-const parsed = (name: string) => {
-	const body = fixtureText(name);
-
-	return validateEvent(body, sign(body), WEBHOOK_SECRET);
-};
 
 /**
  * A driver on a real client whose resources are stubbed — no network, real webhook verification.
@@ -60,6 +16,7 @@ const parsed = (name: string) => {
  * @returns The driver and the client to stub on.
  */
 const setup = () => {
+	// 1. A real client so the stubs go on the SDK's own resources; the driver takes it instead of building one
 	const client = new Polar({ accessToken: 'polar_oat_x', server: 'sandbox' });
 	const driver = new PaymentsDriverPolar({ accessToken: 'polar_oat_x', webhookSecret: WEBHOOK_SECRET, client });
 
@@ -72,6 +29,7 @@ afterEach(() => {
 
 describe('PaymentsDriverPolar', () => {
 	test('Refuses to start without a token or a webhook secret', () => {
+		// 1. Each missing value is named, so a misconfigured deployment fails at registration with the key to set
 		expect(() => new PaymentsDriverPolar({ accessToken: '', webhookSecret: 's' })).toThrow('"accessToken"');
 		expect(() => new PaymentsDriverPolar({ accessToken: 't', webhookSecret: '' })).toThrow('"webhookSecret"');
 	});
@@ -79,6 +37,7 @@ describe('PaymentsDriverPolar', () => {
 	test('Creates a customer with the organization in its metadata, values as strings', async () => {
 		const { client, driver } = setup();
 
+		// 1. Polar answers metadata with a number in it, which the kit's flat string shape has to absorb
 		const create = vi.spyOn(client.customers, 'create').mockResolvedValue({
 			id: 'cust_1',
 			email: 'ada@example.com',
@@ -95,6 +54,7 @@ describe('PaymentsDriverPolar', () => {
 			metadata: { organizationId: 'org_42', seats: '3' },
 		});
 
+		// 2. Only the fields given go to Polar, so its defaults apply to the rest
 		expect(create).toHaveBeenCalledWith({
 			email: 'ada@example.com',
 			name: 'Ada',
@@ -106,6 +66,7 @@ describe('PaymentsDriverPolar', () => {
 		const { client, driver } = setup();
 		const expiresAt = new Date('2026-09-10T12:55:00Z');
 
+		// 1. The hosted page and its expiry are all the driver reads off the checkout
 		const create = vi
 			.spyOn(client.checkouts, 'create')
 			.mockResolvedValue({ id: 'chk_1', url: 'https://polar.sh/checkout/x', expiresAt } as never);
@@ -123,6 +84,8 @@ describe('PaymentsDriverPolar', () => {
 			}),
 		).resolves.toStrictEqual({ id: 'chk_1', url: 'https://polar.sh/checkout/x', expiresAt });
 
+		// 2. The kit's names become Polar's: the price is a product, seats, the trial in days, the cancel URL as
+		//    Polar's return URL
 		expect(create).toHaveBeenCalledWith({
 			products: ['prod_pro'],
 			customerId: 'cust_1',
@@ -139,6 +102,7 @@ describe('PaymentsDriverPolar', () => {
 	test('Opens the portal through a customer session', async () => {
 		const { client, driver } = setup();
 
+		// 1. Polar has no portal resource of its own: a customer session carries the portal URL
 		const create = vi
 			.spyOn(client.customerSessions, 'create')
 			.mockResolvedValue({ customerPortalUrl: 'https://polar.sh/portal?token=x' } as never);
@@ -155,12 +119,13 @@ describe('PaymentsDriverPolar', () => {
 		const event = parsed('subscription.created');
 		const subscription = event.type === 'subscription.created' ? event.data : undefined;
 
+		// 1. The fixture's subscription stands in for what Polar answers to every read and update
 		vi.spyOn(client.subscriptions, 'get').mockResolvedValue(subscription as never);
 		const update = vi.spyOn(client.subscriptions, 'update').mockResolvedValue(subscription as never);
 
 		await expect(driver.getSubscription(subscription!.id)).resolves.toMatchObject({ status: 'trialing', quantity: 3 });
 
-		// 1. A plan change and a seat change are two Polar updates, each with the proration asked for
+		// 2. A plan change and a seat change are two Polar updates, each with the proration asked for
 		await driver.updateSubscription({
 			subscriptionId: 'sub_1',
 			priceId: 'prod_business',
@@ -178,6 +143,7 @@ describe('PaymentsDriverPolar', () => {
 			subscriptionUpdate: { seats: 10, prorationBehavior: 'invoice' },
 		});
 
+		// 3. The kit's `none` is Polar's `next_period`; nothing to change is a caller's mistake, not a silent no-op
 		await driver.updateSubscription({ subscriptionId: 'sub_1', quantity: 4, proration: 'none' });
 
 		expect(update).toHaveBeenLastCalledWith({
@@ -187,7 +153,7 @@ describe('PaymentsDriverPolar', () => {
 
 		await expect(driver.updateSubscription({ subscriptionId: 'sub_1' })).rejects.toThrow('Nothing to update');
 
-		// 2. Cancelling at period end and revoking are both updates, with the reason as the customer's comment
+		// 4. Cancelling at period end and revoking are both updates, with the reason as the customer's comment
 		await driver.cancelSubscription({ subscriptionId: 'sub_1', reason: 'Too expensive' });
 
 		expect(update).toHaveBeenLastCalledWith({
@@ -204,9 +170,12 @@ describe('PaymentsDriverPolar', () => {
 		const event = parsed('order.paid');
 		const order = event.type === 'order.paid' ? event.data : undefined;
 
+		// 1. One page of the SDK's paginated answer is all the driver reads
 		const list = vi.spyOn(client.orders, 'list').mockResolvedValue({ result: { items: [order] } } as never);
 
 		await expect(driver.listInvoices({ customerId: 'cust_1', limit: 10 })).resolves.toStrictEqual([toInvoice(order!)]);
+
+		// 2. Newest first is asked of Polar, not sorted afterwards, so the limit cuts the right end
 		expect(list).toHaveBeenCalledWith({ customerId: 'cust_1', sorting: ['-created_at'], limit: 10 });
 	});
 
@@ -214,22 +183,25 @@ describe('PaymentsDriverPolar', () => {
 		const { driver } = setup();
 		const body = fixtureText('subscription.created');
 
+		// 1. A body signed with the right secret comes back as the kit's event, under the delivery id
 		await expect(driver.parseWebhook(body, sign(body))).resolves.toMatchObject({
 			id: 'msg_2abc',
 			type: 'subscription.created',
 			provider: 'polar',
 		});
 
+		// 2. A wrong secret and a body altered after signing are both credentials problems, not payload ones
 		await expect(driver.parseWebhook(body, sign(body, 'other'))).rejects.toBeInstanceOf(InvalidCredentialsError);
 		await expect(driver.parseWebhook(`${body} `, sign(body))).rejects.toBeInstanceOf(InvalidCredentialsError);
 
+		// 3. A missing header is a malformed delivery, named so the sender knows what to add
 		const headers = sign(body);
 
 		await expect(driver.parseWebhook(body, { 'webhook-id': headers['webhook-id'] })).rejects.toThrow(
 			'no webhook-timestamp header',
 		);
 
-		// 1. A verified body that is not an event at all is a payload problem; one of a type this SDK does not know
+		// 4. A verified body that is not an event at all is a payload problem; one of a type this SDK does not know
 		//    is dropped, since Polar adds event types over time
 		await expect(driver.parseWebhook('{"hello":1}', sign('{"hello":1}'))).rejects.toBeInstanceOf(InvalidPayloadError);
 
@@ -238,116 +210,45 @@ describe('PaymentsDriverPolar', () => {
 		await expect(driver.parseWebhook(unknown, sign(unknown))).resolves.toBeNull();
 	});
 
+	test('Refuses a known event type whose payload fails the schema instead of dropping it', async () => {
+		const { driver } = setup();
+
+		// 1. The type is one the SDK knows, the payload is not what its schema expects — what a change on Polar's side
+		//    looks like; dropping it would lose every subscription delivery without a trace
+		const drifted = JSON.stringify({
+			type: 'subscription.created',
+			timestamp: '2026-09-10T12:00:00Z',
+			data: { id: 'sub_1' },
+		});
+
+		const failure = driver.parseWebhook(drifted, sign(drifted));
+
+		await expect(failure).rejects.toBeInstanceOf(InvalidPayloadError);
+		await expect(failure).rejects.toThrow('"subscription.created"');
+
+		// 2. The SDK's error travels as the cause, with the schema's details for whoever inspects it
+		await expect(failure).rejects.toMatchObject({ cause: expect.objectContaining({ name: 'SDKValidationError' }) });
+	});
+
+	test('Refuses a signed body that is not JSON as a payload problem', async () => {
+		const { driver } = setup();
+
+		// 1. The signature covers the bytes, so a non-JSON body verifies and only then fails to parse; that is the
+		//    sender's mistake and answers 400, not a driver failure that answers 500 and has Polar retry forever
+		const failure = driver.parseWebhook('{not json', sign('{not json'));
+
+		await expect(failure).rejects.toBeInstanceOf(InvalidPayloadError);
+		await expect(failure).rejects.toThrow('not JSON');
+	});
+
 	test('Verifies the token with the cheapest read', async () => {
 		const { client, driver } = setup();
+
+		// 1. One customer is the smallest authenticated read; the stub stands in for a token Polar accepts
 		const list = vi.spyOn(client.customers, 'list').mockResolvedValue({ result: { items: [] } } as never);
 
 		await driver.verify();
 
 		expect(list).toHaveBeenCalledWith({ limit: 1 });
-	});
-});
-
-describe('toSubscription', () => {
-	test('Maps the product as the price, seats, the period and the cancellation dates', () => {
-		const event = parsed('subscription.updated');
-		const subscription = toSubscription(event.type === 'subscription.updated' ? event.data : (undefined as never));
-
-		expect(subscription).toStrictEqual({
-			id: 'd9c8b7a6-5555-4e55-9a55-000000000005',
-			customerId: 'c3d2e1f0-2222-4b22-8d22-000000000002',
-			status: 'active',
-			priceId: 'a1b2c3d4-3333-4c33-9e33-000000000003',
-			productId: 'a1b2c3d4-3333-4c33-9e33-000000000003',
-			quantity: 5,
-			interval: 'month',
-			currentPeriodStart: new Date('2026-09-10T12:00:00Z'),
-			currentPeriodEnd: new Date('2026-10-10T12:00:00Z'),
-			cancelAtPeriodEnd: true,
-			cancelAt: new Date('2026-10-10T12:00:00Z'),
-			canceledAt: new Date('2026-09-20T12:00:00Z'),
-			trialEnd: new Date('2026-09-24T12:00:00Z'),
-			endedAt: null,
-			metadata: { organizationId: 'org_42', planId: 'pro' },
-		});
-	});
-
-	test('Refuses a status it does not know', () => {
-		const event = parsed('subscription.created');
-		const subscription = event.type === 'subscription.created' ? event.data : (undefined as never);
-
-		expect(() => toSubscription({ ...subscription, status: 'frozen' as never })).toThrow('unknown status "frozen"');
-	});
-});
-
-describe('toInvoice', () => {
-	test('Maps a paid order as a paid invoice', () => {
-		const event = parsed('order.paid');
-
-		expect(toInvoice(event.type === 'order.paid' ? event.data : (undefined as never))).toStrictEqual({
-			id: 'f0e1d2c3-7777-4a77-9c77-000000000007',
-			number: 'NOVA-0001',
-			customerId: 'c3d2e1f0-2222-4b22-8d22-000000000002',
-			subscriptionId: 'd9c8b7a6-5555-4e55-9a55-000000000005',
-			status: 'paid',
-			total: { amount: 9500, currency: 'usd' },
-			amountPaid: 9500,
-			amountDue: 0,
-			createdAt: new Date('2026-10-10T12:00:00Z'),
-			dueAt: null,
-			paidAt: new Date('2026-10-10T12:00:00Z'),
-			hostedUrl: null,
-			pdfUrl: null,
-		});
-	});
-});
-
-describe('toEvent', () => {
-	test('Maps the events the kit acts on and drops the rest', () => {
-		expect(toEvent(parsed('checkout.updated'), 'msg_1')).toMatchObject({
-			id: 'msg_1',
-			type: 'checkout.completed',
-			provider: 'polar',
-			occurredAt: new Date('2026-09-10T12:00:00Z'),
-			checkout: {
-				id: 'b2a1c0d9-6666-4f66-8b66-000000000006',
-				customerId: 'c3d2e1f0-2222-4b22-8d22-000000000002',
-				subscriptionId: 'd9c8b7a6-5555-4e55-9a55-000000000005',
-				metadata: { organizationId: 'org_42', planId: 'pro' },
-			},
-		});
-
-		// 1. A checkout still open is not a purchase yet
-		expect(toEvent(parsed('checkout.updated.open'), 'msg_0')).toBeNull();
-
-		expect(toEvent(parsed('subscription.created'), 'msg_2')).toMatchObject({
-			type: 'subscription.created',
-			subscription: { status: 'trialing', quantity: 3 },
-		});
-
-		expect(toEvent(parsed('subscription.updated'), 'msg_3')).toMatchObject({
-			type: 'subscription.updated',
-			subscription: { status: 'active', cancelAtPeriodEnd: true },
-		});
-
-		// 2. The specific subscription events repeat what `subscription.updated` already said
-		expect(toEvent(parsed('subscription.active'), 'msg_4')).toBeNull();
-
-		expect(toEvent(parsed('subscription.revoked'), 'msg_5')).toMatchObject({
-			type: 'subscription.deleted',
-			subscription: { status: 'canceled', endedAt: new Date('2026-10-10T12:00:00Z') },
-		});
-
-		expect(toEvent(parsed('order.paid'), 'msg_6')).toMatchObject({ type: 'invoice.paid', invoice: { status: 'paid' } });
-
-		// 3. The raw payload rides along for the audit trail
-		expect(toEvent(parsed('order.paid'), 'msg_6')?.raw).toStrictEqual(parsed('order.paid'));
-	});
-});
-
-describe('toMetadata', () => {
-	test('Writes every value out as a string', () => {
-		expect(toMetadata({ a: 'x', b: 2, c: true })).toStrictEqual({ a: 'x', b: '2', c: 'true' });
-		expect(toMetadata(null)).toStrictEqual({});
 	});
 });

@@ -42,11 +42,15 @@ record for this driver is a price id (`price_…`). Price and seat changes go on
 `cancel`, the reason as `cancellation_details.comment`. The billing period is read from the item and the invoice's
 subscription from `parent.subscription_details`, where API version 2025-03-31 put them.
 
-Webhooks are verified by `webhooks.constructEventAsync` with the endpoint's signing secret. `checkout.session.completed`
-and `checkout.session.async_payment_succeeded` (subscription mode) → `checkout.completed`;
-`customer.subscription.created` → `subscription.created`; `customer.subscription.updated`, `.paused`, `.resumed` →
-`subscription.updated`; `customer.subscription.deleted` → `subscription.deleted`; `invoice.paid` → `invoice.paid`;
-`invoice.payment_failed` → `invoice.failed`. Everything else is verified and dropped. Locally,
+Webhooks are verified by `webhooks.constructEventAsync` with the endpoint's signing secret; a signed body that is not a
+Stripe event — not JSON, or JSON without an event's `id`, `type` and `data.object` — is refused with
+`InvalidPayloadError`. `checkout.session.completed` and `checkout.session.async_payment_succeeded` (subscription mode,
+`payment_status` other than `unpaid`) → `checkout.completed`: a session completed on a delayed payment method (SEPA or
+ACH debit, a bank transfer) is still `unpaid` and is dropped, `async_payment_succeeded` announces it once the payment
+settled, and `async_payment_failed` is dropped since nothing was announced; `customer.subscription.created` →
+`subscription.created`; `customer.subscription.updated`, `.paused`, `.resumed` → `subscription.updated`;
+`customer.subscription.deleted` → `subscription.deleted`; `invoice.paid` → `invoice.paid`; `invoice.payment_failed` →
+`invoice.failed`. Everything else is verified and dropped. Locally,
 `stripe listen --forward-to localhost:3000/api/webhooks/stripe` prints the `whsec_…` to use.
 
 ## Options

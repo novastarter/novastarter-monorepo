@@ -78,6 +78,7 @@ test('Throws the last error once the retries are spent', async () => {
 });
 
 test('Runs the operation once with zero retries', async () => {
+	// 1. A budget of zero is one attempt: its error comes out as it came and no pause is armed
 	const fn = failing(1);
 
 	await expect(retry(fn, { retries: 0 })).rejects.toThrow('fail 1');
@@ -110,6 +111,7 @@ test('Grows a numeric delay by the factor and caps it at maxDelay', async () => 
 });
 
 test('Keeps the delay constant with a factor of one', async () => {
+	// 1. A factor of one is the way to ask for a fixed pause; three retries, three equal waits
 	const fn = failing(3);
 	const run = retry(fn, { delay: 250, factor: 1 });
 
@@ -315,13 +317,14 @@ test('Does not call onRetry on success, on a refused error or on the last failur
 });
 
 test('Ends the loop with what onRetry throws, without another attempt', async () => {
+	// 1. An operation with retries left, so only the callback can be what ends the loop
 	const operation = failing(3);
 
 	const onRetry = vi.fn(() => {
 		throw new Error('log sink down');
 	});
 
-	// 1. The callback runs before the pause; its error takes over, so no pause is armed and no attempt follows
+	// 2. The callback runs before the pause; its error takes over, so no pause is armed and no attempt follows
 	await expect(retry(operation, { onRetry })).rejects.toThrow('log sink down');
 	expect(operation).toHaveBeenCalledOnce();
 	expect(vi.getTimerCount()).toBe(0);

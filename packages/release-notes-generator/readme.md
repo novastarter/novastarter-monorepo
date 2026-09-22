@@ -71,3 +71,6 @@ Notices can contain any markdown syntax
 
 Normal changeset summary
 ```
+
+The notice block ends at the first line reading `:::`, so the summary may hold further `:::` containers of its own. A
+changeset that consists of the notice alone is rendered under the notice section only, titled by its commit link.

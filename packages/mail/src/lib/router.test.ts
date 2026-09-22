@@ -23,6 +23,7 @@ class NullDriver implements MailDriver {
 	 * @returns Empty lists.
 	 */
 	async send(): Promise<{ accepted: string[]; rejected: string[] }> {
+		// 1. The router only reads names; a driver that never delivers keeps the tests about routing
 		return { accepted: [], rejected: [] };
 	}
 }
@@ -60,6 +61,9 @@ describe('addressDomain', () => {
 });
 
 describe('resolveMailChain', () => {
+	/**
+	 * Routes with one rule of each kind, the marketing chain carrying a name nobody registered.
+	 */
 	const routes: MailRoutes = {
 		transactional: ['main', 'backup'],
 		marketing: ['bulk', 'typo'],
@@ -68,6 +72,9 @@ describe('resolveMailChain', () => {
 		},
 	};
 
+	/**
+	 * The locations the routes may name, `typo` left out on purpose.
+	 */
 	const manager = managerWith('main', 'backup', 'bulk');
 
 	test('Routes by category, transactional unless said otherwise, dropping unknown names', () => {
@@ -84,6 +91,23 @@ describe('resolveMailChain', () => {
 		// 1. The domain rule is matched on the lower-cased domain, whatever the address form
 		expect(resolveMailChain(routes, message, manager)).toStrictEqual(['bulk']);
 		expect(resolveMailChain(routes, { ...message, from: 'hello@acme.com' }, manager)).toStrictEqual(['main', 'backup']);
+	});
+
+	test('Passes a rule made only of unknown names over for the next one', () => {
+		const message = {
+			to: 'ada@example.com',
+			from: 'News <hello@news.acme.com>',
+			subject: 'Hi',
+			category: 'marketing' as const,
+		};
+
+		// 1. A domain rule of typos is no rule: the category chain applies instead of an empty one failing every send
+		expect(resolveMailChain({ ...routes, domains: { 'news.acme.com': ['blk'] } }, message, manager)).toStrictEqual([
+			'bulk',
+		]);
+
+		// 2. The category rule degrades the same way, down to every registered location
+		expect(resolveMailChain({ marketing: ['blk'] }, message, manager)).toStrictEqual(['main', 'backup', 'bulk']);
 	});
 
 	test('Falls back to every location without routes, and to nothing without locations', () => {

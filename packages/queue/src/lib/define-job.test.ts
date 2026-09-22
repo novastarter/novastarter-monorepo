@@ -1,6 +1,7 @@
 /**
  * Tests of `queue/lib/define-job`.
  */
+import { MAX_TIMER_DELAY } from '@novastarter/utils';
 import { describe, expect, test } from 'vitest';
 import { z } from 'zod';
 import { DEFAULT_JOB_OPTIONS, defineJob } from './define-job.js';
@@ -27,6 +28,19 @@ describe('defineJob', () => {
 			expect(() => defineJob({ name, schema })).toThrow(TypeError);
 		},
 	);
+
+	test('Refuses a timeout a timer cannot hold, where the contract is written rather than at every run', () => {
+		expect(() => defineJob({ name: 'mail.send', schema, options: { timeout: -1 } })).toThrow(RangeError);
+		expect(() => defineJob({ name: 'mail.send', schema, options: { timeout: Number.NaN } })).toThrow(RangeError);
+
+		expect(() => defineJob({ name: 'mail.send', schema, options: { timeout: Number.POSITIVE_INFINITY } })).toThrow(
+			`Job "mail.send" has a "timeout" of Infinity; it must be between 0 and ${MAX_TIMER_DELAY} ms`,
+		);
+
+		expect(defineJob({ name: 'mail.send', schema, options: { timeout: MAX_TIMER_DELAY } }).options.timeout).toBe(
+			MAX_TIMER_DELAY,
+		);
+	});
 
 	test('Parses a payload, applying defaults', () => {
 		const job = defineJob({ name: 'mail.send', schema });

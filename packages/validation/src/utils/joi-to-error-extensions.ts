@@ -2,12 +2,47 @@ import type { ValidationErrorItem } from 'joi';
 import type { FailedValidationErrorExtensions } from '../errors/failed-validation.js';
 
 /**
+ * Rules of the extended Joi whose name is the operator itself and whose context carries the compared `substring`.
+ *
+ * `contains` and `ncontains` are matched separately by suffix, as before; these are the prefix / suffix family.
+ *
+ * @internal
+ */
+const affixRules: ReadonlySet<string> = new Set([
+	'starts_with',
+	'nstarts_with',
+	'istarts_with',
+	'nistarts_with',
+	'ends_with',
+	'nends_with',
+	'iends_with',
+	'niends_with',
+]);
+
+/**
+ * Collapse a Joi allow / deny list to its distinct entries, treating a number and its text form as one.
+ *
+ * `generateJoi` builds `_eq` / `_neq` as the value plus its numeric / string twin (`18` and `'18'`), so a list of
+ * two entries is not necessarily an `_in`; the twin collapses to one entry while a genuine list keeps its size.
+ *
+ * @param values - `context.valids` or `context.invalids` of a Joi detail.
+ * @returns Number of distinct entries once numeric twins are merged.
+ * @internal
+ */
+const distinctCount = (values: unknown[]): number => {
+	// 1. Only numbers are stringified: `null` and `'null'`, or `true` and `'true'`, stay distinct because
+	//    `generateJoi` gives no twin to those
+	return new Set(values.map((value) => (typeof value === 'number' ? String(value) : value))).size;
+};
+
+/**
  * Translate one Joi validation detail into the extensions of a `FailedValidationError`.
  *
- * Joi names a failed rule `<type>.<rule>` (`number.greater`, `any.only`, `string.pattern.base`), so the rule is
+ * Joi names a failed rule `<type>.<rule>` (`number.greater`, `any.only`, `string.starts_with`), so the rule is
  * matched on its suffix regardless of the value type. The compared value(s) come out of `context`, whose keys
- * differ per rule (`valids`, `invalids`, `limit`, `substring`, `regex`). A value of the wrong type maps to
- * `required`, since that is the closest thing the client can say about it.
+ * differ per rule (`valids`, `invalids`, `limit`, `substring`). A value of the wrong type maps to `required`, since
+ * that is the closest thing the client can say about it. The substring rules are the ones registered on the
+ * extended `Joi` of this package; a named pattern built by hand is not recognised.
  *
  * @param validationErrorItem - One entry of `ValidationError.details`.
  * @param path - Keys leading to the validated object, prepended to the item's own path for nested payloads.
@@ -37,13 +72,16 @@ export const joiValidationErrorItemToErrorExtensions = (
 
 	const joiType = validationErrorItem.type;
 
-	// 2. `.only` covers eq, in, null and empty: one allowed value, or a list of them
+	// 2. `.only` covers eq, in, null and empty: one allowed value, or a list of them. The list is counted with numeric
+	//    twins merged, so `_eq: 18` (built as `[18, '18']`) reads as `eq` with the caller's value, not as `in`
 	if (joiType.endsWith('only')) {
-		if (validationErrorItem.context?.['valids'].length > 1) {
+		const valids: unknown[] = validationErrorItem.context?.['valids'] ?? [];
+
+		if (distinctCount(valids) > 1) {
 			extensions.type = 'in';
-			extensions.valid = validationErrorItem.context?.['valids'];
+			extensions.valid = valids as (string | number)[];
 		} else {
-			const valid = validationErrorItem.context?.['valids'][0];
+			const valid = valids[0];
 
 			if (valid === null) {
 				extensions.type = 'null';
@@ -51,18 +89,20 @@ export const joiValidationErrorItemToErrorExtensions = (
 				extensions.type = 'empty';
 			} else {
 				extensions.type = 'eq';
-				extensions.valid = valid;
+				extensions.valid = valid as string | number;
 			}
 		}
 	}
 
-	// 3. `.invalid` is the mirror image: neq, nin, nnull and nempty
+	// 3. `.invalid` is the mirror image: neq, nin, nnull and nempty, with the same twin handling
 	if (joiType.endsWith('invalid')) {
-		if (validationErrorItem.context?.['invalids'].length > 1) {
+		const invalids: unknown[] = validationErrorItem.context?.['invalids'] ?? [];
+
+		if (distinctCount(invalids) > 1) {
 			extensions.type = 'nin';
-			extensions.invalid = validationErrorItem.context?.['invalids'];
+			extensions.invalid = invalids as (string | number)[];
 		} else {
-			const invalid = validationErrorItem.context?.['invalids'][0];
+			const invalid = invalids[0];
 
 			if (invalid === null) {
 				extensions.type = 'nnull';
@@ -70,7 +110,7 @@ export const joiValidationErrorItemToErrorExtensions = (
 				extensions.type = 'nempty';
 			} else {
 				extensions.type = 'neq';
-				extensions.invalid = invalid;
+				extensions.invalid = invalid as string | number;
 			}
 		}
 	}
@@ -108,19 +148,35 @@ export const joiValidationErrorItemToErrorExtensions = (
 		extensions.substring = validationErrorItem.context?.['substring'];
 	}
 
-	// 6. A missing value, or a value of the wrong base type, both read as "required" to the client
+	// 6. Prefix / suffix rules of the extended Joi: the rule name is the operator and the substring is the original
+	//    argument, straight from the rule context. The name is compared whole, since `nstarts_with` ends with
+	//    `starts_with`
+	const rule = joiType.slice(joiType.lastIndexOf('.') + 1);
+
+	if (joiType.startsWith('string.') && affixRules.has(rule)) {
+		extensions.type = rule as FailedValidationErrorExtensions['type'];
+		extensions.substring = validationErrorItem.context?.['substring'];
+	}
+
+	// 7. A missing value, or a value of the wrong base type, both read as "required" to the client
 	if (joiType.endsWith('required') || joiType.endsWith('.base')) {
 		extensions.type = 'required';
 	}
 
-	// 7. The substring rules are built as string-or-array alternatives; a value of neither type fails both by type,
+	// 8. Joi's stock string type rejects `''` before any rule runs. `generateJoi` lifts that with `min(0)`, but a
+	//    caller's own string schema may not, and the rejection means exactly "must not be empty"
+	if (joiType === 'string.empty') {
+		extensions.type = 'nempty';
+	}
+
+	// 9. The substring rules are built as string-or-array alternatives; a value of neither type fails both by type,
 	//    which is the same situation as a wrong base type above
 	if (joiType === 'alternatives.types') {
 		extensions.type = 'required';
 	}
 
-	// 8. Array forms of the substring rules: no item contained the substring, or an item contained the forbidden one.
-	//    Joi does not hand the substring back from these rules, so only the operator is reported
+	// 10. Array forms of the substring rules: no item contained the substring, or an item contained the forbidden one.
+	//     Joi does not hand the substring back from these rules, so only the operator is reported
 	if (joiType === 'array.includesRequiredUnknowns') {
 		extensions.type = 'contains';
 	}
@@ -129,40 +185,19 @@ export const joiValidationErrorItemToErrorExtensions = (
 		extensions.type = 'ncontains';
 	}
 
-	// 9. A bare pattern is the `_regex` rule; the value is passed on so the client can show what was rejected
+	// 11. A bare pattern is the `_regex` rule; the value is passed on so the client can show what was rejected
 	if (joiType.endsWith('.pattern.base')) {
 		extensions.type = 'regex';
 		extensions.invalid = validationErrorItem.context?.value;
 	}
 
-	// 10. Outside the safe integer range
-	if (joiType === 'number.unsafe') {
+	// 12. Outside the safe integer range, or infinite: neither is a number the client can act on, and Joi rejects
+	//     `Infinity` with a rule of its own before any range check runs
+	if (joiType === 'number.unsafe' || joiType === 'number.infinity') {
 		extensions.type = 'unsafe';
 	}
 
-	// 11. Named patterns are the starts_with / ends_with family; the operator is the pattern name and the substring is
-	//    cut back out of the regex source, since Joi does not keep the original argument
-	if (joiType.endsWith('.pattern.name') || joiType.endsWith('.pattern.invert.name')) {
-		extensions.type = validationErrorItem.context?.['name'];
-		const regex = validationErrorItem.context?.['regex']?.toString();
-
-		switch (extensions.type) {
-			case 'starts_with':
-			case 'nstarts_with':
-			case 'istarts_with':
-			case 'nistarts_with':
-				extensions.substring = regex.substring(2, regex.lastIndexOf('/') - 2);
-				break;
-			case 'ends_with':
-			case 'nends_with':
-			case 'iends_with':
-			case 'niends_with':
-				extensions.substring = regex.substring(3, regex.lastIndexOf('/') - 1);
-				break;
-		}
-	}
-
-	// 12. Anything else is a rule `generateJoi` never emits; failing loudly beats a message without a type
+	// 13. Anything else is a rule `generateJoi` never emits; failing loudly beats a message without a type
 	if (!extensions.type) {
 		throw new Error(`Couldn't extract validation error type from Joi validation error item`);
 	}

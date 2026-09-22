@@ -1,4 +1,5 @@
 import type { PushDriver, PushMessage, PushPlatform, PushResult } from '@novastarter/push';
+import { withTimeout } from '@novastarter/utils';
 import { ApnsClient, Host } from 'apns2';
 import { assertSigningKey } from './assert-signing-key.js';
 import { describeError } from './describe-error.js';
@@ -32,7 +33,10 @@ export type PushDriverApnsConfig = {
 	ttl?: number | undefined;
 	/** Sound of a notification; `default` unless given, empty for a silent one. */
 	sound?: string | undefined;
-	/** Request timeout in milliseconds; the SDK's default unless given. */
+	/**
+	 * Milliseconds a send may take before it fails with a timeout error; only the HTTP client's own limits, minutes
+	 * long, bound it unless given.
+	 */
 	requestTimeout?: number | undefined;
 	/**
 	 * A ready client, for tests; built from the credentials otherwise.
@@ -86,7 +90,8 @@ export class PushDriverApns implements PushDriver {
 	readonly platforms: readonly PushPlatform[] = ['apns'];
 
 	/**
-	 * Topic, ttl and sound, as the location was registered with, the signing key with its newlines restored.
+	 * Topic, ttl, sound and request timeout, as the location was registered with, the signing key with its newlines
+	 * restored.
 	 *
 	 * @internal
 	 */
@@ -124,7 +129,8 @@ export class PushDriverApns implements PushDriver {
 		this.config = { ...config, signingKey };
 
 		// 3. Production unless told otherwise: a token from a development build only works with the sandbox, and
-		//    APNs answers `BadDeviceToken` across environments
+		//    APNs answers `BadDeviceToken` across environments. The client takes a `requestTimeout` but never reads
+		//    it, so the deadline is not handed over: `send()` keeps it
 		const host = config.host ?? (config.production === false ? Host.development : Host.production);
 
 		this.client =
@@ -135,7 +141,6 @@ export class PushDriverApns implements PushDriver {
 				signingKey,
 				defaultTopic: config.topic,
 				host,
-				...(config.requestTimeout !== undefined ? { requestTimeout: config.requestTimeout } : {}),
 			});
 	}
 
@@ -145,6 +150,8 @@ export class PushDriverApns implements PushDriver {
 	 * @param message - The message, with a token.
 	 * @returns `accepted`; APNs hands out no id the client exposes.
 	 * @throws PushTargetGoneError when APNs says the token is unregistered, bad, or of another app.
+	 * @throws Error naming the deadline when `requestTimeout` passes before APNs answers, the `TimeoutError` of
+	 * `@novastarter/utils` as the cause; the request itself runs on, since the HTTP client cannot be told to stop.
 	 * @throws Error naming APNs's status and reason otherwise, the SDK's error as the cause.
 	 */
 	async send(message: PushMessage): Promise<PushResult> {
@@ -153,9 +160,13 @@ export class PushDriverApns implements PushDriver {
 			throw new Error('The apns push driver needs a token; a subscription belongs to the webpush driver');
 		}
 
-		// 2. The client resolves on a 200 and throws an `ApnsError` with Apple's reason otherwise
+		// 2. The client resolves on a 200 and throws an `ApnsError` with Apple's reason otherwise. It ignores the
+		//    timeout it is given, so the deadline is raced here: a stalled connection would otherwise sit out the
+		//    HTTP client's minutes-long limits, and a queue job around the send with it
 		try {
-			await this.client.send(toApnsNotification(message, this.config));
+			const request = this.client.send(toApnsNotification(message, this.config));
+
+			await (this.config.requestTimeout === undefined ? request : withTimeout(request, this.config.requestTimeout));
 
 			return { status: 'accepted' };
 		} catch (error) {

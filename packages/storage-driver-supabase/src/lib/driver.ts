@@ -135,6 +135,7 @@ export class StorageDriverSupabase implements TusDriver {
 	/**
 	 * Base URL of the Storage API, either the configured endpoint or the hosted one derived from the project id.
 	 *
+	 * @returns The URL every object, listing and TUS request is built on, without a trailing slash.
 	 * @internal
 	 */
 	private get endpoint() {
@@ -232,9 +233,10 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @param filepath - Object path relative to the root.
 	 * @param options - Optional byte range; `version` is not supported by this driver and is ignored.
 	 * @returns The response body as a Node stream.
-	 * @throws Error when the response is an error status or carries no body.
 	 * @throws StorageFileNotFoundError when Supabase answers 404.
-	 * @throws Error for any other error status or a missing body.
+	 * @throws Error naming the HTTP status for any other error status, with the response body as `cause` when
+	 * Supabase sent one.
+	 * @throws Error when a successful response carries no body to stream.
 	 */
 	async read(filepath: string, options?: ReadOptions): Promise<Readable> {
 		const { range } = options || {};
@@ -254,32 +256,44 @@ export class StorageDriverSupabase implements TusDriver {
 
 		const response = await fetch(this.getAuthenticatedUrl(filepath), requestInit);
 
-		// 3. An error status or a missing body means there is nothing to stream; the body is cancelled first because
-		//    an unread body holds its connection open. A 404 becomes the error every backend shares, so a caller tells
-		//    a missing object from a denied or failed read
-		if (response.status >= 400 || !response.body) {
+		// 3. A 404 becomes the error every backend shares, so a caller tells a missing object from a denied or failed
+		//    read; the body is cancelled first because an unread body holds its connection open
+		if (response.status === 404) {
 			await response.body?.cancel();
 
-			if (response.status === 404) {
-				throw new StorageFileNotFoundError({ filepath });
-			}
+			throw new StorageFileNotFoundError({ filepath });
+		}
 
+		// 4. Any other error status is a failed read, not a missing stream: the status stays in the message so a
+		//    denied, throttled or failed read can be told apart, and the body, which carries Supabase's own reason, is
+		//    read as the cause — reading it also releases the connection
+		if (response.status >= 400) {
+			const reason = await response.text().catch(() => '');
+
+			throw new Error(`Couldn't read file "${filepath}" (${response.status})`, reason ? { cause: reason } : undefined);
+		}
+
+		// 5. A successful answer without a body has nothing to stream; nothing to cancel either
+		if (!response.body) {
 			throw new Error(`No stream returned for file "${filepath}"`);
 		}
 
-		// 4. `fetch` returns a Web stream; the rest of the storage layer works with Node readables
+		// 6. `fetch` returns a Web stream; the rest of the storage layer works with Node readables
 		return Readable.fromWeb(response.body);
 	}
 
 	/**
 	 * Look an object up by listing its parent folder with the file name as the search term.
 	 *
-	 * Supabase has no metadata endpoint for a single object, so a filtered listing limited to one result is the
-	 * cheapest way to fetch size and modification time.
+	 * Supabase has no metadata endpoint for a single object, so a filtered listing is the cheapest way to fetch size
+	 * and modification time. The `search` filter is a case-insensitive prefix match, not an exact one, and folders are
+	 * listed before files, so the pages are walked until the entry whose name equals the requested one and that is a
+	 * file — a folder has no id — turns up.
 	 *
 	 * @param filepath - Object path relative to the root.
-	 * @returns The listing entry, or `undefined` when nothing matched.
-	 * @throws The storage error when the listing itself fails, since that says nothing about the object.
+	 * @returns The listing entry of the object, or `undefined` when no file of exactly that name exists.
+	 * @throws Error wrapping the storage error when the listing itself fails, since that says nothing about the
+	 * object.
 	 * @internal
 	 */
 	private async find(filepath: string) {
@@ -287,18 +301,41 @@ export class StorageDriverSupabase implements TusDriver {
 		//    itself; `joinPath` with `..` drops that segment and answers `''` at the top of the bucket
 		const name = this.fullPath(filepath);
 		const rootFolder = joinPath(name, '..');
+		const fileName = basename(name);
+
+		const limit = 100;
+		let offset = 0;
+		let itemCount;
 
 		// 2. Search by the base name only: the API filters within the given folder, so the folder part goes into the
-		//    prefix and the name into `search`
-		const { data, error } = await this.bucket.list(rootFolder, {
-			search: basename(name),
-			limit: 1,
-		});
+		//    prefix and the name into `search`. The filter also matches `name.bak` or `NAME`, so a page can hold other
+		//    entries first; a full page means the exact one may still follow, a short page ends the walk
+		do {
+			const { data, error } = await this.bucket.list(rootFolder, {
+				search: fileName,
+				limit,
+				offset,
+			});
 
-		// 3. A failed lookup is not an empty one; surfacing the error keeps callers from acting on a wrong answer
-		if (error) throw error;
+			// 3. A failed lookup is not an empty one; surfacing the error, with the path the caller asked for, keeps
+			//    callers from acting on a wrong answer
+			if (error || !data) {
+				throw new Error(`Error looking up file "${filepath}"`, error ? { cause: error } : undefined);
+			}
 
-		return data[0];
+			// 4. Only the entry with exactly the requested name counts, and only as a file: a folder of the same name
+			//    has no id and no metadata, and answering for it would report a missing object as present
+			const file = data.find((item) => item.id !== null && item.name === fileName);
+
+			if (file) {
+				return file;
+			}
+
+			itemCount = data.length;
+			offset += itemCount;
+		} while (itemCount === limit);
+
+		return undefined;
 	}
 
 	/**
@@ -306,19 +343,20 @@ export class StorageDriverSupabase implements TusDriver {
 	 *
 	 * @param filepath - Object path relative to the root.
 	 * @returns Size in bytes and modification date.
-	 * @throws StorageFileNotFoundError when the object is missing.
-	 * @throws The storage error when the lookup itself fails.
+	 * @throws StorageFileNotFoundError when no file of exactly that name exists; a folder of that name does not count.
+	 * @throws Error wrapping the storage error when the lookup itself fails.
 	 */
 	async stat(filepath: string): Promise<Stat> {
 		const file = await this.find(filepath);
 
-		// 1. An empty listing is the only way Supabase reports a missing object; it becomes the error every backend
-		//    shares
+		// 1. A listing without a file of exactly that name is the only way Supabase reports a missing object; it
+		//    becomes the error every backend shares
 		if (!file) {
 			throw new StorageFileNotFoundError({ filepath });
 		}
 
-		// 2. Metadata is null for folders, so fall back to zero values rather than throwing on a folder entry
+		// 2. `find` only returns file entries, which carry metadata; the fallbacks guard against an entry the API
+		//    reports without it rather than crashing the caller
 		return {
 			size: file.metadata?.['contentLength'] ?? 0,
 			modified: new Date(file.metadata?.['lastModified'] || 0),
@@ -329,11 +367,12 @@ export class StorageDriverSupabase implements TusDriver {
 	 * Check whether an object is present.
 	 *
 	 * @param filepath - Object path relative to the root.
-	 * @returns `true` when the listing returned the object, `false` otherwise.
-	 * @throws The storage error when the lookup fails, since that says nothing about the object.
+	 * @returns `true` when a file of exactly that name exists, `false` otherwise; a folder of that name does not
+	 * count.
+	 * @throws Error wrapping the storage error when the lookup fails, since that says nothing about the object.
 	 */
 	async exists(filepath: string): Promise<boolean> {
-		// 1. Reuse the filtered listing behind `stat`; an entry is proof of existence
+		// 1. Reuse the exact lookup behind `stat`; an entry is proof of existence
 		return (await this.find(filepath)) !== undefined;
 	}
 
@@ -452,6 +491,7 @@ export class StorageDriverSupabase implements TusDriver {
 	 *
 	 * @param prefix - Full object-name prefix, root included.
 	 * @returns Object paths relative to the root.
+	 * @throws Error wrapping the storage error when a page of the listing fails, naming the full prefix queried.
 	 * @internal
 	 */
 	async *listGenerator(prefix: string): AsyncIterable<string> {
@@ -473,9 +513,12 @@ export class StorageDriverSupabase implements TusDriver {
 				search,
 			});
 
-			// 3. A failed page ends the listing with what was yielded so far, matching the upstream driver
-			if (!data || error) {
-				break;
+			// 3. A failed page must not end the listing as if it were complete: a caller that removes what is no longer
+			//    listed would wipe data on a transient error, so the failure is thrown like every other operation of
+			//    this driver. A page without data and without an error breaks the client's own contract and is
+			//    treated the same way rather than read as an empty prefix
+			if (error || !data) {
+				throw new Error(`Error listing prefix "${prefix}"`, error ? { cause: error } : undefined);
 			}
 
 			itemCount = data.length;
@@ -498,8 +541,13 @@ export class StorageDriverSupabase implements TusDriver {
 
 	/**
 	 * TUS extensions this driver advertises: creation, termination and expiration.
+	 *
+	 * @returns The extension names in the order the TUS server advertises them.
 	 */
 	get tusExtensions(): string[] {
+		// 1. Exactly what Supabase's own TUS endpoint supports: uploads are created lazily on the first chunk,
+		//    `deleteChunkedUpload` terminates them and Supabase expires unfinished ones itself; concatenation and
+		//    checksums are not offered, so advertising them would promise what the backend cannot honour
 		return ['creation', 'termination', 'expiration'];
 	}
 
@@ -547,8 +595,9 @@ export class StorageDriverSupabase implements TusDriver {
 			cacheControl: '3600',
 		};
 
+		// 2. `tus-js-client` reports through callbacks, so the one chunk is wrapped in a promise the callbacks settle
 		await new Promise((resolve, reject) => {
-			// 2. The custom file reader feeds `tus-js-client` the chunk as a one-shot source, so the library sends
+			// 1. The custom file reader feeds `tus-js-client` the chunk as a one-shot source, so the library sends
 			//    exactly this chunk instead of trying to read the whole file. `x-upsert` lets a re-upload replace the
 			//    object; retries are disabled because the TUS server in front of this driver already retries. The size
 			//    is only passed when known: an explicit `undefined` is not an absent key to the library's option types
@@ -566,9 +615,9 @@ export class StorageDriverSupabase implements TusDriver {
 				onError(error) {
 					reject(error);
 				},
-				// 3. Resolve after the first chunk completes: this call only ever carries one chunk, so waiting for
-				//    `onSuccess` would block until the whole upload finished
-				onChunkComplete: function (chunkSize) {
+				onChunkComplete(chunkSize) {
+					// 1. Resolve after the first chunk completes: this call only ever carries one chunk, so waiting for
+					//    `onSuccess` would block until the whole upload finished
 					bytesUploaded += chunkSize;
 
 					resolve(null);
@@ -576,16 +625,16 @@ export class StorageDriverSupabase implements TusDriver {
 				onSuccess() {
 					resolve(null);
 				},
-				// 4. Remember the upload URL Supabase assigned on creation: it is the only handle for appending later
-				//    chunks, and the context is what the TUS server hands back on every following call
 				onUploadUrlAvailable() {
+					// 1. Remember the upload URL Supabase assigned on creation: it is the only handle for appending
+					//    later chunks, and the context is what the TUS server hands back on every following call
 					if (!context.metadata!['upload-url']) {
 						context.metadata!['upload-url'] = upload.url;
 					}
 				},
 			});
 
-			// 5. On every chunk after the first, resume the existing upload instead of creating a new one
+			// 2. On every chunk after the first, resume the existing upload instead of creating a new one
 			if (context.metadata!['upload-url']) {
 				upload.resumeFromPreviousUpload({
 					size: context.size!,

@@ -11,6 +11,8 @@ export interface BusDriver {
 	 * @param channel - Channel to publish to.
 	 * @param payload - Value sent to the subscribers.
 	 * @returns Resolves once the message is handed to the backend.
+	 * @throws `TypeError` when the payload cannot be serialised, such as a `BigInt` or a cyclic object, whether or
+	 * not anybody subscribed.
 	 */
 	publish<T = unknown>(channel: string, payload: T): Promise<void>;
 
@@ -21,6 +23,8 @@ export interface BusDriver {
 	 * @param channel - Channel to subscribe to.
 	 * @param callback - Invoked with every payload published on the channel.
 	 * @returns Resolves once the subscription is active.
+	 * @throws The error the backend refused the subscription with, such as a Redis `SUBSCRIBE` that failed; the
+	 * callback is not registered then, so the call can be retried. `Error` when the driver was closed.
 	 */
 	subscribe<T = unknown>(channel: string, callback: MessageHandler<T>): Promise<void>;
 
