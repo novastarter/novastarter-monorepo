@@ -2,19 +2,9 @@
  * Tests of `to-event`: how a verified Lemon Squeezy delivery, read from fixtures in the shape of its documented
  * payloads, becomes the kit's event — which event names map to which types, which are dropped, and the delivery id.
  */
-import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
-import type { LsWebhookPayload } from '../types.js';
+import { fixture } from '../fixtures/index.js';
 import { deliveryIdOf, toEvent } from './to-event.js';
-
-/**
- * A fixture, parsed.
- *
- * @param name - The file, named after the Lemon Squeezy event it carries.
- * @returns The delivery.
- */
-const fixture = (name: string): LsWebhookPayload =>
-	JSON.parse(readFileSync(new URL(`../fixtures/${name}.json`, import.meta.url), 'utf8')) as LsWebhookPayload;
 
 describe('toEvent', () => {
 	/**
@@ -71,6 +61,6 @@ describe('toEvent', () => {
 
 	test('deliveryIdOf prefers the webhook id', () => {
 		// 1. Lemon Squeezy's own id is stable across retries of one event, so it wins over the derived one
-		expect(deliveryIdOf(fixture('subscription_created') as LsWebhookPayload<{ updated_at?: string }>)).toBe('wh_2');
+		expect(deliveryIdOf(fixture<{ updated_at?: string }>('subscription_created'))).toBe('wh_2');
 	});
 });

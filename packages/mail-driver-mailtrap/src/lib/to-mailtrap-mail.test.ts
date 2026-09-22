@@ -5,14 +5,17 @@ import { describe, expect, test } from 'vitest';
 import { toMailtrapAddress, toMailtrapAttachment, toMailtrapMail } from './to-mailtrap-mail.js';
 
 describe('toMailtrapAddress', () => {
-	test('Splits a name from an address and strips a formatted string', () => {
-		// 1. An object keeps its name; a display-name string is reduced to the address
+	test('Splits a name from an address and keeps the name of a formatted string', () => {
+		// 1. An object keeps its name; a display-name string is parsed, so the name reaches Mailtrap either way
 		expect(toMailtrapAddress({ name: 'Ada', address: 'ada@example.com' })).toStrictEqual({
 			email: 'ada@example.com',
 			name: 'Ada',
 		});
 
-		expect(toMailtrapAddress('Ada <ada@example.com>')).toStrictEqual({ email: 'ada@example.com' });
+		expect(toMailtrapAddress('Ada <ada@example.com>')).toStrictEqual({
+			email: 'ada@example.com',
+			name: 'Ada',
+		});
 	});
 });
 
@@ -72,7 +75,7 @@ describe('toMailtrapMail', () => {
 			to: [{ email: 'ada@example.com', name: 'Ada' }],
 			cc: [{ email: 'cc@example.com' }],
 			bcc: [{ email: 'bcc@example.com' }],
-			reply_to: { email: 'support@acme.test' },
+			reply_to: { email: 'support@acme.test', name: 'Support' },
 			subject: 'Hi',
 			html: '<p>Hi</p>',
 			text: 'Hi',

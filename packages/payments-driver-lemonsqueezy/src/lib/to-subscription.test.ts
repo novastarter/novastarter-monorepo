@@ -2,8 +2,8 @@
  * Tests of `to-subscription`: how a Lemon Squeezy subscription, read from fixtures in the shape of its documented
  * payloads, becomes the kit's subscription — the statuses, the grace period, the seats.
  */
-import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
+import { fixture } from '../fixtures/index.js';
 import type { LsSubscriptionAttributes, LsWebhookPayload } from '../types.js';
 import { toSubscription } from './to-subscription.js';
 
@@ -14,11 +14,7 @@ import { toSubscription } from './to-subscription.js';
  * @returns The subscription resource under `data`.
  */
 const subscriptionOf = (name: string): LsWebhookPayload<LsSubscriptionAttributes>['data'] =>
-	(
-		JSON.parse(
-			readFileSync(new URL(`../fixtures/${name}.json`, import.meta.url), 'utf8'),
-		) as LsWebhookPayload<LsSubscriptionAttributes>
-	).data;
+	fixture<LsSubscriptionAttributes>(name).data;
 
 describe('toSubscription', () => {
 	test('Maps a subscription: the variant as the price, the first item’s seats, the renewal as the period end', () => {

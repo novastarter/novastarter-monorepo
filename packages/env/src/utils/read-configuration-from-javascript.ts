@@ -10,7 +10,8 @@ import { isPlainObject } from 'lodash-es';
  *
  * @param path - Path to the `.js`, `.cjs` or `.mjs` file.
  * @returns The configuration object.
- * @throws When the export is neither a function nor a plain object.
+ * @throws When the export is neither a function nor a plain object, or a function export does not return a plain
+ * object.
  */
 export const readConfigurationFromJavaScript = (path: string): Record<string, unknown> => {
 	// 1. A `require` bound to this module, since ESM has no global one
@@ -26,9 +27,11 @@ export const readConfigurationFromJavaScript = (path: string): Record<string, un
 	if (typeof module === 'object' || typeof module === 'function') {
 		exported = 'default' in module ? module.default : module;
 
-		// 4. A factory gets the raw environment so it can compute values from it
+		// 4. A factory gets the raw environment so it can compute values from it; its result must be a plain object,
+		//    like the export of a data module, so a factory returning nothing is rejected below instead of flowing
+		//    into the merge as `undefined`
 		if (typeof exported === 'function') {
-			return exported(process.env) as Record<string, unknown>;
+			exported = exported(process.env);
 		}
 
 		// 5. Class instances and arrays are rejected on purpose; configuration is a plain key/value map

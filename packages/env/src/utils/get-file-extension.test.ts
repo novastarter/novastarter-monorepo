@@ -8,10 +8,12 @@ import { getFileExtension } from './get-file-extension.js';
 vi.mock('node:path');
 
 afterEach(() => {
+	// 1. A mocked extname leaking into the next test would silently change its assertion
 	vi.clearAllMocks();
 });
 
 test('Returns lowercased extname without period prefix', () => {
+	// 1. An upper-cased extension with a period, so both transformations are proven with one value
 	vi.mocked(extname).mockReturnValue('.JPEG');
 	const res = getFileExtension('./my-test-file.JPEG');
 	expect(extname).toHaveBeenCalledWith('./my-test-file.JPEG');

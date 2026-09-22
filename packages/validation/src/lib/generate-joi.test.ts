@@ -409,18 +409,49 @@ describe(`generateJoi`, () => {
 	});
 
 	it(`returns the correct schema for an _nbetween number match`, () => {
-		// 1. The complement of a range is "below the low bound" combined with "above the high bound"
-		expectSchema({ field: { _nbetween: [1, 3] } }, Joi.number().less(1).greater(3));
+		// 1. The complement of a range is "below the low bound" or "above the high bound"; Joi ANDs the rules of one
+		//    schema, so the "or" needs two alternatives
+		expectSchema(
+			{ field: { _nbetween: [1, 3] } },
+			Joi.alternatives().try(Joi.number().less(1), Joi.number().greater(3)),
+		);
 	});
 
 	it(`returns the correct schema for an _nbetween float match`, () => {
 		// 1. Floats are safe numbers too, so they stay numeric rather than becoming dates
-		expectSchema({ field: { _nbetween: [1.111, 3.333] } }, Joi.number().less(1.111).greater(3.333));
+		expectSchema(
+			{ field: { _nbetween: [1.111, 3.333] } },
+			Joi.alternatives().try(Joi.number().less(1.111), Joi.number().greater(3.333)),
+		);
 	});
 
 	it(`returns the correct schema for an _nbetween date match`, () => {
 		// 1. Dates take the same complement on the date schema
-		expectSchema({ field: { _nbetween: [date, compareDate] } }, Joi.date().less(date).greater(compareDate));
+		expectSchema(
+			{ field: { _nbetween: [date, compareDate] } },
+			Joi.alternatives().try(Joi.date().less(date), Joi.date().greater(compareDate)),
+		);
+	});
+
+	it(`returns the correct schema for an _between with a non-array value`, () => {
+		// 1. Bounds that are not an array cannot hold a range, so the rule fails for any real value instead of
+		//    throwing on `every`
+		expectSchema({ field: { _between: '1,3' } }, Joi.any().equal(true));
+	});
+
+	it(`returns the correct schema for an _nbetween with a non-array value`, () => {
+		// 1. The negated form fails the same way on malformed bounds
+		expectSchema({ field: { _nbetween: '1,3' } }, Joi.any().equal(true));
+	});
+
+	it(`_nbetween accepts values outside the range and rejects values inside`, () => {
+		// 1. `describe()` equality alone pinned the wrong schema before, so the complement is proven behaviourally:
+		//    inside the range fails, both sides outside pass
+		const schema = generateJoi({ field: { _nbetween: [1, 3] } });
+
+		expect(schema.validate({ field: 2 }).error).not.toBeUndefined();
+		expect(schema.validate({ field: 0 }).error).toBeUndefined();
+		expect(schema.validate({ field: 4 }).error).toBeUndefined();
 	});
 
 	it(`returns the correct schema for an _submitted match`, () => {

@@ -2,19 +2,10 @@
  * Tests of the Stripe event mapping: which Stripe events become the kit's, read from fixtures shaped like Stripe's
  * current events, and which are dropped — a session completed before its delayed payment settled among them.
  */
-import { readFileSync } from 'node:fs';
 import type Stripe from 'stripe';
 import { describe, expect, test } from 'vitest';
+import { fixture } from '../fixtures/index.js';
 import { PROVIDER, toCompletedCheckout, toEvent } from './to-event.js';
-
-/**
- * A fixture event, parsed.
- *
- * @param name - The Stripe event type the file is named after.
- * @returns The event object.
- */
-const fixture = (name: string): Stripe.Event =>
-	JSON.parse(readFileSync(new URL(`../fixtures/${name}.json`, import.meta.url), 'utf8')) as Stripe.Event;
 
 /**
  * The checkout fixture with another event type and session fields, for the checkout events Stripe sends no fixture of.

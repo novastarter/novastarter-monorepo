@@ -10,10 +10,13 @@ const contract = defineJob({ name: 'billing.sync', schema: z.object({ customer: 
 
 describe('getJobId', () => {
 	test('Prefers an explicit id', () => {
+		// 1. An explicit id wins over everything, `unique` included
 		expect(getJobId(contract, { customer: 'c1' }, { jobId: 'given', unique: true })).toBe('given');
 	});
 
 	test('Derives a stable id from the payload for unique jobs', () => {
+		// 1. The id names job and payload together: the same payload collapses into the same id across calls, a
+		//    different payload gets one of its own
 		const first = getJobId(contract, { customer: 'c1' }, { unique: true });
 
 		expect(first).toMatch(new RegExp(`^billing\\.sync_[0-9a-f]{${JOB_ID_HASH_LENGTH}}$`));
@@ -22,26 +25,30 @@ describe('getJobId', () => {
 	});
 
 	test('Tells payloads apart that a 32-bit string hash would fold together', () => {
-		// `Aa` and `BB` share a Java-style `h * 31 + c` hash; folded together, the second job would silently be
-		// dropped as a duplicate of the first
+		// 1. `Aa` and `BB` share a Java-style `h * 31 + c` hash; folded together, the second job would silently be
+		//    dropped as a duplicate of the first
 		expect(getJobId(contract, { customer: 'Aa' }, { unique: true })).not.toBe(
 			getJobId(contract, { customer: 'BB' }, { unique: true }),
 		);
 	});
 
 	test('Lets a unique function pick the identifying part', () => {
+		// 1. The function receives the payload; its answer becomes the identifying part of the id
 		expect(getJobId(contract, { customer: 'c1' }, { unique: (payload) => payload.customer })).toBe('billing.sync_c1');
 	});
 
 	test('Refuses an id with a colon, which BullMQ reserves for its keys', () => {
+		// 1. An id carrying a colon is refused, with the offending id and job in the message
 		expect(() => getJobId(contract, { customer: 'a:1' }, { unique: (payload) => payload.customer })).toThrow(
 			'The id "billing.sync_a:1" of job "billing.sync" must not contain ":"',
 		);
 
+		// 2. The same refusal holds for an explicit jobId
 		expect(() => getJobId(contract, { customer: 'c1' }, { jobId: 'x:y' })).toThrow('must not contain ":"');
 	});
 
 	test('Hands out a fresh id otherwise', () => {
+		// 1. Without `unique` or `jobId` every call gets a fresh UUID, so identical payloads never collapse
 		const first = getJobId(contract, { customer: 'c1' }, {});
 
 		expect(first).toMatch(/^[0-9a-f-]{36}$/);

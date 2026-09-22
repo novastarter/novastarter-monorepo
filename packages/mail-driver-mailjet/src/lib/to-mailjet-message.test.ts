@@ -28,7 +28,7 @@ describe('toMailjetMessage', () => {
 			From: { Email: 'no-reply@acme.test', Name: 'Acme' },
 			To: [{ Email: 'ada@example.com', Name: 'Ada' }],
 			Bcc: [{ Email: 'bcc@example.com' }],
-			ReplyTo: { Email: 'support@acme.test' },
+			ReplyTo: { Email: 'support@acme.test', Name: 'Support' },
 			Subject: 'Hi',
 			HTMLPart: '<p>Hi</p>',
 			TextPart: 'Hi',

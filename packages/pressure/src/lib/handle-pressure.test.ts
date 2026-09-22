@@ -23,25 +23,30 @@ let sample: {
 };
 
 beforeEach(() => {
+	// 1. The options under test: thresholds, a Retry-After value and a custom error
 	sample = {
 		options: { maxEventLoopUtilization: 0.8, maxMemoryRss: 800000000, retryAfter: '5' },
 		error: new Error('Custom pressure error'),
 	};
 
+	// 2. The monitor is replaced by the stand-in, so a test flips its verdict by hand
 	mockMonitor = { overloaded: false, close: vi.fn() };
 	vi.mocked(PressureMonitor).mockImplementation(() => mockMonitor as unknown as PressureMonitor);
 
+	// 3. The request and response are bare stubs; only the header call matters to the middleware
 	req = {} as Request;
 	res = { header: vi.fn() } as unknown as Response;
 	next = vi.fn();
 });
 
 afterEach(() => {
+	// 1. Mocks are rebuilt by the next test's setup, so nothing may carry over
 	vi.resetAllMocks();
 });
 
 describe('handlePressure', () => {
 	test('Creates one monitor per middleware instance with the given options', () => {
+		// 1. The middleware, not the request, owns the monitor's lifecycle
 		const handler = handlePressure(sample.options);
 
 		expect(PressureMonitor).toHaveBeenCalledOnce();
@@ -50,6 +55,7 @@ describe('handlePressure', () => {
 	});
 
 	test('Does not create a monitor per request', () => {
+		// 1. Two requests through the handler still mean a single monitor
 		const handler = handlePressure(sample.options);
 
 		handler(req, res, next);
@@ -59,6 +65,7 @@ describe('handlePressure', () => {
 	});
 
 	test('Exposes the monitor so the caller can close it', () => {
+		// 1. Closing through the handler reaches the very monitor the middleware consults
 		const handler = handlePressure(sample.options);
 
 		handler.monitor.close();
@@ -67,6 +74,7 @@ describe('handlePressure', () => {
 	});
 
 	test('Passes the request through without an error when not overloaded', () => {
+		// 1. Under normal load the middleware adds nothing: no header, no error
 		const handler = handlePressure(sample.options);
 
 		handler(req, res, next);
@@ -77,6 +85,7 @@ describe('handlePressure', () => {
 	});
 
 	test('Forwards the default error when overloaded', () => {
+		// 1. The generic error is what a caller gets who set none of their own
 		const handler = handlePressure({ maxEventLoopUtilization: 0.8 });
 		mockMonitor.overloaded = true;
 
@@ -86,17 +95,59 @@ describe('handlePressure', () => {
 		expect(next).toHaveBeenCalledWith(new Error('Pressure limit exceeded'));
 	});
 
-	test('Forwards the given error when overloaded', () => {
+	test('Forwards a copy of the given error when overloaded', () => {
+		// 1. The forwarded error reads exactly like the one given, but is not the same object: a mutation an error
+		//    handler makes must not write back into the option
 		const handler = handlePressure({ ...sample.options, error: sample.error });
 		mockMonitor.overloaded = true;
 
 		handler(req, res, next);
 
 		expect(next).toHaveBeenCalledOnce();
-		expect(next).toHaveBeenCalledWith(sample.error);
+
+		const forwarded = vi.mocked(next).mock.calls[0]![0] as unknown as Error;
+
+		expect(forwarded).not.toBe(sample.error);
+		expect(forwarded).toBeInstanceOf(Error);
+		expect(forwarded.message).toBe(sample.error.message);
+	});
+
+	test('Hands each overloaded request its own error, so a mutating error handler leaks nothing', () => {
+		// 1. An error handler that marks the error it receives; the mark must not survive onto the error of the next
+		//    overloaded request
+		const handler = handlePressure({ ...sample.options, error: sample.error });
+		mockMonitor.overloaded = true;
+
+		handler(req, res, (error) => {
+			if (error) Object.assign(error, { handled: true });
+		});
+
+		handler(req, res, next);
+
+		const forwarded = vi.mocked(next).mock.calls[0]![0] as unknown as Error & { handled?: boolean };
+
+		expect(forwarded).not.toBe(sample.error);
+		expect(forwarded.handled).not.toBe(true);
+	});
+
+	test('Calls a given error factory per rejected request', () => {
+		// 1. The factory pattern `withTimeout` of `@novastarter/utils` uses: every rejected request gets the error
+		//    freshly built, so nothing is shared between requests by construction
+		const factory = vi.fn(() => new Error('factory pressure error'));
+		const handler = handlePressure({ ...sample.options, error: factory });
+		mockMonitor.overloaded = true;
+
+		handler(req, res, next);
+		handler(req, res, next);
+
+		expect(factory).toHaveBeenCalledTimes(2);
+		expect(next).toHaveBeenCalledTimes(2);
+		expect(vi.mocked(next).mock.calls[0]![0]).not.toBe(vi.mocked(next).mock.calls[1]![0]);
+		expect(vi.mocked(next).mock.calls[0]![0]).toEqual(expect.objectContaining({ message: 'factory pressure error' }));
 	});
 
 	test('Sets Retry-After when overloaded and a value is given', () => {
+		// 1. The header is how a rejected client learns when to come back
 		const handler = handlePressure(sample.options);
 		mockMonitor.overloaded = true;
 
@@ -107,6 +158,7 @@ describe('handlePressure', () => {
 	});
 
 	test('Omits Retry-After when overloaded without a value', () => {
+		// 1. No value chosen, no header sent
 		const handler = handlePressure({ maxEventLoopUtilization: 0.8 });
 		mockMonitor.overloaded = true;
 
@@ -116,6 +168,7 @@ describe('handlePressure', () => {
 	});
 
 	test('Reads the verdict per request, so recovery lets requests through again', () => {
+		// 1. Recovery between two requests lets the second one through: the verdict is read per request, not cached
 		const handler = handlePressure(sample.options);
 
 		mockMonitor.overloaded = true;

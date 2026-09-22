@@ -30,9 +30,10 @@ export function validatePayload(
 	payload: Record<string, any>,
 	options?: JoiOptions,
 ): InstanceType<typeof FailedValidationError>[] {
+	// 1. The errors every branch below collects into; shared, so the branches read as one accumulation
 	const errors: InstanceType<typeof FailedValidationError>[] = [];
 
-	// 1. `_and`: every member must pass, so the errors of all members are collected
+	// 2. `_and`: every member must pass, so the errors of all members are collected
 	if (Object.keys(filter)[0] === '_and') {
 		const subValidation = Object.values(filter)[0] as FieldFilter[];
 
@@ -44,7 +45,7 @@ export function validatePayload(
 
 		errors.push(...nestedErrors);
 	} else if (Object.keys(filter)[0] === '_or') {
-		// 2. `_or`: stop at the first passing member; the errors gathered so far are only surfaced when none passes,
+		// 3. `_or`: stop at the first passing member; the errors gathered so far are only surfaced when none passes,
 		//    since the caller then needs to see why each branch was rejected
 		const subValidation = Object.values(filter)[0] as FieldFilter[];
 
@@ -65,7 +66,7 @@ export function validatePayload(
 			errors.push(...swallowErrors);
 		}
 	} else {
-		// 3. Leaf: build the schema and run it; each Joi detail becomes one error with structured extensions, so the
+		// 4. Leaf: build the schema and run it; each Joi detail becomes one error with structured extensions, so the
 		//    caller never sees Joi
 		const schema = generateJoi(filter as FieldFilter, options);
 

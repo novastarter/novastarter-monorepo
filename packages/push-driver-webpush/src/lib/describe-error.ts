@@ -7,14 +7,18 @@ import { GONE_STATUSES } from './constants.js';
  * Turn what `web-push` throws into the error `sendPush()` expects.
  *
  * @param error - What was thrown: a `WebPushError` for a non-2xx answer, a plain error for the network.
- * @returns A {@link PushTargetGoneError} for a dead subscription, else an error naming the status and body with the
- * original as its cause.
+ * @returns A {@link PushTargetGoneError} for a dead subscription, else an error naming the status and body; either
+ * way the original is the cause.
  */
 export const describeError = (error: unknown): Error => {
-	// 1. The push service answered: 404 / 410 mean the subscription is gone for good
+	// 1. The push service answered: 404 / 410 mean the subscription is gone for good. The library's error stays as the
+	//    cause, so the handler can reach the status code and the body
 	if (error instanceof WebPushError) {
 		if (GONE_STATUSES.has(error.statusCode)) {
-			return new PushTargetGoneError({ platform: 'webpush', reason: `${error.statusCode} from ${error.endpoint}` });
+			return new PushTargetGoneError(
+				{ platform: 'webpush', reason: `${error.statusCode} from ${error.endpoint}` },
+				{ cause: error },
+			);
 		}
 
 		const body = error.body?.trim();

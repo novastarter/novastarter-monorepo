@@ -1,16 +1,16 @@
 /**
  * Tests of `logger/lib/logs-stream`.
  *
- * `nanoid` is mocked for a stable node id and the bus is a stub, so these exercise the shaping of the lines alone.
+ * `processId` is mocked for a stable node id and the bus is a stub, so these exercise the shaping of the lines alone.
  */
 import { randomUUID } from 'node:crypto';
 import { omit } from 'lodash-es';
 import { afterEach, expect, test, vi } from 'vitest';
 import { type LogsBus, LogsStream } from './logs-stream.js';
 
-vi.mock('nanoid', () => ({
-	nanoid: () => {
-		return 'a-nanoid';
+vi.mock('@novastarter/utils/node', () => ({
+	processId: () => {
+		return 'a-process-id';
 	},
 }));
 
@@ -45,6 +45,7 @@ const sample = {
 };
 
 test('Publishes raw log when pretty is false', () => {
+	// 1. Raw mode wraps the line as it came; the id of the process rides along so a reader can tell the nodes apart
 	const logStream = new LogsStream(false, messenger);
 	const logString = JSON.stringify(sample.log);
 
@@ -54,12 +55,13 @@ test('Publishes raw log when pretty is false', () => {
 		'logs',
 		JSON.stringify({
 			log: sample.log,
-			nodeId: 'a-nanoid',
+			nodeId: 'a-process-id',
 		}),
 	);
 });
 
 test('Publishes http log when pretty is false', () => {
+	// 1. Request fields stay untouched in raw mode: folding is a pretty concern
 	const logStream = new LogsStream(false, messenger);
 	const logString = JSON.stringify(sample.httpLog);
 
@@ -69,12 +71,13 @@ test('Publishes http log when pretty is false', () => {
 		'logs',
 		JSON.stringify({
 			log: sample.httpLog,
-			nodeId: 'a-nanoid',
+			nodeId: 'a-process-id',
 		}),
 	);
 });
 
 test('Publishes prettified log when pretty is basic', () => {
+	// 1. The basic shape keeps exactly the fields a log viewer shows
 	const logStream = new LogsStream('basic', messenger);
 	const logString = JSON.stringify(sample.log);
 
@@ -84,12 +87,13 @@ test('Publishes prettified log when pretty is basic', () => {
 		'logs',
 		JSON.stringify({
 			log: sample.log,
-			nodeId: 'a-nanoid',
+			nodeId: 'a-process-id',
 		}),
 	);
 });
 
 test('Publishes prettified http log when pretty is http', () => {
+	// 1. A line without its request fields cannot fold, so it falls back to the basic shape
 	const logStream = new LogsStream('http', messenger);
 	const logString = JSON.stringify(omit(sample.httpLog, ['req', 'res', 'responseTime']));
 
@@ -103,12 +107,13 @@ test('Publishes prettified http log when pretty is http', () => {
 				time: sample.httpLog.time,
 				msg: sample.httpLog.msg,
 			},
-			nodeId: 'a-nanoid',
+			nodeId: 'a-process-id',
 		}),
 	);
 });
 
 test('Folds request fields into one message when pretty is http', () => {
+	// 1. Method, URL, status and duration become the one message a reader scans for
 	const logStream = new LogsStream('http', messenger);
 
 	logStream._write(JSON.stringify(sample.httpLog), '', () => {});
@@ -121,7 +126,7 @@ test('Folds request fields into one message when pretty is http', () => {
 				time: sample.httpLog.time,
 				msg: `${sample.httpLog.req.method} ${sample.httpLog.req.url} ${sample.httpLog.res.statusCode} ${sample.httpLog.responseTime}ms`,
 			},
-			nodeId: 'a-nanoid',
+			nodeId: 'a-process-id',
 		}),
 	);
 });
@@ -142,12 +147,13 @@ test('Folds a request served in under a millisecond, whose responseTime is 0', (
 				time: fast.time,
 				msg: `${fast.req.method} ${fast.req.url} 200 0ms`,
 			},
-			nodeId: 'a-nanoid',
+			nodeId: 'a-process-id',
 		}),
 	);
 });
 
 test('Escapes quotes in error messages', () => {
+	// 1. A message with quotes survives the string interpolation of raw mode
 	const logStream = new LogsStream('basic', messenger);
 
 	const log = {
@@ -158,7 +164,7 @@ test('Escapes quotes in error messages', () => {
 
 	logStream._write(JSON.stringify(log), '', () => {});
 
-	expect(messenger.publish).toBeCalledWith('logs', JSON.stringify({ log, nodeId: 'a-nanoid' }));
+	expect(messenger.publish).toBeCalledWith('logs', JSON.stringify({ log, nodeId: 'a-process-id' }));
 });
 
 test('Drops a line the bus refuses instead of failing the stream or the process', async () => {

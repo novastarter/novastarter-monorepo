@@ -1,8 +1,8 @@
 import {
-	bareMailAddress,
 	type MailAddress,
 	type MailAttachment,
 	type MailMessage,
+	parseMailAddress,
 	readAttachment,
 	toMailAddressList,
 } from '@novastarter/mail';
@@ -19,9 +19,12 @@ export type MailjetAttachment = { ContentType: string; Filename: string; Base64C
  * @param address - Ours.
  * @returns `{ Email, Name? }`.
  */
-export const toMailjetAddress = (address: MailAddress): { Email: string; Name?: string } =>
-	// 1. A display-name string is unwrapped to its address; an object keeps its name
-	typeof address === 'string' ? { Email: bareMailAddress(address) } : { Email: address.address, Name: address.name };
+export const toMailjetAddress = (address: MailAddress): { Email: string; Name?: string } => {
+	// 1. The object APIs take name and address apart, so a display-name string is parsed, not flattened to the address
+	const parsed = parseMailAddress(address);
+
+	return { Email: parsed.address, ...(parsed.name !== undefined ? { Name: parsed.name } : {}) };
+};
 
 /**
  * An attachment the way Mailjet takes it: base64 content and a content type.

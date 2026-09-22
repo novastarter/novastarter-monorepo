@@ -1,5 +1,5 @@
 /**
- * Tests of `billing/plans` and `billing/plan-catalog`: what `definePlans()` accepts, what it refuses, and the lookups.
+ * Tests of `billing/plans`: what `definePlans()` accepts, what it refuses, and the catalog it builds.
  */
 import { describe, expect, test } from 'vitest';
 import { PlanCatalog } from './plan-catalog';
@@ -79,41 +79,5 @@ describe('definePlans', () => {
 		expect(() =>
 			definePlans([{ ...definitions[2]!, providerIds: { stripe: { monthly: 'x' }, polar: { monthly: 'x' } } }]),
 		).not.toThrow();
-	});
-});
-
-describe('PlanCatalog', () => {
-	const catalog = definePlans(definitions);
-
-	test('Resolves the provider price id of a plan and period, and complains when it is missing', () => {
-		expect(catalog.priceIdOf('pro', 'yearly', 'stripe')).toBe('price_pro_y');
-		expect(catalog.priceIdOf('pro', 'monthly', 'polar')).toBe('prod_pro_m');
-		expect(() => catalog.priceIdOf('business', 'yearly', 'stripe')).toThrow('Plan "business" has no yearly price');
-
-		expect(() => catalog.priceIdOf('business', 'monthly', 'polar')).toThrow(
-			'Plan "business" has no monthly price id for provider "polar" in its providerIds',
-		);
-
-		expect(() => catalog.priceIdOf('free', 'monthly', 'stripe')).toThrow('Plan "free" has no monthly price');
-	});
-
-	test('Maps a provider price id back to its plan and period', () => {
-		expect(catalog.findByPriceId('stripe', 'price_pro_y')).toMatchObject({ plan: { id: 'pro' }, period: 'yearly' });
-		expect(catalog.findByPriceId('polar', 'prod_pro_m')).toMatchObject({ plan: { id: 'pro' }, period: 'monthly' });
-		expect(catalog.findByPriceId('stripe', 'prod_pro_m')).toBeUndefined();
-		expect(catalog.findByPriceId('paddle', 'price_pro_m')).toBeUndefined();
-	});
-
-	test('Reads entitlements: limits, no limit, switches, and absence', () => {
-		expect(catalog.entitlement('pro', 'seats')).toBe(5);
-		expect(catalog.entitlement('business', 'projects')).toBeNull();
-		expect(catalog.entitlement('business', 'sso')).toBe(true);
-		expect(catalog.entitlement('free', 'api')).toBeUndefined();
-		expect(catalog.entitlementKeys()).toStrictEqual(['seats', 'projects', 'sso']);
-	});
-
-	test('Exposes the plans as plain data', () => {
-		expect(JSON.parse(JSON.stringify(catalog.plans))).toHaveLength(3);
-		expect(catalog.plans[1]?.prices.yearly).toStrictEqual(usd(19000));
 	});
 });

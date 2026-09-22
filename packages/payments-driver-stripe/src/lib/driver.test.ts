@@ -3,21 +3,12 @@
  * and read from fixtures shaped like Stripe's current events. The mappings have their own tests beside their modules
  * (`to-event.test.ts`, `to-invoice.test.ts`, `to-subscription.test.ts`).
  */
-import { readFileSync } from 'node:fs';
 import { InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
 import Stripe from 'stripe';
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { fixture } from '../fixtures/index.js';
 import { PaymentsDriverStripe, PRORATION } from './driver.js';
 import { toInvoice } from './to-invoice.js';
-
-/**
- * A fixture event, parsed.
- *
- * @param name - The Stripe event type the file is named after.
- * @returns The event object.
- */
-const fixture = (name: string): Stripe.Event =>
-	JSON.parse(readFileSync(new URL(`../fixtures/${name}.json`, import.meta.url), 'utf8')) as Stripe.Event;
 
 /** The secret the fixtures are signed with. */
 const WEBHOOK_SECRET = 'whsec_test_secret';

@@ -2,10 +2,11 @@
  * Tests of `to-resend-email`: how a message and its attachments become the payload of Resend's `emails.send()`.
  */
 import { describe, expect, test } from 'vitest';
-import { toResendAttachment, toResendEmail, toResendTag } from './to-resend-email.js';
+import { RESEND_TAG_COUNT, toResendAttachment, toResendEmail, toResendTag } from './to-resend-email.js';
 
 describe('toResendTag', () => {
 	test('Replaces everything outside Resend character set with an underscore', () => {
+		// 1. A space, a dot and a slash are outside Resend's name set, so each becomes one `_`
 		expect(toResendTag('a b.c/d')).toBe('a_b_c_d');
 	});
 });
@@ -90,6 +91,27 @@ describe('toResendEmail', () => {
 				{ name: 'v2', value: '1' },
 			],
 		});
+	});
+
+	test('Drops a tag that sanitises to nothing and caps the list at the limit', async () => {
+		// 1. A tag with no characters Resend's character set would take has no name at all; Resend would reject it, so
+		//    the tag drops and the rest of the message still sends
+		expect(
+			await toResendEmail({ to: 'a@b.c', from: 'x@y.z', subject: 'x', text: 'x', tags: ['', 'welcome'] }),
+		).toMatchObject({
+			tags: [
+				{ name: 'category', value: 'transactional' },
+				{ name: 'welcome', value: '1' },
+			],
+		});
+
+		// 2. Resend caps an email at its tag count; the category takes one slot and the tail is left off
+		const tags = Array.from({ length: RESEND_TAG_COUNT + 5 }, (_, index) => `tag_${index}`);
+
+		const email = await toResendEmail({ to: 'a@b.c', from: 'x@y.z', subject: 'x', text: 'x', tags });
+
+		expect(email.tags).toHaveLength(RESEND_TAG_COUNT);
+		expect(email.tags?.at(-1)).toStrictEqual({ name: `tag_${RESEND_TAG_COUNT - 2}`, value: '1' });
 	});
 
 	test('Refuses a message without a sender by name', async () => {

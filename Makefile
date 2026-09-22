@@ -5,8 +5,10 @@
 #   1. `hooks`   — install the lefthook git hooks from `lefthook.yml`, so the release commit goes through the same
 #                  pre-commit checks as any other commit (`pnpm install` does this too; a fresh clone or a new
 #                  worktree may lack them).
-#   2. `check`   — run the `pre-commit` jobs (ESLint with `--fix`, Prettier with `--write`, the changeset guard)
-#                  over every tracked file, so the tree is clean before the versions are touched.
+#   2. `check`   — run the `pre-commit` jobs over every tracked file, so the tree is clean before the versions are
+#                  touched. ESLint with `--fix` and Prettier with `--write` rewrite all of them here; the changeset
+#                  guard reads `git diff --cached`, which is empty outside a commit, so it always passes in this step
+#                  and only ever blocks at commit time through the installed hook.
 #   3. `version` — build the release notes generator, let changesets bump the versions and consume the pending
 #                  `.changeset/*.md` files, and store the printed release notes in `release-notes.md` (the markdown
 #                  body only, without the console dividers and the changesets banner).

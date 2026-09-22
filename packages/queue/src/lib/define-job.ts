@@ -64,14 +64,15 @@ export interface DefineJobOptions<Name extends string, Schema extends z.ZodType>
 export const defineJob = <Name extends string, Schema extends z.ZodType>(
 	definition: DefineJobOptions<Name, Schema>,
 ): JobContract<Name, Schema> => {
+	// 1. Both are needed on their own below — the name for the validation, the schema for the returned contract
 	const { name, schema } = definition;
 
-	// 1. The name is an identifier that ends up in Redis keys, log lines and URLs, so it is kept strict
+	// 2. The name is an identifier that ends up in Redis keys, log lines and URLs, so it is kept strict
 	if (!JOB_NAME_PATTERN.test(name)) {
 		throw new TypeError(`Job name "${name}" must look like <queue>.<action>: lower-case words, one dot`);
 	}
 
-	// 2. The caller's options win over the defaults; a timeout no timer can hold is refused now, since the worker
+	// 3. The caller's options win over the defaults; a timeout no timer can hold is refused now, since the worker
 	//    would otherwise fail every run of the job with a `RangeError` and retry it for nothing
 	const options = { ...DEFAULT_JOB_OPTIONS, ...definition.options };
 
@@ -81,7 +82,7 @@ export const defineJob = <Name extends string, Schema extends z.ZodType>(
 		);
 	}
 
-	// 3. The queue is everything before the dot, the action the rest; the pattern guaranteed exactly one dot
+	// 4. The queue is everything before the dot, the action the rest; the pattern guaranteed exactly one dot
 	const [queue, action] = name.split('.') as [string, string];
 
 	return {

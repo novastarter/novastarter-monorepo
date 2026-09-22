@@ -40,7 +40,12 @@ export interface MailMessage {
 	headers?: Record<string, string> | undefined;
 	/** `transactional` unless given. */
 	category?: MailCategory | undefined;
-	/** Labels the provider records (Resend tags, SendGrid categories); nodemailer drivers ignore them. */
+	/**
+	 * Labels the provider records (Resend tags, SendGrid categories); nodemailer drivers ignore them.
+	 *
+	 * Every driver adapts the labels to what its provider accepts — character set, length and count — cutting or
+	 * dropping the ones past the limits, so a label can cost the provider's analytics but never fail the send.
+	 */
 	tags?: string[] | undefined;
 }
 

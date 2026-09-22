@@ -120,6 +120,14 @@ export class StorageDriverCloudinary implements TusDriver {
 	private accessMode: 'public' | 'authenticated';
 
 	/**
+	 * Largest chunk in bytes `writeChunk` accepts, taken from `tus.chunkSize` when resumable uploads are enabled;
+	 * `undefined` when no size was configured, in which case any chunk the TUS server hands is accepted.
+	 *
+	 * @internal
+	 */
+	private readonly maximumChunkSize: number | undefined;
+
+	/**
 	 * Create a driver from its options.
 	 *
 	 * @param config - Credentials and behaviour options.
@@ -150,6 +158,10 @@ export class StorageDriverCloudinary implements TusDriver {
 		if (config.tus?.enabled && config.tus.chunkSize && config.tus?.chunkSize < MINIMUM_CHUNK_SIZE) {
 			throw new Error('The cloudinary storage driver got a "tus.chunkSize" below 5 MB');
 		}
+
+		// 4. The configured size is the ceiling the TUS server agrees to send per request, so it is kept for
+		//    `writeChunk` to refuse an oversized chunk before the chunk is sent
+		this.maximumChunkSize = config.tus?.enabled ? config.tus.chunkSize : undefined;
 	}
 
 	/**
@@ -491,11 +503,16 @@ export class StorageDriverCloudinary implements TusDriver {
 			body,
 		});
 
-		// 3. Cloudinary explains a rejected rename in the JSON body; pass the message on with the path
+		// 3. Cloudinary explains a rejected rename in the JSON body; pass the message on with the path. A body that is
+		//    not JSON — a gateway's HTML page among it — reads as `Unknown` instead of crashing the parse
 		if (response.status >= 400) {
-			const responseData = (await response.json()) as { error?: { message?: string } };
+			const responseData = (await response.json().catch(() => ({}))) as { error?: { message?: string } };
 			throw new Error(`Can't move file "${src}": ${responseData?.error?.message ?? 'Unknown'}`);
 		}
+
+		// 4. An unread body holds its connection open, so the successful rename's body is cancelled rather than left
+		//    for the GC to collect
+		await response.body?.cancel();
 	}
 
 	/**
@@ -672,11 +689,16 @@ export class StorageDriverCloudinary implements TusDriver {
 			},
 		});
 
-		// 3. Cloudinary explains a rejected chunk in the JSON body; pass the message on
+		// 3. Cloudinary explains a rejected chunk in the JSON body; pass the message on. A body that is not JSON reads
+		//    as `Unknown` instead of crashing the parse
 		if (response.status >= 400) {
-			const responseData = (await response.json()) as { error?: { message?: string } };
+			const responseData = (await response.json().catch(() => ({}))) as { error?: { message?: string } };
 			throw new Error(responseData?.error?.message ?? 'Unknown');
 		}
+
+		// 4. An unread body holds its connection open, so the successful chunk's body is cancelled rather than left for
+		//    the GC to collect
+		await response.body?.cancel();
 	}
 
 	/**
@@ -721,6 +743,10 @@ export class StorageDriverCloudinary implements TusDriver {
 			const json = (await response.json().catch(() => ({}))) as { error?: { message?: string } };
 			throw new Error(`Error deleting file "${filepath}": ${json.error?.message ?? `HTTP ${response.status}`}`);
 		}
+
+		// 3. An unread body holds its connection open, so the successful destroy's body is cancelled rather than left
+		//    for the GC to collect
+		await response.body?.cancel();
 	}
 
 	/**
@@ -737,19 +763,20 @@ export class StorageDriverCloudinary implements TusDriver {
 
 		let nextCursor = '';
 
-		// 2. The search API pages with a cursor; an empty cursor on the first call asks for the first page
+		// 2. The search API pages with a cursor; an empty cursor on the first call asks for the first page. The query
+		//    goes through `URLSearchParams` so a prefix carrying `&`, `#` or `+` cannot break out of the `expression`
+		//    value
 		do {
-			const response = await fetch(
-				`https://api.cloudinary.com/v1_1/${this.cloudName}/resources/search?expression=${fullPath}*&next_cursor=${nextCursor}`,
-				{
-					method: 'GET',
-					headers: {
-						Authorization: this.getBasicAuth(),
-					},
-				},
-			);
+			const query = new URLSearchParams({ expression: `${fullPath}*`, next_cursor: nextCursor });
 
-			const json = (await response.json()) as {
+			const response = await fetch(`https://api.cloudinary.com/v1_1/${this.cloudName}/resources/search?${query}`, {
+				method: 'GET',
+				headers: {
+					Authorization: this.getBasicAuth(),
+				},
+			});
+
+			const json = (await response.json().catch(() => ({}))) as {
 				next_cursor: string;
 				resources: {
 					public_id: string;
@@ -796,15 +823,19 @@ export class StorageDriverCloudinary implements TusDriver {
 	 * Start a resumable upload.
 	 *
 	 * @param _filepath - Final asset path relative to the root; unused.
-	 * @param context - Client-supplied size and metadata.
+	 * @param context - Client-supplied size and metadata; the metadata map is created when the client sent none.
 	 * @returns The context with the signing timestamp and the upload id recorded in its metadata.
 	 */
 	async createChunkedUpload(_filepath: string, context: ChunkedUploadContext): Promise<ChunkedUploadContext> {
-		// 1. Every chunk of one upload must carry the same timestamp, since it is part of the signature, and the same
+		// 1. A POST without `Upload-Metadata` arrives with no map at all; it is created here, before anything is
+		//    recorded, so storing the upload state below cannot fail with a TypeError
+		const metadata = (context.metadata ??= {});
+
+		// 2. Every chunk of one upload must carry the same timestamp, since it is part of the signature, and the same
 		//    upload id, since Cloudinary joins the chunks by it; the context is what the TUS server hands back on
 		//    every following call, so both are recorded there
-		context.metadata!['timestamp'] = this.getTimestamp();
-		context.metadata!['uploadId'] = this.getUploadId();
+		metadata['timestamp'] = this.getTimestamp();
+		metadata['uploadId'] = this.getUploadId();
 
 		return context;
 	}
@@ -818,6 +849,7 @@ export class StorageDriverCloudinary implements TusDriver {
 	 * @param context - Context carrying the total `size` and the `timestamp` and `uploadId` recorded by
 	 * {@link StorageDriverCloudinary.createChunkedUpload}.
 	 * @returns The new upload offset: `offset` plus the bytes of this chunk.
+	 * @throws Error when the chunk exceeds the size configured as `tus.chunkSize`.
 	 * @throws Error carrying Cloudinary's message when the chunk is rejected.
 	 */
 	async writeChunk(
@@ -830,10 +862,15 @@ export class StorageDriverCloudinary implements TusDriver {
 		const folderPath = this.getFolderPath(fullPath);
 		const resourceType = this.getResourceType(filepath);
 
-		// 1. Same parameters as a plain write, except the timestamp comes from the context so every chunk carries
+		// 1. The map is read for the upload state below and may arrive absent from a POST without `Upload-Metadata`; it
+		//    is created rather than crashing with a TypeError, so the failure a missing session causes is the API's, not
+		//    the driver's
+		const metadata = (context.metadata ??= {});
+
+		// 2. Same parameters as a plain write, except the timestamp comes from the context so every chunk carries
 		//    the signature the upload started with
 		const uploadParameters = {
-			timestamp: context.metadata!['timestamp'] as string,
+			timestamp: metadata['timestamp'] as string,
 			api_key: this.apiKey,
 			type: 'upload',
 			access_mode: this.accessMode,
@@ -846,15 +883,15 @@ export class StorageDriverCloudinary implements TusDriver {
 				: {}),
 		};
 
-		// 2. The upload id also comes from the context, so every chunk lands in the same Cloudinary upload; an upload
+		// 3. The upload id also comes from the context, so every chunk lands in the same Cloudinary upload; an upload
 		//    started before the id was recorded keeps the timestamp its earlier chunks went out under
-		const uploadId = context.metadata!['uploadId'] ?? uploadParameters.timestamp;
+		const uploadId = metadata['uploadId'] ?? uploadParameters.timestamp;
 
 		let bytesUploaded = offset || 0;
 		let currentChunkSize = 0;
 		let chunks = Buffer.alloc(0);
 
-		// 3. Buffer the whole chunk: the upload API needs its size for `Content-Range` before the request starts
+		// 4. Buffer the whole chunk: the upload API needs its size for `Content-Range` before the request starts
 		for await (const chunk of content) {
 			currentChunkSize += chunk.length;
 			chunks = Buffer.concat([chunks, chunk], currentChunkSize);
@@ -862,7 +899,15 @@ export class StorageDriverCloudinary implements TusDriver {
 
 		bytesUploaded += currentChunkSize;
 
-		// 4. Only the chunk that reaches the declared size carries the real total; earlier ones send `-1`, which
+		// 5. The TUS server agreed to send at most the configured size per request; an oversized chunk is refused
+		//    before it is sent, since Cloudinary would assemble an asset from bytes the upload never agreed to carry
+		if (this.maximumChunkSize !== undefined && currentChunkSize > this.maximumChunkSize) {
+			throw new Error(
+				`The chunk of ${currentChunkSize} bytes exceeds the chunk size limit of ${this.maximumChunkSize} bytes`,
+			);
+		}
+
+		// 6. Only the chunk that reaches the declared size carries the real total; earlier ones send `-1`, which
 		//    tells Cloudinary more is coming
 		await this.uploadChunk({
 			resourceType,

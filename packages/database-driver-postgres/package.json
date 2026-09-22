@@ -28,6 +28,7 @@
 		"@novastarter/database": "workspace:*",
 		"@novastarter/logger": "workspace:*",
 		"@novastarter/utils": "workspace:*",
+		"@types/pg": "catalog:",
 		"drizzle-orm": "catalog:",
 		"pg": "catalog:"
 	},
@@ -35,7 +36,6 @@
 		"@ngneat/falso": "catalog:",
 		"@novastarter/tsconfig": "workspace:*",
 		"@types/node": "catalog:",
-		"@types/pg": "catalog:",
 		"@vitest/coverage-v8": "catalog:",
 		"tsdown": "catalog:",
 		"typescript": "catalog:",

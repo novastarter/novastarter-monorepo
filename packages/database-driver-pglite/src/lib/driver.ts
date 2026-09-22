@@ -35,6 +35,14 @@ export type DatabaseDriverPgliteOptions = Omit<PGliteOptions, 'dataDir'>;
  *
  * @param connection - The `connection` string of a location.
  * @returns The path to create, or `undefined` for a database that lives elsewhere than on disk.
+ * @example
+ * ```ts
+ * const directory = dataDirectory(config.connection);
+ *
+ * if (directory !== undefined) {
+ *     ensureDirectory(directory);
+ * }
+ * ```
  */
 export const dataDirectory = (connection: string): string | undefined => {
 	// 1. The prefix is PGlite's to read; the filesystem wants the bare path

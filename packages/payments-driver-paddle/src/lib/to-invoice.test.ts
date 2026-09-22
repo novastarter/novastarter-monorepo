@@ -15,7 +15,7 @@ describe('toInvoice', () => {
 			customerId: 'ctm_01h7zcgmdc8n1v3ypn6pkqtb3r',
 			subscriptionId: 'sub_01h7zcgmdc8n1v3ypn6pkqtb3s',
 			status: 'paid',
-			total: { amount: 10440, currency: 'USD' },
+			total: { amount: 10440, currency: 'usd' },
 			amountPaid: 10440,
 			amountDue: 0,
 			createdAt: new Date('2026-09-01T09:59:50.000Z'),

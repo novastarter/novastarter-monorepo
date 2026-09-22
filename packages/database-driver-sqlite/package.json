@@ -27,13 +27,13 @@
 	"dependencies": {
 		"@novastarter/database": "workspace:*",
 		"@novastarter/logger": "workspace:*",
+		"@types/better-sqlite3": "catalog:",
 		"better-sqlite3": "catalog:",
 		"drizzle-orm": "catalog:"
 	},
 	"devDependencies": {
 		"@ngneat/falso": "catalog:",
 		"@novastarter/tsconfig": "workspace:*",
-		"@types/better-sqlite3": "catalog:",
 		"@types/node": "catalog:",
 		"@vitest/coverage-v8": "catalog:",
 		"tsdown": "catalog:",

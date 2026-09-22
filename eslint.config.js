@@ -77,8 +77,6 @@ export default typescriptEslint.config(
 			'lines-between-class-members': ['error', 'always', { exceptAfterSingleLine: true }],
 			// Disallow nested ternary expressions
 			'no-nested-ternary': 'error',
-			// Require brace style for multi-line control statements
-			curly: ['error', 'multi-line'],
 			// Disallow expressions where the operation doesn't affect the value
 			'no-constant-binary-expression': 'error',
 			// Added to eslint:recommended in ESLint 10. Downgraded to warnings so the toolchain

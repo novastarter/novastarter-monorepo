@@ -5,6 +5,10 @@ import nodemailer from 'nodemailer';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { MailDriverSendmail } from './sendmail.js';
 
+/**
+ * Stand-in for the sendmail transport `createTransport()` hands out: its `sendMail()` is the shared spy, so a test can
+ * script nodemailer's answer.
+ */
 const transporter = {
 	sendMail: vi.fn(async () => ({ messageId: '<x>', envelope: { to: ['ada@example.com'] } })),
 };

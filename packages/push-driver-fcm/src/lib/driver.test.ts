@@ -84,11 +84,14 @@ describe('PushDriverFcm', () => {
 	});
 
 	test('Sends and answers the message name; reports a dead token as gone and the rest as errors with the cause', async () => {
-		const driver = new PushDriverFcm({ messaging: { send }, credential: { getAccessToken } });
+		const driver = new PushDriverFcm({ serviceAccount: JSON.stringify(account) });
 		const message = { token: 'tok', title: 'Hi' };
 
-		// 1. An injected messaging client means no Firebase app of our own
-		expect(initializeApp).not.toHaveBeenCalled();
+		// 1. The messaging API of the location's own app is what sends reach
+		expect(initializeApp).toHaveBeenCalledWith(
+			{ credential: { getAccessToken }, projectId: 'proj' },
+			expect.stringMatching(/^novastarter-push-/),
+		);
 
 		// 2. FCM's message name is the id
 		send.mockResolvedValueOnce('projects/proj/messages/1');
@@ -137,16 +140,12 @@ describe('PushDriverFcm', () => {
 		getAccessToken.mockRejectedValueOnce(new Error('invalid_grant'));
 		await expect(driver.verify()).rejects.toThrow('FCM credentials are invalid: invalid_grant');
 
-		// 2. Only an app of our own is deleted; an injected client leaves nothing to close
+		// 2. `close()` releases the location's app
 		await driver.close();
 
 		expect(deleteApp).toHaveBeenCalledWith(
 			expect.objectContaining({ name: expect.stringMatching(/^novastarter-push-/) }),
 		);
-
-		await expect(
-			new PushDriverFcm({ messaging: { send }, credential: { getAccessToken } }).close(),
-		).resolves.toBeUndefined();
 	});
 
 	test('Is the default export too', () => {

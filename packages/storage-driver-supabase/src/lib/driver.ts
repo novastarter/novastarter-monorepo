@@ -209,8 +209,9 @@ export class StorageDriverSupabase implements TusDriver {
 	 */
 	private getAuthenticatedUrl(filepath: string) {
 		// 1. `object/authenticated` rather than `object/public`: the bucket may be private, and the bearer token in the
-		//    request is what grants access either way
-		return `${this.endpoint}/${join('object/authenticated', this.config.bucket, this.fullPath(filepath))}`;
+		//    request is what grants access either way. `joinPath` keeps the forward slashes an HTTP URL needs, the way
+		//    the object names are built
+		return `${this.endpoint}/${joinPath('object/authenticated', this.config.bucket, this.fullPath(filepath))}`;
 	}
 
 	/**
@@ -586,16 +587,20 @@ export class StorageDriverSupabase implements TusDriver {
 	): Promise<number> {
 		let bytesUploaded = offset || 0;
 
-		// 1. Supabase reads the target from the TUS metadata rather than the URL; the content type falls back to a
-		//    generic image type because the endpoint rejects an empty one
+		// 1. The map may arrive absent from a POST without `Upload-Metadata`; it is created rather than crashing with a
+		//    TypeError, so the upload state below always has a place to go
+		const contextMetadata = (context.metadata ??= {});
+
+		// 2. Supabase reads the target from the TUS metadata rather than the URL; the content type falls back to a
+		//    generic binary type because the endpoint rejects an empty one
 		const metadata = {
 			bucketName: this.config.bucket,
 			objectName: this.fullPath(filepath),
-			contentType: context.metadata!['type'] ?? 'image/png',
+			contentType: contextMetadata['type'] ?? 'application/octet-stream',
 			cacheControl: '3600',
 		};
 
-		// 2. `tus-js-client` reports through callbacks, so the one chunk is wrapped in a promise the callbacks settle
+		// 3. `tus-js-client` reports through callbacks, so the one chunk is wrapped in a promise the callbacks settle
 		await new Promise((resolve, reject) => {
 			// 1. The custom file reader feeds `tus-js-client` the chunk as a one-shot source, so the library sends
 			//    exactly this chunk instead of trying to read the whole file. `x-upsert` lets a re-upload replace the
@@ -628,19 +633,19 @@ export class StorageDriverSupabase implements TusDriver {
 				onUploadUrlAvailable() {
 					// 1. Remember the upload URL Supabase assigned on creation: it is the only handle for appending
 					//    later chunks, and the context is what the TUS server hands back on every following call
-					if (!context.metadata!['upload-url']) {
-						context.metadata!['upload-url'] = upload.url;
+					if (!contextMetadata['upload-url']) {
+						contextMetadata['upload-url'] = upload.url;
 					}
 				},
 			});
 
 			// 2. On every chunk after the first, resume the existing upload instead of creating a new one
-			if (context.metadata!['upload-url']) {
+			if (contextMetadata['upload-url']) {
 				upload.resumeFromPreviousUpload({
 					size: context.size!,
-					creationTime: context.metadata!['creation_date'] as string,
+					creationTime: contextMetadata['creation_date'] as string,
 					metadata,
-					uploadUrl: context.metadata!['upload-url'],
+					uploadUrl: contextMetadata['upload-url'],
 				} as any);
 			}
 

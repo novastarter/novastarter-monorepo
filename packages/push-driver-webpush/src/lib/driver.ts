@@ -13,9 +13,9 @@ import { describeError } from './describe-error.js';
 import { toRequestOptions } from './to-request-options.js';
 
 /**
- * The function that posts to the push service — `sendNotification` of `web-push`, or a test double.
+ * The function that posts to the push service — `sendNotification` of `web-push`.
  */
-export type SendNotification = (
+type SendNotification = (
 	subscription: PushSubscription,
 	payload: string,
 	options: RequestOptions,
@@ -39,12 +39,6 @@ export type PushDriverWebPushConfig = {
 	timeout?: number | undefined;
 	/** Proxy URL for the requests to the push services. */
 	proxy?: string | undefined;
-	/**
-	 * A `sendNotification`, for tests; the library's otherwise.
-	 *
-	 * @internal
-	 */
-	sendNotification?: SendNotification | undefined;
 };
 
 /**
@@ -103,7 +97,7 @@ export class PushDriverWebPush implements PushDriver {
 	private readonly config: PushDriverWebPushConfig;
 
 	/**
-	 * What posts to the push service: the library's `sendNotification`, or the test double.
+	 * What posts to the push service: the library's `sendNotification`.
 	 *
 	 * @internal
 	 */
@@ -131,7 +125,7 @@ export class PushDriverWebPush implements PushDriver {
 
 		this.config = config;
 		this.applicationServerKey = config.publicKey;
-		this.sendNotification = config.sendNotification ?? webpush.sendNotification;
+		this.sendNotification = webpush.sendNotification;
 	}
 
 	/**

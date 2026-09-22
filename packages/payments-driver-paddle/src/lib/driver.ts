@@ -328,21 +328,25 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 			throw new InvalidPayloadError({ reason: `The delivery carries no ${SIGNATURE_HEADER} header` });
 		}
 
-		// 2. The SDK checks the signature before it reads the body; a malformed header is a refused signature too
-		if (!(await this.client.webhooks.isSignatureValid(rawBody, this.webhookSecret, signature).catch(() => false))) {
-			throw new InvalidCredentialsError();
-		}
-
-		// 3. A verified body that is not an event is the sender's problem, reported as such — the SDK reads an unknown
-		//    type as a generic event and a non-event as one without a type or an id
+		// 2. The SDK verifies the signature before it reads the body, so `unmarshal` is the single check: a wrong
+		//    secret, a stale timestamp and a malformed header all throw from it, marked with the SDK's `[Paddle]`
+		//    prefix, while anything else that goes wrong in there is a payload problem
 		let event;
 
 		try {
 			event = await this.client.webhooks.unmarshal(rawBody, this.webhookSecret, signature);
 		} catch (error) {
+			// 1. The SDK's signature errors mean the delivery could not be authenticated, which the kit reports as
+			//    invalid credentials, not as a malformed payload
+			if (toErrorMessage(error).startsWith('[Paddle]')) {
+				throw new InvalidCredentialsError(undefined, { cause: error });
+			}
+
 			throw new InvalidPayloadError({ reason: toErrorMessage(error) });
 		}
 
+		// 3. A verified body that is not an event is the sender's problem, reported as such — the SDK reads an unknown
+		//    type as a generic event and a non-event as one without a type or an id
 		if (typeof event.eventType !== 'string' || typeof event.eventId !== 'string') {
 			throw new InvalidPayloadError({ reason: 'The body is not a Paddle event' });
 		}

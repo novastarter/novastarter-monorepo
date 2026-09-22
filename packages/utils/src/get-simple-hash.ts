@@ -14,14 +14,16 @@
  * ```
  */
 export function getSimpleHash(str: string): string {
+	// 1. The digest accumulates in a running value; zero is the neutral start of the additive fold below, and keeping
+	//    it a plain `let` outside the loop is what the loop adds to
 	let hash = 0;
 
-	// 1. Fold every UTF-16 code unit in, keeping the running value a 32-bit integer so it cannot grow into a float
+	// 2. Fold every UTF-16 code unit in, keeping the running value a 32-bit integer so it cannot grow into a float
 	for (let index = 0; index < str.length; index++) {
 		hash = (hash << 5) - hash + str.charCodeAt(index);
 		hash |= 0;
 	}
 
-	// 2. Reinterpret as unsigned, so the digest never carries a minus sign
+	// 3. Reinterpret as unsigned, so the digest never carries a minus sign
 	return (hash >>> 0).toString(16);
 }

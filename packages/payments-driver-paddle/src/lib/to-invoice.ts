@@ -44,14 +44,15 @@ export const toInvoice = (transaction: PaddleTransactionLike): Invoice => {
 	// 2. `capturedAt` is the moment of payment; a completed transaction without one was billed and settled at once
 	const paidAt = status === 'paid' ? (captured?.capturedAt ?? transaction.billedAt ?? transaction.createdAt) : null;
 
-	// 3. Paid means paid in full; otherwise what was captured so far is the balance's complement
+	// 3. Paid means paid in full; otherwise what was captured so far is the balance's complement. Paddle sends the
+	//    currency in upper case, while the kit's contract reads it in lower case
 	return {
 		id: transaction.id,
 		number: transaction.invoiceNumber,
 		customerId: transaction.customerId ?? '',
 		subscriptionId: transaction.subscriptionId,
 		status,
-		total: { amount: total, currency: transaction.currencyCode },
+		total: { amount: total, currency: transaction.currencyCode.toLowerCase() },
 		amountPaid: status === 'paid' ? total : Math.max(0, total - balance),
 		amountDue: status === 'paid' ? 0 : balance,
 		createdAt: new Date(transaction.createdAt),

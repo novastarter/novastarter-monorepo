@@ -1,9 +1,9 @@
 /**
  * Tests of the Stripe invoice mapping, read from fixtures shaped like Stripe's current invoices.
  */
-import { readFileSync } from 'node:fs';
 import type Stripe from 'stripe';
 import { describe, expect, test } from 'vitest';
+import { fixture } from '../fixtures/index.js';
 import { toInvoice } from './to-invoice.js';
 
 /**
@@ -12,14 +12,12 @@ import { toInvoice } from './to-invoice.js';
  * @param name - The Stripe event type the file is named after.
  * @returns The invoice.
  */
-const fixture = (name: string): Stripe.Invoice =>
-	(JSON.parse(readFileSync(new URL(`../fixtures/${name}.json`, import.meta.url), 'utf8')) as Stripe.Event).data
-		.object as Stripe.Invoice;
+const invoiceOf = (name: string): Stripe.Invoice => fixture(name).data.object as Stripe.Invoice;
 
 describe('toInvoice', () => {
 	test('Maps amounts, the subscription of the parent and the links', () => {
 		// 1. Amounts stay in minor units; the subscription comes from `parent.subscription_details`, the links as is
-		expect(toInvoice(fixture('invoice.paid'))).toStrictEqual({
+		expect(toInvoice(invoiceOf('invoice.paid'))).toStrictEqual({
 			id: 'in_1S5abcDEF12345',
 			number: 'A1B2C3D4-0001',
 			customerId: 'cus_T1abcDEF12345',
@@ -38,7 +36,7 @@ describe('toInvoice', () => {
 
 	test('Reads a draft for an invoice without a status and null for what is unset', () => {
 		// 1. Stripe leaves `status` null on an invoice still being built; a draft is the honest reading
-		const invoice = fixture('invoice.payment_failed');
+		const invoice = invoiceOf('invoice.payment_failed');
 
 		expect(toInvoice({ ...invoice, status: null })).toMatchObject({ status: 'draft' });
 

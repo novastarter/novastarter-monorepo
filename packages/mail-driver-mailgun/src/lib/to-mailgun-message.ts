@@ -13,6 +13,35 @@ import type { MailgunMessageData } from 'mailgun.js/definitions';
 export type MailgunFile = { filename: string; data: Buffer; contentType?: string };
 
 /**
+ * Longest tag name Mailgun accepts; a longer one fails the request.
+ *
+ * @defaultValue 128 characters.
+ */
+export const MAILGUN_TAG_LENGTH = 128;
+
+/**
+ * Most tags Mailgun accepts on one message; the category takes one of them.
+ *
+ * @defaultValue 3 tags.
+ */
+export const MAILGUN_TAG_COUNT = 3;
+
+/**
+ * The category and the tags as Mailgun takes them: every label cut to its length limit, the ones left empty dropped,
+ * the list capped at its count limit — so a label past a limit trims the analytics instead of failing the send.
+ *
+ * @param message - Ours.
+ * @returns The `o:tag` values, the category first.
+ */
+export const toMailgunTags = (message: MailMessage): string[] =>
+	// 1. Mailgun refuses a message over its tag limits, so each label is cut, an empty one drops out and the tail
+	//    past the count is left off, the category first
+	[message.category ?? 'transactional', ...(message.tags ?? [])]
+		.map((tag) => tag.slice(0, MAILGUN_TAG_LENGTH))
+		.filter((tag) => tag !== '')
+		.slice(0, MAILGUN_TAG_COUNT);
+
+/**
  * An attachment the way Mailgun takes it: the bytes and a filename.
  *
  * An inline image is referenced from the html as `cid:<filename>` on Mailgun, so the content id becomes the
@@ -37,8 +66,9 @@ export const toMailgunFile = async (attachment: MailAttachment): Promise<Mailgun
 /**
  * Translate a message into the payload of Mailgun's `messages.create()`.
  *
- * The category and the tags become Mailgun tags (`o:tag`), which the dashboard and the stats group by; the reply-to
- * and the custom headers go as `h:` fields; attachments with a content id go to `inline`, the rest to `attachment`.
+ * The category and the tags become Mailgun tags (`o:tag`), which the dashboard and the stats group by, cut and
+ * capped at Mailgun's limits by {@link toMailgunTags}; the reply-to and the custom headers go as `h:` fields;
+ * attachments with a content id go to `inline`, the rest to `attachment`.
  *
  * @param message - Ours, with `from` set (`sendMail()` fills it in).
  * @param testMode - Turn Mailgun's test mode on for this message.
@@ -56,7 +86,7 @@ export const toMailgunMessage = async (message: MailMessage, testMode = false): 
 		from: formatMailAddress(message.from),
 		to: toMailAddressList(message.to).map(formatMailAddress),
 		subject: message.subject,
-		'o:tag': [message.category ?? 'transactional', ...(message.tags ?? [])],
+		'o:tag': toMailgunTags(message),
 		...(message.html !== undefined ? { html: message.html } : {}),
 		...(message.text !== undefined ? { text: message.text } : {}),
 		...(message.cc ? { cc: message.cc.map(formatMailAddress) } : {}),

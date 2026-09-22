@@ -6,6 +6,7 @@ import {
 	toMailAddressList,
 } from '@novastarter/mail';
 import { MailtrapClient } from 'mailtrap';
+import { describeError } from './describe-error.js';
 import { toMailtrapMail } from './to-mailtrap-mail.js';
 
 /**
@@ -102,14 +103,22 @@ export class MailDriverMailtrap implements MailDriver {
 	 * @param message - Rendered message.
 	 * @returns The first message id Mailtrap assigned; every recipient as accepted, since the API takes all or
 	 * nothing.
-	 * @throws The SDK's `MailtrapError` (its message lists Mailtrap's errors) when the API refuses.
+	 * @throws An error naming Mailtrap with the SDK's `MailtrapError` as the cause (its message lists Mailtrap's
+	 * errors) when the API refuses.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
-		// 1. The message is translated before the request, so a missing sender fails by name instead of as an API error;
-		// the SDK throws its own `MailtrapError` on refusal, which passes through untouched
-		const response = await this.client.send(await toMailtrapMail(message));
+		// 1. The message is translated before the request, so a missing sender fails by name instead of as an API error
+		let response: Awaited<ReturnType<MailtrapClient['send']>>;
 
-		// 2. Mailtrap takes a message whole or refuses it, so every recipient counts as accepted
+		try {
+			response = await this.client.send(await toMailtrapMail(message));
+		} catch (error) {
+			// 2. The SDK throws its own `MailtrapError` on refusal, its messages listed; wrapped so the log names the
+			//    provider, the SDK's error as the cause
+			throw describeError(error);
+		}
+
+		// 3. Mailtrap takes a message whole or refuses it, so every recipient counts as accepted
 		return {
 			messageId: response.message_ids[0],
 			accepted: toMailAddressList(message.to).map(bareMailAddress),
@@ -120,11 +129,18 @@ export class MailDriverMailtrap implements MailDriver {
 	/**
 	 * Check the token without sending: it has to see at least one account.
 	 *
-	 * @throws The SDK's error when Mailtrap refuses the token; an error when it has no account.
+	 * @throws An error naming Mailtrap with the SDK's error as the cause when Mailtrap refuses the token; an error
+	 * when it has no account.
 	 */
 	async verify(): Promise<void> {
 		// 1. Listing the accounts is the cheapest call that needs the token: a bad one is refused here, without a send
-		const accounts = await this.client.general.accounts.getAllAccounts();
+		let accounts: Awaited<ReturnType<MailtrapClient['general']['accounts']['getAllAccounts']>>;
+
+		try {
+			accounts = await this.client.general.accounts.getAllAccounts();
+		} catch (error) {
+			throw describeError(error);
+		}
 
 		// 2. A token of no account can send nothing
 		if (accounts.length === 0) {

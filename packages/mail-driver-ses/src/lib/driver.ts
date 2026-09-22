@@ -6,7 +6,8 @@ import {
 	toMailResult,
 	toNodemailerMessage,
 } from '@novastarter/mail';
-import nodemailer, { type Transporter } from 'nodemailer';
+import nodemailer, { type SentMessageInfo, type Transporter } from 'nodemailer';
+import { describeError } from './describe-error.js';
 import { toSesClientConfig } from './to-ses-client-config.js';
 import { toSesMessageTags } from './to-ses-message-tags.js';
 
@@ -105,20 +106,27 @@ export class MailDriverSes implements MailDriver {
 	 *
 	 * @param message - Rendered message.
 	 * @returns SES's message id and the envelope recipients as accepted.
-	 * @throws The SDK's error when SES refuses.
+	 * @throws An error naming SES with the SDK's or nodemailer's error as the cause when SES refuses.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
 		// 1. Tags and the configuration set ride on the `ses` field nodemailer merges into the SendEmailCommand; the tags
 		//    are sanitised first, since SES refuses the whole message over one name outside its character set
-		const info = await this.transporter.sendMail({
-			...toNodemailerMessage(message),
-			ses: {
-				EmailTags: toSesMessageTags(message),
-				...(this.configurationSet ? { ConfigurationSetName: this.configurationSet } : {}),
-			},
-		} as Parameters<Transporter['sendMail']>[0]);
+		let info: SentMessageInfo;
 
-		// 2. nodemailer reports the envelope; SES itself answers with the message id only
+		try {
+			info = await this.transporter.sendMail({
+				...toNodemailerMessage(message),
+				ses: {
+					EmailTags: toSesMessageTags(message),
+					...(this.configurationSet ? { ConfigurationSetName: this.configurationSet } : {}),
+				},
+			} as Parameters<Transporter['sendMail']>[0]);
+		} catch (error) {
+			// 2. The transport or the SDK throws on a refusal; wrapped so the log names the provider
+			throw describeError(error);
+		}
+
+		// 3. nodemailer reports the envelope; SES itself answers with the message id only
 		return toMailResult(info);
 	}
 

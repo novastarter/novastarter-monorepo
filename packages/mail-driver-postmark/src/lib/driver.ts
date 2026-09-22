@@ -6,6 +6,7 @@ import {
 	toMailAddressList,
 } from '@novastarter/mail';
 import { ServerClient } from 'postmark';
+import { describeError } from './describe-error.js';
 import { type PostmarkStreams, toPostmarkMessage } from './to-postmark-message.js';
 
 /**
@@ -94,14 +95,21 @@ export class MailDriverPostmark implements MailDriver {
 	 *
 	 * @param message - Rendered message.
 	 * @returns Postmark's message id; every recipient as accepted — a refused recipient fails the whole request.
-	 * @throws The SDK's error (`PostmarkError` with `code` and `statusCode`; `InactiveRecipientsError` names the
-	 * suppressed recipients) when the API refuses.
+	 * @throws An error naming Postmark with the SDK's error as the cause (`PostmarkError` with `code` and
+	 * `statusCode`; `InactiveRecipientsError` names the suppressed recipients) when the API refuses.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
-		// 1. Translate first, so a message Postmark cannot take fails before the request; the SDK throws on a refusal
-		const response = await this.client.sendEmail(await toPostmarkMessage(message, this.streams));
+		// 1. Translate first, so a message Postmark cannot take fails before the request
+		let response: Awaited<ReturnType<ServerClient['sendEmail']>>;
 
-		// 2. Postmark takes a message whole or refuses it, so every recipient counts as accepted
+		try {
+			response = await this.client.sendEmail(await toPostmarkMessage(message, this.streams));
+		} catch (error) {
+			// 2. The SDK throws on a refusal; wrapped so the log names the provider, the SDK's error as the cause
+			throw describeError(error);
+		}
+
+		// 3. Postmark takes a message whole or refuses it, so every recipient counts as accepted
 		return {
 			messageId: response.MessageID,
 			accepted: toMailAddressList(message.to).map(bareMailAddress),
@@ -113,10 +121,13 @@ export class MailDriverPostmark implements MailDriver {
 	/**
 	 * Check the token without sending: the server it belongs to has to answer.
 	 *
-	 * @throws The SDK's error (`InvalidAPIKeyError` for a bad token) when Postmark refuses.
+	 * @throws An error naming Postmark with the SDK's error (`InvalidAPIKeyError` for a bad token) as the cause when
+	 * Postmark refuses.
 	 */
 	async verify(): Promise<void> {
 		// 1. The cheapest authenticated call: the server's own record
-		await this.client.getServer();
+		await this.client.getServer().catch((error: unknown) => {
+			throw describeError(error);
+		});
 	}
 }

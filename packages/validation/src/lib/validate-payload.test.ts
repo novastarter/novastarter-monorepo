@@ -188,12 +188,19 @@ describe('validatePayload', () => {
 			},
 		);
 
-		test('_icontains fails on the rule with the substring', () => {
-			// 1. The case-insensitive form must reach its rule as well; its reported operator is left to the converter
+		test('_icontains fails on its own rule with the substring', () => {
+			// 1. The case-insensitive form reaches its own rule, so the error carries the `icontains` operator rather
+			//    than being reported as `contains`
 			const errors = validatePayload({ email: { _icontains: '@' } } as Filter, { email: '' });
 
 			expect(errors).toHaveLength(1);
-			expect(errors[0]!.extensions).toMatchObject({ field: 'email', path: [], substring: '@' });
+
+			expect(errors[0]!.extensions).toStrictEqual({
+				field: 'email',
+				path: [],
+				type: 'icontains',
+				substring: '@',
+			});
 		});
 
 		test('inside a logical group', () => {

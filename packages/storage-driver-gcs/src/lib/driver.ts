@@ -476,7 +476,8 @@ export class StorageDriverGcs implements TusDriver {
 	 */
 	async deleteChunkedUpload(filepath: string, _context: ChunkedUploadContext): Promise<void> {
 		// 1. GCS keeps no object for an unfinished session and lets the session expire on its own, so the only thing that
-		//    can be left behind is a finished object under this path, which the plain delete removes
-		await this.delete(filepath);
+		//    can be left behind is a finished object under this path. `ignoreNotFound` answers the SDK's 404 for the far
+		//    more common missing object with a no-op, the way the drivers whose delete never rejects do
+		await this.file(this.fullPath(filepath)).delete({ ignoreNotFound: true });
 	}
 }

@@ -122,6 +122,7 @@ export class DatabaseDriverTurso<
 	 * @param config - Connection, schema and logging options.
 	 * @throws Error when `connection` is missing, or is a config without a `url`.
 	 * @throws What libsql raised when a local file could not be opened.
+	 * @throws What the filesystem raised when the directory of a local file could not be created.
 	 */
 	constructor(config: DatabaseDriverTursoConfig<Schema>) {
 		// 1. Refuse a missing connection up front, and a config without a URL with it: libsql would report an invalid

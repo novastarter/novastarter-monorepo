@@ -5,6 +5,7 @@ import type { Redis } from 'ioredis';
 import { getQueueNames } from '../../contracts/index.js';
 import type { QueueDriver } from '../../driver.js';
 import type { EnqueuedJob, EnqueueOptions, JobContract, JobOptions, QueueStats } from '../../types.js';
+import { loadBullmq } from '../load-bullmq.js';
 
 /**
  * Options accepted by {@link QueueDriverBullmq}: the options of a `bullmq` location.
@@ -137,9 +138,6 @@ export class QueueDriverBullmq implements QueueDriver {
 	 * @internal
 	 */
 	private closed = false;
-
-	/** The module, loaded once on first use. */
-	private bullmq: Promise<typeof import('bullmq')> | undefined;
 
 	/**
 	 * Open the driver on its Redis.
@@ -311,7 +309,7 @@ export class QueueDriverBullmq implements QueueDriver {
 	 */
 	private async openQueue(name: string): Promise<Queue> {
 		// 1. `bullmq` is loaded on first use, so a process that never opens a queue never pays for it
-		const { Queue } = await this.load();
+		const { Queue } = await loadBullmq();
 
 		// 2. Prefix and telemetry are only set when given: BullMQ would take an explicit `undefined` literally
 		const queue = new Queue(name, {
@@ -329,21 +327,5 @@ export class QueueDriverBullmq implements QueueDriver {
 		this.queues.set(name, queue);
 
 		return queue;
-	}
-
-	/**
-	 * Load `bullmq` once.
-	 *
-	 * @returns The module.
-	 * @throws Error naming the missing package when it is not installed.
-	 */
-	private load(): Promise<typeof import('bullmq')> {
-		// 1. The import is memoised, so every queue of the driver shares one load; a failed one names the optional
-		//    peer to install, since Node's own "Cannot find package" would not say why the driver needs it
-		this.bullmq ??= import('bullmq').catch((error: unknown) => {
-			throw new Error('Queue driver "bullmq" needs the "bullmq" package: pnpm add bullmq', { cause: error });
-		});
-
-		return this.bullmq;
 	}
 }

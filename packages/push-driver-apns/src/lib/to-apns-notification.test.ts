@@ -1,10 +1,10 @@
 /**
  * Tests of `to-apns-notification`: how a message becomes the SDK's notification, its priority and its collapse id.
  */
+import { COLLAPSE_ID_MAX_LENGTH } from '@novastarter/push';
 import { Priority } from 'apns2';
 import { describe, expect, test } from 'vitest';
-import { APNS_COLLAPSE_ID_MAX_LENGTH } from './constants.js';
-import { toApnsNotification, toApnsPriority, toCollapseId } from './to-apns-notification.js';
+import { toApnsNotification, toApnsPriority } from './to-apns-notification.js';
 
 describe('toApnsPriority', () => {
 	test('Maps the urgency onto 10 / 5 / 1', () => {
@@ -14,29 +14,6 @@ describe('toApnsPriority', () => {
 		expect(toApnsPriority(undefined)).toBe(Priority.throttled);
 		expect(toApnsPriority('low')).toBe(Priority.low);
 		expect(toApnsPriority('very-low')).toBe(Priority.low);
-	});
-});
-
-describe('toCollapseId', () => {
-	test('Keeps the safe alphabet, replaces the rest, cuts to 64 bytes and drops an empty tag', () => {
-		// 1. Letters, digits and `_ . : -` pass; anything else would make the HTTP client refuse the header
-		expect(toCollapseId('invoice.paid:42')).toBe('invoice.paid:42');
-		expect(toCollapseId('счёт-42')).toBe('____-42');
-		expect(toCollapseId('a b/c')).toBe('a_b_c');
-
-		// 2. An emoji is one code point, so one `_` — not one per surrogate half
-		expect(toCollapseId('a😀b')).toBe('a_b');
-
-		// 3. The limit is bytes: forty two-byte letters would be 80 bytes verbatim, so the cut happens after the
-		//    replacement, where a character is a byte
-		expect(toCollapseId('ё'.repeat(40))).toBe('_'.repeat(40));
-		expect(toCollapseId('x'.repeat(100))).toBe('x'.repeat(APNS_COLLAPSE_ID_MAX_LENGTH));
-		expect(Buffer.byteLength(toCollapseId('ё'.repeat(100)) as string)).toBe(APNS_COLLAPSE_ID_MAX_LENGTH);
-		expect(Buffer.byteLength(toCollapseId('😀'.repeat(100)) as string)).toBe(APNS_COLLAPSE_ID_MAX_LENGTH);
-
-		// 4. No tag, no header
-		expect(toCollapseId('')).toBeUndefined();
-		expect(toCollapseId(undefined)).toBeUndefined();
 	});
 });
 
@@ -70,7 +47,7 @@ describe('toApnsNotification', () => {
 			topic: 'com.example.app',
 			alert: { title: 'Hi', body: 'There' },
 			expiration: Math.floor(now.getTime() / 1000) + 60,
-			collapseId: 'x'.repeat(APNS_COLLAPSE_ID_MAX_LENGTH),
+			collapseId: 'x'.repeat(COLLAPSE_ID_MAX_LENGTH),
 			sound: 'default',
 			mutableContent: true,
 			data: { kind: 'invoice', url: '/dashboard', image: 'https://cdn/img.png' },

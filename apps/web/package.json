@@ -9,6 +9,7 @@
 		"start": "next start",
 		"check-types": "next typegen && tsc --noEmit",
 		"test": "vitest run",
+		"test:coverage": "vitest run --coverage",
 		"db:generate": "drizzle-kit generate",
 		"db:migrate": "tsx scripts/migrate.ts",
 		"db:studio": "drizzle-kit studio"
@@ -43,6 +44,7 @@
 		"@types/pg": "catalog:",
 		"@types/react": "catalog:",
 		"@types/react-dom": "catalog:",
+		"@vitest/coverage-v8": "catalog:",
 		"drizzle-kit": "catalog:",
 		"tsx": "catalog:",
 		"typescript": "catalog:apps",

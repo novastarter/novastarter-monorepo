@@ -13,16 +13,21 @@ const endpoint = 'https://push.example/abc';
 
 describe('describeError', () => {
 	test('Reports a 404 or 410 as a gone target naming the status and endpoint', () => {
-		// 1. A 410 is Chrome's answer for an unsubscribed browser: the error the caller deletes the subscription on
-		expect(describeError(new WebPushError('x', 410, {}, '', endpoint))).toMatchObject({
+		// 1. A 410 is Chrome's answer for an unsubscribed browser: the error the caller deletes the subscription on, the
+		//    library's error as the cause so the handler can reach the status
+		const gone410 = new WebPushError('x', 410, {}, '', endpoint);
+
+		expect(describeError(gone410)).toMatchObject({
 			extensions: { platform: 'webpush', reason: `410 from ${endpoint}` },
+			cause: gone410,
 		});
 
 		// 2. A 404 is what Firefox and Safari answer for the same thing, so it is as gone as a 410
-		const gone = describeError(new WebPushError('x', 404, {}, '', endpoint));
+		const gone404 = new WebPushError('x', 404, {}, '', endpoint);
+		const gone = describeError(gone404);
 
 		expect(gone).toBeInstanceOf(PushTargetGoneError);
-		expect(gone).toMatchObject({ extensions: { platform: 'webpush', reason: `404 from ${endpoint}` } });
+		expect(gone).toMatchObject({ extensions: { platform: 'webpush', reason: `404 from ${endpoint}` }, cause: gone404 });
 	});
 
 	test('Names any other status and the trimmed body, keeping the library error as the cause', () => {

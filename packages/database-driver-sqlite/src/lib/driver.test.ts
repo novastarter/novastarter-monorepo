@@ -122,6 +122,56 @@ describe('#constructor', () => {
 		expect(lastHandle().pragma).toHaveBeenCalledWith('journal_mode = WAL');
 	});
 
+	test('Leaves WAL off for a file opened readonly', () => {
+		// 1. SQLite answers the WAL attempt on a read-only file with SQLITE_READONLY, so the default keeps it off there
+		new DatabaseDriverSqlite({ file: sample.file, options: { readonly: true }, logger: sample.logger as never });
+
+		expect(lastHandle().pragma).toHaveBeenCalledExactlyOnceWith('foreign_keys = ON');
+	});
+
+	test('Does what it is told when WAL is asked for on a read-only file', () => {
+		// 1. An explicit wal: true stands, as in memory: the driver's contract is to run the pragma it was given
+		new DatabaseDriverSqlite({
+			file: sample.file,
+			options: { readonly: true },
+			wal: true,
+			logger: sample.logger as never,
+		});
+
+		expect(lastHandle().pragma).toHaveBeenCalledWith('journal_mode = WAL');
+	});
+
+	test('Closes the handle when a pragma throws', () => {
+		// 1. What SQLite answers on a read-only file asked for WAL
+		const error = new Error('attempt to write a readonly database');
+
+		vi.mocked(Database).mockImplementationOnce(
+			() =>
+				({
+					pragma: vi.fn(() => {
+						throw error;
+					}),
+					close: vi.fn(),
+				}) as unknown as Database.Database,
+		);
+
+		// 2. The constructor rethrows the pragma's error; the handle opened a moment ago is closed with it. Foreign
+		//    keys stay off, so the throwing call is the WAL pragma itself
+		expect(
+			() =>
+				new DatabaseDriverSqlite({
+					file: sample.file,
+					foreignKeys: false,
+					wal: true,
+					logger: sample.logger as never,
+				}),
+		).toThrow(error);
+
+		const handle = vi.mocked(Database).mock.results.at(-1)!.value as { close: ReturnType<typeof vi.fn> };
+
+		expect(handle.close).toHaveBeenCalledOnce();
+	});
+
 	test('Builds the Drizzle database over the handle with the schema and casing', () => {
 		const schema = { notes: {} };
 

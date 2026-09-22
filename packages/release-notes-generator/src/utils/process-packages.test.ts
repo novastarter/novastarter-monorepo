@@ -91,7 +91,16 @@ test('should return main version and package versions', async () => {
 });
 
 test('should fail if main version is missing', async () => {
-	await expect(() => processPackages()).rejects.toThrow(/Main version .* is missing or invalid/);
+	await expect(() => processPackages()).rejects.toThrow(`Main version of the 'main' package is missing or invalid`);
+});
+
+test('should name the environment variable when the forced version is invalid', async () => {
+	// 1. A malformed forced version is blamed on its source, never on an undefined main package
+	vi.stubEnv('NOVASTARTER_VERSION', 'not-a-version');
+
+	await expect(() => processPackages()).rejects.toThrow(
+		'Main version of the NOVASTARTER_VERSION environment variable ("not-a-version") is missing or invalid',
+	);
 });
 
 test('should work without a main package', async () => {

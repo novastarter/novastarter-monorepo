@@ -423,8 +423,8 @@ export class StorageDriverLocal implements TusDriver {
 	 * @param offset - Byte offset within the file where this chunk starts.
 	 * @param _context - Unused; the offset is all this driver needs.
 	 * @returns The new upload offset: `offset` plus the bytes written.
-	 * @throws `undefined` when the pipeline fails; the rejection carries no error, so the TUS server answers with a
-	 * generic failure. The error itself is logged as a warning.
+	 * @throws Error naming the file and offset when the pipeline fails; the failure that caused it is logged as a
+	 * warning and carried as the error's `cause`.
 	 */
 	async writeChunk(
 		filepath: string,
@@ -457,12 +457,16 @@ export class StorageDriverLocal implements TusDriver {
 		// 3. The callback form of `pipeline` is used so the byte count can be read once every stream has finished
 		return new Promise<number>((resolve, reject) => {
 			stream.pipeline(content, transform, writeable, (err) => {
-				// 1. The rejection carries no error on purpose (upstream behaviour): the TUS server maps any rejection to
-				//    a generic failure and the client resumes from the offset it last had confirmed. The cause is logged,
-				//    so a failing disk does not go unnoticed
+				// 1. The rejection carries a real error naming the file and offset: the TUS server maps any rejection
+				//    to a generic failure and the client resumes from the offset it last had confirmed, while callers
+				//    inspecting `error.message` get a readable reason. The cause is logged, so a failing disk does not
+				//    go unnoticed
 				if (err) {
-					useLogger().warn(err, `Local storage failed to write a chunk of "${filepath}" at offset ${offset}`);
-					return reject();
+					const message = `Local storage failed to write a chunk of "${filepath}" at offset ${offset}`;
+
+					useLogger().warn(err, message);
+
+					return reject(new Error(message, { cause: err }));
 				}
 
 				// 2. Only bytes that went through the pipeline count; a chunk cut short by an error never reaches here

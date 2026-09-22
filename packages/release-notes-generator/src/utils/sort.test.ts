@@ -24,6 +24,12 @@ describe('sortByExternalOrder', () => {
 		expect(compare({ name: 'second' }, { name: 'other' })).toBeLessThan(0);
 	});
 
+	test('should put an unlisted item after a listed one', () => {
+		// 1. The mirror case, so the comparator is symmetric: unlisted items sort after the listed ones from
+		//    either direction
+		expect(compare({ name: 'other' }, { name: 'first' })).toBeGreaterThan(0);
+	});
+
 	test('should keep the existing order of unlisted items', () => {
 		expect(compare({ name: 'other' }, { name: 'another' })).toBe(0);
 	});

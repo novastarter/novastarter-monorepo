@@ -6,9 +6,9 @@ import { describeError } from './describe-error.js';
 import { toApnsNotification } from './to-apns-notification.js';
 
 /**
- * The part of the APNs client the driver uses; the whole client satisfies it, and so does a test double.
+ * The part of the APNs client the driver uses; the whole client satisfies it.
  */
-export type ApnsSender = Pick<ApnsClient, 'send' | 'close'>;
+type ApnsSender = Pick<ApnsClient, 'send' | 'close'>;
 
 /**
  * Options accepted by {@link PushDriverApns}.
@@ -38,12 +38,6 @@ export type PushDriverApnsConfig = {
 	 * long, bound it unless given.
 	 */
 	requestTimeout?: number | undefined;
-	/**
-	 * A ready client, for tests; built from the credentials otherwise.
-	 *
-	 * @internal
-	 */
-	client?: ApnsSender | undefined;
 };
 
 /**
@@ -133,15 +127,13 @@ export class PushDriverApns implements PushDriver {
 		//    it, so the deadline is not handed over: `send()` keeps it
 		const host = config.host ?? (config.production === false ? Host.development : Host.production);
 
-		this.client =
-			config.client ??
-			new ApnsClient({
-				team: config.teamId,
-				keyId: config.keyId,
-				signingKey,
-				defaultTopic: config.topic,
-				host,
-			});
+		this.client = new ApnsClient({
+			team: config.teamId,
+			keyId: config.keyId,
+			signingKey,
+			defaultTopic: config.topic,
+			host,
+		});
 	}
 
 	/**
@@ -191,7 +183,7 @@ export class PushDriverApns implements PushDriver {
 	 * Close the HTTP/2 connections, whose keep-alive pings would otherwise keep the process alive.
 	 */
 	async close(): Promise<void> {
-		// 1. The client owns the sessions, injected or not: a test double's `close` is a no-op
+		// 1. The client owns the sessions: closing it releases them
 		await this.client.close();
 	}
 }

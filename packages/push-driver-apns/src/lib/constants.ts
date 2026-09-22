@@ -11,10 +11,3 @@ export const GONE_REASONS: ReadonlySet<string> = new Set([
 	Errors.badDeviceToken,
 	Errors.deviceTokenNotForTopic,
 ]);
-
-/**
- * Longest `apns-collapse-id` APNs accepts.
- *
- * @defaultValue 64 bytes.
- */
-export const APNS_COLLAPSE_ID_MAX_LENGTH = 64;

@@ -119,6 +119,14 @@ export class StorageDriverAzure implements TusDriver {
 	private root: string;
 
 	/**
+	 * Largest chunk in bytes one `writeChunk` appends, taken from `tus.chunkSize` when resumable uploads are enabled
+	 * and from the append-block limit otherwise.
+	 *
+	 * @internal
+	 */
+	private readonly maximumChunkSize: number;
+
+	/**
 	 * Create a driver together with its credential and container handle.
 	 *
 	 * @param config - Connection and behaviour options.
@@ -158,6 +166,11 @@ export class StorageDriverAzure implements TusDriver {
 		if (config.tus?.enabled && config.tus.chunkSize && config.tus.chunkSize > MAXIMUM_CHUNK_SIZE) {
 			throw new Error('The azure storage driver got a "tus.chunkSize" above 100 MiB');
 		}
+
+		// 6. One TUS chunk becomes one `Append Block` request, so the bound `writeChunk` enforces per chunk is the
+		//    configured size when resumable uploads are on — validated above to stay within the service limit — and the
+		//    service limit itself otherwise
+		this.maximumChunkSize = config.tus?.enabled && config.tus.chunkSize ? config.tus.chunkSize : MAXIMUM_CHUNK_SIZE;
 	}
 
 	/**
@@ -368,6 +381,8 @@ export class StorageDriverAzure implements TusDriver {
 	 * @param offset - Byte offset within the whole upload where this chunk starts.
 	 * @param _context - Upload context; unused, the append blob tracks its own length.
 	 * @returns The new upload offset: `offset` plus the bytes appended.
+	 * @throws Error when the chunk exceeds the size configured as `tus.chunkSize`, or the append-block limit when no
+	 * size was configured.
 	 */
 	async writeChunk(
 		filepath: string,
@@ -382,7 +397,7 @@ export class StorageDriverAzure implements TusDriver {
 		const chunks: Buffer[] = [];
 
 		// 1. Buffer the whole chunk first: `appendBlock` needs the exact byte length up front, which a stream cannot
-		//    give; the chunk is bounded by the configured size, so it stays within `MAXIMUM_CHUNK_SIZE`
+		//    give; the chunk is bounded by the check below, so it stays within `MAXIMUM_CHUNK_SIZE`
 		content.on('data', (chunk: Buffer) => {
 			bytesUploaded += chunk.length;
 			chunks.push(chunk);
@@ -392,7 +407,15 @@ export class StorageDriverAzure implements TusDriver {
 
 		const chunk = Buffer.concat(chunks);
 
-		// 2. Skip the request for an empty chunk; the service rejects a zero-length append
+		// 2. One TUS chunk becomes one `Append Block` request, so a chunk above the bound is refused here, with the
+		//    size named, instead of as a service error mid-upload
+		if (chunk.length > this.maximumChunkSize) {
+			throw new Error(
+				`The chunk of ${chunk.length} bytes exceeds the chunk size limit of ${this.maximumChunkSize} bytes`,
+			);
+		}
+
+		// 3. Skip the request for an empty chunk; the service rejects a zero-length append
 		if (chunk.length > 0) {
 			await client.appendBlock(chunk, chunk.length);
 		}

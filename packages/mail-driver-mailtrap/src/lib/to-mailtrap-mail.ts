@@ -1,8 +1,8 @@
 import {
-	bareMailAddress,
 	type MailAddress,
 	type MailAttachment,
 	type MailMessage,
+	parseMailAddress,
 	readAttachment,
 	toMailAddressList,
 } from '@novastarter/mail';
@@ -14,9 +14,12 @@ import type { Address, Attachment, Mail } from 'mailtrap';
  * @param address - Ours.
  * @returns `{ email, name? }`.
  */
-export const toMailtrapAddress = (address: MailAddress): Address =>
-	// 1. A display-name string is unwrapped to its address; an object keeps its name
-	typeof address === 'string' ? { email: bareMailAddress(address) } : { email: address.address, name: address.name };
+export const toMailtrapAddress = (address: MailAddress): Address => {
+	// 1. The object APIs take name and address apart, so a display-name string is parsed, not flattened to the address
+	const parsed = parseMailAddress(address);
+
+	return { email: parsed.address, ...(parsed.name !== undefined ? { name: parsed.name } : {}) };
+};
 
 /**
  * An attachment the way Mailtrap takes it: the bytes, a type and — inline — the content id.

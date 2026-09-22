@@ -2,8 +2,8 @@
  * Tests of `to-invoice`: how a Lemon Squeezy subscription invoice, read from fixtures in the shape of its documented
  * payloads, becomes the kit's invoice — the status, the all-or-nothing amounts, the hosted link.
  */
-import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
+import { fixture } from '../fixtures/index.js';
 import type { LsSubscriptionInvoiceAttributes, LsWebhookPayload } from '../types.js';
 import { toInvoice } from './to-invoice.js';
 
@@ -14,11 +14,7 @@ import { toInvoice } from './to-invoice.js';
  * @returns The invoice resource under `data`.
  */
 const invoiceOf = (name: string): LsWebhookPayload<LsSubscriptionInvoiceAttributes>['data'] =>
-	(
-		JSON.parse(
-			readFileSync(new URL(`../fixtures/${name}.json`, import.meta.url), 'utf8'),
-		) as LsWebhookPayload<LsSubscriptionInvoiceAttributes>
-	).data;
+	fixture<LsSubscriptionInvoiceAttributes>(name).data;
 
 describe('toInvoice', () => {
 	test('A paid subscription invoice, with its hosted link', () => {
@@ -29,7 +25,7 @@ describe('toInvoice', () => {
 			customerId: '987',
 			subscriptionId: '3001',
 			status: 'paid',
-			total: { amount: 10440, currency: 'USD' },
+			total: { amount: 10440, currency: 'usd' },
 			amountPaid: 10440,
 			amountDue: 0,
 			createdAt: new Date('2026-10-01T10:00:00.000000Z'),

@@ -1,9 +1,9 @@
 /**
  * Tests of the Stripe subscription mapping, read from fixtures shaped like Stripe's current subscriptions.
  */
-import { readFileSync } from 'node:fs';
 import type Stripe from 'stripe';
 import { describe, expect, test } from 'vitest';
+import { fixture } from '../fixtures/index.js';
 import { STRIPE_STATUSES, toSubscription } from './to-subscription.js';
 
 /**
@@ -12,14 +12,12 @@ import { STRIPE_STATUSES, toSubscription } from './to-subscription.js';
  * @param name - The Stripe event type the file is named after.
  * @returns The subscription.
  */
-const fixture = (name: string): Stripe.Subscription =>
-	(JSON.parse(readFileSync(new URL(`../fixtures/${name}.json`, import.meta.url), 'utf8')) as Stripe.Event).data
-		.object as Stripe.Subscription;
+const subscriptionOf = (name: string): Stripe.Subscription => fixture(name).data.object as Stripe.Subscription;
 
 describe('toSubscription', () => {
 	test('Reads the item for price, seats and the period, the subscription for the rest', () => {
 		// 1. The updated fixture has every date set, so each one is checked as a `Date` from Stripe's seconds
-		expect(toSubscription(fixture('customer.subscription.updated'))).toStrictEqual({
+		expect(toSubscription(subscriptionOf('customer.subscription.updated'))).toStrictEqual({
 			id: 'sub_1S5abcDEF123456789',
 			customerId: 'cus_T1abcDEF12345',
 			status: 'active',
@@ -40,7 +38,7 @@ describe('toSubscription', () => {
 
 	test('Accepts every status Stripe reports', () => {
 		// 1. Each of Stripe's statuses is one of the kit's; none is refused or renamed
-		const subscription = fixture('customer.subscription.created');
+		const subscription = subscriptionOf('customer.subscription.created');
 
 		for (const status of STRIPE_STATUSES) {
 			expect(toSubscription({ ...subscription, status: status as Stripe.Subscription.Status })).toMatchObject({
@@ -51,7 +49,7 @@ describe('toSubscription', () => {
 
 	test('Refuses a subscription without items or with a status it does not know', () => {
 		// 1. Without an item there is no price, no seat count and no period to read
-		const subscription = fixture('customer.subscription.created');
+		const subscription = subscriptionOf('customer.subscription.created');
 
 		expect(() => toSubscription({ ...subscription, items: { ...subscription.items, data: [] } })).toThrow(
 			'has no items',

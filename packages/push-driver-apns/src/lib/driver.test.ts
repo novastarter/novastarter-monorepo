@@ -1,12 +1,12 @@
 /**
- * Tests of the APNs driver class with the client injected; the SDK's own classes (notifications, errors) are real.
- * The key check, the error mapping and the message mapping are tested in `assert-signing-key.test.ts`,
+ * Tests of the APNs driver class with the SDK's client mocked; the SDK's own classes (notifications, errors, hosts)
+ * are real. The key check, the error mapping and the message mapping are tested in `assert-signing-key.test.ts`,
  * `describe-error.test.ts` and `to-apns-notification.test.ts`.
  */
 import { generateKeyPairSync } from 'node:crypto';
 import { PushTargetGoneError } from '@novastarter/push';
 import { TimeoutError } from '@novastarter/utils';
-import { ApnsClient, ApnsError, Host, Notification } from 'apns2';
+import { ApnsError, Host, Notification } from 'apns2';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import defaultExport from '../index.js';
 import { PushDriverApns } from './driver.js';
@@ -33,24 +33,60 @@ const rsaPem = (): string =>
 const signingKey = p256Pem();
 
 /**
- * The injected client's `send` spy; each test programs its answer.
+ * The mocked client's `send` spy; each test programs its answer.
  */
 const send = vi.fn();
 
 /**
- * The injected client's `close` spy.
+ * The mocked client's `close` spy, so a test can check the driver releases the client.
  */
 const close = vi.fn();
 
 /**
- * The test double standing in for the SDK's client.
+ * Spy recording the options every `ApnsClient` was built with, so a test can check the credentials and the host.
  */
-const client = { send, close };
+const construct = vi.fn();
+
+vi.mock('apns2', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('apns2')>();
+
+	return {
+		...actual,
+		/**
+		 * Stand-in for the SDK's `ApnsClient`: routes `send()` and `close()` to the shared spies and records the
+		 * options, so no test opens a session.
+		 */
+		ApnsClient: class {
+			/**
+			 * The request the driver makes, scripted per test with the SDK's answer.
+			 *
+			 * @internal
+			 */
+			send = send;
+
+			/**
+			 * Session closer, recorded on the shared spy.
+			 *
+			 * @internal
+			 */
+			close = close;
+
+			/**
+			 * Keep the options instead of opening sessions, so a test can read back what the driver built.
+			 *
+			 * @param options - The credentials and host the driver passed.
+			 */
+			constructor(public options: unknown) {
+				construct(options);
+			}
+		},
+	};
+});
 
 /**
- * A complete configuration with the double injected; a test overrides the option it is about.
+ * A complete configuration; a test overrides the option it is about.
  */
-const credentials = { teamId: 'TEAM1', keyId: 'KEY1', signingKey, topic: 'com.example.app', client };
+const credentials = { teamId: 'TEAM1', keyId: 'KEY1', signingKey, topic: 'com.example.app' };
 
 /**
  * An `ApnsError` the way the client raises it for a refusal.
@@ -76,18 +112,25 @@ describe('PushDriverApns', () => {
 
 	test('Unescapes the key of a .env line and builds the client for production or the sandbox', () => {
 		const escaped = signingKey.replace(/\n/g, '\\n');
-		const production = new PushDriverApns({ ...credentials, signingKey: escaped, client: undefined });
-		const sandbox = new PushDriverApns({ ...credentials, client: undefined, production: false, requestTimeout: 5000 });
+		const production = new PushDriverApns({ ...credentials, signingKey: escaped });
+		const sandbox = new PushDriverApns({ ...credentials, production: false, requestTimeout: 5000 });
 
-		// 1. The clients are the SDK's, on the host the environment picks
-		const productionClient = (production as unknown as { client: ApnsClient }).client;
-		const sandboxClient = (sandbox as unknown as { client: ApnsClient }).client;
+		// 1. The client is the SDK's, built on the unescaped key with the host the environment picks
+		expect(construct).toHaveBeenNthCalledWith(1, {
+			team: 'TEAM1',
+			keyId: 'KEY1',
+			signingKey,
+			defaultTopic: 'com.example.app',
+			host: Host.production,
+		});
 
-		expect(productionClient).toBeInstanceOf(ApnsClient);
-		expect(productionClient.host).toBe(Host.production);
-		expect(productionClient.signingKey).toBe(signingKey);
-		expect(productionClient.defaultTopic).toBe('com.example.app');
-		expect(sandboxClient.host).toBe(Host.development);
+		expect(construct).toHaveBeenNthCalledWith(2, {
+			team: 'TEAM1',
+			keyId: 'KEY1',
+			signingKey,
+			defaultTopic: 'com.example.app',
+			host: Host.development,
+		});
 
 		return Promise.all([production.close(), sandbox.close()]);
 	});
@@ -165,7 +208,7 @@ describe('PushDriverApns', () => {
 	test('Verifies the key and closes the client', async () => {
 		const driver = new PushDriverApns(credentials);
 
-		// 1. The key passes offline; `close()` reaches the client, injected or not
+		// 1. The key passes offline; `close()` reaches the client the driver built
 		await expect(driver.verify()).resolves.toBeUndefined();
 		await driver.close();
 		expect(close).toHaveBeenCalledTimes(1);

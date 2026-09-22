@@ -108,10 +108,16 @@ export async function processPackages(): Promise<{
 		const mainVersion = semver.parse(rawMainVersion);
 
 		if (!mainVersion) {
-			throw new Error(`Main version ('${config.mainPackage}' package) is missing or invalid`);
+			// 3. Name the source the bad value came from: the forced variable, or the main package `changesets` was
+			//    expected to version — either way the message must never print an undefined package
+			const versionSource = manualMainVersion
+				? `the NOVASTARTER_VERSION environment variable ("${manualMainVersion}")`
+				: `the '${config.mainPackage}' package`;
+
+			throw new Error(`Main version of ${versionSource} is missing or invalid`);
 		}
 
-		// 3. A prerelease version is only valid while `changesets` is in prerelease mode with the same tag
+		// 4. A prerelease version is only valid while `changesets` is in prerelease mode with the same tag
 		const isPrerelease = mainVersion.prerelease.length > 0;
 		let prereleaseId;
 

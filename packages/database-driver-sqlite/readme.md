@@ -45,14 +45,14 @@ throwaway work.
 
 ## Options
 
-| Option         | Required | Description                                                                        |
-| -------------- | -------- | ---------------------------------------------------------------------------------- |
-| `file`         | yes      | Path of the database file, created with its directory when missing, or `:memory:`. |
-| `options`      | —        | better-sqlite3 open options: `readonly`, `fileMustExist`, `timeout`, `verbose`.    |
-| `foreignKeys`  | —        | `PRAGMA foreign_keys = ON`; on by default, since SQLite leaves it off.             |
-| `wal`          | —        | `PRAGMA journal_mode = WAL`; on by default for a file, off for `:memory:`.         |
-| `schema`       | —        | The Drizzle schema, for `db.query` and the typing of `db`.                         |
-| `casing`       | —        | `snake_case` or `camelCase`: column names for properties that declare none.        |
-| `logger`       | —        | Where the queries go with `queryLogging`; the process logger unless given.         |
-| `queryLogging` | —        | Log every query with its parameters at `debug`.                                    |
-| `label`        | —        | The location's name, for log lines and errors; `registerLocation()` fills it in.   |
+| Option         | Required | Description                                                                                    |
+| -------------- | -------- | ---------------------------------------------------------------------------------------------- |
+| `file`         | yes      | Path of the database file, created with its directory when missing, or `:memory:`.             |
+| `options`      | —        | better-sqlite3 open options: `readonly`, `fileMustExist`, `timeout`, `verbose`.                |
+| `foreignKeys`  | —        | `PRAGMA foreign_keys = ON`; on by default, since SQLite leaves it off.                         |
+| `wal`          | —        | `PRAGMA journal_mode = WAL`; on by default for a file, off for `:memory:` and read-only opens. |
+| `schema`       | —        | The Drizzle schema, for `db.query` and the typing of `db`.                                     |
+| `casing`       | —        | `snake_case` or `camelCase`: column names for properties that declare none.                    |
+| `logger`       | —        | Where the queries go with `queryLogging`; the process logger unless given.                     |
+| `queryLogging` | —        | Log every query with its parameters at `debug`.                                                |
+| `label`        | —        | The location's name, for log lines and errors; `registerLocation()` fills it in.               |

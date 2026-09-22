@@ -54,6 +54,45 @@ export const bareMailAddress = (address: MailAddress): string => {
 };
 
 /**
+ * A `MailAddress` as its two parts: the address always, the display name when there is one.
+ *
+ * A display-name string (`Ada <ada@example.com>`, or a quoted `"Smith, John" <john@example.com>`) is split into its
+ * name and address, the quoted-string's quotes and escapes coming off; a bare string is its own address with no name.
+ * Drivers whose API takes `{ email, name }` objects (Mailjet, Mailtrap, SendGrid) use this so a name given as a
+ * string survives, the way the nodemailer-based drivers keep it.
+ *
+ * @param address - Ours.
+ * @returns The address, with the display name when there is one.
+ * @example
+ * ```ts
+ * parseMailAddress('Ada <ada@example.com>');
+ * // => { name: 'Ada', address: 'ada@example.com' }
+ *
+ * parseMailAddress('ada@example.com');
+ * // => { address: 'ada@example.com' }
+ * ```
+ */
+export const parseMailAddress = (address: MailAddress): { name?: string | undefined; address: string } => {
+	// 1. An object already keeps the parts apart
+	if (typeof address !== 'string') {
+		return { name: address.name, address: address.address };
+	}
+
+	// 2. A display-name form splits at the angle brackets; a quoted name loses its quotes, with only `"` and `\`
+	//    unescaped, the characters RFC 5322 allows to be escaped there
+	const match = /^\s*(?:"((?:[^"\\]|\\.)*)"|([^<>]*?))\s*<([^<>\s]+)>\s*$/.exec(address);
+
+	if (match) {
+		const name = (match[1] !== undefined ? match[1].replace(/\\(["\\])/g, '$1') : (match[2] ?? '')).trim();
+
+		return { ...(name !== '' ? { name } : {}), address: match[3]! };
+	}
+
+	// 3. A bare string is its own address, with no name to carry
+	return { address };
+};
+
+/**
  * The recipients of a message as a flat list.
  *
  * @param to - `to` of a message.

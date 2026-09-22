@@ -291,12 +291,12 @@ Mandatory, no exceptions.
 
 - A unit test is `<name>.test.ts` next to `<name>.ts`, one file per module: a driver gets its own test file, not a
   shared one for the library it wraps.
-- A test that runs a module with its real dependencies — the other modules of the package unmocked, or a real
-  backend — is `<name>.int.test.ts` next to the module it starts from.
+- A test that runs a module with its real dependencies — the other modules of the package unmocked, or a real backend —
+  is `<name>.int.test.ts` next to the module it starts from.
 - A test that needs a running service reads its address from the environment and skips without it:
-  `describe.skipIf(!process.env['REDIS'])(…)`. `pnpm test` stays green on a machine with nothing running; the
-  service is what turns the suite on. Clients are opened inside `beforeAll`, never in the `describe` body, which
-  runs at collection even when the suite is skipped.
+  `describe.skipIf(!process.env['REDIS'])(…)`. `pnpm test` stays green on a machine with nothing running; the service is
+  what turns the suite on. Clients are opened inside `beforeAll`, never in the `describe` body, which runs at collection
+  even when the suite is skipped.
 
 ## Rule: no application business logic in `packages/`
 
@@ -315,12 +315,12 @@ Mandatory, no exceptions.
 
 Mandatory, no exceptions.
 
-- While the task is in `apps/<name>/`, a change to `packages/` is never made on the way. First ask, in one line,
-  whether the same result can be reached inside `apps/<name>/` — a wrapper, a driver of the app's own, a location
-  config, a handler — and wait for the answer.
+- While the task is in `apps/<name>/`, a change to `packages/` is never made on the way. First ask, in one line, whether
+  the same result can be reached inside `apps/<name>/` — a wrapper, a driver of the app's own, a location config, a
+  handler — and wait for the answer.
 - Only when the user confirms the package has to change is it changed, in a step of its own with its own changeset.
-- The reason: `packages/` is shared by every application; a shortcut taken for one app becomes an API every other
-  app has to live with.
+- The reason: `packages/` is shared by every application; a shortcut taken for one app becomes an API every other app
+  has to live with.
 
 ## Rule: every change ships with a changeset
 

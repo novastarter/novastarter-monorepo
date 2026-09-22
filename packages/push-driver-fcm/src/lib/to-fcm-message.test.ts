@@ -2,30 +2,12 @@
  * Tests of `to-fcm-message`: how a message and the location defaults become FCM's `Message` for a token.
  */
 import { describe, expect, test } from 'vitest';
-import { toCollapseId, toFcmMessage } from './to-fcm-message.js';
+import { toFcmMessage } from './to-fcm-message.js';
 
 /**
  * A fixed clock, so the APNs expiration header is a known number.
  */
 const now = new Date('2026-09-11T12:00:00Z');
-
-describe('toCollapseId', () => {
-	test('Cuts the tag to 64 bytes of UTF-8 on a character boundary', () => {
-		// 1. A short tag passes as is; no tag means no header, never an empty one
-		expect(toCollapseId('invoice-1')).toBe('invoice-1');
-		expect(toCollapseId(undefined)).toBeUndefined();
-		expect(toCollapseId('')).toBeUndefined();
-
-		// 2. APNs counts bytes: 40 two-byte characters are 80 bytes, so 32 of them fit; ASCII fits 64
-		expect(toCollapseId('ё'.repeat(40))).toBe('ё'.repeat(32));
-		expect(toCollapseId('x'.repeat(70))).toBe('x'.repeat(64));
-
-		// 3. A four-byte character is kept whole when it fits and dropped whole when it straddles the limit, so the
-		//    header never ends in half of a surrogate pair
-		expect(toCollapseId(`${'x'.repeat(60)}😀yy`)).toBe(`${'x'.repeat(60)}😀`);
-		expect(toCollapseId(`${'x'.repeat(62)}😀`)).toBe('x'.repeat(62));
-	});
-});
 
 describe('toFcmMessage', () => {
 	test('Maps the notification, the data with the url, and the platform blocks', () => {
@@ -124,14 +106,14 @@ describe('toFcmMessage', () => {
 		});
 	});
 
-	test('Cuts the APNs collapse id to 64 bytes while Android and the web keep the whole tag', () => {
-		// 1. Only APNs has the byte limit: FCM relays the header as given and APNs answers BadCollapseId past it,
-		//    while the Android collapse key and the web tag take the tag whole
+	test('Sanitises the APNs collapse id while Android and the web keep the whole tag', () => {
+		// 1. Only APNs has the byte limit and the header alphabet: FCM relays the header as given and APNs answers
+		//    BadCollapseId past it, while the Android collapse key and the web tag take the tag whole
 		const tag = 'ё'.repeat(40);
 
 		expect(toFcmMessage({ token: 'tok', title: 'Hi', tag }, {}, now)).toMatchObject({
 			android: { collapseKey: tag, notification: { tag } },
-			apns: { headers: { 'apns-collapse-id': 'ё'.repeat(32) } },
+			apns: { headers: { 'apns-collapse-id': '_'.repeat(40) } },
 			webpush: { notification: { tag } },
 		});
 	});

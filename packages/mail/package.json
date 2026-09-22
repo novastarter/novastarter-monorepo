@@ -35,7 +35,6 @@
 	"devDependencies": {
 		"@novastarter/tsconfig": "workspace:*",
 		"@types/node": "catalog:",
-		"@types/nodemailer": "catalog:",
 		"@vitest/coverage-v8": "catalog:",
 		"tsdown": "catalog:",
 		"typescript": "catalog:",

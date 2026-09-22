@@ -7,8 +7,25 @@ import defaultExport from '../index.js';
 import { DEFAULT_MAILGUN_HOST } from './constants.js';
 import { MailDriverMailgun } from './driver.js';
 
+/**
+ * Spy standing in for the messages API's `create()`, shared by every client so a test can script Mailgun's answer and
+ * inspect the request.
+ *
+ * @internal
+ */
 const create = vi.fn();
+
+/**
+ * Spy standing in for the domains API's `get()`, the call `verify()` makes.
+ *
+ * @internal
+ */
 const get = vi.fn();
+
+/**
+ * Stand-in for the `Mailgun` class's `client()` factory: hands out a client whose messages and domains APIs are the
+ * shared spies.
+ */
 const client = vi.fn(() => ({ messages: { create }, domains: { get } }));
 
 vi.mock('mailgun.js', () => ({

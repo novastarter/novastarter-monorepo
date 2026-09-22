@@ -1,5 +1,6 @@
 import type { MailDriver, MailMessage, MailResult } from '@novastarter/mail';
-import { Client, type SendEmailV3_1 } from 'node-mailjet';
+import { Client, type LibraryResponse, type SendEmailV3_1 } from 'node-mailjet';
+import { describeError } from './describe-error.js';
 import { toMailjetMessage } from './to-mailjet-message.js';
 
 /**
@@ -81,8 +82,8 @@ export class MailDriverMailjet implements MailDriver {
 	 *
 	 * @param message - Rendered message.
 	 * @returns The message ids Mailjet assigned per recipient (the first as `messageId`), accepted recipients.
-	 * @throws Error listing Mailjet's per-message errors when the status is not `success`; the SDK's error when
-	 * the request itself fails.
+	 * @throws Error listing Mailjet's per-message errors when the status is not `success`; an error naming Mailjet
+	 * with the SDK's error as the cause when the request itself fails.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
 		// 1. One message per request; the sandbox flag is a property of the whole body
@@ -91,17 +92,25 @@ export class MailDriverMailjet implements MailDriver {
 			...(this.sandbox ? { SandboxMode: true } : {}),
 		};
 
-		const result = await this.client.post('send', { version: 'v3.1' }).request<SendEmailV3_1.Response>(body);
+		let result: LibraryResponse<SendEmailV3_1.Response>;
+
+		try {
+			result = await this.client.post('send', { version: 'v3.1' }).request<SendEmailV3_1.Response>(body);
+		} catch (error) {
+			// 2. A transport failure never reaches Mailjet; named like a refusal, the SDK's error as the cause
+			throw describeError(error);
+		}
+
 		const sent = result.body.Messages[0];
 
-		// 2. A rejected message comes back with status 200 and `Status: 'error'`; that is a failure for `sendMail()`
+		// 3. A rejected message comes back with status 200 and `Status: 'error'`; that is a failure for `sendMail()`
 		if (!sent || sent.Status !== 'success') {
 			const errors = (sent?.Errors ?? []).map((error) => error.ErrorMessage ?? JSON.stringify(error));
 
 			throw new Error(`Mailjet: ${errors.join('; ') || `status ${sent?.Status ?? 'unknown'}`}`);
 		}
 
-		// 3. Mailjet reports every recipient it took, with a message id each
+		// 4. Mailjet reports every recipient it took, with a message id each
 		const delivered = [...(sent.To ?? []), ...(sent.Cc ?? []), ...(sent.Bcc ?? [])];
 
 		return {

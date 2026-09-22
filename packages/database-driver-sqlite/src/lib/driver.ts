@@ -40,9 +40,10 @@ export type DatabaseDriverSqliteConfig<Schema extends Record<string, unknown> = 
 		foreignKeys?: boolean | undefined;
 		/**
 		 * Write-ahead logging (`PRAGMA journal_mode = WAL`), so readers no longer block the writer; meaningless for
-		 * a database in memory.
+		 * a database in memory, and refused by SQLite on a file opened `readonly`, where the attempt fails with
+		 * `SQLITE_READONLY`.
 		 *
-		 * @defaultValue true for a file, false for {@link MEMORY_FILE}
+		 * @defaultValue true for a file, false for {@link MEMORY_FILE} and for a file opened `readonly`
 		 */
 		wal?: boolean | undefined;
 	};
@@ -118,6 +119,8 @@ export class DatabaseDriverSqlite<
 	 * @throws Error when `file` is missing.
 	 * @throws What better-sqlite3 raised when the file could not be opened — a missing file under `fileMustExist`,
 	 * a directory without write access.
+	 * @throws What better-sqlite3 raised when a pragma could not be applied, after closing the file — `journal_mode =
+	 * WAL` on a read-only file asked for WAL explicitly.
 	 */
 	constructor(config: DatabaseDriverSqliteConfig<Schema>) {
 		// 1. Refuse a missing file up front: better-sqlite3 would open an anonymous database in memory and every
@@ -136,19 +139,29 @@ export class DatabaseDriverSqlite<
 		this.database =
 			config.options === undefined ? new Database(config.file) : new Database(config.file, config.options);
 
-		// 3. Foreign keys are off in SQLite unless every connection turns them on; a schema declaring references
-		//    expects them enforced, so on by default
-		if (config.foreignKeys ?? true) {
-			this.database.pragma('foreign_keys = ON');
+		// 3. The pragmas can refuse on the handle that was just opened — a read-only file answers WAL with
+		//    SQLITE_READONLY — and a constructor that throws must not leak the handle, so a failure closes it first
+		try {
+			// 4. Foreign keys are off in SQLite unless every connection turns them on; a schema declaring references
+			//    expects them enforced, so on by default
+			if (config.foreignKeys ?? true) {
+				this.database.pragma('foreign_keys = ON');
+			}
+
+			// 5. WAL lets readers and the writer proceed together, what a server wants from a file; a database in memory
+			//    has no journal to speak of, and a file opened read-only cannot take it — the attempt would fail with
+			//    SQLITE_READONLY — so it stays off there unless asked for explicitly
+			if (config.wal ?? (!inMemory && !config.options?.readonly)) {
+				this.database.pragma('journal_mode = WAL');
+			}
+		} catch (error) {
+			// 6. The handle opened above belongs to a driver that will never exist; close it before the error travels on
+			this.database.close();
+
+			throw error;
 		}
 
-		// 4. WAL lets readers and the writer proceed together, what a server wants from a file; a database in memory
-		//    has no journal to speak of
-		if (config.wal ?? !inMemory) {
-			this.database.pragma('journal_mode = WAL');
-		}
-
-		// 5. Drizzle over the handle, with the schema and, when asked for, the query logger bound to the label
+		// 7. Drizzle over the handle, with the schema and, when asked for, the query logger bound to the label
 		this.label = config.label;
 		this.db = drizzle(this.database, toDrizzleOptions(config, resolveLogger(config)));
 	}

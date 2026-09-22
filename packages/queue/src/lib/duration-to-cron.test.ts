@@ -8,6 +8,7 @@ import { validateCron } from './validate-cron.js';
 
 describe('durationToCron', () => {
 	test('Honours the hourly intervals with a random phase offset', () => {
+		// 1. Twenty rounds each: the phase offset is random, so a single round could pass by luck
 		for (let round = 0; round < 20; round++) {
 			expect(durationToCron(3600)).toMatch(/^\d{1,2} \d{1,2} \*\/1 \* \* \*$/);
 			expect(durationToCron(7200)).toMatch(/^\d{1,2} \d{1,2} [01]-23\/2 \* \* \*$/);
@@ -16,12 +17,14 @@ describe('durationToCron', () => {
 	});
 
 	test('Falls back to daily for anything else', () => {
+		// 1. An interval that does not divide a day stays schedulable by becoming one run a day
 		expect(durationToCron(7 * 3600)).toMatch(/^\d{1,2} \d{1,2} (\d|1\d|2[0-3]) \* \* \*$/);
 		expect(durationToCron(90)).toMatch(/^\d{1,2} \d{1,2} (\d|1\d|2[0-3]) \* \* \*$/);
 		expect(durationToCron(0)).toMatch(/^\d{1,2} \d{1,2} (\d|1\d|2[0-3]) \* \* \*$/);
 	});
 
 	test('Produces expressions croner accepts', () => {
+		// 1. Whatever the duration, the output must be a rule the scheduler actually parses
 		for (const duration of [3600, 7200, 3 * 3600, 25200, 60]) {
 			expect(validateCron(durationToCron(duration))).toBe(true);
 		}
