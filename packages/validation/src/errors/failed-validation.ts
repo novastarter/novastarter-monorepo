@@ -19,7 +19,7 @@ export interface FailedValidationErrorExtensions {
 	type: ClientFilterOperator | 'required' | 'email' | 'unsafe';
 	/** Value(s) the field was expected to match. */
 	valid?: number | string | (number | string)[];
-	/** Value(s) the field was expected not to match. */
+	/** Value(s) or pattern the field was expected not to match: the forbidden value(s) for `neq` / `nin`, the pattern for `regex`. */
 	invalid?: number | string | (number | string)[];
 	/** Text the field was expected to contain, not contain, start with or end with. */
 	substring?: string;
@@ -81,7 +81,8 @@ export const messageConstructor = (extensions: FailedValidationErrorExtensions):
 		}
 	}
 
-	// 4. Rules that carry a substring; `icontains` reads the same as `contains` since the case is a detail
+	// 4. Rules that carry a substring; `icontains` reads the same as `contains` and the case-insensitive affixes the
+	//    same as their plain forms, since the case is a detail the client renders on its own
 	if ('substring' in extensions) {
 		switch (extensions.type) {
 			case 'contains':
@@ -90,6 +91,22 @@ export const messageConstructor = (extensions: FailedValidationErrorExtensions):
 				break;
 			case 'ncontains':
 				message += ` Value can't contain "${extensions.substring}".`;
+				break;
+			case 'starts_with':
+			case 'istarts_with':
+				message += ` Value has to start with "${extensions.substring}".`;
+				break;
+			case 'nstarts_with':
+			case 'nistarts_with':
+				message += ` Value can't start with "${extensions.substring}".`;
+				break;
+			case 'ends_with':
+			case 'iends_with':
+				message += ` Value has to end with "${extensions.substring}".`;
+				break;
+			case 'nends_with':
+			case 'niends_with':
+				message += ` Value can't end with "${extensions.substring}".`;
 				break;
 		}
 	}
@@ -118,7 +135,7 @@ export const messageConstructor = (extensions: FailedValidationErrorExtensions):
 			message += ` Value has to be a valid email address.`;
 			break;
 		case 'unsafe':
-			message += ` Value is not a safe number.`;
+			message += ` Value is not valid.`;
 			break;
 	}
 

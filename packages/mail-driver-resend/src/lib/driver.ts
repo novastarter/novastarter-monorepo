@@ -6,6 +6,7 @@ import {
 	toMailAddressList,
 } from '@novastarter/mail';
 import { Resend } from 'resend';
+import { describeError } from './describe-error.js';
 import { toResendEmail } from './to-resend-email.js';
 
 /**
@@ -73,21 +74,20 @@ export class MailDriverResend implements MailDriver {
 	 * Send through the Resend API.
 	 *
 	 * @param message - Rendered message.
-	 * @returns Resend's message id; every recipient as accepted, since the API takes all or nothing.
-	 * @throws Error carrying Resend's error name and message when the API refuses, the SDK's error value as the
-	 * cause.
+	 * @returns Resend's message id; every recipient as accepted, since the API takes all or nothing; `response`
+	 * stays empty, since the API answers no status line.
+	 * @throws Error naming Resend with the failure's `name` and `message`, the SDK's error value as the cause, when
+	 * the API refuses.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
 		// 1. The SDK answers `{ data, error }` instead of throwing, so a refusal has to be read off the value;
 		//    attachments are read into the payload before the request goes out
 		const { data, error } = await this.client.emails.send(await toResendEmail(message));
 
-		// 2. A failure becomes the throw the fallback of `sendMail()` expects, the original kept as the cause so the
-		//    caller can still read its status code
+		// 2. A failure becomes the throw the fallback of `sendMail()` expects, the SDK's value kept as the cause so
+		//    the caller can still read its status code; a missing value is named for what it is
 		if (error || !data) {
-			throw new Error(`Resend: ${error?.name ?? 'unknown_error'}: ${error?.message ?? 'no data returned'}`, {
-				cause: error,
-			});
+			throw describeError(error ?? 'no data or error returned');
 		}
 
 		// 3. Resend takes a message whole or refuses it, so every recipient counts as accepted

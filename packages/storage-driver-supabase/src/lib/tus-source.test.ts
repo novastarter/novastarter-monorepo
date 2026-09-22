@@ -31,13 +31,15 @@ describe('FileReader', () => {
 	});
 
 	test('Reports the stream as ended on the second slice, so one chunk maps to one TUS request', async () => {
-		// 1. After the first slice the library would keep asking for the next range of the "file"; answering `null`
-		//    is how the source says there is nothing more, which ends the request after this chunk
+		// 1. After the first slice the library would keep asking for the next range of the "file"; an exhausted
+		//    `{ value: null, done: true }` is how the source says there is nothing more, which ends the request after
+		//    this chunk — and the shape is what the library destructures, where a bare `null` crashed it with a
+		//    TypeError
 		const source = await new FileReader().openFile(chunkStream('hello world'), 1024);
 
 		await source.slice(0, 5);
 
-		await expect(source.slice(5, 11)).resolves.toBeNull();
+		await expect(source.slice(5, 11)).resolves.toStrictEqual({ value: null, done: true });
 	});
 
 	test('Ignores the chunk size the library passes, since the stream already holds exactly one chunk', async () => {

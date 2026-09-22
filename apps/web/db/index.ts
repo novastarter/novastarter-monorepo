@@ -2,6 +2,9 @@ import { useDatabase } from '@novastarter/database';
 import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core';
 import type * as schema from './schema';
 
+/**
+ * The `users` table, re-exported as the app's public handle on the schema.
+ */
 export { users } from './schema';
 
 /**

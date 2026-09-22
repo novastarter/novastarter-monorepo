@@ -5,7 +5,8 @@ import type { MailAddress } from '../types.js';
  *
  * A display name that holds anything beyond letters, digits, spaces and `. ' - _` is wrapped in a quoted-string, with
  * `"` and `\` escaped, the way nodemailer does it: Mailgun, Postmark and Resend parse the string as an address list,
- * so an unquoted comma in a name would split one recipient into two broken ones.
+ * so an unquoted comma in a name would split one recipient into two broken ones. The name is trimmed first; one that
+ * is empty afterwards — `''` or whitespace only — is dropped, so no stray space stands in front of the address.
  *
  * @param address - Ours.
  * @returns `Name <address>`, `"Quoted, name" <address>`, or the bare address.
@@ -22,9 +23,15 @@ export const formatMailAddress = (address: MailAddress): string => {
 	// 1. A string is handed on as given: the caller already formatted it
 	if (typeof address === 'string') return address;
 
-	// 2. Only a name of plain characters may stand bare; RFC 5322 specials (`,` `<` `"` `@` and the like) and anything
-	//    non-ASCII go inside a quoted-string, where only the quote and the backslash need escaping
-	const name = /[^\w .'-]/.test(address.name) ? `"${address.name.replace(/["\\]/g, '\\$&')}"` : address.name;
+	// 2. A name of nothing but whitespace formats as nothing at all; the bare address keeps the stray space out of
+	//    the line
+	const trimmed = address.name.trim();
+
+	if (trimmed === '') return address.address;
+
+	// 3. Only a name of plain characters may stand bare; RFC 5322 specials (`,` `<` `"` `@` and the like) and
+	//    anything non-ASCII go inside a quoted-string, where only the quote and the backslash need escaping
+	const name = /[^\w .'-]/.test(trimmed) ? `"${trimmed.replace(/["\\]/g, '\\$&')}"` : trimmed;
 
 	return `${name} <${address.address}>`;
 };

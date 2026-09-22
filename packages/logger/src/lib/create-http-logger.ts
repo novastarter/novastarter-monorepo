@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'node:http';
 import { URL } from 'node:url';
 import type { Logger, SerializedRequest } from 'pino';
-import { type AutoLoggingOptions, type HttpLogger, type Options, pinoHttp, stdSerializers } from 'pino-http';
+import { type HttpLogger, type Options, pinoHttp, stdSerializers } from 'pino-http';
 import { redactQuery } from '../utils/redact-query.js';
 
 /**
@@ -10,7 +10,7 @@ import { redactQuery } from '../utils/redact-query.js';
 export interface CreateHttpLoggerOptions {
 	/** Logger the request lines are written through; the process logger, normally, so both share streams and level. */
 	logger: Logger<never>;
-	/** Paths the request logger stays quiet about, health checks for example; matched on the pathname alone. */
+	/** Paths the request logger stays quiet about, health checks for example; matched on the pathname alone. When `http.autoLogging` is given too, its other settings are kept and only its `ignore` is replaced. */
 	ignorePaths?: string[] | undefined;
 	/**
 	 * Further pino-http options, merged over the ones built here; its `serializers` are merged too, and the query token
@@ -54,11 +54,15 @@ export const createHttpLogger = (options: CreateHttpLoggerOptions): HttpLogger =
 	//    spread would let the map built here replace them wholesale
 	const { serializers: callerSerializers = {}, ...httpOptions }: Options = { ...options.http };
 
-	// 2. Ignored paths are matched on the pathname only, so a query string cannot un-silence them
+	// 2. Ignored paths are matched on the pathname only, so a query string cannot un-silence them. The built `ignore`
+	//    is layered over the caller's own `autoLogging` rather than replacing it wholesale; a boolean `autoLogging`
+	//    carries no settings, so only an object is spread
 	if (options.ignorePaths?.length) {
 		const ignorePathsSet = new Set(options.ignorePaths);
+		const callerAutoLogging = typeof httpOptions.autoLogging === 'object' ? httpOptions.autoLogging : undefined;
 
 		httpOptions.autoLogging = {
+			...callerAutoLogging,
 			ignore: (req) => {
 				// 1. A request without a target cannot match a path; it is logged like any other
 				if (!req.url) return false;
@@ -74,7 +78,7 @@ export const createHttpLogger = (options: CreateHttpLoggerOptions): HttpLogger =
 					return false;
 				}
 			},
-		} as AutoLoggingOptions;
+		};
 	}
 
 	// 3. pino-http wraps every custom serializer unless told not to: the `req` serializer then receives the request

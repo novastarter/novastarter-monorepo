@@ -167,7 +167,7 @@ describe('PaymentsDriverStripe', () => {
 		const { client, driver } = setup();
 		const stripeSubscription = fixture('customer.subscription.created').data.object as Stripe.Subscription;
 
-		vi.spyOn(client.subscriptions, 'retrieve').mockResolvedValue(stripeSubscription as never);
+		const retrieve = vi.spyOn(client.subscriptions, 'retrieve').mockResolvedValue(stripeSubscription as never);
 		const update = vi.spyOn(client.subscriptions, 'update').mockResolvedValue(stripeSubscription as never);
 		const cancel = vi.spyOn(client.subscriptions, 'cancel').mockResolvedValue(stripeSubscription as never);
 
@@ -210,6 +210,13 @@ describe('PaymentsDriverStripe', () => {
 		await driver.cancelSubscription({ subscriptionId: 'sub_1S5abcDEF123456789', immediately: true });
 
 		expect(cancel).toHaveBeenCalledWith('sub_1S5abcDEF123456789', {});
+
+		// 6. Neither a price nor a quantity is a caller's mistake, refused before any request is sent
+		await expect(driver.updateSubscription({ subscriptionId: 'sub_1S5abcDEF123456789' })).rejects.toThrow(
+			'Nothing to update',
+		);
+
+		expect(retrieve).toHaveBeenCalledTimes(3);
 	});
 
 	test('Lists invoices', async () => {
@@ -225,6 +232,11 @@ describe('PaymentsDriverStripe', () => {
 		]);
 
 		expect(list).toHaveBeenCalledWith({ customer: 'cus_T1abcDEF12345', limit: 10 });
+
+		// 3. Without a limit the kit's default of twenty is sent: leaving it out would let Stripe page at ten
+		await expect(driver.listInvoices({ customerId: 'cus_T1abcDEF12345' })).resolves.toStrictEqual([toInvoice(invoice)]);
+
+		expect(list).toHaveBeenCalledWith({ customer: 'cus_T1abcDEF12345', limit: 20 });
 	});
 
 	test('Verifies a signed webhook and refuses a wrong signature, a missing header and a broken body', async () => {

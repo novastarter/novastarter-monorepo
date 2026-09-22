@@ -8,6 +8,15 @@ import { SmsDriverTwilio } from './driver.js';
 
 const create = vi.fn();
 const fetch = vi.fn();
+const destroy = vi.fn();
+
+/**
+ * The request client the SDK hangs off the client, as the driver reaches it; a test can strip the axios shape to
+ * mimic a custom client that has no agent to release.
+ */
+const httpClient: { axios?: { defaults: { httpsAgent: { destroy: () => void } } } | undefined } = {
+	axios: { defaults: { httpsAgent: { destroy } } },
+};
 
 vi.mock('twilio', () => {
 	/**
@@ -24,13 +33,18 @@ vi.mock('twilio', () => {
 	 * Stand-in for the `twilio()` factory: hands out a client whose messages and balance APIs are the shared spies,
 	 * so each test can script Twilio's answer and inspect the request.
 	 */
-	const factory = vi.fn(() => ({ messages: { create }, balance: { fetch } }));
+	const factory = vi.fn(() => ({
+		messages: { create },
+		balance: { fetch },
+		httpClient,
+	}));
 
 	return { default: Object.assign(factory, { RestException }) };
 });
 
 afterEach(() => {
 	vi.clearAllMocks();
+	httpClient.axios = { defaults: { httpsAgent: { destroy } } };
 });
 
 describe('SmsDriverTwilio', () => {
@@ -48,6 +62,26 @@ describe('SmsDriverTwilio', () => {
 
 		expect(create).toHaveBeenCalledWith({ to: '+14155550123', body: 'Hi', from: '+14155550100' });
 		expect(defaultExport).toBe(SmsDriverTwilio);
+	});
+
+	test('Reports no segment count when Twilio does not say one', async () => {
+		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
+
+		// 1. `null` and an empty string are not counts — reporting 0 would claim the text was split into zero parts,
+		//    so the result carries no `segments` key at all
+		create.mockResolvedValueOnce({ sid: 'SM4', status: 'queued', numSegments: null, errorCode: null });
+
+		expect(await driver.send({ to: '+14155550123', from: '+14155550100', text: 'Hi' })).toStrictEqual({
+			messageId: 'SM4',
+			status: 'queued',
+		});
+
+		create.mockResolvedValueOnce({ sid: 'SM5', status: 'queued', numSegments: '', errorCode: null });
+
+		expect(await driver.send({ to: '+14155550123', from: '+14155550100', text: 'Hi' })).toStrictEqual({
+			messageId: 'SM5',
+			status: 'queued',
+		});
 	});
 
 	test('Adds the location messaging service and status callback to a message without a sender', async () => {
@@ -127,5 +161,26 @@ describe('SmsDriverTwilio', () => {
 
 		fetch.mockRejectedValueOnce(new Error('Authenticate'));
 		await expect(driver.verify()).rejects.toThrow('Twilio: Authenticate');
+	});
+
+	test('Releases the keep-alive agent on close', async () => {
+		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
+
+		// 1. The SDK pools connections in a keep-alive https.Agent and has no close of its own, so `close()` destroys
+		//    the agent behind its axios instance
+		await driver.close();
+
+		expect(destroy).toHaveBeenCalledTimes(1);
+	});
+
+	test('Closes cleanly when the client has no axios agent', async () => {
+		// 1. A custom or mocked request client may carry no axios defaults at all: there is nothing to release, and
+		//    `close()` must not throw — the manager awaits it while releasing every location
+		httpClient.axios = undefined;
+
+		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
+
+		await expect(driver.close()).resolves.toBeUndefined();
+		expect(destroy).not.toHaveBeenCalled();
 	});
 });

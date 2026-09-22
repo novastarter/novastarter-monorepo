@@ -27,7 +27,7 @@ import { generateJoi, type JoiOptions } from './generate-joi.js';
  */
 export function validatePayload(
 	filter: Filter,
-	payload: Record<string, any>,
+	payload: Record<string, unknown>,
 	options?: JoiOptions,
 ): InstanceType<typeof FailedValidationError>[] {
 	// 1. The errors every branch below collects into; shared, so the branches read as one accumulation

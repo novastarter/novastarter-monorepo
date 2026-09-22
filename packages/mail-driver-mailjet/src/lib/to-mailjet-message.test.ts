@@ -55,4 +55,19 @@ describe('toMailjetMessage', () => {
 		// 2. A message without a sender is refused by name
 		await expect(toMailjetMessage({ to: 'a@b.c', subject: 'x', text: 'x' })).rejects.toThrow(/"from"/);
 	});
+
+	test('Cuts the joined tags at the CustomID limit, so an over-long value never fails the send', async () => {
+		// 1. Mailjet refuses a request whose `CustomID` passes 255 characters; joined tags that long must trim the
+		//    analytics instead of failing the whole send
+		const message = await toMailjetMessage({
+			to: 'a@b.c',
+			from: 'x@y.z',
+			subject: 'x',
+			text: 'x',
+			tags: ['a'.repeat(200), 'b'.repeat(200)],
+		});
+
+		// 2. The value is cut at the limit, not dropped — a partial id still groups the statistics
+		expect(message.CustomID).toBe(`${'a'.repeat(200)},${'b'.repeat(54)}`);
+	});
 });

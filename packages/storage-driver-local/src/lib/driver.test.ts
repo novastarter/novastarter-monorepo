@@ -3,9 +3,9 @@
  */
 import type { Dir, ReadStream, WriteStream } from 'node:fs';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { access, copyFile, mkdir, opendir, rename, stat, unlink } from 'node:fs/promises';
+import { copyFile, mkdir, open, opendir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
-import { PassThrough } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import {
 	randDirectoryPath,
@@ -17,6 +17,7 @@ import {
 	randGitShortSha as randUnique,
 	randWord,
 } from '@ngneat/falso';
+import { useLogger } from '@novastarter/logger';
 import { StorageFileNotFoundError } from '@novastarter/storage';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { StorageDriverLocalConfig } from './driver.js';
@@ -277,8 +278,8 @@ describe('#read', () => {
 
 describe('#stat', () => {
 	test('Calls node:fs/promises stat with full path', async () => {
-		// 1. An empty object is enough: the test only checks which path was asked for, not the returned numbers
-		vi.mocked(stat).mockResolvedValueOnce({} as unknown as Awaited<ReturnType<typeof stat>>);
+		// 1. An object with `isFile` is enough: the test only checks which path was asked for, not the returned numbers
+		vi.mocked(stat).mockResolvedValueOnce({ isFile: () => true } as unknown as Awaited<ReturnType<typeof stat>>);
 
 		await driver.stat(sample.path.input);
 
@@ -288,6 +289,14 @@ describe('#stat', () => {
 
 	test('Throws the kit error if stat does not return info', async () => {
 		// 1. The auto-mocked `stat` resolves `undefined`, which is the misbehaving-filesystem case the guard covers
+		await expect(driver.stat(sample.path.input)).rejects.toBeInstanceOf(StorageFileNotFoundError);
+	});
+
+	test('Reports a directory as missing', async () => {
+		// 1. A directory has a size and an `mtime` too, but no `read()` can ever stream it; it reads as missing, the
+		//    way the object stores answer for a prefix
+		vi.mocked(stat).mockResolvedValueOnce({ isFile: () => false } as unknown as Awaited<ReturnType<typeof stat>>);
+
 		await expect(driver.stat(sample.path.input)).rejects.toBeInstanceOf(StorageFileNotFoundError);
 	});
 
@@ -313,28 +322,38 @@ describe('#stat', () => {
 });
 
 describe('#exists', () => {
-	test('Calls node:fs/promises access with full path', async () => {
-		// 1. A resolved value of any shape means "present"; only the path handed to `access` is under test here
-		vi.mocked(access).mockResolvedValueOnce({} as unknown as Awaited<ReturnType<typeof access>>);
+	test('Calls node:fs/promises stat with full path', async () => {
+		// 1. `stat` proves both presence and file-ness; only the path handed to it is under test here
+		vi.mocked(stat).mockResolvedValueOnce({ isFile: () => true } as unknown as Awaited<ReturnType<typeof stat>>);
 
 		await driver.exists(sample.path.input);
 
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
-		expect(access).toHaveBeenCalledWith(sample.path.inputFull);
+		expect(stat).toHaveBeenCalledWith(sample.path.inputFull);
 	});
 
-	test('Returns true if access resolves', async () => {
-		// 1. `access` resolving is the only signal of presence the driver relies on
-		vi.mocked(access).mockResolvedValueOnce({} as unknown as Awaited<ReturnType<typeof access>>);
+	test('Returns true if the path is a file', async () => {
+		// 1. Only a file counts as present: `read()` can stream it, as it can an object on every other backend
+		vi.mocked(stat).mockResolvedValueOnce({ isFile: () => true } as unknown as Awaited<ReturnType<typeof stat>>);
 
 		const result = await driver.exists(sample.path.input);
 
 		expect(result).toBe(true);
 	});
 
+	test('Returns false for a directory', async () => {
+		// 1. `access` used to resolve for directories too, answering `true` for a folder no `read()` can stream; the
+		//    object stores answer `false` there, and so does this driver
+		vi.mocked(stat).mockResolvedValueOnce({ isFile: () => false } as unknown as Awaited<ReturnType<typeof stat>>);
+
+		const result = await driver.exists(sample.path.input);
+
+		expect(result).toBe(false);
+	});
+
 	test('Returns false if the file does not exist', async () => {
 		// 1. `node:fs` errors carry the code as a property, which `Object.assign` reproduces on a plain Error
-		vi.mocked(access).mockRejectedValueOnce(Object.assign(new Error(), { code: 'ENOENT' }));
+		vi.mocked(stat).mockRejectedValueOnce(Object.assign(new Error(), { code: 'ENOENT' }));
 
 		const result = await driver.exists(sample.path.input);
 
@@ -343,7 +362,7 @@ describe('#exists', () => {
 
 	test('Returns false if a parent of the path is a file', async () => {
 		// 1. ENOTDIR is what the filesystem answers when a directory segment of the path is actually a file
-		vi.mocked(access).mockRejectedValueOnce(Object.assign(new Error(), { code: 'ENOTDIR' }));
+		vi.mocked(stat).mockRejectedValueOnce(Object.assign(new Error(), { code: 'ENOTDIR' }));
 
 		const result = await driver.exists(sample.path.input);
 
@@ -355,7 +374,7 @@ describe('#exists', () => {
 		//    serving a permission error for a file that does exist
 		const error = Object.assign(new Error('permission denied'), { code: 'EACCES' });
 
-		vi.mocked(access).mockRejectedValueOnce(error);
+		vi.mocked(stat).mockRejectedValueOnce(error);
 
 		await expect(driver.exists(sample.path.input)).rejects.toThrow(error);
 	});
@@ -500,6 +519,17 @@ describe('#write', () => {
 
 		await expect(driver.write(sample.path.input, sample.stream)).rejects.toBe(error);
 	});
+
+	test('Removes the temporary file and rethrows when the rename fails', async () => {
+		// 1. A cross-device target, a directory in the way or `EPERM` used to rethrow with the `<name>.<hex>.tmp` file
+		//    left on disk forever, because the rename sat outside the cleanup `try`
+		const error = Object.assign(new Error('invalid cross-device link'), { code: 'EXDEV' });
+		vi.mocked(rename).mockRejectedValueOnce(error);
+
+		await expect(driver.write(sample.path.input, sample.stream)).rejects.toBe(error);
+
+		expect(unlink).toHaveBeenCalledWith(writtenPath());
+	});
 });
 
 describe('#delete', () => {
@@ -600,6 +630,43 @@ describe('#listGenerator', () => {
 		expect(output).toStrictEqual(mockFiles);
 	});
 
+	test('Skips the temporary staging files of a concurrent write', async () => {
+		// 1. `write()` stages its bytes in a `<name>.<random>.tmp` sibling; a listing running while the write is in
+		//    flight would otherwise yield a path that vanishes the moment the write publishes its rename
+		vi.mocked(relative).mockImplementation((_, x) => x);
+
+		vi.mocked(opendir).mockResolvedValue(
+			(function* () {
+				yield { name: 'file.png.0f1e2d3c4b5a.tmp', isFile: () => true, isDirectory: () => false };
+				yield { name: 'file.png', isFile: () => true, isDirectory: () => false };
+			})() as unknown as Dir,
+		);
+
+		const output = [];
+
+		for await (const filename of driver['listGenerator']('')) {
+			output.push(filename);
+		}
+
+		expect(output).toStrictEqual(['file.png']);
+	});
+
+	test('Yields forward slashes whatever the platform separator is', async () => {
+		// 1. `relative` reports platform separators — a backslash on Windows — while the contract mandates forward
+		//    slashes, so the yielded path is normalised
+		vi.mocked(relative).mockImplementation((_, x) => x.replaceAll('/', '\\'));
+
+		const iterator = driver['listGenerator']('');
+
+		const output = [];
+
+		for await (const filename of iterator) {
+			output.push(filename);
+		}
+
+		expect(output).toStrictEqual(mockFiles);
+	});
+
 	test('Recursively calls itself to traverse directories', async () => {
 		vi.mocked(relative).mockImplementation((_, x) => x);
 
@@ -661,5 +728,142 @@ describe('#listGenerator', () => {
 		const iterator = driver['listGenerator'](`${randDirectoryPath()}/`);
 
 		await expect(iterator.next()).rejects.toBe(error);
+	});
+});
+
+describe('#tusExtensions', () => {
+	test('Advertises creation, termination and expiration', () => {
+		// 1. Only the extensions the chunked-upload methods back: a chunk is written at its offset without a
+		//    verification step, and chunks of several uploads cannot be joined into one
+		expect(driver.tusExtensions).toStrictEqual(['creation', 'termination', 'expiration']);
+	});
+});
+
+describe('#createChunkedUpload', () => {
+	beforeEach(() => {
+		// 1. `ensureDir` is stubbed so the tests can assert it was asked for the right directory
+		driver['ensureDir'] = vi.fn();
+	});
+
+	test('Creates the empty target file under the resolved path', async () => {
+		const mockDirname = randDirectoryPath();
+		vi.mocked(dirname).mockReturnValueOnce(mockDirname);
+
+		const context = { size: sample.file.size, metadata: {} };
+
+		const result = await driver.createChunkedUpload(sample.path.input, context);
+
+		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
+		expect(dirname).toHaveBeenCalledWith(sample.path.inputFull);
+		expect(driver['ensureDir']).toHaveBeenCalledWith(mockDirname);
+		expect(writeFile).toHaveBeenCalledWith(sample.path.inputFull, '');
+		expect(result).toBe(context);
+	});
+});
+
+describe('#writeChunk', () => {
+	let mockTarget: PassThrough;
+
+	let mockCreateWriteStream: ReturnType<typeof vi.fn>;
+
+	beforeEach(() => {
+		// 1. A real pass-through stands in for the file stream, so the real `stream.pipeline` the driver uses flows
+		//    bytes through and the offset math is what is under test
+		mockTarget = new PassThrough();
+		mockCreateWriteStream = vi.fn().mockReturnValue(mockTarget);
+
+		vi.mocked(open).mockResolvedValue({
+			createWriteStream: mockCreateWriteStream,
+		} as unknown as Awaited<ReturnType<typeof open>>);
+	});
+
+	test('Writes the chunk into the file at the given offset', async () => {
+		const received: Buffer[] = [];
+		mockTarget.on('data', (chunk: Buffer) => received.push(chunk));
+
+		const result = await driver.writeChunk(
+			sample.path.input,
+			Readable.from([Buffer.from('abc'), Buffer.from('def')]),
+			5,
+			{ size: 11, metadata: {} },
+		);
+
+		// 1. The file is opened for writing without truncating and the stream starts at the offset, so the chunk
+		//    lands at its place while the bytes before it stay intact
+		expect(open).toHaveBeenCalledWith(sample.path.inputFull, 'r+');
+		expect(mockCreateWriteStream).toHaveBeenCalledWith({ start: 5 });
+
+		// 2. The returned offset is the given one plus every byte that flowed through, and the bytes arrive as sent
+		expect(result).toBe(11);
+		expect(Buffer.concat(received).toString()).toBe('abcdef');
+	});
+
+	test('Rejects with the file and offset when the pipeline fails', async () => {
+		// 1. The TUS server maps any rejection to a generic failure and the client resumes from its last confirmed
+		//    offset, so the error must carry a readable reason naming the file and the offset
+		vi.mocked(useLogger).mockReturnValue({ warn: vi.fn() } as any);
+
+		const source = new PassThrough();
+
+		const result = driver.writeChunk(sample.path.input, source, 7, { size: 11, metadata: {} });
+
+		source.write('abc');
+		source.destroy(new Error('source died'));
+
+		await expect(result).rejects.toThrowError(
+			`Local storage failed to write a chunk of "${sample.path.input}" at offset 7`,
+		);
+	});
+
+	test.each([['ENOENT'], ['ENOTDIR']] as const)(
+		'Maps a missing upload file (%s) to the kit error, keeping the cause',
+		async (code) => {
+			// 1. `writeChunk` requires the upload's file to exist — `createChunkedUpload` makes it — so a missing file
+			//    means the upload is unknown; a raw file system error would not say that, the kit's "not found" does
+			const cause = Object.assign(new Error('no such file or directory'), { code });
+
+			vi.mocked(open).mockRejectedValue(cause);
+
+			const failure: unknown = await driver
+				.writeChunk(sample.path.input, Readable.from([Buffer.from('abc')]), 0, { size: 3, metadata: {} })
+				.catch((error: unknown) => error);
+
+			expect(failure).toBeInstanceOf(StorageFileNotFoundError);
+			expect(failure).toMatchObject({ extensions: { filepath: sample.path.input } });
+			expect((failure as { cause?: unknown }).cause).toBe(cause);
+		},
+	);
+
+	test('Rethrows any other file open error unchanged', async () => {
+		// 1. Only the errors that prove the path cannot exist mean "missing"; anything else says nothing about the
+		//    upload and is rethrown, the way `read` and `stat` treat it
+		const failure = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+
+		vi.mocked(open).mockRejectedValue(failure);
+
+		await expect(
+			driver.writeChunk(sample.path.input, Readable.from([Buffer.from('abc')]), 0, { size: 3, metadata: {} }),
+		).rejects.toBe(failure);
+	});
+});
+
+describe('#finishChunkedUpload', () => {
+	test('Resolves without touching the file', async () => {
+		// 1. Every chunk was written in place at its offset, so the file is already complete once the last chunk lands
+		await expect(
+			driver.finishChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} }),
+		).resolves.toBeUndefined();
+
+		expect(writeFile).not.toHaveBeenCalled();
+	});
+});
+
+describe('#deleteChunkedUpload', () => {
+	test('Removes the partially written file', async () => {
+		// 1. Chunks are written straight into the final file, so removing that file discards the whole upload
+		await driver.deleteChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} });
+
+		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
+		expect(unlink).toHaveBeenCalledWith(sample.path.inputFull);
 	});
 });

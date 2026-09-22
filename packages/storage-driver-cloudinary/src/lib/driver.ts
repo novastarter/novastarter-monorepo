@@ -1,6 +1,6 @@
 import { Blob, Buffer } from 'node:buffer';
 import { createHash, randomUUID } from 'node:crypto';
-import { extname, parse } from 'node:path';
+import { extname } from 'node:path';
 import { Readable } from 'node:stream';
 import {
 	type ChunkedUploadContext,
@@ -225,12 +225,16 @@ export class StorageDriverCloudinary implements TusDriver {
 	/**
 	 * Current time as the string Cloudinary expects in the `timestamp` parameter.
 	 *
-	 * @returns Milliseconds since the epoch, stringified.
+	 * Cloudinary defines `timestamp` as Unix time in seconds; a value in milliseconds is roughly a thousand times too
+	 * large and only passes while the replay window is not validated in both directions.
+	 *
+	 * @returns Whole seconds since the epoch, stringified.
+	 * @see https://cloudinary.com/documentation/signatures
 	 * @internal
 	 */
 	private getTimestamp() {
-		// 1. Stringified up front because every parameter is signed and sent as text
-		return String(new Date().getTime());
+		// 1. Whole seconds, per the signing spec, stringified up front because every parameter is signed and sent as text
+		return String(Math.floor(Date.now() / 1000));
 	}
 
 	/**
@@ -272,15 +276,24 @@ export class StorageDriverCloudinary implements TusDriver {
 	 * @internal
 	 */
 	private getPublicId(filepath: string) {
-		const { base, name } = parse(filepath);
 		const resourceType = this.getResourceType(filepath);
 
-		// 1. Raw ids include the extension: Cloudinary stores no format for them, so the extension is the only way
+		// 1. Normalise the separators first, so the split below only ever sees forward slashes — unlike `node:path`,
+		//    whose notion of a separator depends on the platform the process runs on
+		const segments = confinePath(filepath).split('/');
+		const base = segments[segments.length - 1] ?? '';
+
+		// 2. The extension is the part after the last dot of the final segment, mirroring `extname` except for a
+		//    leading dot, which marks a hidden name rather than an extension
+		const lastDot = base.lastIndexOf('.');
+		const extension = lastDot > 0 ? base.slice(lastDot) : '';
+
+		// 3. Raw ids include the extension: Cloudinary stores no format for them, so the extension is the only way
 		//    the name survives
 		if (resourceType === 'raw') return base;
 
-		// 2. Image and video ids drop it: Cloudinary derives the format and would otherwise produce `name.png.png`
-		return name;
+		// 4. Image and video ids drop it: Cloudinary derives the format and would otherwise produce `name.png.png`
+		return base.slice(0, base.length - extension.length);
 	}
 
 	/**
@@ -294,8 +307,12 @@ export class StorageDriverCloudinary implements TusDriver {
 	 * @internal
 	 */
 	private getFolderPath(filepath: string) {
-		// 1. `parse` already yields the directory without a trailing separator, which is the form the API wants
-		return parse(filepath).dir;
+		// 1. Normalise the separators first, so the cut below only ever sees forward slashes; the folder is everything
+		//    before the last segment and empty for a bare file name, which is the form the asset-folder parameter wants
+		const normalized = confinePath(filepath);
+		const lastSeparator = normalized.lastIndexOf('/');
+
+		return lastSeparator === -1 ? '' : normalized.slice(0, lastSeparator);
 	}
 
 	/**
@@ -335,11 +352,13 @@ export class StorageDriverCloudinary implements TusDriver {
 			url += `/v${version}`;
 		}
 
-		url += `/${fullPath}`;
+		// 3. Each path segment is percent-encoded: a public id is allowed to carry `?` or `#`, which would otherwise turn
+		//    the rest of the URL into a query or fragment and make the delivery API serve a different asset
+		url += `/${fullPath.split('/').map(encodeURIComponent).join('/')}`;
 
 		const requestInit: RequestInit = { method: 'GET' };
 
-		// 3. Translate the range into the HTTP header form: an omitted start is `0` — `{ end }` alone asks for the
+		// 4. Translate the range into the HTTP header form: an omitted start is `0` — `{ end }` alone asks for the
 		//    first bytes up to `end`, where `bytes=-N` would mean the last N bytes — and an omitted end is left open
 		if (range) {
 			requestInit.headers = {
@@ -349,7 +368,7 @@ export class StorageDriverCloudinary implements TusDriver {
 
 		const response = await fetch(url, requestInit);
 
-		// 4. An error status or a missing body means there is nothing to stream; the body is cancelled first because
+		// 5. An error status or a missing body means there is nothing to stream; the body is cancelled first because
 		//    an unread body holds its connection open; a 404 becomes the error every backend shares
 		if (response.status >= 400 || !response.body) {
 			await response.body?.cancel();
@@ -361,7 +380,7 @@ export class StorageDriverCloudinary implements TusDriver {
 			throw new Error(`No stream returned for file "${filepath}"`);
 		}
 
-		// 5. `fetch` returns a Web stream; the rest of the storage layer works with Node readables
+		// 6. `fetch` returns a Web stream; the rest of the storage layer works with Node readables
 		return Readable.fromWeb(response.body);
 	}
 
@@ -533,11 +552,20 @@ export class StorageDriverCloudinary implements TusDriver {
 	 * The stream is cut into chunks of about 5.5 MB and each chunk is sent as its own upload request, up to ten in
 	 * flight at once. Cloudinary joins the chunks by an upload id unique to this call and the `Content-Range` headers.
 	 *
+	 * Cloudinary derives the content type of an asset from its file extension and offers no upload parameter to
+	 * override it, so a caller's content type cannot be forwarded: the parameter is accepted to satisfy the shared
+	 * driver contract and otherwise ignored. Chunks of a resumable (TUS) upload through
+	 * {@link StorageDriverCloudinary.writeChunk} carry no content type either, since the TUS protocol hands none to
+	 * the driver.
+	 *
 	 * @param filepath - Asset path relative to the root.
 	 * @param content - Data to store.
+	 * @param _type - Ignored; accepted only to satisfy the shared driver contract, see the method description.
+	 * @throws Error when the stream is empty, since Cloudinary cannot store an empty asset and a silent success would
+	 * leave any previous asset under the same public id in place.
 	 * @throws Error wrapping the first failed chunk upload.
 	 */
-	async write(filepath: string, content: Readable): Promise<void> {
+	async write(filepath: string, content: Readable, _type?: string): Promise<void> {
 		const fullPath = this.fullPath(filepath);
 		const resourceType = this.getResourceType(fullPath);
 		const folderPath = this.getFolderPath(fullPath);
@@ -570,8 +598,9 @@ export class StorageDriverCloudinary implements TusDriver {
 		//    thrown, so the loop can drain the stream and the queue can settle before reporting it
 		const queue = new PQueue({ concurrency: 10 });
 
-		// 3. Cloudinary requires each chunk to be at least 5 MB; 5.5 MB leaves a safety margin above that
-		const chunkSize = 5.5e6;
+		// 3. Cloudinary requires each chunk to be at least {@link MINIMUM_CHUNK_SIZE}; five percent above it leaves the
+		//    safety margin the fixed 5.5 MB used to hard-code, derived from the constant so the two can never drift apart
+		const chunkSize = Math.ceil(MINIMUM_CHUNK_SIZE * 1.05);
 		let chunks = Buffer.alloc(0);
 
 		for await (let chunk of content) {
@@ -608,33 +637,42 @@ export class StorageDriverCloudinary implements TusDriver {
 						}),
 					)
 					.catch((err) => {
-						error = err;
+						error ??= err;
 					});
 			}
 		}
 
-		// 6. The last chunk carries the real total, which is how Cloudinary knows the upload is complete
-		queue
-			.add(() =>
-				this.uploadChunk({
-					resourceType,
-					blob: new Blob([chunks]),
-					bytesOffset: uploaded,
-					bytesTotal: totalSize,
-					uploadId,
-					parameters: {
-						signature,
-						...uploadParameters,
-					},
-				}),
-			)
-			.catch((err) => {
-				error = err;
-			});
+		// 6. A stream without a single byte stores nothing, and Cloudinary accepts no zero-length chunk that could mark
+		//    the upload complete; resolving would leave any previous asset under the same public id untouched while
+		//    reading as success, so the empty write is refused like a failed one
+		if (totalSize === 0) {
+			throw new Error(`Can't upload file "${filepath}": the stream is empty`);
+		}
+
+		// 7. The last chunk carries the real total, which is how Cloudinary knows the upload is complete
+		if (chunks.length > 0) {
+			queue
+				.add(() =>
+					this.uploadChunk({
+						resourceType,
+						blob: new Blob([chunks]),
+						bytesOffset: uploaded,
+						bytesTotal: totalSize,
+						uploadId,
+						parameters: {
+							signature,
+							...uploadParameters,
+						},
+					}),
+				)
+				.catch((err) => {
+					error ??= err;
+				});
+		}
 
 		await queue.onIdle();
 
-		// 7. Surface the first chunk failure with the path once every request has settled
+		// 8. Surface the first chunk failure with the path once every request has settled
 		if (error) {
 			throw new Error(`Can't upload file "${filepath}": ${(error as Error).message}`, { cause: error });
 		}
@@ -764,10 +802,12 @@ export class StorageDriverCloudinary implements TusDriver {
 		let nextCursor = '';
 
 		// 2. The search API pages with a cursor; an empty cursor on the first call asks for the first page. The query
-		//    goes through `URLSearchParams` so a prefix carrying `&`, `#` or `+` cannot break out of the `expression`
-		//    value
+		//    goes through `URLSearchParams`, which escapes the value for the URL but not for the search language, so the
+		//    prefix is pinned to the `public_id` field and quoted: an unquoted ` OR ` inside the caller's prefix would
+		//    otherwise be read as a boolean operator and list every asset in the account, past the location root
 		do {
-			const query = new URLSearchParams({ expression: `${fullPath}*`, next_cursor: nextCursor });
+			const expression = `public_id:"${fullPath.replaceAll('"', '\\"')}*"`;
+			const query = new URLSearchParams({ expression, next_cursor: nextCursor });
 
 			const response = await fetch(`https://api.cloudinary.com/v1_1/${this.cloudName}/resources/search?${query}`, {
 				method: 'GET',
@@ -778,7 +818,7 @@ export class StorageDriverCloudinary implements TusDriver {
 
 			const json = (await response.json().catch(() => ({}))) as {
 				next_cursor: string;
-				resources: {
+				resources?: {
 					public_id: string;
 					format: string;
 					resource_type: string;
@@ -795,8 +835,10 @@ export class StorageDriverCloudinary implements TusDriver {
 
 			nextCursor = json.next_cursor;
 
-			for (const file of json.resources) {
-				// 4. Strip the root and its slash so callers get paths in the form they pass in; images and videos get
+			// 4. A 2xx answer that is not JSON — a proxy's HTML page among it — reads as an empty page rather than
+			//    crashing on an un iterable `resources`
+			for (const file of json.resources ?? []) {
+				// 5. Strip the root and its slash so callers get paths in the form they pass in; images and videos get
 				//    their extension back because their public id was stored without it
 				const filename = toRelativePath(this.root, file.public_id);
 				if (file.resource_type === 'image' || file.resource_type === 'video') yield `${filename}.${file.format}`;
@@ -860,7 +902,7 @@ export class StorageDriverCloudinary implements TusDriver {
 	): Promise<number> {
 		const fullPath = this.fullPath(filepath);
 		const folderPath = this.getFolderPath(fullPath);
-		const resourceType = this.getResourceType(filepath);
+		const resourceType = this.getResourceType(fullPath);
 
 		// 1. The map is read for the upload state below and may arrive absent from a POST without `Upload-Metadata`; it
 		//    is created rather than crashing with a TypeError, so the failure a missing session causes is the API's, not
@@ -891,35 +933,44 @@ export class StorageDriverCloudinary implements TusDriver {
 		let currentChunkSize = 0;
 		let chunks = Buffer.alloc(0);
 
-		// 4. Buffer the whole chunk: the upload API needs its size for `Content-Range` before the request starts
-		for await (const chunk of content) {
+		// 4. Buffer the chunk as it streams in, counting bytes on the way: the upload API needs the exact size for
+		//    `Content-Range` before the request starts, and the bound check below runs per chunk so a client that
+		//    ignores the advertised chunk size is refused while still streaming instead of after the whole of it has
+		//    been buffered into one unbounded `Buffer`
+		for await (let chunk of content) {
+			if (!Buffer.isBuffer(chunk)) chunk = Buffer.from(chunk);
+
 			currentChunkSize += chunk.length;
 			chunks = Buffer.concat([chunks, chunk], currentChunkSize);
+
+			// 5. The TUS server agreed to send at most the configured size per request; an oversized chunk is refused
+			//    while it is still arriving, since Cloudinary would assemble an asset from bytes the upload never
+			//    agreed to carry
+			if (this.maximumChunkSize !== undefined && currentChunkSize > this.maximumChunkSize) {
+				throw new Error(
+					`The chunk of ${currentChunkSize} bytes exceeds the chunk size limit of ${this.maximumChunkSize} bytes`,
+				);
+			}
 		}
 
 		bytesUploaded += currentChunkSize;
 
-		// 5. The TUS server agreed to send at most the configured size per request; an oversized chunk is refused
-		//    before it is sent, since Cloudinary would assemble an asset from bytes the upload never agreed to carry
-		if (this.maximumChunkSize !== undefined && currentChunkSize > this.maximumChunkSize) {
-			throw new Error(
-				`The chunk of ${currentChunkSize} bytes exceeds the chunk size limit of ${this.maximumChunkSize} bytes`,
-			);
-		}
-
 		// 6. Only the chunk that reaches the declared size carries the real total; earlier ones send `-1`, which
-		//    tells Cloudinary more is coming
-		await this.uploadChunk({
-			resourceType,
-			blob: new Blob([chunks]),
-			bytesOffset: offset || 0,
-			bytesTotal: context.size && bytesUploaded === context.size ? context.size : -1,
-			uploadId,
-			parameters: {
-				signature: this.getFullSignature(uploadParameters),
-				...uploadParameters,
-			},
-		});
+		//    tells Cloudinary more is coming. An empty chunk sends no request at all, since Cloudinary rejects a
+		//    zero-length chunk and the offset is unchanged either way
+		if (currentChunkSize > 0) {
+			await this.uploadChunk({
+				resourceType,
+				blob: new Blob([chunks]),
+				bytesOffset: offset || 0,
+				bytesTotal: context.size && bytesUploaded === context.size ? context.size : -1,
+				uploadId,
+				parameters: {
+					signature: this.getFullSignature(uploadParameters),
+					...uploadParameters,
+				},
+			});
+		}
 
 		return bytesUploaded;
 	}

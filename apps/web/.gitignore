@@ -36,3 +36,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local files of the default storage location (STORAGE_LOCAL_ROOT)
+/uploads/

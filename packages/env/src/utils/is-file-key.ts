@@ -6,4 +6,7 @@
  * @param key - Variable name.
  * @returns `true` for names such as `DB_PASSWORD_FILE`.
  */
-export const isFileKey = (key: string): boolean => key.length > 5 && key.endsWith('_FILE');
+export const isFileKey = (key: string): boolean => {
+	// 1. The length check excludes a bare `_FILE`, which would leave an empty name once the suffix is removed
+	return key.length > 5 && key.endsWith('_FILE');
+};

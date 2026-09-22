@@ -42,6 +42,16 @@ describe('formatMailAddress', () => {
 			'"Jürgen Müller" <j@example.de>',
 		);
 	});
+
+	test('Drops a name that is empty or whitespace only, keeping the bare address', () => {
+		// 1. An empty name has nothing to display; a whitespace-only one neither — both would leave a stray space in
+		//    front of the address
+		expect(formatMailAddress({ name: '', address: 'ada@example.com' })).toBe('ada@example.com');
+		expect(formatMailAddress({ name: '   ', address: 'ada@example.com' })).toBe('ada@example.com');
+
+		// 2. Surrounding whitespace of a real name is trimmed, not carried into the line
+		expect(formatMailAddress({ name: '  Ada  ', address: 'ada@example.com' })).toBe('Ada <ada@example.com>');
+	});
 });
 
 describe('bareMailAddress', () => {

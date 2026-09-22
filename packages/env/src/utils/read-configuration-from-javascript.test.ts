@@ -88,3 +88,13 @@ test('Throws an error if the exported value is not a function or plain object', 
 		`[Error: Invalid JS configuration file export type. Requires one of "function", "object", received: "undefined"]`,
 	);
 });
+
+test('Throws an error instead of crashing when the module exports null', () => {
+	// 1. `typeof null` is `object`, so without the null guard the `in` check would crash with a raw TypeError; null
+	//    must be refused with the same documented error as any other bad export
+	vi.mocked(mockRequire).mockReturnValue(null);
+
+	expect(() => readConfigurationFromJavaScript('./test/path.js')).toThrowErrorMatchingInlineSnapshot(
+		`[Error: Invalid JS configuration file export type. Requires one of "function", "object", received: "undefined"]`,
+	);
+});

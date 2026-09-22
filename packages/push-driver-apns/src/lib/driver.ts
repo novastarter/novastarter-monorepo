@@ -37,7 +37,7 @@ export type PushDriverApnsConfig = {
 	 * Milliseconds a send may take before it fails with a timeout error; only the HTTP client's own limits, minutes
 	 * long, bound it unless given.
 	 */
-	requestTimeout?: number | undefined;
+	timeout?: number | undefined;
 };
 
 /**
@@ -123,8 +123,8 @@ export class PushDriverApns implements PushDriver {
 		this.config = { ...config, signingKey };
 
 		// 3. Production unless told otherwise: a token from a development build only works with the sandbox, and
-		//    APNs answers `BadDeviceToken` across environments. The client takes a `requestTimeout` but never reads
-		//    it, so the deadline is not handed over: `send()` keeps it
+		//    APNs answers `BadDeviceToken` across environments. The SDK takes a `requestTimeout` option of its own but
+		//    never reads it, so the driver's `timeout` is not handed over: `send()` races it instead
 		const host = config.host ?? (config.production === false ? Host.development : Host.production);
 
 		this.client = new ApnsClient({
@@ -142,7 +142,7 @@ export class PushDriverApns implements PushDriver {
 	 * @param message - The message, with a token.
 	 * @returns `accepted`; APNs hands out no id the client exposes.
 	 * @throws PushTargetGoneError when APNs says the token is unregistered, bad, or of another app.
-	 * @throws Error naming the deadline when `requestTimeout` passes before APNs answers, the `TimeoutError` of
+	 * @throws Error naming the deadline when `timeout` passes before APNs answers, the `TimeoutError` of
 	 * `@novastarter/utils` as the cause; the request itself runs on, since the HTTP client cannot be told to stop.
 	 * @throws Error naming APNs's status and reason otherwise, the SDK's error as the cause.
 	 */
@@ -158,25 +158,12 @@ export class PushDriverApns implements PushDriver {
 		try {
 			const request = this.client.send(toApnsNotification(message, this.config));
 
-			await (this.config.requestTimeout === undefined ? request : withTimeout(request, this.config.requestTimeout));
+			await (this.config.timeout === undefined ? request : withTimeout(request, this.config.timeout));
 
 			return { status: 'accepted' };
 		} catch (error) {
 			throw describeError(error);
 		}
-	}
-
-	/**
-	 * Check the credentials without sending: the signing key parses and is the kind APNs takes.
-	 *
-	 * APNs validates the team, the key id and the topic only on a push, so a wrong id shows up as
-	 * `InvalidProviderToken` or `TopicDisallowed` on the first message rather than here.
-	 *
-	 * @throws Error when the key is not an APNs auth key.
-	 */
-	async verify(): Promise<void> {
-		// 1. The key is the one thing checkable offline; the ids and the topic only APNs can judge
-		assertSigningKey(this.config.signingKey);
 	}
 
 	/**

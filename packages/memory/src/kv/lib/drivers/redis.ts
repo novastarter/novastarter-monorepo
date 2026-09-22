@@ -25,12 +25,12 @@ export interface ExtendedRedis extends Redis {
 	 * Store `value` only when it is larger than the current value of `key`.
 	 *
 	 * @param key - Namespaced key.
-	 * @param value - Candidate value.
+	 * @param value - Candidate value as text, stored verbatim when it beats the current value.
 	 * @param ttl - Expiry to set along with the value, in milliseconds; none when omitted.
 	 * @returns `1` when the value was stored, `0` when the current value is as large or larger, `-1` when the current
 	 * value is not a number.
 	 */
-	setMax(key: string, value: number, ttl?: number): Promise<number>;
+	setMax(key: string, value: string, ttl?: number): Promise<number>;
 
 	/**
 	 * Add `amount` to the integer under `key` and give the key an expiry once the addition went through.
@@ -96,11 +96,14 @@ export type KvDriverRedisConfig = {
  * Lua script behind `setMax`: store the value only when it beats the current one.
  *
  * Running the compare-and-set inside Redis makes it atomic; a GET followed by a SET from the client would let two
- * processes race each other. A second argument, when given, is the expiry in milliseconds set along with the value.
- * The answer is a number, never a Lua boolean — Redis turns `false` into a nil reply, which the client reads as
- * `null`, not as `0`: `1` stored, `0` not larger, `-1` when the current value is no number at all — a JSON string,
- * `null`, a compressed payload — which the driver turns into the error the local store throws for the same key,
- * instead of the Lua comparison error the script would otherwise die with.
+ * processes race each other. The value arrives as text and is stored verbatim: passed as a Lua number, Redis would
+ * convert it back to text with 17 significant digits, so a `0.1` written here would read as `0.10000000000000001`
+ * where `set` stores `0.1` — the comparison still runs on `tonumber(ARGV[1])`. A second argument, when given, is
+ * the expiry in milliseconds set along with the value. The answer is a number, never a Lua boolean — Redis turns
+ * `false` into a nil reply, which the client reads as `null`, not as `0`: `1` stored, `0` not larger, `-1` when the
+ * current value is no number at all — a JSON string, `null`, a compressed payload — which the driver turns into
+ * the error the local store throws for the same key, instead of the Lua comparison error the script would
+ * otherwise die with.
  */
 export const SET_MAX_SCRIPT = `
   local key = KEYS[1]
@@ -121,9 +124,9 @@ export const SET_MAX_SCRIPT = `
   end
 
   if ttl then
-    redis.call('SET', key, value, 'PX', ttl)
+    redis.call('SET', key, ARGV[1], 'PX', ttl)
   else
-    redis.call('SET', key, value)
+    redis.call('SET', key, ARGV[1])
   end
 
   return 1
@@ -406,9 +409,12 @@ export class KvDriverRedis implements KvDriver {
 				: await this.redis.increment(namespaced, amount);
 		} catch (error) {
 			// 3. A value `INCRBY` cannot read as an integer — a JSON string, `null`, a fraction, a compressed payload —
-			//    comes back as a reply error; rethrown as the error the local store throws for the same key, so a
-			//    caller handles both backends alike, with the reply kept as the cause
-			if (error instanceof Error && error.message.includes('not an integer')) {
+			//    comes back as this exact reply error. Redis prefixes the message when the failure happens inside the
+			//    Lua script, so the whole sentence is matched rather than its start, and only it: an unrelated error
+			//    that merely mentions "not an integer" passes through unchanged. The match is rethrown as the error
+			//    the local store throws for the same key, so a caller handles both backends alike, with the reply kept
+			//    as the cause
+			if (error instanceof Error && error.message.includes('ERR value is not an integer or out of range')) {
 				throw new Error(`The value for key "${key}" is not an integer.`, { cause: error });
 			}
 
@@ -432,12 +438,13 @@ export class KvDriverRedis implements KvDriver {
 			throw new RangeError(`The value for key "${key}" must be a finite number, got ${value}`);
 		}
 
-		// 2. The expiry travels with the value into the script, so a key stored here expires like one `set` wrote
+		// 2. The value goes to the script as text and is stored verbatim, so a `get` reads back exactly what `set`
+		//    stores; the expiry travels with it, so a key stored here expires like one `set` wrote
 		const namespaced = withNamespace(key, this.namespace);
 
 		const wasSet = this.ttl
-			? await this.redis.setMax(namespaced, value, this.ttl)
-			: await this.redis.setMax(namespaced, value);
+			? await this.redis.setMax(namespaced, String(value), this.ttl)
+			: await this.redis.setMax(namespaced, String(value));
 
 		// 3. The script answers `-1` for a current value that is no number, which the local store refuses with an
 		//    error rather than a `false` that would read as "not larger"

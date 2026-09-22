@@ -26,7 +26,8 @@
 	},
 	"dependencies": {
 		"@novastarter/logger": "workspace:*",
-		"@novastarter/storage": "workspace:*"
+		"@novastarter/storage": "workspace:*",
+		"@novastarter/utils": "workspace:*"
 	},
 	"devDependencies": {
 		"@ngneat/falso": "catalog:",

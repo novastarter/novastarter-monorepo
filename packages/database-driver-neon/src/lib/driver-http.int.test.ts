@@ -24,10 +24,21 @@ describe.skipIf(!NEON_DATABASE_URL)('DatabaseDriverNeonHttp on Neon', () => {
 	beforeAll(async () => {
 		driver = new DatabaseDriverNeonHttp({ connection: NEON_DATABASE_URL!, logger: logger as never });
 
-		// 1. A drizzle-kit folder of one migration, written per run: the schema name carries the pid
+		// 1. The fixture table the batch below writes is made here, not by the migration: every test must pass run
+		//    alone, under `vitest -t` as well as whole-file
+		await driver.db.execute(sql.raw(`CREATE SCHEMA IF NOT EXISTS "${schema}"`));
+
+		await driver.db.execute(
+			sql.raw(
+				`CREATE TABLE IF NOT EXISTS "${schema}"."notes" ("id" serial PRIMARY KEY NOT NULL, "text" text NOT NULL)`,
+			),
+		);
+
+		// 2. A drizzle-kit folder of one migration, written per run: the schema name carries the pid
 		migrationsFolder = await mkdtemp(join(tmpdir(), 'novastarter-migrations-'));
 		await mkdir(join(migrationsFolder, 'meta'));
 
+		// 3. The journal is what the migrator reads to find what to apply: one entry tagging the migration below
 		await writeFile(
 			join(migrationsFolder, 'meta', '_journal.json'),
 			JSON.stringify({
@@ -37,15 +48,23 @@ describe.skipIf(!NEON_DATABASE_URL)('DatabaseDriverNeonHttp on Neon', () => {
 			}),
 		);
 
+		// 4. The migration itself: a probe table nothing reads — the migrator running it and journaling it is the point
 		await writeFile(
 			join(migrationsFolder, '0000_init.sql'),
-			`CREATE TABLE "${schema}"."notes" ("id" serial PRIMARY KEY NOT NULL, "text" text NOT NULL);`,
+			`CREATE TABLE "${schema}"."probe" ("id" serial PRIMARY KEY NOT NULL);`,
 		);
 	});
 
 	afterAll(async () => {
-		await driver.db.execute(sql.raw(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`));
-		await rm(migrationsFolder, { recursive: true, force: true });
+		// 1. A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
+		//    real failure stays the one reported. There is no `close`: a fetch per query holds no connection
+		if (driver) {
+			await driver.db.execute(sql.raw(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`));
+		}
+
+		if (migrationsFolder) {
+			await rm(migrationsFolder, { recursive: true, force: true });
+		}
 	});
 
 	test('ping reaches the project over HTTP', async () => {

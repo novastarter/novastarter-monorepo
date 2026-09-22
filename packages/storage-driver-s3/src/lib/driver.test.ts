@@ -238,22 +238,16 @@ describe('#getClient', () => {
 
 	test('Throws error if key defined but secret missing', () => {
 		// 1. The constructor builds the client, so half a credential pair must throw before any client exists
-		try {
-			new StorageDriverS3({ key: 'key', bucket: 'bucket' });
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe('The s3 storage driver needs "key" and "secret" together');
-		}
+		expect(() => new StorageDriverS3({ key: 'key', bucket: 'bucket' })).toThrowError(
+			'The s3 storage driver needs "key" and "secret" together',
+		);
 	});
 
 	test('Throws error if secret defined but key missing', () => {
 		// 1. The constructor builds the client, so half a credential pair must throw before any client exists
-		try {
-			new StorageDriverS3({ secret: 'secret', bucket: 'bucket' });
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe('The s3 storage driver needs "key" and "secret" together');
-		}
+		expect(() => new StorageDriverS3({ secret: 'secret', bucket: 'bucket' })).toThrowError(
+			'The s3 storage driver needs "key" and "secret" together',
+		);
 	});
 
 	test('Creates S3Client without key / secret (based on machine config)', () => {
@@ -325,6 +319,31 @@ describe('#getClient', () => {
 				hostname: sampleDomain,
 				protocol: 'https:',
 				path: '/',
+			},
+			credentials: {
+				accessKeyId: sample.config.key,
+				secretAccessKey: sample.config.secret,
+			},
+			requestHandler: expect.any(NodeHttpHandler),
+		});
+	});
+
+	test('Keeps a path prefix and a port of a custom endpoint', () => {
+		// 1. An S3-compatible service mounted under a path prefix loses it when the endpoint is split by string
+		//    replacement, and a port ends up inside `hostname`; the URL parser forwards both to their own fields
+		new StorageDriverS3({
+			key: sample.config.key,
+			secret: sample.config.secret,
+			bucket: sample.config.bucket,
+			endpoint: 'http://localhost:9000/s3',
+		});
+
+		expect(S3Client).toHaveBeenCalledWith({
+			endpoint: {
+				hostname: 'localhost',
+				protocol: 'http:',
+				path: '/s3',
+				port: 9000,
 			},
 			credentials: {
 				accessKeyId: sample.config.key,
@@ -501,12 +520,9 @@ describe('#read', () => {
 			Body: undefined,
 		} as unknown as void);
 
-		try {
-			await driver.read(sample.path.input, { range: sample.range });
-		} catch (err: any) {
-			expect(err).toBeInstanceOf(Error);
-			expect(err.message).toBe(`No stream returned for file "${sample.path.input}"`);
-		}
+		await expect(driver.read(sample.path.input, { range: sample.range })).rejects.toThrowError(
+			`No stream returned for file "${sample.path.input}"`,
+		);
 	});
 
 	test('Throws an error when returned stream is not a readable stream', async () => {
@@ -597,6 +613,16 @@ describe('#stat', () => {
 		vi.mocked(driver['client'].send).mockRejectedValue(error as unknown as void);
 
 		await expect(driver.stat(sample.path.input)).rejects.toBe(error);
+	});
+
+	test('Refuses a HEAD response missing size or modification time', async () => {
+		// 1. Both fields are optional in the SDK's types; answering `undefined` under the non-optional `Stat` type
+		//    would fail far from its cause, so a broken response is refused with the path named
+		vi.mocked(driver['client'].send).mockResolvedValue({} as unknown as void);
+
+		await expect(driver.stat(sample.path.input)).rejects.toThrowError(
+			`No stat returned for file "${sample.path.input}"`,
+		);
 	});
 });
 
@@ -1364,6 +1390,30 @@ describe('#writeChunk', () => {
 
 		await expect(driver.writeChunk(sample.path.input, sample.stream, 10, context)).rejects.toBe(refusal);
 	});
+
+	test('Accepts a chunk while the length is still deferred', async () => {
+		// 1. A deferred-length upload has no total yet; the size passes through as `undefined`, so the parts are sized
+		//    for the largest object S3 allows and no part is treated as the final one
+		const context = { metadata: { 'upload-id': uploadId }, size: undefined };
+
+		await expect(driver.writeChunk(sample.path.input, sample.stream, 10, context)).resolves.toBe(17);
+
+		expect(driver['uploadParts']).toHaveBeenCalledWith(
+			sample.path.inputFull,
+			uploadId,
+			undefined,
+			sample.stream,
+			3,
+			10,
+		);
+	});
+});
+
+describe('#calcOptimalPartSize', () => {
+	test('Plans for the largest object when the size is unknown', () => {
+		// 1. A deferred-length upload must never overflow the part count, so the part size grows to fit the S3 maximum
+		expect(driver['calcOptimalPartSize'](undefined)).toBe(Math.ceil(driver.maxUploadSize / driver.maxMultipartParts));
+	});
 });
 
 describe('#uploadParts', () => {
@@ -1410,6 +1460,19 @@ describe('#uploadParts', () => {
 
 		expect(bytes).toBe(7);
 		expect(driver['uploadPart']).toHaveBeenCalledWith(key, uploadId, expect.any(fs.ReadStream), 4);
+	});
+
+	test('Skips a short trailing part while the length is deferred', async () => {
+		// 1. With an unknown size no part can be recognised as the final one, so a trailing part under the minimum is
+		//    skipped like any non-final part and the client resends those bytes once the length is declared
+		const createReadStream = vi.spyOn(fs, 'createReadStream');
+		const source = Readable.from([Buffer.alloc(17, 'a')]);
+
+		const bytes = await driver['uploadParts'](key, uploadId, undefined, source, 1, 0);
+
+		expect(bytes).toBe(10);
+		expect(driver['uploadPart']).toHaveBeenCalledTimes(1);
+		expect(createReadStream).toHaveBeenCalledTimes(1);
 	});
 
 	test('Destroys the read stream when the part upload rejects', async () => {
@@ -1464,5 +1527,55 @@ describe('#uploadParts', () => {
 
 		expect(semaphore['availablePermits']).toBe(1);
 		expect(open).not.toHaveBeenCalled();
+	});
+
+	test('Keeps a part permit checked out until its upload settles, even when another chunk fails', async () => {
+		// 1. One permit shared by the whole driver: the first part holds it through an upload the test controls, so
+		//    every later part of every upload on this driver waits for it
+		const semaphore = new Semaphore(1);
+		driver['partUploadSemaphore'] = semaphore;
+
+		// 2. Both uploads hang until the test releases them, so a permit wrongly freed mid-failure would visibly admit
+		//    the second upload before the first one settles
+		let finishFirst: (etag: string) => void = () => {};
+
+		let finishSecond: (etag: string) => void = () => {};
+
+		vi.mocked(driver['uploadPart'])
+			.mockImplementationOnce(() => new Promise<string>((resolve) => (finishFirst = resolve)))
+			.mockImplementation(() => new Promise<string>((resolve) => (finishSecond = resolve)));
+
+		const source1 = new PassThrough();
+		const run1 = driver['uploadParts'](key, uploadId, 100, source1, 1, 0);
+
+		// 3. Fifteen bytes cut at ten: the first part is complete and its upload hangs onto the only permit, while the
+		//    remainder waits for a permit before its part file is opened
+		source1.write(Buffer.alloc(15, 'a'));
+		await vi.waitFor(() => expect(driver['uploadPart']).toHaveBeenCalledTimes(1));
+
+		// 4. A second upload arrives and its part must wait for the permit, since the first upload is still in flight
+		const source2 = new PassThrough();
+		const run2 = driver['uploadParts'](key, uploadId, 100, source2, 1, 0);
+		source2.write(Buffer.alloc(10, 'a'));
+		source2.end();
+		await tick();
+
+		// 5. The first chunk dies while its part uploads: the failure must not free the in-flight part's permit, or the
+		//    waiting upload would be admitted while the first upload is still running, past the concurrency cap. The
+		//    pause gives a wrongly freed permit every chance to surface through the real file system instead of
+		//    racing past it
+		source1.destroy(new Error('connection reset'));
+
+		await expect(run1).rejects.toThrow('connection reset');
+		await new Promise((resolve) => setTimeout(resolve, 50));
+
+		expect(driver['uploadPart']).toHaveBeenCalledTimes(1);
+
+		// 6. The permit comes back when the in-flight upload settles, and only then does the waiting upload proceed
+		finishFirst('etag');
+		await vi.waitFor(() => expect(driver['uploadPart']).toHaveBeenCalledTimes(2));
+
+		finishSecond('etag');
+		await expect(run2).resolves.toBe(10);
 	});
 });

@@ -233,10 +233,12 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	 * @throws Polar's `PolarError` when the request is refused, or its `HTTPClientError` when Polar cannot be reached.
 	 */
 	async updateSubscription(input: UpdateSubscriptionInput): Promise<Subscription> {
+		// 1. The proration behavior holds whichever request carries the change, so it is resolved once; the
+		//    accumulator keeps the last update's result, which is the state that comes back
 		const prorationBehavior = PRORATION[input.proration ?? 'prorate'];
 		let subscription;
 
-		// 1. A product change is one update
+		// 2. A product change is one update
 		if (input.priceId !== undefined) {
 			subscription = await this.client.subscriptions.update({
 				id: input.subscriptionId,
@@ -244,7 +246,7 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 			});
 		}
 
-		// 2. A seat change is another; its result is the later state, so it is the one returned
+		// 3. A seat change is another; its result is the later state, so it is the one returned
 		if (input.quantity !== undefined) {
 			subscription = await this.client.subscriptions.update({
 				id: input.subscriptionId,
@@ -252,7 +254,7 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 			});
 		}
 
-		// 3. Neither given: a caller's mistake, reported rather than answered with an unchanged subscription
+		// 4. Neither given: a caller's mistake, reported rather than answered with an unchanged subscription
 		if (!subscription) {
 			throw new Error(
 				`Nothing to update on Polar subscription "${input.subscriptionId}": give a priceId or a quantity`,
@@ -331,9 +333,10 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 			present[name] = value;
 		}
 
-		// 2. The SDK verifies the signature and the timestamp, then parses the body — in that order
+		// 2. The SDK verifies the signature and the timestamp, then parses the body — in that order. Every header is
+		//    checked present above, so the delivery id is there
 		try {
-			return toEvent(validateEvent(rawBody, present, this.webhookSecret), deliveryIdOf(present) ?? '');
+			return toEvent(validateEvent(rawBody, present, this.webhookSecret), deliveryIdOf(present));
 		} catch (error) {
 			// 3. A signature that does not match, or a stale timestamp, is a credentials problem
 			if (error instanceof WebhookVerificationError) {

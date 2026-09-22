@@ -28,6 +28,16 @@ describe('toMailgunTags', () => {
 		// 3. A category alone fits, as does an empty tag list
 		expect(toMailgunTags({ to: 'a@b.c', subject: 'x' })).toStrictEqual(['transactional']);
 	});
+
+	test('Brings a tag into Mailgun character set instead of refusing the message over it', () => {
+		// 1. Mailgun takes ASCII letters, digits, `_` and `-` only, so a non-ASCII label becomes underscores rather
+		//    than failing the whole send; the sanitised label is then cut and capped like any other
+		expect(toMailgunTags({ to: 'a@b.c', subject: 'x', tags: ['счёт', 'v2.1'] })).toStrictEqual([
+			'transactional',
+			'____',
+			'v2_1',
+		]);
+	});
 });
 
 describe('toMailgunFile', () => {

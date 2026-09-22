@@ -7,10 +7,12 @@ import { LimitExceededError, limitExceededMessage, ResourceRestrictedError, reso
 
 describe('LimitExceededError', () => {
 	test('Constructs message', () => {
+		// 1. The message names the entitlement the limit was exceeded for
 		expect(limitExceededMessage({ category: 'seats' })).toMatchInlineSnapshot('"Limit exceeded for "seats"."');
 	});
 
 	test('Carries the code, the status and the category', () => {
+		// 1. The transport layer reads the code, the HTTP status and the extensions off the error
 		const error = new LimitExceededError({ category: 'seats' });
 
 		expect(error.code).toBe('LIMIT_EXCEEDED');
@@ -22,10 +24,12 @@ describe('LimitExceededError', () => {
 
 describe('ResourceRestrictedError', () => {
 	test('Constructs message', () => {
+		// 1. The message names the feature the plan does not grant
 		expect(resourceRestrictedMessage({ category: 'sso' })).toMatchInlineSnapshot('"Resource "sso" is restricted."');
 	});
 
 	test('Carries the code, the status and the category', () => {
+		// 1. The same shape as the limit error, with its own code
 		const error = new ResourceRestrictedError({ category: 'sso' });
 
 		expect(error.code).toBe('RESOURCE_RESTRICTED');

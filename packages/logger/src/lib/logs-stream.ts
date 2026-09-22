@@ -8,12 +8,6 @@ import { processId } from '@novastarter/utils/node';
 export type PrettyType = 'basic' | 'http' | false;
 
 /**
- * Identifier of this process, attached to every published line so a reader of a multi-instance stream can tell the
- * nodes apart.
- */
-const nodeId = processId();
-
-/**
  * The part of a message bus {@link LogsStream} needs: publishing a line on a channel.
  *
  * Structural on purpose, so the `BusDriver` of `@novastarter/memory` fits without this package depending on it, and
@@ -51,6 +45,15 @@ export class LogsStream extends Writable {
 	pretty: PrettyType;
 
 	/**
+	 * Identifier of this process, attached to every published line so a reader of a multi-instance stream can tell
+	 * the nodes apart.
+	 *
+	 * Resolved in the constructor rather than at import time: the package declares no side effects, so a bundler
+	 * may drop or defer a module whose import runs code, and `processId()` must not run before a stream exists.
+	 */
+	private readonly nodeId: string;
+
+	/**
 	 * Create the stream.
 	 *
 	 * @param pretty - Shape applied to every line.
@@ -59,6 +62,11 @@ export class LogsStream extends Writable {
 	constructor(pretty: PrettyType, messenger: LogsBus) {
 		// 1. Object mode, so pino hands over whole lines rather than arbitrary byte chunks
 		super({ objectMode: true });
+
+		// 2. The process id is taken on construction, not at import: `processId()` memoises, so every stream of
+		//    this process still shares one id
+		this.nodeId = processId();
+
 		this.messenger = messenger;
 		this.pretty = pretty;
 	}
@@ -71,40 +79,56 @@ export class LogsStream extends Writable {
 	 * @param callback - Signals the stream that the line was handled.
 	 */
 	override _write(chunk: string, _encoding: string, callback: (error?: Error | null) => void): void {
-		// 1. Raw mode wraps the line by string interpolation on purpose: parsing and re-serialising every line would cost
-		// more than the whole logging call
-		if (!this.pretty) {
-			this.publish(`{"log":${chunk},"nodeId":"${nodeId}"}`);
+		// 1. Pino terminates every line with a newline, which object mode preserves; stripping the terminator keeps it
+		//    from ending up embedded inside the published JSON payload
+		const line = chunk.replace(/\r?\n$/, '');
+
+		let log: Record<string, any>;
+
+		// 2. Anything but pino can write into a multistream, and a foreign or corrupted line is not JSON. Raw mode
+		//    interpolates the line into the payload, which would hand every subscriber a syntactically invalid
+		//    message, so the line is validated exactly like the pretty branch does; the parse result is discarded in
+		//    raw mode, where the original line is forwarded so its exact content and field order survive
+		try {
+			log = JSON.parse(line);
+		} catch {
+			this.publishUnreadableLine();
+
 			return callback();
 		}
 
-		const log = JSON.parse(chunk);
+		// 3. Raw mode wraps the validated line by string interpolation on purpose: parsing and re-serialising every
+		//    line would cost more than the whole logging call
+		if (!this.pretty) {
+			this.publish(`{"log":${line},"nodeId":"${this.nodeId}"}`);
+			return callback();
+		}
 
-		// 2. An HTTP line carries request and response objects; they are folded into a single readable message. The
+		// 4. An HTTP line carries request and response objects; they are folded into a single readable message. The
 		//    duration is tested for presence, not truth: pino-http counts whole milliseconds, so a request served in
 		//    under one reports `0`, and it must fold like any other
 		if (
 			this.pretty === 'http' &&
-			log.req?.method &&
-			log.req?.url &&
-			log.res?.statusCode != null &&
-			log.responseTime != null
+			log['req']?.method &&
+			log['req']?.url &&
+			log['res']?.statusCode != null &&
+			log['responseTime'] != null
 		) {
 			this.publish(
 				JSON.stringify({
 					log: {
 						level: log['level'],
 						time: log['time'],
-						msg: `${log.req.method} ${log.req.url} ${log.res.statusCode} ${log.responseTime}ms`,
+						msg: `${log['req'].method} ${log['req'].url} ${log['res'].statusCode} ${log['responseTime']}ms`,
 					},
-					nodeId: nodeId,
+					nodeId: this.nodeId,
 				}),
 			);
 
 			return callback();
 		}
 
-		// 3. Every other line keeps only the fields a log viewer shows
+		// 5. Every other line keeps only the fields a log viewer shows
 		this.publish(
 			JSON.stringify({
 				log: {
@@ -112,11 +136,29 @@ export class LogsStream extends Writable {
 					time: log['time'],
 					msg: log['msg'],
 				},
-				nodeId: nodeId,
+				nodeId: this.nodeId,
 			}),
 		);
 
 		callback();
+	}
+
+	/**
+	 * Publish the fallback line that stands in for a chunk that is not JSON.
+	 *
+	 * Shared by the raw and the pretty paths, so a foreign or corrupted line is reported the same way whichever
+	 * shape the stream publishes.
+	 *
+	 * @internal
+	 */
+	private publishUnreadableLine(): void {
+		// 1. A fixed error line keeps the stream and its subscribers alive; its time marks when the bad chunk arrived
+		this.publish(
+			JSON.stringify({
+				log: { level: 50, time: Date.now(), msg: 'Received an unreadable log line' },
+				nodeId: this.nodeId,
+			}),
+		);
 	}
 
 	/**

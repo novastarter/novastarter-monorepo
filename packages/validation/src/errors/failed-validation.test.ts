@@ -1,7 +1,7 @@
 /**
  * Tests of `validation/errors/failed-validation`.
  */
-import type { FilterOperator } from '@novastarter/types';
+import type { ClientFilterOperator, FilterOperator } from '@novastarter/types';
 import { describe, expect, test } from 'vitest';
 import { messageConstructor } from './failed-validation.js';
 
@@ -77,7 +77,20 @@ describe('Invalid value (list)', () => {
 });
 
 describe('Substring', () => {
-	const types: FilterOperator[] = ['contains', 'icontains', 'ncontains'];
+	// The affix operators are client-only, so the list needs the client operator type, not the storage one
+	const types: ClientFilterOperator[] = [
+		'contains',
+		'icontains',
+		'ncontains',
+		'starts_with',
+		'nstarts_with',
+		'istarts_with',
+		'nistarts_with',
+		'ends_with',
+		'nends_with',
+		'iends_with',
+		'niends_with',
+	];
 
 	/** Can't be randomized, as we're using snapshot tests */
 	const substring = 'test_substring';
@@ -90,9 +103,9 @@ describe('Substring', () => {
 	});
 });
 
-describe('Unsafe number', () => {
+describe('Unsafe', () => {
 	test('Constructs message for "unsafe"', () => {
-		// 1. Snapshot the message so a wording change is a deliberate diff, not a silent one
+		// 1. The catch-all rule names no specific expectation, since refinements, unions and unknown keys all map to it
 		const message = messageConstructor({
 			field,
 			type: 'unsafe',

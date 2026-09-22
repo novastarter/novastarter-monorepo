@@ -5,10 +5,10 @@ import {
 	type MailResult,
 	toMailAddressList,
 } from '@novastarter/mail';
-import { toErrorMessage } from '@novastarter/utils';
 import Mailgun from 'mailgun.js';
 import type { Interfaces } from 'mailgun.js/definitions';
 import { DEFAULT_MAILGUN_HOST } from './constants.js';
+import { rethrowMailgunError } from './describe-error.js';
 import { toMailgunMessage } from './to-mailgun-message.js';
 
 /**
@@ -39,20 +39,6 @@ declare module '@novastarter/mail' {
 		mailgun: MailDriverMailgunConfig;
 	}
 }
-
-/**
- * Re-throw an error of the SDK with the provider named, the original as the cause.
- *
- * @param error - What `mailgun.js` threw — its `APIError` carries the status and Mailgun's message.
- * @returns Never; the type lets it sit in a `.catch()`.
- * @throws Always.
- */
-const rethrowMailgunError = (error: unknown): never => {
-	// 1. The SDK's message already names the status and Mailgun's reason; only the provider is added
-	const details = toErrorMessage(error);
-
-	throw new Error(`Mailgun: ${details}`, { cause: error });
-};
 
 /**
  * Driver for [Mailgun](https://www.mailgun.com), through the official `mailgun.js` SDK.

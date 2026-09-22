@@ -15,20 +15,13 @@ import { MailDriverSes } from './driver.js';
 const sendMail = vi.fn();
 
 /**
- * Spy standing in for the transport's `close()`, so a test can check the driver releases the transport at shutdown.
- *
- * @internal
- */
-const close = vi.fn();
-
-/**
  * Spy recording every `SESv2Client.destroy()`, so a test can check the driver releases the SDK client at shutdown.
  *
  * @internal
  */
 const destroy = vi.fn();
 
-vi.mock('nodemailer', () => ({ default: { createTransport: vi.fn(() => ({ sendMail, close })) } }));
+vi.mock('nodemailer', () => ({ default: { createTransport: vi.fn(() => ({ sendMail })) } }));
 
 vi.mock('@aws-sdk/client-sesv2', () => ({
 	/**
@@ -117,10 +110,9 @@ describe('MailDriverSes', () => {
 
 		expect(defaultExport).toBe(MailDriverSes);
 
-		// 4. `close()` releases the transport and the SDK client's agents
+		// 4. `close()` releases the SDK client's agents; the SES transport holds nothing of its own
 		await driver.close();
 
-		expect(close).toHaveBeenCalledOnce();
 		expect(destroy).toHaveBeenCalledOnce();
 	});
 

@@ -42,8 +42,9 @@ declare module '@novastarter/mail' {
  * Driver for [Amazon SES](https://aws.amazon.com/ses/), through nodemailer's SES transport on the SESv2 SDK.
  *
  * The category and the tags become SES message tags, which show up in the sending events. SES takes only ASCII
- * letters, digits, `_` and `-` in a tag, at most 256 of them, so every tag is sanitised on the way
- * (`welcome flow` becomes `welcome_flow`) and one left with no name is dropped, rather than failing the whole send.
+ * letters, digits, `_` and `-` in a tag name or value, at most 256 characters of either, so every tag is sanitised
+ * on the way (`welcome flow` becomes `welcome_flow`) and one left with no name is dropped, rather than failing the
+ * whole send.
  *
  * @example
  * ```ts
@@ -136,9 +137,8 @@ export class MailDriverSes implements MailDriver {
 	 * @returns Once the client is destroyed.
 	 */
 	async close(): Promise<void> {
-		// 1. The transport holds no sockets of its own; the SDK client's keep-alive agents are what keeps the process
-		//    up
-		this.transporter.close();
+		// 1. The SES transport holds no sockets of its own and nodemailer defines no `close()` on it, so there is
+		//    nothing to release there; the SDK client's keep-alive agents are what keeps the process up
 		this.sesClient.destroy();
 	}
 }

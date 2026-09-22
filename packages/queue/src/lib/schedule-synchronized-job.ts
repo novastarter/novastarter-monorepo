@@ -7,9 +7,20 @@ import { SynchronizedClock } from './synchronized-clock.js';
  */
 export interface ScheduledJob {
 	/**
-	 * Stop firing and forget the clock.
+	 * Stop firing.
+	 *
+	 * The cluster-wide clock is left in place: a tick that already fired stays claimed, so an instance that stops
+	 * during a rolling restart cannot let a peer that is still running claim the same tick a second time.
 	 */
 	stop(): Promise<void>;
+
+	/**
+	 * Stop firing and forget the clock, so the next instance to start begins afresh.
+	 *
+	 * Only for callers that really want a fresh start — a tick that already fired becomes claimable again, so the
+	 * "once per tick across every instance" guarantee does not hold across a reset.
+	 */
+	reset(): Promise<void>;
 }
 
 /**
@@ -83,9 +94,14 @@ export const scheduleSynchronizedJob = (
 		},
 	);
 
-	// 3. The handle: stopping ends the timer and forgets the clock, so the next instance to start begins afresh
+	// 3. The handle: `stop` ends the timer alone, leaving the clock's reading in place — a tick already claimed stays
+	//    claimed, so an instance stopped mid-restart cannot let a peer re-run that tick; `reset` is the explicit opt-in
+	//    to a fresh start, forgetting the clock for the next instance
 	return {
 		stop: async () => {
+			job.stop();
+		},
+		reset: async () => {
 			job.stop();
 			await clock.reset();
 		},

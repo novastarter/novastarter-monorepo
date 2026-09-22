@@ -115,12 +115,16 @@ const register = (locations: Record<string, 'ok' | 'broken' | 'rude'>): void => 
 const message: MailMessage = { to: 'ada@example.com', subject: 'Hi', text: 'Hello' };
 
 beforeEach(() => {
+	// 1. The doubles replace the process-wide logger and emitter, so the manager the test builds works without them
 	vi.mocked(useLogger).mockReturnValue(logger as any);
 	vi.mocked(useEmitter).mockReturnValue(emitter as any);
 });
 
 afterEach(() => {
+	// 1. The manager is process-wide: reset it, so registrations of one test never leak into the next
 	useMail.reset();
+
+	// 2. The recorded messages and the mocks' call history go with the test that wrote them
 	sent.length = 0;
 	vi.clearAllMocks();
 });

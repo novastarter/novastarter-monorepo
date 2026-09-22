@@ -149,6 +149,10 @@ export interface LsWebhookPayload<A = unknown> {
 	meta: {
 		event_name: string;
 		custom_data?: Record<string, unknown> | undefined;
+		/**
+		 * The id of the webhook configuration the delivery was sent to: identical on every delivery of one endpoint,
+		 * so it identifies the endpoint, not the event — never a per-event id.
+		 */
 		webhook_id?: string | undefined;
 		test_mode?: boolean | undefined;
 	};

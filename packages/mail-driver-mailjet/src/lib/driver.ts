@@ -82,8 +82,8 @@ export class MailDriverMailjet implements MailDriver {
 	 *
 	 * @param message - Rendered message.
 	 * @returns The message ids Mailjet assigned per recipient (the first as `messageId`), accepted recipients.
-	 * @throws Error listing Mailjet's per-message errors when the status is not `success`; an error naming Mailjet
-	 * with the SDK's error as the cause when the request itself fails.
+	 * @throws Error listing Mailjet's per-message errors, the response body as the `cause`, when the status is not
+	 * `success`; an error naming Mailjet with the SDK's error as the cause when the request itself fails.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
 		// 1. One message per request; the sandbox flag is a property of the whole body
@@ -103,14 +103,19 @@ export class MailDriverMailjet implements MailDriver {
 
 		const sent = result.body.Messages[0];
 
-		// 3. A rejected message comes back with status 200 and `Status: 'error'`; that is a failure for `sendMail()`
+		// 3. A rejected message comes back with status 200 and `Status: 'error'`; that is a failure for `sendMail()`,
+		//    the body kept as the cause so the refusal stays inspectable
 		if (!sent || sent.Status !== 'success') {
 			const errors = (sent?.Errors ?? []).map((error) => error.ErrorMessage ?? JSON.stringify(error));
 
-			throw new Error(`Mailjet: ${errors.join('; ') || `status ${sent?.Status ?? 'unknown'}`}`);
+			throw new Error(`Mailjet: ${errors.join('; ') || `status ${sent?.Status ?? 'unknown'}`}`, {
+				cause: result.body,
+			});
 		}
 
-		// 4. Mailjet reports every recipient it took, with a message id each
+		// 4. Mailjet reports every recipient it took, with a message id each. A message that came back `success` was
+		//    taken whole, so unlike the envelope-recipient drivers there is no rejected list to report: `accepted` is
+		//    the provider's list and `rejected` stays empty on purpose
 		const delivered = [...(sent.To ?? []), ...(sent.Cc ?? []), ...(sent.Bcc ?? [])];
 
 		return {

@@ -6,6 +6,7 @@ import { getQueueNames } from '../../contracts/index.js';
 import type { QueueDriver } from '../../driver.js';
 import type { EnqueuedJob, EnqueueOptions, JobContract, JobOptions, QueueStats } from '../../types.js';
 import { loadBullmq } from '../load-bullmq.js';
+import { validateJobDelay } from '../validate-delay.js';
 
 /**
  * Options accepted by {@link QueueDriverBullmq}: the options of a `bullmq` location.
@@ -47,7 +48,8 @@ export const DEFAULT_REMOVE_ON_FAIL = 1_000;
  * The states BullMQ keeps queued work in, folded into `waiting` of {@link QueueStats}.
  *
  * A job with a `priority` waits in `prioritized`, a parent waiting for its children in `waiting-children`; only a
- * plain job sits in `waiting` itself. BullMQ's own `count()` sums the same states.
+ * plain job sits in `waiting` itself. This driver asks BullMQ for all three and reports their sum as the one
+ * `waiting` number, since the reader asks how much is waiting, not where BullMQ keeps it.
  *
  * @defaultValue `waiting`, `prioritized`, `waiting-children`
  */
@@ -175,7 +177,8 @@ export class QueueDriverBullmq implements QueueDriver {
 	 * @param id - Job id from `enqueue()`.
 	 * @returns The job's identity as BullMQ recorded it: the record's id, which for a `unique` job is BullMQ's own,
 	 * and the queued job's when the add collapsed into it.
-	 * @throws Error when the driver is closed; whatever BullMQ throws.
+	 * @throws Error when the driver is closed; `RangeError` for a `delay` that is negative, `NaN` or not finite;
+	 * whatever BullMQ throws.
 	 */
 	async enqueue(
 		contract: JobContract,
@@ -183,10 +186,15 @@ export class QueueDriverBullmq implements QueueDriver {
 		options: JobOptions & EnqueueOptions,
 		id?: string,
 	): Promise<EnqueuedJob> {
-		// 1. A `Queue` per name, shared with `stats()`; a closed driver refuses here
+		// 1. A delay a timer could not honour — negative, `NaN` or not finite — is refused through the shared check,
+		//    exactly as the `local` driver refuses it: BullMQ would take it as no delay at all, so the sibling drivers
+		//    would disagree about the same job
+		validateJobDelay(contract.name, options.delay);
+
+		// 2. A `Queue` per name, shared with `stats()`; a closed driver refuses here
 		const queue = await this.getQueue(contract.queue);
 
-		// 2. An explicit id names the record, and BullMQ answers an add with whatever record it holds under that id,
+		// 3. An explicit id names the record, and BullMQ answers an add with whatever record it holds under that id,
 		//    finished or not. A completed or failed one — kept for inspection — is dropped first, so the id can be
 		//    used again once its work is done and only queued, retrying or running work collapses, as with `unique`
 		if (options.jobId) {
@@ -197,7 +205,7 @@ export class QueueDriverBullmq implements QueueDriver {
 			}
 		}
 
-		// 3. The BullMQ job name is the action: workers see `send` on queue `mail`, and `getJobContract` rejoins the two
+		// 4. The BullMQ job name is the action: workers see `send` on queue `mail`, and `getJobContract` rejoins the two
 		const job = await queue.add(contract.action, payload, toJobsOptions(options, id));
 
 		return { id: String(job.id ?? id), name: contract.name, queue: contract.queue };
@@ -224,7 +232,14 @@ export class QueueDriverBullmq implements QueueDriver {
 
 		// 4. A client the caller handed in is theirs to close; one opened here would otherwise keep the process alive
 		if (this.ownsConnection) {
-			await this.connection.quit();
+			// 1. `quit` sends QUIT through the normal command path, so a client that never reached `ready` reconnects
+			//    endlessly, retrying forever by default, to deliver it and the close never resolves; a client that is
+			//    not connected is dropped with `disconnect` instead, which sends nothing and waits for nothing
+			if (this.connection.status !== 'ready') {
+				this.connection.disconnect();
+			} else {
+				await this.connection.quit();
+			}
 		}
 
 		// 5. A queue that refused to close is reported once everything else is down

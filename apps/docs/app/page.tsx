@@ -33,7 +33,7 @@ const ThemeImage = (props: Props) => {
 /**
  * The landing page of the app: the Turborepo starter screen with its calls to action.
  *
- * The page is a Server Component — the leftover demo button carries no click handler, so nothing here needs client
+ * The page is a Server Component — it renders no interactive controls, so nothing here needs client
  * JavaScript.
  *
  * @returns The whole page as one static tree.
@@ -46,8 +46,8 @@ export default function Home() {
 			<main className={styles.main}>
 				<ThemeImage
 					className={styles.logo}
-					srcLight="turborepo-dark.svg"
-					srcDark="turborepo-light.svg"
+					srcLight="/turborepo-dark.svg"
+					srcDark="/turborepo-light.svg"
 					alt="Turborepo logo"
 					width={180}
 					height={38}
@@ -79,10 +79,6 @@ export default function Home() {
 						Read our docs
 					</a>
 				</div>
-				{/* Plain button left over from the removed `@novastarter/ui` demo component; no click handler, so the page stays a Server Component */}
-				<button type="button" className={styles.secondary}>
-					Open alert
-				</button>
 			</main>
 			<footer className={styles.footer}>
 				<a

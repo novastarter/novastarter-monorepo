@@ -60,6 +60,43 @@ test('Publishes raw log when pretty is false', () => {
 	);
 });
 
+test('Strips the trailing newline of a pino line before publishing', () => {
+	// 1. pino terminates every line with `\n` and object mode preserves it; raw mode interpolates the line into the
+	//    payload, so an unstripped terminator would embed a control character in the published JSON
+	const logStream = new LogsStream(false, messenger);
+	const logString = JSON.stringify(sample.log) + '\n';
+
+	logStream._write(logString, '', () => {});
+
+	expect(messenger.publish).toBeCalledWith(
+		'logs',
+		JSON.stringify({
+			log: sample.log,
+			nodeId: 'a-process-id',
+		}),
+	);
+});
+
+test('Publishes a fallback line for a chunk that is not JSON', () => {
+	// 1. Anything but pino can write into a multistream; a non-JSON line must not throw out of `_write` — the stream
+	//    has no `error` listener — but become a fallback line so the stream keeps running
+	const logStream = new LogsStream('basic', messenger);
+
+	const callback = vi.fn();
+	expect(() => logStream._write('not a json line', '', callback)).not.toThrow();
+	expect(callback).toHaveBeenCalledWith();
+
+	expect(messenger.publish).toHaveBeenCalledOnce();
+
+	// 2. The payload is compared parsed, since `expect.any` cannot survive the JSON serialisation of the expectation
+	const payload = JSON.parse(vi.mocked(messenger.publish).mock.calls[0]![1]);
+
+	expect(payload).toStrictEqual({
+		log: { level: 50, time: expect.any(Number), msg: 'Received an unreadable log line' },
+		nodeId: 'a-process-id',
+	});
+});
+
 test('Publishes http log when pretty is false', () => {
 	// 1. Request fields stay untouched in raw mode: folding is a pretty concern
 	const logStream = new LogsStream(false, messenger);
@@ -154,7 +191,7 @@ test('Folds a request served in under a millisecond, whose responseTime is 0', (
 
 test('Escapes quotes in error messages', () => {
 	// 1. A message with quotes survives the string interpolation of raw mode
-	const logStream = new LogsStream('basic', messenger);
+	const logStream = new LogsStream(false, messenger);
 
 	const log = {
 		level: 30,
@@ -165,6 +202,27 @@ test('Escapes quotes in error messages', () => {
 	logStream._write(JSON.stringify(log), '', () => {});
 
 	expect(messenger.publish).toBeCalledWith('logs', JSON.stringify({ log, nodeId: 'a-process-id' }));
+});
+
+test('Publishes the fallback line for a non-JSON chunk in raw mode', () => {
+	// 1. Raw mode interpolates the line into the payload, so a foreign or corrupted line would produce a
+	//    syntactically invalid message every subscriber's `JSON.parse` throws on; it is swapped for the fallback
+	//    line, exactly like the pretty branch does
+	const logStream = new LogsStream(false, messenger);
+
+	const callback = vi.fn();
+	expect(() => logStream._write('not a json line', '', callback)).not.toThrow();
+	expect(callback).toHaveBeenCalledWith();
+
+	expect(messenger.publish).toHaveBeenCalledOnce();
+
+	// 2. The payload is compared parsed, since `expect.any` cannot survive the JSON serialisation of the expectation
+	const payload = JSON.parse(vi.mocked(messenger.publish).mock.calls[0]![1]);
+
+	expect(payload).toStrictEqual({
+		log: { level: 50, time: expect.any(Number), msg: 'Received an unreadable log line' },
+		nodeId: 'a-process-id',
+	});
 });
 
 test('Drops a line the bus refuses instead of failing the stream or the process', async () => {

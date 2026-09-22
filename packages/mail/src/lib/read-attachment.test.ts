@@ -13,10 +13,12 @@ import { readAttachment } from './read-attachment.js';
 let dir: string;
 
 beforeEach(async () => {
+	// 1. Every test gets a fresh directory, so attachments never read a leftover file
 	dir = await mkdtemp(join(tmpdir(), 'novastarter-mail-attachment-'));
 });
 
 afterEach(async () => {
+	// 1. The directory and every file a test wrote go, so nothing is left in the system's temp dir
 	await rm(dir, { recursive: true, force: true });
 });
 

@@ -383,12 +383,18 @@ describe('acquireLock', () => {
 	});
 
 	test('Keeps locks of different keys independent', async () => {
-		// 1. Two keys, two holders at once: neither waits for the other
+		// 1. Two keys, two holders at once: neither waits for the other — both entries exist while both are held, so
+		//    key isolation is asserted on the driver's own record rather than by the absence of a timeout
 		const a = await kv.acquireLock('a');
 		const b = await kv.acquireLock('b');
 
+		expect(kv['locks'].size).toBe(2);
+
 		await a.release();
+		expect(kv['locks'].size).toBe(1);
+
 		await b.release();
+		expect(kv['locks'].size).toBe(0);
 	});
 });
 

@@ -17,6 +17,7 @@ const MYSQL = process.env['MYSQL'];
 describe.skipIf(!MYSQL)('DatabaseDriverMysql on MySQL', () => {
 	// MySQL has no schema to isolate a run in, so the table and the journal carry the pid instead
 	const table = `notes_${process.pid}`;
+	const probeTable = `probe_${process.pid}`;
 	const migrationsTable = `__drizzle_migrations_${process.pid}`;
 	const logger = { error: vi.fn(), debug: vi.fn() };
 	let driver: DatabaseDriverMysql;
@@ -26,7 +27,15 @@ describe.skipIf(!MYSQL)('DatabaseDriverMysql on MySQL', () => {
 	beforeAll(async () => {
 		driver = new DatabaseDriverMysql({ connection: MYSQL!, logger: logger as never });
 
-		// 1. A drizzle-kit folder of one migration, written per run, since the table name carries the pid
+		// 1. The fixture table the queries below write is made here, not by the migration: every test must pass run
+		//    alone, under `vitest -t` as well as whole-file
+		await driver.db.execute(
+			sql.raw(
+				`CREATE TABLE IF NOT EXISTS \`${table}\` (\`id\` int AUTO_INCREMENT NOT NULL, \`text\` text NOT NULL, PRIMARY KEY (\`id\`))`,
+			),
+		);
+
+		// 2. A drizzle-kit folder of one migration, written per run, since the table name carries the pid
 		migrationsFolder = await mkdtemp(join(tmpdir(), 'novastarter-migrations-'));
 		await mkdir(join(migrationsFolder, 'meta'));
 
@@ -39,17 +48,27 @@ describe.skipIf(!MYSQL)('DatabaseDriverMysql on MySQL', () => {
 			}),
 		);
 
+		// 3. The migration itself: a probe table nothing reads — the migrator running it and journaling it is the point
 		await writeFile(
 			join(migrationsFolder, '0000_init.sql'),
-			`CREATE TABLE \`${table}\` (\`id\` int AUTO_INCREMENT NOT NULL, \`text\` text NOT NULL, PRIMARY KEY (\`id\`));`,
+			`CREATE TABLE \`${probeTable}\` (\`id\` int AUTO_INCREMENT NOT NULL, PRIMARY KEY (\`id\`));`,
 		);
 	});
 
 	afterAll(async () => {
-		await driver.db.execute(sql.raw(`DROP TABLE IF EXISTS \`${table}\``));
-		await driver.db.execute(sql.raw(`DROP TABLE IF EXISTS \`${migrationsTable}\``));
-		await driver.close();
-		await rm(migrationsFolder, { recursive: true, force: true });
+		// 1. A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
+		//    real failure stays the one reported
+		if (driver) {
+			// 2. The pid-scoped tables go, so two runs on the same database never meet each other's fixtures
+			await driver.db.execute(sql.raw(`DROP TABLE IF EXISTS \`${table}\``));
+			await driver.db.execute(sql.raw(`DROP TABLE IF EXISTS \`${probeTable}\``));
+			await driver.db.execute(sql.raw(`DROP TABLE IF EXISTS \`${migrationsTable}\``));
+			await driver.close();
+		}
+
+		if (migrationsFolder) {
+			await rm(migrationsFolder, { recursive: true, force: true });
+		}
 	});
 
 	/**

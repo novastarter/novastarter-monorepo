@@ -9,24 +9,44 @@ import { findWorkspacePackages } from './find-workspace-packages.js';
 import { sortByExternalOrder } from './sort.js';
 
 /**
+ * Inputs of {@link processPackages} that only the caller can know: the version a workflow forces and the root of
+ * the workspace `changesets` just versioned.
+ */
+export interface ProcessPackagesOptions {
+	/**
+	 * Version forced for the main package, overriding the version `changesets` wrote; in the changesets-driven
+	 * entry this is the value of the `NOVASTARTER_VERSION` environment variable.
+	 *
+	 * @defaultValue none
+	 */
+	forcedVersion?: string | undefined;
+	/**
+	 * Root of the workspace the run works against; the packages and `.changeset/pre.json` are read from it.
+	 */
+	workspaceRoot: string;
+}
+
+/**
  * Collect the versions `changesets` wrote, remove its changelog files and apply the extra bumps from the config.
  *
  * Runs after `changesets` has versioned the workspace. A package counts as bumped when `changesets` generated a
  * `CHANGELOG.md` for it; that file is removed again because the release notes replace it. The headline version
- * comes from `NOVASTARTER_VERSION` or from the configured main package, and may be unknown when neither is set.
+ * comes from the forced version of the options or from the configured main package, and may be unknown when
+ * neither is set.
  *
+ * @param options - Forced version and workspace root, both owned by the caller.
  * @returns The headline version, its prerelease state and the published packages with their new versions.
  * @throws When the main package is configured but its version is missing or invalid, or when a prerelease version
  * is used outside of the `changesets` prerelease mode or with a different prerelease tag.
  */
-export async function processPackages(): Promise<{
+export async function processPackages(options: ProcessPackagesOptions): Promise<{
 	mainVersion: string | undefined;
 	isPrerelease: boolean;
 	prereleaseId: string | undefined;
 	packageVersions: PackageVersion[];
 }> {
 	// 1. The workspace is read once up front; the version map and the dependents graph are filled in on the way
-	const workspacePackages = await findWorkspacePackages(process.cwd());
+	const workspacePackages = await findWorkspacePackages(options.workspaceRoot);
 	const packageVersions = new Map<string, string>();
 	let dependentsMap: Record<string, string[]> | undefined;
 
@@ -52,7 +72,7 @@ export async function processPackages(): Promise<{
 	}
 
 	// 4. Work out the headline version before bumping anything, as the bumps depend on its prerelease state
-	const { mainVersion, manualMainVersion, isPrerelease, prereleaseId } = getVersionInfo();
+	const { mainVersion, manualMainVersion, isPrerelease, prereleaseId } = getVersionInfo(options.forcedVersion);
 
 	// 5. A forced version overrides whatever `changesets` gave the main package, dependents included
 	if (manualMainVersion && config.mainPackage) {
@@ -82,12 +102,11 @@ export async function processPackages(): Promise<{
 	/**
 	 * Determine the headline version and whether the release is a prerelease.
 	 *
+	 * @param manualMainVersion - Forced version passed by the caller, when one is set.
 	 * @returns The headline version (if known), whether it was forced, and the prerelease state.
 	 * @throws When the main package is configured but has no valid version, or the prerelease state is inconsistent.
 	 */
-	function getVersionInfo() {
-		const manualMainVersion = process.env['NOVASTARTER_VERSION'];
-
+	function getVersionInfo(manualMainVersion: string | undefined) {
 		// 1. The forced version wins over the version `changesets` gave the main package
 		const mainPackageVersion = config.mainPackage ? packageVersions.get(config.mainPackage) : undefined;
 		const rawMainVersion = manualMainVersion ?? mainPackageVersion;
@@ -145,15 +164,19 @@ export async function processPackages(): Promise<{
 	/**
 	 * Read the prerelease tag `changesets` stores while in prerelease mode.
 	 *
+	 * `changesets pre exit` keeps `.changeset/pre.json` on disk with `mode: "exit"`, so the file alone does not
+	 * mean a prerelease is running — the tag is trusted only while the parsed state says `mode: "pre"`.
+	 *
 	 * @returns The tag from `.changeset/pre.json`, or `undefined` when `changesets` is not in prerelease mode.
 	 */
 	function readPrereleaseTag(): string | undefined {
-		// 1. The file only exists in prerelease mode; any read or parse failure means "not in prerelease mode"
+		// 1. The file outlives `changesets pre exit` with `mode: "exit"` on disk, so the mode is read before the tag
+		//    is trusted; any read or parse failure means "not in prerelease mode" as well
 		try {
-			const changesetPreFile = join(process.cwd(), '.changeset', 'pre.json');
-			const { tag } = JSON.parse(readFileSync(changesetPreFile, 'utf8'));
+			const changesetPreFile = join(options.workspaceRoot, '.changeset', 'pre.json');
+			const { mode, tag } = JSON.parse(readFileSync(changesetPreFile, 'utf8'));
 
-			return typeof tag === 'string' ? tag : undefined;
+			return mode === 'pre' && typeof tag === 'string' ? tag : undefined;
 		} catch {
 			return undefined;
 		}
@@ -180,17 +203,27 @@ export async function processPackages(): Promise<{
 		if (version) {
 			newVersion = version;
 		} else if (workspacePackage.manifest.version) {
-			newVersion = semver.inc(workspacePackage.manifest.version, isPrerelease ? 'prerelease' : 'patch', prereleaseId!);
+			// 3. A prerelease step needs the tag; `getVersionInfo` has already thrown when prerelease mode has no
+			//    string tag, so a missing tag here means that validation broke — fail loudly instead of asserting
+			if (isPrerelease) {
+				if (typeof prereleaseId !== 'string') {
+					throw new Error('Expected a string for prerelease identifier');
+				}
+
+				newVersion = semver.inc(workspacePackage.manifest.version, 'prerelease', prereleaseId);
+			} else {
+				newVersion = semver.inc(workspacePackage.manifest.version, 'patch');
+			}
 		}
 
 		if (!newVersion) return;
 
-		// 3. Persist the bump and record it, so the package ends up in the published versions list
+		// 4. Persist the bump and record it, so the package ends up in the published versions list
 		workspacePackage.manifest.version = newVersion;
 		await workspacePackage.writeProjectManifest(workspacePackage.manifest);
 		packageVersions.set(packageName, newVersion);
 
-		// 4. Dependents that `changesets` did not touch get a bump too, so they pick up the new version
+		// 5. Dependents that `changesets` did not touch get a bump too, so they pick up the new version
 		if (bumpDependents) {
 			const dependents = findDependents(packageName);
 

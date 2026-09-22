@@ -3,21 +3,15 @@ import type { DatabaseCapabilities, MigrateOptions } from './types.js';
 /**
  * Contract every database driver implements: a connection to one database, exposed as a Drizzle database.
  *
- * Declared as an ambient class rather than an interface so that `typeof DatabaseDriver` describes a constructor for
- * {@link DatabaseManager.registerDriver}; no runtime code exists behind it. The dialect decides the type of `db` — a
- * `NodePgDatabase` for PostgreSQL, a `BetterSQLite3Database` for SQLite — and with it the query API the application
- * writes against; an application augments {@link DatabaseLocations} so `location()` hands the right type out.
+ * Declared as an ambient class — a type with no runtime code behind it — so a driver `implements` it and the export
+ * stays type-only; it cannot be constructed, extended or emitted as a value import. The dialect decides the type of
+ * `db` — a `NodePgDatabase` for PostgreSQL, a `BetterSQLite3Database` for SQLite — and with it the query API the
+ * application writes against; an application augments {@link DatabaseLocations} so `location()` hands the right type
+ * out.
  *
  * @typeParam Db - The Drizzle database type of the driver's dialect.
  */
 export declare class DatabaseDriver<Db = unknown> {
-	/**
-	 * Create a driver from its location options.
-	 *
-	 * @param config - Driver-specific options, as given in the location's `options`.
-	 */
-	constructor(config: Record<string, unknown>);
-
 	/**
 	 * The Drizzle database over the location's connection and schema.
 	 *

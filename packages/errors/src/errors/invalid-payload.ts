@@ -15,7 +15,7 @@ export interface InvalidPayloadErrorExtensions {
  * @param extensions - The reason the payload was rejected.
  * @returns Message naming the reason, so the caller knows what to fix.
  */
-export const messageConstructor = (extensions: InvalidPayloadErrorExtensions): string => {
+export const invalidPayloadMessage = (extensions: InvalidPayloadErrorExtensions): string => {
 	// 1. The reason is a fragment without a full stop, so the message closes it — one sentence, one period
 	return `Invalid payload. ${extensions.reason}.`;
 };
@@ -32,4 +32,4 @@ export const messageConstructor = (extensions: InvalidPayloadErrorExtensions): s
  * ```
  */
 export const InvalidPayloadError: NovastarterErrorConstructor<InvalidPayloadErrorExtensions> =
-	createError<InvalidPayloadErrorExtensions>(ErrorCode.InvalidPayload, messageConstructor, 400);
+	createError<InvalidPayloadErrorExtensions>(ErrorCode.InvalidPayload, invalidPayloadMessage, 400);

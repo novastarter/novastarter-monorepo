@@ -1,3 +1,4 @@
+import type { DatabaseCapabilities } from '@novastarter/database';
 import { DatabaseDriverPostgres } from '@novastarter/database-driver-postgres';
 import { type DatabaseDriverSupabaseConfig, toPostgresConfig } from './to-postgres-config.js';
 
@@ -47,10 +48,19 @@ export class DatabaseDriverSupabase<
 	Schema extends Record<string, unknown> = Record<string, unknown>,
 > extends DatabaseDriverPostgres<Schema> {
 	/**
+	 * What the dialect and the transport can do: sessions, so `db.transaction()` works.
+	 *
+	 * On the transaction pooler (port 6543, the default pooled URL) statements cannot be prepared across queries:
+	 * `.prepare(name)` is rejected there, so Drizzle's relational query builder fails on a pooler URL even though
+	 * plain transactions work. The session pooler (port 5432) and the direct host take everything.
+	 */
+	declare readonly capabilities: DatabaseCapabilities;
+
+	/**
 	 * Create a driver over a pool on the project's connection string.
 	 *
 	 * @param config - URL, TLS, pool, schema and logging options.
-	 * @throws Error when `url` is missing.
+	 * @throws Error when `url` is missing, is not a valid URL, or carries an `sslmode` parameter.
 	 */
 	constructor(config: DatabaseDriverSupabaseConfig<Schema>) {
 		// 1. The mapping checks the URL and throws before any pool exists; the Postgres driver does the rest

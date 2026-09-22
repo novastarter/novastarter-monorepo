@@ -5,11 +5,15 @@
  */
 import { createHmac } from 'node:crypto';
 import { InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { fixture, fixtureText } from '../fixtures/index.js';
 import type { LsSubscriptionAttributes, LsSubscriptionInvoiceAttributes } from '../types.js';
 import type { ApiFetch } from './api.js';
 import { PaymentsDriverLemonSqueezy } from './driver.js';
+
+const { mockWarn } = vi.hoisted(() => ({ mockWarn: vi.fn() }));
+
+vi.mock('@novastarter/logger', () => ({ useLogger: () => ({ warn: mockWarn }) }));
 
 /** The secret the fixtures are signed with. */
 const WEBHOOK_SECRET = 'lemon-signing-secret';
@@ -151,10 +155,13 @@ describe('PaymentsDriverLemonSqueezy', () => {
 	test('Creates a customer in the store', async () => {
 		const { driver, calls } = setup([{ body: customer }]);
 
-		// 1. The metadata given is dropped: Lemon Squeezy keeps custom data on checkouts, not on customers
-		await expect(
-			driver.createCustomer({ email: 'ada@example.com', name: 'Ada Lovelace', metadata: { organizationId: 'org_42' } }),
-		).resolves.toStrictEqual({ id: '987', email: 'ada@example.com', name: 'Ada Lovelace', metadata: {} });
+		// 1. Without metadata the customer is created as given; the response is the customer, with no metadata to read
+		await expect(driver.createCustomer({ email: 'ada@example.com', name: 'Ada Lovelace' })).resolves.toStrictEqual({
+			id: '987',
+			email: 'ada@example.com',
+			name: 'Ada Lovelace',
+			metadata: {},
+		});
 
 		// 2. The customer is tied to the configured store through the relationship, its id as a string
 		expect(calls[0]).toMatchObject({
@@ -168,6 +175,18 @@ describe('PaymentsDriverLemonSqueezy', () => {
 				},
 			},
 		});
+	});
+
+	test('Refuses to create a customer with metadata, naming where the metadata can go', async () => {
+		const { driver, calls } = setup([{ body: customer }]);
+
+		// 1. Lemon Squeezy customers carry no custom data, so the metadata would be lost silently; the refusal says so
+		//    before any request, instead of answering with a customer whose empty `metadata` hides the loss
+		await expect(
+			driver.createCustomer({ email: 'ada@example.com', name: 'Ada Lovelace', metadata: { organizationId: 'org_42' } }),
+		).rejects.toThrow('createCheckoutSession');
+
+		expect(calls).toHaveLength(0);
 	});
 
 	test('Starts a checkout for the variant, prefilled with the customer, with the seats and the custom data', async () => {
@@ -326,6 +345,16 @@ describe('PaymentsDriverLemonSqueezy', () => {
 		await expect(driver.updateSubscription({ subscriptionId: '3001' })).rejects.toThrow('Nothing to update');
 	});
 
+	test('Refuses a variant change whose price id is not a positive integer, before any request', async () => {
+		const { driver, calls } = setup([]);
+
+		// 1. The same guard as the checkout's price id: the API would refuse the JSON `null` a non-numeric id becomes
+		//    with a message that does not name the cause, so the driver names it instead, without asking
+		await expect(driver.updateSubscription({ subscriptionId: '3001', priceId: 'abc' })).rejects.toThrow('"priceId"');
+
+		expect(calls).toHaveLength(0);
+	});
+
 	test('Skips the proration on a seat change alone when asked not to prorate', async () => {
 		const subscription = { data: fixture('subscription_created').data };
 
@@ -438,13 +467,62 @@ describe('PaymentsDriverLemonSqueezy', () => {
 		expect(invoices.map((invoice) => invoice.id)).toStrictEqual(['9003', '9001']);
 	});
 
+	test('Caps the subscription pages read and reports the truncation', async () => {
+		const mine = fixture<LsSubscriptionAttributes>('subscription_created').data;
+
+		// 1. Every page claims eleven exist, so the loop would otherwise read on forever; the paged subscriptions
+		//    belong to another customer, so no invoice read follows
+		const other = {
+			...mine,
+			attributes: { ...mine.attributes, customer_id: 1 },
+		};
+
+		const { driver, calls } = setup([
+			{ body: customer },
+			...Array.from({ length: 10 }, (_, index) => ({
+				body: subscriptionsPage([other], { currentPage: index + 1, lastPage: 11 }),
+			})),
+		]);
+
+		mockWarn.mockClear();
+
+		await driver.listInvoices({ customerId: '987', limit: 10 });
+
+		// 2. Ten pages at the largest page size is the cap: the eleventh is never asked for, and the truncation is
+		//    reported rather than silent
+		const subscriptionCalls = calls.filter((call) => call.url.includes('/v1/subscriptions?'));
+
+		expect(subscriptionCalls).toHaveLength(10);
+		expect(subscriptionCalls.at(-1)?.url).toContain('page[number]=10');
+		expect(calls.some((call) => call.url.includes('/v1/subscription-invoices'))).toBe(false);
+		expect(mockWarn).toHaveBeenCalledWith(expect.stringContaining('past page 10'));
+	});
+
+	test('Refuses a checkout for a price id that is not a positive integer, before any request', async () => {
+		const { driver, calls } = setup([]);
+
+		// 1. A non-numeric price id would be sent as JSON `null` and refused by the API with a message that does not
+		//    name the cause; the driver names it instead, without asking the API
+		await expect(
+			driver.createCheckoutSession({
+				customerId: '987',
+				priceId: 'abc',
+				successUrl: 'https://app/billing?ok',
+				cancelUrl: 'https://app/billing/plans',
+			}),
+		).rejects.toThrow('"priceId"');
+
+		expect(calls).toHaveLength(0);
+	});
+
 	test('Verifies a webhook and refuses a bad or missing signature, or a body that is not an event', async () => {
 		const { driver } = setup([{ body: variant }]);
 		const body = fixtureText('subscription_created');
 
-		// 1. A signed fixture verifies and maps, the interval read from the variant
+		// 1. A signed fixture verifies and maps, the interval read from the variant; the id is derived from the event,
+		//    the resource and its update time — `meta.webhook_id` is the endpoint's, not the event's
 		await expect(driver.parseWebhook(body, { 'x-signature': sign(body) })).resolves.toMatchObject({
-			id: 'wh_2',
+			id: 'subscription_created:3001:2026-09-01T10:00:05.000000Z',
 			type: 'subscription.created',
 			provider: 'lemonsqueezy',
 			subscription: { id: '3001', interval: 'month', metadata: { organizationId: 'org_123' } },

@@ -129,6 +129,19 @@ describe('MailDriverMailtrap', () => {
 		});
 	});
 
+	test('Surfaces a local mapping failure without the provider prefix', async () => {
+		// 1. A message without a sender is refused by the mapper itself, before any request: the kit's own error
+		//    stands alone, without the provider prefix the API refusal would get
+		const driver = new MailDriverMailtrap({ token: 't' });
+
+		await expect(driver.send({ to: 'a@example.com', subject: 'S' })).rejects.toMatchObject({
+			message: 'Mailtrap needs a "from" address',
+		});
+
+		// 2. The refusal happened before the API, so the client never sent anything
+		expect(send).not.toHaveBeenCalled();
+	});
+
 	test('Verifies by listing the accounts of the token', async () => {
 		const driver = new MailDriverMailtrap({ token: 't' });
 

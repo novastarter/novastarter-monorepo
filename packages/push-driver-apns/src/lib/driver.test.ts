@@ -113,7 +113,7 @@ describe('PushDriverApns', () => {
 	test('Unescapes the key of a .env line and builds the client for production or the sandbox', () => {
 		const escaped = signingKey.replace(/\n/g, '\\n');
 		const production = new PushDriverApns({ ...credentials, signingKey: escaped });
-		const sandbox = new PushDriverApns({ ...credentials, production: false, requestTimeout: 5000 });
+		const sandbox = new PushDriverApns({ ...credentials, production: false, timeout: 5000 });
 
 		// 1. The client is the SDK's, built on the unescaped key with the host the environment picks
 		expect(construct).toHaveBeenNthCalledWith(1, {
@@ -169,12 +169,12 @@ describe('PushDriverApns', () => {
 		await expect(driver.send({ token: 'tok', title: 'Hi' })).rejects.toThrow('APNs 429 TooManyRequests');
 	});
 
-	test('Fails a send that outlives requestTimeout, and waits without one', async () => {
+	test('Fails a send that outlives the timeout, and waits without one', async () => {
 		// 1. The SDK never reads the timeout it is given, so the driver has to race it: a request APNs never answers
 		//    fails after the deadline, the timeout as the cause
 		send.mockReturnValueOnce(new Promise(() => {}));
 
-		const bounded = new PushDriverApns({ ...credentials, requestTimeout: 20 });
+		const bounded = new PushDriverApns({ ...credentials, timeout: 20 });
 		const failure: unknown = await bounded.send({ token: 'tok', title: 'Hi' }).catch((error: unknown) => error);
 
 		expect(failure).toBeInstanceOf(Error);
@@ -205,11 +205,10 @@ describe('PushDriverApns', () => {
 		expect(settled).toBe(false);
 	});
 
-	test('Verifies the key and closes the client', async () => {
+	test('Closes the client', async () => {
 		const driver = new PushDriverApns(credentials);
 
-		// 1. The key passes offline; `close()` reaches the client the driver built
-		await expect(driver.verify()).resolves.toBeUndefined();
+		// 1. `close()` reaches the client the driver built
 		await driver.close();
 		expect(close).toHaveBeenCalledTimes(1);
 	});

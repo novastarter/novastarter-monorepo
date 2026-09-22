@@ -54,6 +54,16 @@ describe.skipIf(!REDIS)('KvDriverRedis on Redis', () => {
 		expect(await kv.get('max')).toBe(11);
 	});
 
+	test('setMax with a float reads back exactly the number set stores', async () => {
+		// 1. The value reaches the script as text and is stored verbatim: a `get` must return exactly what a `set` of
+		//    the same number returns, not the 17-digit form Lua's number conversion would produce
+		await kv.setMax('float-max', 0.1);
+		await kv.set('float-set', 0.1);
+
+		expect(await kv.get('float-max')).toBe(0.1);
+		expect(await kv.get('float-max')).toBe(await kv.get('float-set'));
+	});
+
 	test('increment works on the plain integer a number is stored as', async () => {
 		// 1. A number `set` wrote raw is what the script's `INCRBY` reads; a missing key starts from zero
 		await kv.set('counter', 1);

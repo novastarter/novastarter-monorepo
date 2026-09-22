@@ -14,6 +14,13 @@ import type { SendEmailV3_1 } from 'node-mailjet';
 export type MailjetAttachment = { ContentType: string; Filename: string; Base64Content: string; ContentID?: string };
 
 /**
+ * Longest `CustomID` Mailjet accepts; a longer one fails the whole request, so the joined tags are cut to fit.
+ *
+ * @defaultValue 255 characters.
+ */
+export const MAILJET_CUSTOM_ID_MAX_LENGTH = 255;
+
+/**
  * A `MailAddress` the way Mailjet takes it.
  *
  * @param address - Ours.
@@ -49,7 +56,8 @@ export const toMailjetAttachment = async (attachment: MailAttachment): Promise<M
 /**
  * Translate a message into one entry of Mailjet's `Messages`.
  *
- * The category becomes `CustomCampaign`, the tags `CustomID` (joined), which Mailjet's statistics group by.
+ * The category becomes `CustomCampaign`, the tags `CustomID` (joined, cut at {@link MAILJET_CUSTOM_ID_MAX_LENGTH}),
+ * which Mailjet's statistics group by.
  *
  * @param message - Ours, with `from` set (`sendMail()` fills it in).
  * @returns Mailjet's.
@@ -66,13 +74,17 @@ export const toMailjetMessage = async (message: MailMessage): Promise<SendEmailV
 	const inline = attachments.filter((attachment) => attachment.ContentID !== undefined);
 	const regular = attachments.filter((attachment) => attachment.ContentID === undefined);
 
-	// 3. Optional fields are only set when present, so the request carries no `undefined` keys
+	// 3. The tags ride in `CustomID` for Mailjet's statistics, cut to the limit — a longer value would fail the whole
+	//    request, and a tag must never be the reason a send fails
+	const customId = (message.tags ?? []).join(',').slice(0, MAILJET_CUSTOM_ID_MAX_LENGTH);
+
+	// 4. Optional fields are only set when present, so the request carries no `undefined` keys
 	return {
 		From: toMailjetAddress(message.from),
 		To: toMailAddressList(message.to).map(toMailjetAddress),
 		Subject: message.subject,
 		CustomCampaign: message.category ?? 'transactional',
-		...(message.tags?.length ? { CustomID: message.tags.join(',') } : {}),
+		...(customId ? { CustomID: customId } : {}),
 		...(message.cc ? { Cc: message.cc.map(toMailjetAddress) } : {}),
 		...(message.bcc ? { Bcc: message.bcc.map(toMailjetAddress) } : {}),
 		...(message.replyTo ? { ReplyTo: toMailjetAddress(message.replyTo) } : {}),

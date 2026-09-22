@@ -40,9 +40,11 @@ export const _state: { booted: boolean; handlers: boolean } = { booted: false, h
  *
  * The one place the environment meets the packages: the variables are parsed against the app's schema, turned into
  * the location configs under `config/`, and registered on the managers — logger, Redis, memory, queue, storage,
- * database, mail, SMS — then the handlers of the app's jobs under `jobs/`. Each package reads nothing itself; a location
- * opens its connections on first use. Registering is idempotent across calls, so a second `bootstrap()` (Next.js
- * reloading the server module in development, a test suite) is a no-op.
+ * database, mail, SMS — then the handlers of the app's jobs under `jobs/`. Each package reads nothing itself; a
+ * location opens its connections on first use, with the one exception of the `default` Redis location, whose client
+ * the boot resolves eagerly to hand to the memory locations — so an unreachable `REDIS` fails the boot rather than
+ * the first request. Registering is idempotent across calls, so a second `bootstrap()` (Next.js reloading the server
+ * module in development, a test suite) is a no-op.
  *
  * @returns The parsed variables, for the caller that wants them.
  */

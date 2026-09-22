@@ -20,11 +20,13 @@ export const readConfigurationFromJavaScript = (path: string): Record<string, un
 	const module = require(path);
 
 	// 2. Declared outside the block so the error below can name the type of whatever was found (or `undefined`);
-	//    `any` because `require` returns `any` and the checks below are the runtime validation
-	let exported: any;
+	//    `unknown` because `require` returns `any` and the checks below are the runtime validation
+	let exported: unknown;
 
-	// 3. ESM-style `default` export and CJS `module.exports` are both accepted
-	if (typeof module === 'object' || typeof module === 'function') {
+	// 3. ESM-style `default` export and CJS `module.exports` are both accepted; `typeof null` is `object` too, so a
+	//    null export must be excluded before the `in` operator below touches it — otherwise it would crash with a raw
+	//    TypeError instead of the documented error
+	if ((typeof module === 'object' && module !== null) || typeof module === 'function') {
 		exported = 'default' in module ? module.default : module;
 
 		// 4. A factory gets the raw environment so it can compute values from it; its result must be a plain object,
@@ -40,6 +42,8 @@ export const readConfigurationFromJavaScript = (path: string): Record<string, un
 		}
 	}
 
+	// 6. Reached when the export was neither a plain object nor a factory returning one: the refusal names the
+	//    type that was actually found (or `undefined`), so the author sees what the file handed over
 	throw new Error(
 		`Invalid JS configuration file export type. Requires one of "function", "object", received: "${typeof exported}"`,
 	);

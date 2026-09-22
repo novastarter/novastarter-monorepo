@@ -91,6 +91,11 @@ describe('toFcmMessage', () => {
 		});
 	});
 
+	test('Refuses a message without a token', () => {
+		// 1. A subscription is the webpush driver's business; the mapper throws for a direct caller without a token
+		expect(() => toFcmMessage({ title: 'Hi' })).toThrow(/needs a token/);
+	});
+
 	test('Maps a ttl of 0 to "now or never" on every platform', () => {
 		// 1. APNs reads "now or never" from an expiration of `0`; the send time as a timestamp would be a message
 		//    already expired on arrival, while Android and the web take the zero as is

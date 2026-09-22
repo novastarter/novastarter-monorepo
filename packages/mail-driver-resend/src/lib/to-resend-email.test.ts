@@ -2,12 +2,21 @@
  * Tests of `to-resend-email`: how a message and its attachments become the payload of Resend's `emails.send()`.
  */
 import { describe, expect, test } from 'vitest';
-import { RESEND_TAG_COUNT, toResendAttachment, toResendEmail, toResendTag } from './to-resend-email.js';
+import {
+	RESEND_TAG_COUNT,
+	RESEND_TAG_LENGTH,
+	toResendAttachment,
+	toResendEmail,
+	toResendTag,
+} from './to-resend-email.js';
 
 describe('toResendTag', () => {
-	test('Replaces everything outside Resend character set with an underscore', () => {
+	test('Replaces everything outside Resend character set with an underscore and cuts at the length limit', () => {
 		// 1. A space, a dot and a slash are outside Resend's name set, so each becomes one `_`
 		expect(toResendTag('a b.c/d')).toBe('a_b_c_d');
+
+		// 2. Resend refuses a name past 256 characters, so the tail is cut rather than taking the whole send down
+		expect(toResendTag('a'.repeat(RESEND_TAG_LENGTH + 10))).toHaveLength(RESEND_TAG_LENGTH);
 	});
 });
 

@@ -52,10 +52,11 @@ export type CacheMultiMessageClear = {
  * Reads try L1 first and fall back to L2. Writes go to both levels and then publish an invalidation, so every other
  * process drops its stale L1 copy and re-reads from Redis on its next access; an invalidation that lands while this
  * process's own write is still in flight keeps that write out of L1, so a concurrent writer elsewhere cannot leave a
- * stale copy behind that nothing invalidates any more. L1 expires no later than L2, so a key Redis let go is not
- * served from memory either. Locks always go through Redis, since a local lock would not protect against other
- * processes. The bus subscribes on a connection of its own, which `close()` quits; the L2 connection belongs to the
- * caller.
+ * stale copy behind that nothing invalidates any more — and this process's own `delete` and `clear` mark their
+ * in-flight writes the same way, since a sender skips its own invalidation messages. L1 expires no later than L2, so
+ * a key Redis let go is not served from memory either. Locks always go through Redis, since a local lock would not
+ * protect against other processes. The bus subscribes on a connection of its own, which `close()` quits; the L2
+ * connection belongs to the caller.
  *
  * @example
  * ```ts
@@ -272,12 +273,17 @@ export class CacheDriverMulti implements CacheDriver {
 		// 1. Subscribed first, for the same reason as in `set`
 		await this.subscribe();
 
-		// 2. L2 first, then L1, in the same order as `set`: a failed L2 delete leaves L1 as it was, which is a copy of
+		// 2. A `set` of this process still waiting for its L2 reply would land in L1 after this delete, with L2 holding
+		//    nothing and no further invalidation coming, so the in-flight write is marked the way another process's
+		//    invalidation would mark it: it skips L1 once it settles
+		this.markWritesInvalidated(key);
+
+		// 3. L2 first, then L1, in the same order as `set`: a failed L2 delete leaves L1 as it was, which is a copy of
 		//    what L2 still holds
 		await this.redis.delete(key);
 		await this.local.delete(key);
 
-		// 3. Other processes drop the key from their L1 as well
+		// 4. Other processes drop the key from their L1 as well
 		await this.clearOthers(key);
 	}
 
@@ -298,7 +304,7 @@ export class CacheDriverMulti implements CacheDriver {
 	 * @param key - Key other processes should drop; all keys when omitted.
 	 * @internal
 	 */
-	private async clearOthers(key?: string) {
+	private async clearOthers(key?: string): Promise<void> {
 		// 1. Stamp the message with this process's id, so the sender can skip it when it comes back; the caller made
 		//    sure of the subscription before writing
 		await this.bus.publish(CACHE_CHANNEL_KEY, {
@@ -317,11 +323,15 @@ export class CacheDriverMulti implements CacheDriver {
 		// 1. Subscribed first, for the same reason as in `set`
 		await this.subscribe();
 
-		// 2. L2 first, then L1, in the same order as `set`
+		// 2. Every in-flight write of this process would land in L1 after this clear with L2 holding nothing, so all of
+		//    them are marked to skip L1, the way another process's keyless invalidation would mark them
+		this.markWritesInvalidated();
+
+		// 3. L2 first, then L1, in the same order as `set`
 		await this.redis.clear();
 		await this.local.clear();
 
-		// 3. A message without a key means "drop everything"
+		// 4. A message without a key means "drop everything"
 		await this.clearOthers();
 	}
 
@@ -379,13 +389,36 @@ export class CacheDriverMulti implements CacheDriver {
 	 */
 	private async onMessageClear(payload: CacheMultiMessageClear) {
 		// 1. Skip messages this process sent itself: `set` and `delete` already updated L1 before publishing, so
-		//    dropping the key again would only throw away fresh data
+		//    dropping the key again would only throw away fresh data. In-flight writes are the one exception a sender
+		//    cannot know about, which is why its own `delete` and `clear` mark them directly
 		if (payload.origin === this.processId) return;
 
 		// 2. A write of this process still waiting for its L2 reply may be older than the one this message announces,
 		//    so it is kept out of L1 once it lands; a message without a key concerns every such write
+		this.markWritesInvalidated(payload.key);
+
+		// 3. Drop the one key, or everything when the message carries no key
 		if (payload.key !== undefined) {
-			const writing = this.writing.get(payload.key);
+			await this.local.delete(payload.key);
+		} else {
+			await this.local.clear();
+		}
+	}
+
+	/**
+	 * Mark every in-flight write of the key, or of every key when none is given, to skip L1 once it settles.
+	 *
+	 * Used by `delete` and `clear` for this process's own writes — a sender skips its own bus messages, so its
+	 * in-flight writes would otherwise land in L1 after the local delete — and by {@link CacheDriverMulti.onMessageClear}
+	 * for the writes another process's invalidation races.
+	 *
+	 * @param key - Key whose in-flight writes are invalidated; every key when omitted.
+	 * @internal
+	 */
+	private markWritesInvalidated(key?: string): void {
+		// 1. One entry marks one key's pending writes; a keyless invalidation concerns them all
+		if (key !== undefined) {
+			const writing = this.writing.get(key);
 
 			if (writing) {
 				writing.invalidated = true;
@@ -394,13 +427,6 @@ export class CacheDriverMulti implements CacheDriver {
 			for (const writing of this.writing.values()) {
 				writing.invalidated = true;
 			}
-		}
-
-		// 3. Drop the one key, or everything when the message carries no key
-		if (payload.key !== undefined) {
-			await this.local.delete(payload.key);
-		} else {
-			await this.local.clear();
 		}
 	}
 }

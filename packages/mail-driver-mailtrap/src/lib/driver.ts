@@ -93,7 +93,7 @@ export class MailDriverMailtrap implements MailDriver {
 			token: config.token,
 			sandbox: Boolean(config.sandbox),
 			bulk: Boolean(config.bulk),
-			...(config.testInboxId !== undefined ? { testInboxId: Number(config.testInboxId) } : {}),
+			...(config.testInboxId !== undefined ? { testInboxId: config.testInboxId } : {}),
 		});
 	}
 
@@ -102,16 +102,19 @@ export class MailDriverMailtrap implements MailDriver {
 	 *
 	 * @param message - Rendered message.
 	 * @returns The first message id Mailtrap assigned; every recipient as accepted, since the API takes all or
-	 * nothing.
+	 * nothing; `response` stays empty, since the API answers no status line.
 	 * @throws An error naming Mailtrap with the SDK's `MailtrapError` as the cause (its message lists Mailtrap's
-	 * errors) when the API refuses.
+	 * errors) when the API refuses; the mapper's own error unchanged when the message cannot be built.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
-		// 1. The message is translated before the request, so a missing sender fails by name instead of as an API error
+		// 1. The message is translated before the request, so a failure of the mapper (no sender, unreadable
+		//    attachment) surfaces the kit's own error instead of a re-wrapped API error
+		const mail = await toMailtrapMail(message);
+
 		let response: Awaited<ReturnType<MailtrapClient['send']>>;
 
 		try {
-			response = await this.client.send(await toMailtrapMail(message));
+			response = await this.client.send(mail);
 		} catch (error) {
 			// 2. The SDK throws its own `MailtrapError` on refusal, its messages listed; wrapped so the log names the
 			//    provider, the SDK's error as the cause

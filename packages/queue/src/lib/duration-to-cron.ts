@@ -5,7 +5,7 @@ import { randomInt } from 'node:crypto';
  *
  * @defaultValue 3600
  */
-const HOURS_IN_SECONDS = 3600;
+const SECONDS_IN_HOUR = 3600;
 
 /**
  * Hourly intervals a duration is honoured at; anything else falls back to daily.
@@ -41,8 +41,8 @@ export function durationToCron(duration: number): string {
 	const minute = randomInt(0, 60);
 
 	// 2. Whole hours only, and only the intervals that divide a day evenly, so the rule repeats identically every day
-	if (duration > 0 && duration % HOURS_IN_SECONDS === 0) {
-		const hours = duration / HOURS_IN_SECONDS;
+	if (duration > 0 && duration % SECONDS_IN_HOUR === 0) {
+		const hours = duration / SECONDS_IN_HOUR;
 
 		if (ALLOWED_HOURS.has(hours)) {
 			// 3. hours=1 has no phase offset so default to `*/1`; a phase is written as the standard `offset-23/hours`

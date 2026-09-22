@@ -366,13 +366,23 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			}
 		}
 
-		// 10. List membership maps straight onto Joi's allow / deny lists
+		// 10. List membership maps straight onto Joi's allow / deny lists. An empty `_in` list holds no allowed
+		//     values, so it becomes the never-validating rule of the malformed compare values above — Joi's `equal()`
+		//     without values would build a no-op `any` schema that passes everything; an empty `_nin` list forbids
+		//     nothing, so every value passes, which is what Joi's `not()` without values already builds and is stated
+		//     here so the vacuous truth reads on purpose
 		if (operator === '_in') {
-			schema[key] = getAnySchema().equal(...(compareValue as (string | number)[]));
+			schema[key] =
+				Array.isArray(compareValue) && compareValue.length === 0
+					? Joi.any().equal(true)
+					: getAnySchema().equal(...(compareValue as (string | number)[]));
 		}
 
 		if (operator === '_nin') {
-			schema[key] = getAnySchema().not(...(compareValue as (string | number)[]));
+			schema[key] =
+				Array.isArray(compareValue) && compareValue.length === 0
+					? Joi.any()
+					: getAnySchema().not(...(compareValue as (string | number)[]));
 		}
 
 		// 11. Range operators: a value that is a `Date` or does not parse as a number is compared as a date, so
@@ -483,15 +493,28 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 				const wrapped =
 					typeof compareValue === 'string' ? compareValue.startsWith('/') && compareValue.endsWith('/') : false;
 
-				schema[key] = getStringSchema().regex(new RegExp(wrapped ? (compareValue as any).slice(1, -1) : compareValue));
+				// 17. A pattern that does not compile can never be matched by a real value, so the rule degrades to
+				//     `equal(true)` — which fails for any real value, like the malformed compare values above — instead
+				//     of throwing a `SyntaxError` out of schema building: the payload under validation is not at fault
+				//     for a bad filter
+				let pattern: RegExp | null;
+
+				try {
+					pattern = new RegExp(wrapped ? compareValue.slice(1, -1) : compareValue);
+				} catch {
+					// The pattern does not compile; `null` degrades the rule below to never-validating
+					pattern = null;
+				}
+
+				schema[key] = pattern !== null ? getStringSchema().regex(pattern) : Joi.any().equal(true);
 			}
 		}
 	}
 
-	// 17. An operator this function does not know leaves the field unconstrained rather than failing the payload
+	// 18. An operator this function does not know leaves the field unconstrained rather than failing the payload
 	schema[key] = schema[key] ?? Joi.any();
 
-	// 18. Presence is opt-in, so a filter can describe a partial update without every field being sent
+	// 19. Presence is opt-in, so a filter can describe a partial update without every field being sent
 	if (options.requireAll) {
 		schema[key] = schema[key]!.required();
 	}

@@ -2,7 +2,7 @@
  * Tests of the Lemon Squeezy JSON:API client on a fake fetch — the requests recorded, the responses queued: the
  * headers every request carries, how a refusal reads as an error, and the timeout it enforces and refuses.
  */
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { type ApiFetch, LemonSqueezyApi, LemonSqueezyApiError, MAX_TIMEOUT } from './api.js';
 
 /**
@@ -90,15 +90,39 @@ describe('LemonSqueezyApi', () => {
 	});
 
 	test('Refuses a timeout the abort signal cannot hold, at construction', () => {
-		// 1. A negative, `NaN`, infinite or fractional delay would throw on every request, one above the timer's
-		//    bound would abandon every request after 1 ms — all are refused before a single request is sent
-		for (const timeout of [-1, Number.NaN, Number.POSITIVE_INFINITY, 1.5, MAX_TIMEOUT + 1]) {
+		// 1. A negative, `NaN`, infinite or fractional delay would throw on every request, `0` would abandon every
+		//    request immediately, one above the timer's bound would abandon every request after 1 ms — all are refused
+		//    before a single request is sent
+		for (const timeout of [-1, 0, Number.NaN, Number.POSITIVE_INFINITY, 1.5, MAX_TIMEOUT + 1]) {
 			expect(() => new LemonSqueezyApi({ apiKey: 'k', timeout })).toThrow(RangeError);
 		}
 
-		// 2. The bounds themselves are timeouts the signal holds
-		expect(() => new LemonSqueezyApi({ apiKey: 'k', timeout: 0 })).not.toThrow();
+		// 2. The bounds of the accepted range are timeouts the signal holds
+		expect(() => new LemonSqueezyApi({ apiKey: 'k', timeout: 1 })).not.toThrow();
 		expect(() => new LemonSqueezyApi({ apiKey: 'k', timeout: MAX_TIMEOUT })).not.toThrow();
+	});
+
+	test('Sends with the platform fetch bound to the global object', async () => {
+		// 1. A fetch on the global object that records its receiver, the way a WebIDL operation would insist on it
+		const original = globalThis.fetch;
+		const receiver = vi.fn();
+
+		globalThis.fetch = function (this: unknown) {
+			receiver(this);
+
+			return Promise.resolve(new Response('{}', { status: 200 }));
+		} as typeof fetch;
+
+		try {
+			const api = new LemonSqueezyApi({ apiKey: 'k' });
+
+			await api.request('GET', '/users/me');
+
+			expect(receiver).toHaveBeenCalledWith(globalThis);
+		} finally {
+			// 2. Whatever the assertion, the platform fetch is restored for the next test
+			globalThis.fetch = original;
+		}
 	});
 
 	test('Abandons a request that outlives the timeout', async () => {

@@ -34,9 +34,13 @@ export const toDrizzleOptions = <Schema extends Record<string, unknown>>(
 		options.casing = config.casing;
 	}
 
-	// 2. The query logger is opt-in: on by default it would cost a logger call per query in every deployment
+	// 2. The query logger is opt-in: on by default it would cost a logger call per query in every deployment. `true`
+	//    means SQL text and parameter count; an object carries what it asks for — the values only as `{ params: true }`
 	if (config.queryLogging) {
-		options.logger = createQueryLogger(logger);
+		options.logger = createQueryLogger(
+			logger,
+			typeof config.queryLogging === 'object' ? config.queryLogging : undefined,
+		);
 	}
 
 	return options;

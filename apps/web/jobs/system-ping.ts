@@ -95,14 +95,17 @@ registerSchedule({
  * @returns The handler.
  */
 export const createSystemPingHandler = (options: SystemPingHandlerOptions = {}): JobHandler<typeof systemPing> => {
+	// 1. The options are captured here, so the bootstrap registers a ready-made handler and a test can hand in its
+	//    own logger
 	return async (payload: SystemPingPayload, context: JobContext): Promise<void> => {
+		// 1. The logger is resolved per call, so a test's sink takes the line instead of the app logger
 		const logger = options.logger ?? useLogger();
 
-		// 1. The wait between enqueue and run is what the ping measures; the payload's own stamp wins when it carries one
+		// 2. The wait between enqueue and run is what the ping measures; the payload's own stamp wins when it carries one
 		const sentAt = payload.at ? new Date(payload.at) : context.enqueuedAt;
 		const delay = Math.max(0, Date.now() - sentAt.getTime());
 
-		// 2. One line with everything the reader needs to tell pings apart
+		// 3. One line with everything the reader needs to tell pings apart
 		logger.info(`Ping "${payload.message}" (${context.id}) arrived after ${delay} ms on attempt ${context.attempt}`);
 	};
 };

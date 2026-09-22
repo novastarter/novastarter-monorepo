@@ -34,6 +34,17 @@ describe('toVonageMessage', () => {
 		});
 	});
 
+	test('Drops the plus of a numeric sender, keeps an alphanumeric sender id', () => {
+		// 1. Vonage refuses a numeric sender carrying a `+` (status 15), so a sender in E.164 loses it like the
+		//    recipient does
+		expect(toVonageMessage({ to: '+14155550123', from: '+14155550100', text: 'Hi' })).toMatchObject({
+			from: '14155550100',
+		});
+
+		// 2. An alphanumeric sender id is not a number: the `+` rule does not apply to it and it goes out unchanged
+		expect(toVonageMessage({ to: '+14155550123', from: 'Acme', text: 'Hi' })).toMatchObject({ from: 'Acme' });
+	});
+
 	test('Turns the ttl into milliseconds and carries the reference over', () => {
 		// 1. Ours is in seconds, Vonage's `ttl` in milliseconds
 		expect(

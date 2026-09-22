@@ -19,6 +19,12 @@ describe('localFilePath', () => {
 		expect(localFilePath('file:app.db#x')).toBe('app.db');
 	});
 
+	test('Answers nothing for a file:// URL with a remote host', () => {
+		// 1. libsql rejects a non-localhost host in a file: URL itself; a path here would create a bogus directory
+		//    for a database the client refuses to open
+		expect(localFilePath('file://example.com/x')).toBeUndefined();
+	});
+
 	test('Answers nothing for a database in memory or a remote one', () => {
 		expect(localFilePath(':memory:')).toBeUndefined();
 		expect(localFilePath('file::memory:')).toBeUndefined();

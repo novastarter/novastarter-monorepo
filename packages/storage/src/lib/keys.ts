@@ -49,7 +49,7 @@ export const toListPrefix = (fullPrefix: string, prefix: string): string => {
  * Turn a backend key into the path a caller passes in: the root and its slash removed.
  *
  * What `list()` yields, so a listed path can be handed straight back to `read()` or `delete()`. A key that does not
- * sit under the root is answered with as it came; a prefix built by {@link toListPrefix} never lists one.
+ * sit under the root is returned as it came; a prefix built by {@link toListPrefix} never lists one.
  *
  * @param root - The location root, without a trailing slash; empty for the top of the bucket.
  * @param key - The full key the backend reported.

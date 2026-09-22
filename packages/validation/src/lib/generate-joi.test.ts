@@ -313,6 +313,25 @@ describe(`generateJoi`, () => {
 		expectSchema({ field: { _nin: ['field', 'secondField'] } }, Joi.any().not(...['field', 'secondField']));
 	});
 
+	it(`fails every value for an _in match with an empty list`, () => {
+		// 1. Nothing is a member of an empty list: the field fails for any value, through the never-validating schema
+		//    the malformed compare values get — `describe()` alone pinned a passing schema before
+		expectSchema({ field: { _in: [] } }, Joi.any().equal(true));
+
+		// 2. Behaviourally: whatever the payload holds, the field fails
+		const { error } = generateJoi({ field: { _in: [] } }).validate({ field: 'anything' });
+
+		expect(error).toBeDefined();
+	});
+
+	it(`passes every value for a _nin match with an empty list`, () => {
+		// 1. An empty list forbids nothing, so every value passes — the vacuous truth of "not in nothing", stated
+		//    behaviourally since a no-op `any` schema admits anything
+		const { error } = generateJoi({ field: { _nin: [] } }).validate({ field: 'anything' });
+
+		expect(error).toBeUndefined();
+	});
+
 	it(`returns the correct schema for an _gt number match`, () => {
 		// 1. A numeric compare value selects the number schema, where "greater" is the exclusive bound
 		expectSchema({ field: { _gt: 1 } }, Joi.number().greater(1));
@@ -472,5 +491,16 @@ describe(`generateJoi`, () => {
 	it(`returns the correct schema for an _regex match with null value`, () => {
 		// 1. A missing pattern can match nothing, so the rule fails for any real value
 		expectSchema({ field: { _regex: null } }, Joi.any().equal(true));
+	});
+
+	it(`fails any value for an _regex match with an invalid pattern`, () => {
+		// 1. `[` does not compile: instead of a `SyntaxError` out of schema building, the rule degrades to the
+		//    never-validating schema the malformed compare values get
+		expectSchema({ field: { _regex: '[' } }, Joi.any().equal(true));
+
+		// 2. Behaviourally: whatever the payload holds, the field fails — the schema still builds and validates
+		const { error } = generateJoi({ field: { _regex: '[' } }).validate({ field: 'anything' });
+
+		expect(error).toBeDefined();
 	});
 });

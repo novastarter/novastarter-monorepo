@@ -2,7 +2,12 @@
  * Tests of `to-ses-message-tags`: how the category and the tags become SES message tags that SES will accept.
  */
 import { describe, expect, test } from 'vitest';
-import { SES_MESSAGE_TAG_LENGTH, toSesMessageTag, toSesMessageTags } from './to-ses-message-tags.js';
+import {
+	SES_MESSAGE_TAG_COUNT,
+	SES_MESSAGE_TAG_LENGTH,
+	toSesMessageTag,
+	toSesMessageTags,
+} from './to-ses-message-tags.js';
 
 describe('toSesMessageTag', () => {
 	test('Replaces everything outside the SES character set and cuts at the length limit', () => {
@@ -42,5 +47,15 @@ describe('toSesMessageTags', () => {
 			{ Name: 'category', Value: 'transactional' },
 			{ Name: 'welcome', Value: '1' },
 		]);
+	});
+
+	test('Caps the list at the tag count, the category taking one slot', () => {
+		// 1. SES refuses a message past its tag count, so the tail past the cap is left off rather than failing the send
+		const tags = Array.from({ length: SES_MESSAGE_TAG_COUNT + 5 }, (_, index) => `tag_${index}`);
+
+		const result = toSesMessageTags({ to: 'ada@example.com', subject: 'Hi', tags });
+
+		expect(result).toHaveLength(SES_MESSAGE_TAG_COUNT);
+		expect(result.at(-1)).toStrictEqual({ Name: `tag_${SES_MESSAGE_TAG_COUNT - 2}`, Value: '1' });
 	});
 });

@@ -156,7 +156,7 @@ function formatUntypedPackages(untypedPackages: UntypedPackage[]): string {
 
 	for (const { name, changes } of untypedPackages) {
 		// 1. Skip packages without changes to avoid empty headings
-		if (changes.length == 0) {
+		if (changes.length === 0) {
 			continue;
 		}
 

@@ -17,7 +17,7 @@ const TURSO_DATABASE_URL = process.env['TURSO_DATABASE_URL'];
 const TURSO_AUTH_TOKEN = process.env['TURSO_AUTH_TOKEN'];
 
 /**
- * Write a drizzle-kit folder of one migration creating a notes table, in the layout `drizzle-kit generate` writes.
+ * Write a drizzle-kit folder of one migration creating a table, in the layout `drizzle-kit generate` writes.
  *
  * @param table - Name of the table the migration creates.
  * @returns The folder; the caller removes it.
@@ -27,6 +27,7 @@ const writeMigrations = async (table: string): Promise<string> => {
 	const folder = await mkdtemp(join(tmpdir(), 'novastarter-migrations-'));
 	await mkdir(join(folder, 'meta'));
 
+	// 2. The journal is what the migrator reads to find what to apply: one entry tagging the migration below
 	await writeFile(
 		join(folder, 'meta', '_journal.json'),
 		JSON.stringify({
@@ -36,9 +37,10 @@ const writeMigrations = async (table: string): Promise<string> => {
 		}),
 	);
 
+	// 3. The migration itself: a probe table nothing reads — the migrator running it and journaling it is the point
 	await writeFile(
 		join(folder, '0000_init.sql'),
-		`CREATE TABLE \`${table}\` (\`id\` integer PRIMARY KEY AUTOINCREMENT NOT NULL, \`text\` text NOT NULL);`,
+		`CREATE TABLE \`${table}\` (\`id\` integer PRIMARY KEY AUTOINCREMENT NOT NULL);`,
 	);
 
 	return folder;
@@ -55,13 +57,30 @@ describe('DatabaseDriverTurso on a local file', () => {
 	beforeAll(async () => {
 		root = await mkdtemp(join(tmpdir(), 'novastarter-turso-'));
 		driver = new DatabaseDriverTurso({ connection: `file:${join(root, 'nested', 'app.db')}`, logger: logger as never });
-		migrationsFolder = await writeMigrations('notes');
+
+		// 1. The fixture table the transaction and batch below write is made here, not by the migration: every test
+		//    must pass run alone, under `vitest -t` as well as whole-file
+		await driver.db.run(
+			sql`CREATE TABLE IF NOT EXISTS notes ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "text" text NOT NULL)`,
+		);
+
+		migrationsFolder = await writeMigrations('probe');
 	});
 
 	afterAll(async () => {
-		await driver.close();
-		await rm(root, { recursive: true, force: true });
-		await rm(migrationsFolder, { recursive: true, force: true });
+		// 1. A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
+		//    real failure stays the one reported
+		if (driver) {
+			await driver.close();
+		}
+
+		if (root) {
+			await rm(root, { recursive: true, force: true });
+		}
+
+		if (migrationsFolder) {
+			await rm(migrationsFolder, { recursive: true, force: true });
+		}
 	});
 
 	test('ping answers', async () => {
@@ -110,12 +129,26 @@ describe('DatabaseDriverTurso in memory', () => {
 
 	beforeAll(async () => {
 		driver = new DatabaseDriverTurso({ connection: MEMORY_URL, logger: logger as never });
-		migrationsFolder = await writeMigrations('notes');
+
+		// 1. The fixture table the test below writes is made here, not by the migration: the test must pass run alone,
+		//    under `vitest -t` as well as whole-file
+		await driver.db.run(
+			sql`CREATE TABLE IF NOT EXISTS notes ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "text" text NOT NULL)`,
+		);
+
+		migrationsFolder = await writeMigrations('probe');
 	});
 
 	afterAll(async () => {
-		await driver.close();
-		await rm(migrationsFolder, { recursive: true, force: true });
+		// 1. A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
+		//    real failure stays the one reported
+		if (driver) {
+			await driver.close();
+		}
+
+		if (migrationsFolder) {
+			await rm(migrationsFolder, { recursive: true, force: true });
+		}
 	});
 
 	test('Migrates and round-trips without a file', async () => {
@@ -129,6 +162,7 @@ describe('DatabaseDriverTurso in memory', () => {
 describe.skipIf(!TURSO_DATABASE_URL || !TURSO_AUTH_TOKEN)('DatabaseDriverTurso on Turso', () => {
 	// SQLite has no schema to isolate a run in, so the table and the journal carry the pid instead
 	const table = `notes_${process.pid}`;
+	const probeTable = `probe_${process.pid}`;
 	const migrationsTable = `__drizzle_migrations_${process.pid}`;
 	const logger = { error: vi.fn(), debug: vi.fn() };
 	let driver: DatabaseDriverTurso;
@@ -141,14 +175,31 @@ describe.skipIf(!TURSO_DATABASE_URL || !TURSO_AUTH_TOKEN)('DatabaseDriverTurso o
 			logger: logger as never,
 		});
 
-		migrationsFolder = await writeMigrations(table);
+		// 1. The fixture table the transaction and batch below write is made here, not by the migration: every test
+		//    must pass run alone, under `vitest -t` as well as whole-file
+		await driver.db.run(
+			sql.raw(
+				`CREATE TABLE IF NOT EXISTS \`${table}\` (\`id\` integer PRIMARY KEY AUTOINCREMENT NOT NULL, \`text\` text NOT NULL)`,
+			),
+		);
+
+		migrationsFolder = await writeMigrations(probeTable);
 	});
 
 	afterAll(async () => {
-		await driver.db.run(sql.raw(`DROP TABLE IF EXISTS \`${table}\``));
-		await driver.db.run(sql.raw(`DROP TABLE IF EXISTS \`${migrationsTable}\``));
-		await driver.close();
-		await rm(migrationsFolder, { recursive: true, force: true });
+		// 1. A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
+		//    real failure stays the one reported
+		if (driver) {
+			// 2. The pid-scoped tables go, so two runs on the same database never meet each other's fixtures
+			await driver.db.run(sql.raw(`DROP TABLE IF EXISTS \`${table}\``));
+			await driver.db.run(sql.raw(`DROP TABLE IF EXISTS \`${probeTable}\``));
+			await driver.db.run(sql.raw(`DROP TABLE IF EXISTS \`${migrationsTable}\``));
+			await driver.close();
+		}
+
+		if (migrationsFolder) {
+			await rm(migrationsFolder, { recursive: true, force: true });
+		}
 	});
 
 	test('ping reaches the database over HTTPS', async () => {

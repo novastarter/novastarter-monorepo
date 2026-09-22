@@ -57,6 +57,21 @@ describe('emitFilter', () => {
 		);
 	});
 
+	test('Lets the real event name win over a meta event key', async () => {
+		// 1. The failure logs inside the wrappers name `meta.event`; a caller meta carrying an `event` key of its own
+		//    must not be able to shadow it
+		const handler = vi.fn();
+		emitter.onFilter('items.create', handler);
+
+		await emitter.emitFilter('items.create', 'payload', { event: 'forged', collection: 'articles' });
+
+		expect(handler).toHaveBeenCalledWith(
+			'payload',
+			{ event: 'items.create', collection: 'articles' },
+			expect.anything(),
+		);
+	});
+
 	test('Passes the given context through', async () => {
 		const handler = vi.fn();
 		const context = { accountability: { user: 'u1' } as any, database: 'db' };
@@ -98,6 +113,18 @@ describe('emitAction', () => {
 		await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
 
 		expect(handler).toHaveBeenCalledWith({ event: 'items.create', key: 1 }, { accountability: null });
+	});
+
+	test('Lets the real event name win over a meta event key', async () => {
+		// 1. The wrapper logs name `meta.event` on failure; a caller meta carrying an `event` key of its own must not
+		//    be able to shadow it
+		const handler = vi.fn();
+		emitter.onAction('items.create', handler);
+
+		emitter.emitAction('items.create', { event: 'forged', key: 1 });
+		await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+
+		expect(handler).toHaveBeenCalledWith({ event: 'items.create', key: 1 }, expect.anything());
 	});
 
 	test('Logs a warning instead of rejecting when an async handler fails', async () => {
@@ -220,6 +247,17 @@ describe('emitInit', () => {
 		order.push('after');
 
 		expect(order).toStrictEqual(['handler', 'after']);
+	});
+
+	test('Lets the real event name win over a meta event key', async () => {
+		// 1. The wrapper logs name `meta.event` on failure; a caller meta carrying an `event` key of its own must not
+		//    be able to shadow it
+		const handler = vi.fn();
+		emitter.onInit('app.before', handler);
+
+		await emitter.emitInit('app.before', { event: 'forged' });
+
+		expect(handler).toHaveBeenCalledWith({ event: 'app.before' });
 	});
 
 	test('Logs a warning instead of throwing when a handler fails', async () => {

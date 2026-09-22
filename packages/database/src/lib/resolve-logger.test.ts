@@ -18,13 +18,19 @@ let sample: {
 };
 
 beforeEach(() => {
+	// 1. Fresh fixtures per test, so no test can read a return value another one left behind
 	sample = { logger: { child: vi.fn() }, child: { debug: vi.fn() }, processLogger: { child: vi.fn() } };
+
+	// 2. A child logger answers the fixture child, so the label-binding assertions have a value to compare
 	sample.logger.child.mockReturnValue(sample.child);
 	sample.processLogger.child.mockReturnValue(sample.child);
+
+	// 3. The process logger is what a driver built with no logger falls back to
 	vi.mocked(useLogger).mockReturnValue(sample.processLogger as never);
 });
 
 afterEach(() => {
+	// 1. Implementations and recorded calls reset together, so one test's mock state cannot leak into the next
 	vi.resetAllMocks();
 });
 

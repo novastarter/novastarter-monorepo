@@ -14,7 +14,7 @@ vi.mock('@novastarter/logger');
 
 // No Redis is opened in unit tests; the client is a stand-in
 vi.mock('@novastarter/redis', () => ({
-	createRedis: vi.fn(() => ({ quit: vi.fn(async () => 'OK') })),
+	createRedis: vi.fn(() => ({ status: 'ready', quit: vi.fn(async () => 'OK'), disconnect: vi.fn() })),
 }));
 
 beforeEach(() => {

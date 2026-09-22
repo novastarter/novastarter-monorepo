@@ -269,21 +269,22 @@ describe('PaymentsDriverPaddle', () => {
 		// 2. No header is a malformed delivery (400), not a forged one
 		await expect(driver.parseWebhook(body, {})).rejects.toBeInstanceOf(InvalidPayloadError);
 
-		// 3. A wrong secret and a header the SDK cannot parse are both refused signatures (401)
+		// 3. A wrong secret is a refused signature (401)
 		await expect(driver.parseWebhook(body, { 'paddle-signature': sign(body, 'other') })).rejects.toBeInstanceOf(
 			InvalidCredentialsError,
 		);
 
+		// 4. A header without its timestamp or digest is malformed (400), not a forged signature
 		await expect(driver.parseWebhook(body, { 'paddle-signature': 'garbage' })).rejects.toBeInstanceOf(
-			InvalidCredentialsError,
+			InvalidPayloadError,
 		);
 
-		// 4. A signature older than the SDK's tolerance is refused as well
+		// 5. A signature older than the SDK's tolerance is refused as well
 		await expect(
 			driver.parseWebhook(body, { 'paddle-signature': sign(body, WEBHOOK_SECRET, Math.floor(Date.now() / 1000) - 60) }),
 		).rejects.toBeInstanceOf(InvalidCredentialsError);
 
-		// 5. A verified body that is not an event is the sender's problem
+		// 6. A verified body that is not an event is the sender's problem
 		const junk = '{"hello":1}';
 
 		await expect(driver.parseWebhook(junk, { 'paddle-signature': sign(junk) })).rejects.toBeInstanceOf(

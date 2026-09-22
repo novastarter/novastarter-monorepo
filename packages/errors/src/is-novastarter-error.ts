@@ -30,8 +30,9 @@ export const isNovastarterError = <T = never, C extends string = string>(
 ): value is NovastarterError<
 	[T] extends [never] ? (C extends keyof ExtensionsMap ? ExtensionsMap[C] : unknown) : T
 > => {
-	// 1. Only a non-array object carrying the shared name qualifies; arrays are objects too, hence the extra check
-	const isNovastarterError =
+	// 1. Only a non-array object carrying the shared name qualifies; arrays are objects too, hence the extra check.
+	//    The local is named `matches` rather than after the exported function, so the two never shadow each other
+	const matches =
 		typeof value === 'object' &&
 		value !== null &&
 		Array.isArray(value) === false &&
@@ -40,9 +41,9 @@ export const isNovastarterError = <T = never, C extends string = string>(
 
 	// 2. When a code is requested, compare it upper-cased, the way `createError` stores it
 	if (code) {
-		return isNovastarterError && 'code' in value && value.code === code.toUpperCase();
+		return matches && 'code' in value && value.code === code.toUpperCase();
 	}
 
 	// 3. Without a code any Novastarter error matches
-	return isNovastarterError;
+	return matches;
 };

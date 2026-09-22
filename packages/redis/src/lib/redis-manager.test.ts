@@ -54,7 +54,7 @@ test('Answers default without a name and throws for an unknown location', () => 
 test('Quits every opened client on close, leaving the registrations in place', async () => {
 	// 1. Two locations registered, only the default one used: the close quits exactly the opened clients
 	const quit = vi.fn().mockResolvedValue('OK');
-	vi.mocked(createRedis).mockImplementation(() => ({ quit }) as unknown as Redis);
+	vi.mocked(createRedis).mockImplementation(() => ({ status: 'ready', quit }) as unknown as Redis);
 
 	const manager = new RedisManager();
 	manager.registerLocation('default', 'redis://cache:6379');
@@ -67,4 +67,22 @@ test('Quits every opened client on close, leaving the registrations in place', a
 	expect(quit).toHaveBeenCalledTimes(1);
 	expect(manager.locationNames()).toEqual(['default', 'jobs']);
 	expect(manager.instantiated().size).toBe(0);
+});
+
+test('Disconnects a client that never reached ready instead of waiting for a quit', async () => {
+	// 1. A client that is still connecting, or already ended, has no server to quit: `quit` would reconnect forever
+	//    to deliver QUIT and hang the close, so the close must drop the socket without sending anything
+	const quit = vi.fn().mockResolvedValue('OK');
+	const disconnect = vi.fn();
+
+	vi.mocked(createRedis).mockImplementation(() => ({ status: 'connecting', quit, disconnect }) as unknown as Redis);
+
+	const manager = new RedisManager();
+	manager.registerLocation('default', 'redis://cache:6379');
+	manager.location('default');
+
+	await manager.close();
+
+	expect(disconnect).toHaveBeenCalledOnce();
+	expect(quit).not.toHaveBeenCalled();
 });

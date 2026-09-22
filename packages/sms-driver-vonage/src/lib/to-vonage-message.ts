@@ -38,10 +38,12 @@ export const toVonageMessage = (message: SmsMessage): SMSParams => {
 		throw new Error('The vonage sms driver needs a "from"');
 	}
 
-	// 2. Vonage writes numbers without the leading `+`, and expects `ttl` in milliseconds where ours is in seconds
+	// 2. Vonage writes numbers without the leading `+`, and expects `ttl` in milliseconds where ours is in seconds.
+	//    The sender loses its `+` only when it is a number — Vonage refuses a numeric sender carrying one (status 15) —
+	//    while an alphanumeric sender id is not a number and must go out exactly as the brand wrote it
 	return {
 		to: message.to.replace(/^\+/, ''),
-		from: message.from,
+		from: message.from.replace(/^\+(?=\d)/, ''),
 		text: message.text,
 		type: needsUnicode(message.text) ? TypeEnum.UNICODE : TypeEnum.TEXT,
 		...(message.ttl !== undefined ? { ttl: message.ttl * 1000 } : {}),

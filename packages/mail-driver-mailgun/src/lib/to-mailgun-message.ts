@@ -27,17 +27,19 @@ export const MAILGUN_TAG_LENGTH = 128;
 export const MAILGUN_TAG_COUNT = 3;
 
 /**
- * The category and the tags as Mailgun takes them: every label cut to its length limit, the ones left empty dropped,
- * the list capped at its count limit — so a label past a limit trims the analytics instead of failing the send.
+ * The category and the tags as Mailgun takes them: every label brought into Mailgun's character set and cut to its
+ * length limit, the ones left empty dropped, the list capped at its count limit — so a label past a limit trims the
+ * analytics instead of failing the send.
  *
  * @param message - Ours.
  * @returns The `o:tag` values, the category first.
  */
 export const toMailgunTags = (message: MailMessage): string[] =>
-	// 1. Mailgun refuses a message over its tag limits, so each label is cut, an empty one drops out and the tail
-	//    past the count is left off, the category first
+	// 1. Mailgun refuses a message over its tag limits: a tag is ASCII letters, digits, `_` and `-` only, so anything
+	//    outside the set becomes `_`; each label is then cut, an empty one drops out and the tail past the count is
+	//    left off, the category first
 	[message.category ?? 'transactional', ...(message.tags ?? [])]
-		.map((tag) => tag.slice(0, MAILGUN_TAG_LENGTH))
+		.map((tag) => tag.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, MAILGUN_TAG_LENGTH))
 		.filter((tag) => tag !== '')
 		.slice(0, MAILGUN_TAG_COUNT);
 

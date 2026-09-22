@@ -31,15 +31,23 @@ export const toTwilioMessage = (
 	message: SmsMessage,
 	defaults: TwilioMessageDefaults = {},
 ): MessageListInstanceCreateOptions => {
-	// 1. Without a sender of either kind the API answers 21603; say so by the option's name instead
-	if (!message.from && !defaults.messagingServiceSid) {
-		throw new Error('The twilio sms driver needs a "from" or a "messagingServiceSid"');
-	}
+	// 1. The sender of the message wins over the location's pool, so one location serves both: a campaign sending
+	//    from its pool and a message that names its own number
+	let sender: { from: string } | { messagingServiceSid: string };
 
-	// 2. The sender of the message wins over the location's pool, so one location serves both
-	const sender = message.from
-		? { from: message.from }
-		: { messagingServiceSid: defaults.messagingServiceSid as string };
+	if (message.from) {
+		sender = { from: message.from };
+	} else {
+		// 2. Without a sender of either kind the API answers 21603; say so by the option's name instead. Checked for
+		//    truthiness on its own, the value narrows instead of needing a cast
+		const messagingServiceSid = defaults.messagingServiceSid;
+
+		if (!messagingServiceSid) {
+			throw new Error('The twilio sms driver needs a "from" or a "messagingServiceSid"');
+		}
+
+		sender = { messagingServiceSid };
+	}
 
 	// 3. Optional fields are only set when present, so the request carries no `undefined` keys; `validityPeriod` is
 	//    Twilio's name for how long it keeps trying, in seconds, which is what `ttl` means here

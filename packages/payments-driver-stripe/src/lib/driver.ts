@@ -239,12 +239,20 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 *
 	 * @param input - Subscription, new price and/or seats, proration.
 	 * @returns The subscription after the change.
+	 * @throws Error when neither a price nor a seat count is given.
 	 * @throws Stripe's `StripeError` when the request is refused — no such subscription, an unknown price — or Stripe
 	 * cannot be reached.
 	 * @throws Error for a subscription without items.
 	 */
 	async updateSubscription(input: UpdateSubscriptionInput): Promise<Subscription> {
-		// 1. The item is what carries price and quantity; there is one per subscription in the kit's model
+		// 1. An update with nothing to change is a caller's mistake, not a request to send
+		if (input.priceId === undefined && input.quantity === undefined) {
+			throw new Error(
+				`Nothing to update on Stripe subscription "${input.subscriptionId}": give a priceId or a quantity`,
+			);
+		}
+
+		// 2. The item is what carries price and quantity; there is one per subscription in the kit's model
 		const current = await this.client.subscriptions.retrieve(input.subscriptionId);
 		const item = current.items.data[0];
 
@@ -252,7 +260,7 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 			throw new Error(`Stripe subscription "${input.subscriptionId}" has no items`);
 		}
 
-		// 2. One update carries both changes; Stripe prorates the way the caller chose, `prorate` unless told
+		// 3. One update carries both changes; Stripe prorates the way the caller chose, `prorate` unless told
 		const updated = await this.client.subscriptions.update(input.subscriptionId, {
 			items: [
 				{
@@ -294,10 +302,14 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 * @throws Stripe's `StripeError` when the request is refused or Stripe cannot be reached.
 	 */
 	async listInvoices(input: ListInvoicesInput): Promise<Invoice[]> {
-		// 1. Stripe lists most recent first already; the limit is passed through when given
+		// 1. Twenty invoices are asked for unless the caller names a limit: the kit's default across providers, where
+		//    leaving it to Stripe would silently page at its own default of ten
+		const limit = input.limit ?? 20;
+
+		// 2. Stripe lists most recent first already; the limit is passed on every call
 		const invoices = await this.client.invoices.list({
 			customer: input.customerId,
-			...(input.limit !== undefined ? { limit: input.limit } : {}),
+			limit,
 		});
 
 		return invoices.data.map(toInvoice);

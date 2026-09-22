@@ -27,12 +27,12 @@
 	"dependencies": {
 		"@libsql/client": "catalog:",
 		"@novastarter/database": "workspace:*",
-		"@novastarter/logger": "workspace:*",
 		"@novastarter/utils": "workspace:*",
 		"drizzle-orm": "catalog:"
 	},
 	"devDependencies": {
 		"@ngneat/falso": "catalog:",
+		"@novastarter/logger": "workspace:*",
 		"@novastarter/tsconfig": "workspace:*",
 		"@types/node": "catalog:",
 		"@vitest/coverage-v8": "catalog:",

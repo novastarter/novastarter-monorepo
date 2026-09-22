@@ -26,6 +26,7 @@
 	},
 	"dependencies": {
 		"@novastarter/errors": "workspace:*",
+		"@novastarter/logger": "workspace:*",
 		"@novastarter/payments": "workspace:*"
 	},
 	"devDependencies": {

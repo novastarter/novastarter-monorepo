@@ -144,6 +144,23 @@ describe('#constructor', () => {
 		).toThrowErrorMatchingInlineSnapshot(`[Error: The azure storage driver got a "tus.chunkSize" above 100 MiB]`);
 	});
 
+	test.each([[-1], [0], [Number.NaN]])(
+		'Refuses a non-positive chunk size of %s when resumable uploads are on',
+		(chunkSize) => {
+			// 1. A zero, negative or NaN size would be kept as the per-chunk bound and make every arriving chunk fail;
+			//    NaN slips through every comparison, which is why the check is written as `!(size > 0)`
+			expect(
+				() =>
+					new StorageDriverAzure({
+						containerName: sample.config.containerName,
+						accountKey: sample.config.accountKey,
+						accountName: sample.config.accountName,
+						tus: { enabled: true, chunkSize },
+					}),
+			).toThrowError('The azure storage driver got a "tus.chunkSize" below 1 byte');
+		},
+	);
+
 	test('Creates signed credentials', () => {
 		// 1. The shared driver from `beforeEach` already ran the constructor, so the credential call is recorded; the
 		//    instance check shows the credential is kept for the SDK rather than rebuilt per request
@@ -473,6 +490,18 @@ describe('#stat', () => {
 
 		await expect(driver.stat(sample.path.input)).rejects.toBe(error);
 	});
+
+	test('Refuses a properties response missing size or modification time', async () => {
+		// 1. Both fields are optional in the SDK's types; answering `undefined` under the non-optional `Stat` type
+		//    would fail far from its cause, so a broken response is refused with the path named
+		driver['containerClient'] = {
+			getBlobClient: vi.fn().mockReturnValue({ getProperties: vi.fn().mockResolvedValue({}) }),
+		} as unknown as ContainerClient;
+
+		await expect(driver.stat(sample.path.input)).rejects.toThrowError(
+			`No stat returned for file "${sample.path.input}"`,
+		);
+	});
 });
 
 describe('#exists', () => {
@@ -662,6 +691,21 @@ describe('#list', () => {
 
 		expect(output).toStrictEqual([mockFile]);
 	});
+
+	test('Skips folder placeholder blobs ending in a slash', async () => {
+		// 1. ADLS Gen2 and several upload tools create zero-byte `folder/` markers; a caller that pipes `list()` into
+		//    `read()` breaks on them, so they are left out like on the S3 and GCS drivers
+		const mockFile = randFilePath();
+		mockListBlobsFlat.mockReturnValue([{ name: 'folder/' }, { name: mockFile }]);
+
+		const output = [];
+
+		for await (const filepath of driver.list()) {
+			output.push(filepath);
+		}
+
+		expect(output).toStrictEqual([mockFile]);
+	});
 });
 
 describe('#writeChunk', () => {
@@ -685,8 +729,25 @@ describe('#writeChunk', () => {
 		// 1. The chunk lands as one block under the resolved name, and the offset advances by the bytes appended
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
 		expect(driver['containerClient'].getAppendBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
-		expect(mockAppendBlock).toHaveBeenCalledWith(Buffer.from(sample.text), Buffer.byteLength(sample.text));
+
+		expect(mockAppendBlock).toHaveBeenCalledWith(Buffer.from(sample.text), Buffer.byteLength(sample.text), {
+			conditions: { appendPosition: 0 },
+		});
+
 		expect(result).toBe(Buffer.byteLength(sample.text));
+	});
+
+	test('Pins the append to the offset the chunk starts at', async () => {
+		// 1. Append blobs append at the current end unconditionally; pinning the position makes a resent chunk fail
+		//    with 412 instead of appending its bytes a second time and corrupting the upload
+		await driver.writeChunk(sample.path.input, Readable.from([Buffer.from(sample.text)]), 42, {
+			size: sample.file.size,
+			metadata: {},
+		});
+
+		expect(mockAppendBlock).toHaveBeenCalledWith(Buffer.from(sample.text), Buffer.byteLength(sample.text), {
+			conditions: { appendPosition: 42 },
+		});
 	});
 
 	test('Refuses a chunk above the configured size', async () => {
@@ -710,5 +771,114 @@ describe('#writeChunk', () => {
 		).rejects.toThrow(`The chunk of ${Buffer.byteLength(sample.text)} bytes exceeds the chunk size limit of 1 bytes`);
 
 		expect(mockAppendBlock).not.toHaveBeenCalled();
+	});
+
+	test('Stops consuming the stream once the chunk crosses the configured size', async () => {
+		// 1. The bound is enforced while the chunk is still arriving, so a chunk that never ends must be refused rather
+		//    than buffered forever
+		const tusDriver = new StorageDriverAzure({
+			containerName: sample.config.containerName,
+			accountKey: sample.config.accountKey,
+			accountName: sample.config.accountName,
+			tus: { enabled: true, chunkSize: 1 },
+		});
+
+		tusDriver['fullPath'] = driver['fullPath'];
+		tusDriver['containerClient'] = driver['containerClient'];
+
+		let pulls = 0;
+
+		const endless = Readable.from(
+			(async function* () {
+				while (true) {
+					pulls += 1;
+					yield Buffer.from(sample.text);
+				}
+			})(),
+		);
+
+		await expect(
+			tusDriver.writeChunk(sample.path.input, endless, 0, {
+				size: sample.file.size,
+				metadata: {},
+			}),
+		).rejects.toThrow('exceeds the chunk size limit of 1 bytes');
+
+		// 2. Only the first pull is needed to cross the bound, and the stream is destroyed rather than drained, so the
+		//    generator must not keep running past a buffered prefetch
+		await new Promise((resolve) => setImmediate(resolve));
+
+		expect(pulls).toBeLessThan(10);
+
+		expect(mockAppendBlock).not.toHaveBeenCalled();
+	});
+});
+
+describe('#tusExtensions', () => {
+	test('Advertises creation, termination and expiration', () => {
+		// 1. Only the extensions the chunked-upload methods back; checksum and concatenation are left out because an
+		//    append blob can neither verify a chunk before it lands nor be assembled from several uploads
+		expect(driver.tusExtensions).toStrictEqual(['creation', 'termination', 'expiration']);
+	});
+});
+
+describe('#createChunkedUpload', () => {
+	let mockCreateIfNotExists: Mock;
+
+	beforeEach(() => {
+		// 1. The append blob is the whole upload state, so creation is one `createIfNotExists` on the resolved name
+		mockCreateIfNotExists = vi.fn().mockResolvedValue(undefined);
+
+		driver['containerClient'] = {
+			getAppendBlobClient: vi.fn().mockReturnValue({ createIfNotExists: mockCreateIfNotExists }),
+		} as unknown as ContainerClient;
+	});
+
+	test('Creates an empty append blob under the final name', async () => {
+		const context = { size: sample.file.size, metadata: {} };
+
+		const result = await driver.createChunkedUpload(sample.path.input, context);
+
+		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
+		expect(driver['containerClient'].getAppendBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
+		expect(mockCreateIfNotExists).toHaveBeenCalledOnce();
+		expect(result).toBe(context);
+	});
+
+	test('Keeps blocks already appended when creation is retried', async () => {
+		// 1. `createIfNotExists` rather than `create` is what makes a retried creation leave an upload that already has
+		//    blocks alone; the assertion above pins the call, here the driver simply must not fail the retry
+		mockCreateIfNotExists.mockRejectedValue(Object.assign(new Error('already exists'), { statusCode: 409 }));
+
+		await expect(
+			driver.createChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} }),
+		).rejects.toBeDefined();
+	});
+});
+
+describe('#finishChunkedUpload', () => {
+	test('Resolves without a request', async () => {
+		// 1. The append blob already holds every chunk under the final name, so there is nothing to assemble
+		await expect(
+			driver.finishChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} }),
+		).resolves.toBeUndefined();
+	});
+});
+
+describe('#deleteChunkedUpload', () => {
+	test('Deletes the append blob under the final name', async () => {
+		// 1. Termination is a plain delete of the blob under the final name; `deleteIfExists` keeps a termination for an
+		//    upload that never got a chunk from rejecting
+		const mockDeleteIfExists = vi.fn().mockResolvedValue(undefined);
+
+		driver['containerClient'] = {
+			getBlockBlobClient: vi.fn().mockReturnValue({ deleteIfExists: mockDeleteIfExists }),
+		} as unknown as ContainerClient;
+
+		await driver.deleteChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} });
+
+		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
+		expect(driver['containerClient'].getBlockBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
+		expect(mockDeleteIfExists).toHaveBeenCalledOnce();
 	});
 });

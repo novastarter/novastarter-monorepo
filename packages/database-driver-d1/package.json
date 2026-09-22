@@ -27,11 +27,11 @@
 	"dependencies": {
 		"@cloudflare/workers-types": "catalog:",
 		"@novastarter/database": "workspace:*",
-		"@novastarter/logger": "workspace:*",
 		"drizzle-orm": "catalog:"
 	},
 	"devDependencies": {
 		"@ngneat/falso": "catalog:",
+		"@novastarter/logger": "workspace:*",
 		"@novastarter/tsconfig": "workspace:*",
 		"@types/node": "catalog:",
 		"@vitest/coverage-v8": "catalog:",

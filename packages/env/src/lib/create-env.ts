@@ -71,29 +71,37 @@ export const createEnv = (options: CreateEnvOptions = {}): Env => {
 				throw new Error(`Environment variables "${name}" and "${key}" are both set; keep one of them.`);
 			}
 
-			try {
-				// 6. A cast prefix applies to the file contents, not the path, so it is peeled off and re-applied
-				const castFlag = getCastFlag(value);
-				const castPrefix = castFlag ? castFlag + ':' : '';
-				const filePath = castFlag ? value.replace(castPrefix, '') : value;
+			// 6. A cast prefix applies to the file contents, not the path, so it is peeled off and re-applied; the
+			//    peel cannot fail, so it stays outside the try and the path below is the one actually read
+			const castFlag = getCastFlag(value);
+			const castPrefix = castFlag ? castFlag + ':' : '';
+			const filePath = castFlag ? value.replace(castPrefix, '') : value;
 
+			try {
 				// 7. Read the secret as text
 				const fileContent = readFileSync(filePath, { encoding: 'utf8' });
 
-				// 8. Store under the option name and feed the prefix back in, so casting treats it like an inline value
+				// 8. A mounted-secret file ends in a newline an inline value never carries; one trailing `\r?\n` is
+				//    stripped — not a full trim, since inner whitespace can be intentional — so both sources yield
+				//    the same value
+				const secret = fileContent.replace(/\r?\n$/, '');
+
+				// 9. Store under the option name and feed the prefix back in, so casting treats it like an inline value
 				key = name;
-				value = castPrefix + fileContent;
+				value = castPrefix + secret;
 			} catch (error) {
-				// 9. The fs error carries the code and path the operator needs (`EACCES`, `ENOENT`), so it stays as the
-				//    cause and its message is quoted, while the wrapper adds the variable the fs alone does not know
+				// 10. The fs error carries the code and path the operator needs (`EACCES`, `ENOENT`), so it stays as
+				//     the cause and its message is quoted, while the wrapper adds the variable the fs alone does not
+				//     know; the message names `filePath`, the path that was actually read, not the raw value with
+				//     its cast prefix
 				throw new Error(
-					`Failed to read value from file "${value}", defined in environment variable "${key}": ${toErrorMessage(error)}`,
+					`Failed to read value from file "${filePath}", defined in environment variable "${key}": ${toErrorMessage(error)}`,
 					{ cause: error },
 				);
 			}
 		}
 
-		// 10. A cast prefix on a source value is applied; everything else is kept as the source gave it. A payload the
+		// 11. A cast prefix on a source value is applied; everything else is kept as the source gave it. A payload the
 		//     prefix cannot read is reported with the variable's name, which the cast alone does not know
 		try {
 			output[key] = cast(value);

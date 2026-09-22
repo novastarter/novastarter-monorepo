@@ -2,8 +2,9 @@
  * Tests of `to-event`: which Paddle notifications become the kit's events and which are dropped, read from the
  * fixtures in the shape of Paddle's notification payloads.
  */
+import { Webhooks } from '@paddle/paddle-node-sdk';
 import { describe, expect, test } from 'vitest';
-import { parsed } from '../fixtures/index.js';
+import { fixtureText, parsed } from '../fixtures/index.js';
 import { toEvent } from './to-event.js';
 
 describe('toEvent', () => {
@@ -44,5 +45,17 @@ describe('toEvent', () => {
 
 		// 5. A verified event of a type the kit does not track is dropped rather than refused
 		expect(toEvent(parsed('customer.updated'))).toBeNull();
+	});
+
+	test('Drops a subscription.updated that carries the canceled status', () => {
+		// 1. Paddle fires subscription.updated with status canceled alongside subscription.canceled for one
+		//    cancellation; the canceled event owns the deletion, so the update must not arrive as a change
+		const body = JSON.parse(fixtureText('subscription.updated')) as Parameters<typeof Webhooks.fromJson>[0] & {
+			data: { status: string };
+		};
+
+		body.data.status = 'canceled';
+
+		expect(toEvent(Webhooks.fromJson(body))).toBeNull();
 	});
 });

@@ -21,6 +21,7 @@ import { toEvent } from './to-event.js';
 import { toInvoice } from './to-invoice.js';
 import { toMetadata } from './to-metadata.js';
 import { toSubscription } from './to-subscription.js';
+import { signaturePartsOf, verifySignature } from './verify-signature.js';
 
 /**
  * Options of {@link PaymentsDriverPaddle}, as given in the location's `options`.
@@ -86,6 +87,9 @@ export const PRORATION: Record<NonNullable<UpdateSubscriptionInput['proration']>
  * so `successUrl` / `cancelUrl` of the input have no counterpart. Trials and discount codes are set on the price
  * and the checkout in Paddle rather than per session.
  *
+ * Webhook verification follows the SDK's five-second replay window and accepts timestamps ahead of the clock, so a
+ * server clock running more than five seconds behind Paddle's rejects valid deliveries — keep the clock in sync.
+ *
  * @example
  * ```ts
  * import { usePayments } from '@novastarter/payments';
@@ -145,12 +149,14 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 			throw new Error('The paddle payments driver needs a "webhookSecret"');
 		}
 
-		// 2. The SDK takes a base URL in place of an environment name, which is how a stand-in is reached
+		// 2. The SDK takes a base URL in place of an environment name, which is how a stand-in is reached; the option
+		//    is typed as the SDK's string enum, so an arbitrary URL reaches it through `unknown` — a plain
+		//    `as Environment` would assert the URL is a member of the enum
 		const environment = config.environment === 'sandbox' ? Environment.sandbox : Environment.production;
 
 		this.client =
 			config.client ??
-			new Paddle(config.apiKey, { environment: (config.apiUrl as Environment | undefined) ?? environment });
+			new Paddle(config.apiKey, { environment: (config.apiUrl ?? environment) as unknown as Environment });
 
 		this.webhookSecret = config.webhookSecret;
 		this.checkoutUrl = config.checkoutUrl;
@@ -294,9 +300,10 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	 * @throws Paddle's `ApiError` when the request is refused, or the fetch error when Paddle cannot be reached.
 	 */
 	async listInvoices(input: ListInvoicesInput): Promise<Invoice[]> {
+		// 1. A page of this many transactions is asked for; the caller's default otherwise
 		const limit = input.limit ?? 20;
 
-		// 1. Only the billed states: a draft or an abandoned checkout is not an invoice
+		// 2. Only the billed states: a draft or an abandoned checkout is not an invoice
 		const page = this.client.transactions.list({
 			customerId: [input.customerId],
 			status: ['billed', 'paid', 'completed', 'past_due', 'canceled'],
@@ -304,7 +311,7 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 			perPage: limit,
 		});
 
-		// 2. One page is what the caller asked for; the collection would keep paging
+		// 3. One page is what the caller asked for; the collection would keep paging
 		const transactions = await page.next();
 
 		return transactions.slice(0, limit).map(toInvoice);
@@ -313,10 +320,14 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	/**
 	 * Verify a webhook against the destination's secret and normalise its event.
 	 *
+	 * The signature is verified in the driver, in constant time, before the SDK's `unmarshal` is asked to parse the
+	 * body — the SDK's own digest comparison short-circuits on the first differing byte.
+	 *
 	 * @param rawBody - The body byte for byte.
 	 * @param headers - The request headers, lower-cased.
 	 * @returns The event, or `null` for one the kit does not act on.
-	 * @throws InvalidPayloadError without the `paddle-signature` header, or for a body that is not a Paddle event.
+	 * @throws InvalidPayloadError without the `paddle-signature` header, for a header without its timestamp or
+	 * digest, or for a body that is not a Paddle event.
 	 * @throws InvalidCredentialsError when the signature does not verify, or its timestamp is outside the SDK's
 	 * tolerance.
 	 */
@@ -328,16 +339,25 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 			throw new InvalidPayloadError({ reason: `The delivery carries no ${SIGNATURE_HEADER} header` });
 		}
 
-		// 2. The SDK verifies the signature before it reads the body, so `unmarshal` is the single check: a wrong
-		//    secret, a stale timestamp and a malformed header all throw from it, marked with the SDK's `[Paddle]`
-		//    prefix, while anything else that goes wrong in there is a payload problem
+		// 2. The header must name the timestamp and the digest; one without them is malformed (400), not forged
+		const parts = signaturePartsOf(signature);
+
+		// 3. The HMAC is recomputed and compared in constant time before the SDK sees the body, the SDK's signed
+		//    payload and replay window reproduced exactly — its own comparison would leak how much of a guessed
+		//    signature was right
+		if (!verifySignature(rawBody, parts, this.webhookSecret)) {
+			throw new InvalidCredentialsError();
+		}
+
+		// 4. The signature is verified; `unmarshal` now only parses the body — its own verification runs again inside
+		//    as a formality, so a failure there is no longer expected
 		let event;
 
 		try {
 			event = await this.client.webhooks.unmarshal(rawBody, this.webhookSecret, signature);
 		} catch (error) {
-			// 1. The SDK's signature errors mean the delivery could not be authenticated, which the kit reports as
-			//    invalid credentials, not as a malformed payload
+			// 5. An SDK signature error here can only be the replay window closing between the two checks — still a
+			//    credentials problem, not a payload one; anything else it throws is a payload problem
 			if (toErrorMessage(error).startsWith('[Paddle]')) {
 				throw new InvalidCredentialsError(undefined, { cause: error });
 			}
@@ -345,13 +365,13 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 			throw new InvalidPayloadError({ reason: toErrorMessage(error) });
 		}
 
-		// 3. A verified body that is not an event is the sender's problem, reported as such — the SDK reads an unknown
+		// 6. A verified body that is not an event is the sender's problem, reported as such — the SDK reads an unknown
 		//    type as a generic event and a non-event as one without a type or an id
 		if (typeof event.eventType !== 'string' || typeof event.eventId !== 'string') {
 			throw new InvalidPayloadError({ reason: 'The body is not a Paddle event' });
 		}
 
-		// 4. The mapping decides which Paddle events the kit acts on
+		// 7. The mapping decides which Paddle events the kit acts on
 		return toEvent(event);
 	}
 

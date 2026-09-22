@@ -65,6 +65,28 @@ describe('any.only', () => {
 		expect(joiValidationErrorItemToErrorExtensions(item('any.only', { valids: [true, 'true'] })).type).toBe('in');
 	});
 
+	test('maps a boolean to eq with its text, like the zod converter reports it', () => {
+		// 1. `_eq: true` is built as the boolean itself; the extensions shape holds numbers and strings only, so the
+		//    value is stringified — exactly what the zod converter's `comparable` does with an issue value
+		expect(joiValidationErrorItemToErrorExtensions(item('any.only', { valids: [true] }))).toMatchObject({
+			type: 'eq',
+			valid: 'true',
+		});
+
+		expect(joiValidationErrorItemToErrorExtensions(item('any.only', { valids: [false] }))).toMatchObject({
+			type: 'eq',
+			valid: 'false',
+		});
+	});
+
+	test('maps booleans in a list to in with their texts', () => {
+		// 1. A genuine list keeps its size, and each entry is stringified the same way as the scalar case
+		expect(joiValidationErrorItemToErrorExtensions(item('any.only', { valids: [true, false] }))).toMatchObject({
+			type: 'in',
+			valid: ['true', 'false'],
+		});
+	});
+
 	test('maps null to null and empty string to empty', () => {
 		// 1. The `_null` / `_empty` operators are allow lists with a single entry, told apart by the entry itself
 		expect(joiValidationErrorItemToErrorExtensions(item('any.only', { valids: [null] })).type).toBe('null');
@@ -97,6 +119,14 @@ describe('any.invalid', () => {
 		});
 	});
 
+	test('maps a boolean to neq with its text, like the zod converter reports it', () => {
+		// 1. `_neq: false` is built as the boolean itself and stringified for the extensions, mirroring the zod side
+		expect(joiValidationErrorItemToErrorExtensions(item('any.invalid', { invalids: [false] }))).toMatchObject({
+			type: 'neq',
+			invalid: 'false',
+		});
+	});
+
 	test('maps null to nnull and empty string to nempty', () => {
 		// 1. The `_nnull` / `_nempty` operators are deny lists with a single entry, told apart by the entry itself
 		expect(joiValidationErrorItemToErrorExtensions(item('any.invalid', { invalids: [null] })).type).toBe('nnull');
@@ -115,6 +145,22 @@ describe('ranges', () => {
 	])('maps %s to %s with the limit', (joiType, type) => {
 		// 1. The rule is matched on its suffix, so number and date bounds share one mapping and the bound is `limit`
 		expect(joiValidationErrorItemToErrorExtensions(item(joiType, { limit: 18 }))).toMatchObject({ type, valid: 18 });
+	});
+
+	test('normalises a date bound to the ISO string the caller passed', () => {
+		// 1. Joi puts the Date object itself into `context.limit` for date bounds; the extensions hold numbers and
+		//    strings only, and the ISO form is stable across server timezones, unlike `Date.prototype.toString`
+		const bound = new Date('2024-01-01T00:00:00.000Z');
+
+		expect(joiValidationErrorItemToErrorExtensions(item('date.min', { limit: bound }))).toMatchObject({
+			type: 'gte',
+			valid: '2024-01-01T00:00:00.000Z',
+		});
+
+		expect(joiValidationErrorItemToErrorExtensions(item('date.greater', { limit: bound }))).toMatchObject({
+			type: 'gt',
+			valid: '2024-01-01T00:00:00.000Z',
+		});
 	});
 });
 
@@ -165,11 +211,14 @@ describe('substrings', () => {
 });
 
 describe('other rules', () => {
-	test('maps a bare pattern to regex with the rejected value', () => {
-		// 1. The pattern itself is not reported, only the value, since the client renders "wrong format"
-		expect(joiValidationErrorItemToErrorExtensions(item('string.pattern.base', { value: 'nope' }))).toMatchObject({
+	test('maps a bare pattern to regex with the pattern, like the zod converter reports it', () => {
+		// 1. The pattern is reported, so the client can show what the value had to match — the same `invalid` the zod
+		//    converter reports for a regex failure, slashes included
+		expect(
+			joiValidationErrorItemToErrorExtensions(item('string.pattern.base', { regex: /^\d+$/, value: 'nope' })),
+		).toMatchObject({
 			type: 'regex',
-			invalid: 'nope',
+			invalid: '/^\\d+$/',
 		});
 	});
 

@@ -46,10 +46,14 @@ export type StorageDriverGcsConfig = {
 	/** Resumable-upload tuning. */
 	tus?:
 		| {
-				/** Whether chunked uploads are in use; turns on validation of `chunkSize`. */
+				/**
+				 * Whether resumable uploads are switched on; when `false`, the chunked-upload methods refuse with an
+				 * error naming the flag.
+				 */
 				enabled: boolean;
 				/**
-				 * Chunk size in bytes per upload request; a power of two of at least 256 KiB.
+				 * Chunk size in bytes per upload request; a power of two of at least 256 KiB, validated whenever it is
+				 * configured.
 				 *
 				 * @defaultValue {@link DEFAULT_CHUNK_SIZE}
 				 */
@@ -117,10 +121,18 @@ export class StorageDriverGcs implements TusDriver {
 	private readonly preferredChunkSize: number;
 
 	/**
+	 * Whether resumable uploads are switched on for this location, read from `tus.enabled`; only an explicit `false`
+	 * disables them.
+	 *
+	 * @internal
+	 */
+	private readonly tusEnabled: boolean;
+
+	/**
 	 * Create a driver together with its client and bucket handle.
 	 *
 	 * @param config - Connection and behaviour options.
-	 * @throws Error when TUS is enabled and `chunkSize` is not a power of two of at least 256 KiB.
+	 * @throws Error when `tus.chunkSize` is configured with a value that is not a power of two of at least 256 KiB.
 	 */
 	constructor(config: StorageDriverGcsConfig) {
 		const { bucket, root, tus, apiEndpoint } = config;
@@ -149,16 +161,25 @@ export class StorageDriverGcs implements TusDriver {
 		const storage = new Storage(storageOptions);
 		this.bucket = storage.bucket(bucket);
 
-		this.preferredChunkSize = tus?.chunkSize || DEFAULT_CHUNK_SIZE;
+		// 5. The chunk size handed to resumable uploads: the configured value when one was given, the package default
+		//    otherwise. `??` rather than `||`, so a configured `0` or `NaN` stays what it is and is caught by the
+		//    validation below instead of being masked by the default
+		this.preferredChunkSize = tus?.chunkSize ?? DEFAULT_CHUNK_SIZE;
 
-		// 5. GCS requires resumable chunks to be multiples of 256 KiB; restricting to powers of two keeps every chunk
-		//    aligned and rejects a misconfiguration here rather than on the first PATCH
-		if (
-			tus?.enabled &&
-			(this.preferredChunkSize < MINIMUM_CHUNK_SIZE || Math.log2(this.preferredChunkSize) % 1 !== 0)
-		) {
+		// 6. GCS requires resumable chunks to be multiples of 256 KiB; restricting to powers of two keeps every chunk
+		//    aligned and rejects a misconfiguration here rather than on the first PATCH. The check runs on the
+		//    configured value itself whenever one was given — `0` fails it for being below the minimum and `NaN` for
+		//    not being a power of two — and it runs regardless of the `enabled` flag, because `writeChunk` hands the
+		//    size to the SDK no matter what, so a value GCS would reject must not pass construction just because the
+		//    flag is off
+		if (tus?.chunkSize !== undefined && (tus.chunkSize < MINIMUM_CHUNK_SIZE || Math.log2(tus.chunkSize) % 1 !== 0)) {
 			throw new Error('The gcs storage driver got a "tus.chunkSize" that is not a power of two of at least 256 KiB');
 		}
+
+		// 7. An explicit `false` marks a location that does not serve resumable uploads; the chunked-upload methods
+		//    read the flag and refuse rather than acting as if uploads were possible. An absent flag keeps the
+		//    behaviour of every version before the option was honoured
+		this.tusEnabled = tus?.enabled ?? true;
 	}
 
 	/**
@@ -293,8 +314,14 @@ export class StorageDriverGcs implements TusDriver {
 		}
 
 		// 2. The SDK types `size` as `string | number` and the JSON API sends a string, so it is converted into the
-		//    number the storage contract expects; `updated` is an ISO timestamp, converted into the `Date` it expects
-		return { size: Number(metadata.size), modified: new Date(metadata.updated as string) };
+		//    number the storage contract expects; `updated` is an ISO timestamp, converted into the `Date` it expects.
+		//    Both fields are optional in the SDK's types, and a metadata record missing either is a broken answer that
+		//    is refused here rather than handed out as `NaN` / `Invalid Date` under the `Stat` type
+		if (metadata.size === undefined || metadata.updated === undefined) {
+			throw new Error(`No stat returned for file "${filepath}": the metadata has no size or updated time`);
+		}
+
+		return { size: Number(metadata.size), modified: new Date(metadata.updated) };
 	}
 
 	/**
@@ -380,20 +407,44 @@ export class StorageDriverGcs implements TusDriver {
 	}
 
 	/**
+	 * Refuse a chunked-upload call when the location has resumable uploads switched off.
+	 *
+	 * `tus.enabled: false` marks a location that does not serve resumable uploads; without the guard the
+	 * chunked-upload methods would act as if uploads were possible and fail on the missing session state instead of
+	 * saying why.
+	 *
+	 * @throws Error naming `tus.enabled` when resumable uploads are disabled.
+	 * @internal
+	 */
+	private assertTusEnabled() {
+		// 1. Only an explicit `false` disables uploads; an absent or `true` flag behaves as it always has
+		if (this.tusEnabled === false) {
+			throw new Error(
+				'The gcs storage driver refuses chunked uploads because resumable uploads are disabled (tus.enabled is false)',
+			);
+		}
+	}
+
+	/**
 	 * Open a GCS resumable-upload session for a chunked upload.
 	 *
 	 * @param filepath - Final object path relative to the root.
 	 * @param context - Client-supplied size and metadata; the metadata map is created when the client sent none.
 	 * @returns The same context with the session `uri` stored in its metadata for the following calls.
+	 * @throws Error naming `tus.enabled` when the location has resumable uploads disabled.
 	 */
 	async createChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<ChunkedUploadContext> {
+		// 1. A location with resumable uploads switched off refuses the upload instead of opening a session it never
+		//    agreed to serve
+		this.assertTusEnabled();
+
 		const file = this.file(this.fullPath(filepath));
 
-		// 1. A client that sends no `Upload-Metadata` leaves the map undefined; it is created here, before the session is
+		// 2. A client that sends no `Upload-Metadata` leaves the map undefined; it is created here, before the session is
 		//    opened, so storing the URI below cannot fail and leak a session GCS already accepted
 		const metadata = (context.metadata ??= {});
 
-		// 2. The session URI is the only state GCS needs to accept further chunks; it lives in the context so a resumed
+		// 3. The session URI is the only state GCS needs to accept further chunks; it lives in the context so a resumed
 		//    upload on another process can continue the same session
 		const [uri] = await file.createResumableUpload();
 
@@ -410,6 +461,9 @@ export class StorageDriverGcs implements TusDriver {
 	 * @param offset - Byte offset the chunk starts at.
 	 * @param context - Upload context carrying the session `uri` and the CRC32C `hash` of the bytes uploaded so far.
 	 * @returns The upload offset after this chunk, i.e. `offset` plus the bytes consumed from `content`.
+	 * @throws Error naming `tus.enabled` when the location has resumable uploads disabled.
+	 * @throws Error when the context carries no session `uri`, meaning no upload was created by
+	 * {@link StorageDriverGcs.createChunkedUpload}.
 	 */
 	async writeChunk(
 		filepath: string,
@@ -417,34 +471,50 @@ export class StorageDriverGcs implements TusDriver {
 		offset: number,
 		context: ChunkedUploadContext,
 	): Promise<number> {
+		// 1. A location with resumable uploads switched off refuses the chunk instead of failing on the missing session
+		//    state, which would not say why
+		this.assertTusEnabled();
+
 		const file = this.file(this.fullPath(filepath));
 
-		// 1. The map is read for the session state and written for the hash below; a context handed over without one
-		//    gets an empty map rather than a TypeError, so the failure a missing session causes is the SDK's, not ours
+		// 2. The map is read for the session state and written for the hash below; a context handed over without one
+		//    gets an empty map rather than a TypeError
 		const metadata = (context.metadata ??= {});
 
-		// 2. Continue the stored session as a partial upload: `offset` tells GCS where these bytes go, `resumeCRC32C`
-		//    seeds the running checksum with the hash of the earlier chunks, and `contentLength` lets GCS finalise the
-		//    object on its own once the last byte arrives, which is why `finishChunkedUpload` has nothing left to do
+		// 3. The session URI is recorded by `createChunkedUpload`; a context without it means the calls arrived out of
+		//    order, and an explicit error says so where the old non-null assertion handed the SDK `undefined` under a
+		//    `string` type — the wording mirrors the S3 driver's missing-upload-id error
+		const uri = metadata['uri'];
+
+		if (uri === undefined || uri === null) {
+			throw new Error(`Cannot write a chunk of "${filepath}": the context has no session uri`);
+		}
+
+		// 4. Continue the stored session as a partial upload: `offset` tells GCS where these bytes go, `resumeCRC32C`
+		//    seeds the running checksum with the hash of the earlier chunks, and `contentLength` — sent only when the
+		//    client declared a size — lets GCS finalise the object on its own once the last byte arrives, which is why
+		//    `finishChunkedUpload` has nothing left to do. An unknown size must leave the key out entirely: `0` would
+		//    read as a real total and finalise the object empty, while the upload library only falls back to a deferred
+		//    `'*'` total when the key is absent
 		const stream = file.createWriteStream({
 			chunkSize: this.preferredChunkSize,
-			uri: metadata['uri'] as string,
+			uri,
 			offset,
 			isPartialUpload: true,
 			resumeCRC32C: metadata['hash'] as string,
 			metadata: {
-				contentLength: context.size || 0,
+				...(context.size !== undefined ? { contentLength: context.size } : {}),
 			},
 		});
 
-		// 3. The SDK emits the CRC32C of everything uploaded so far; keeping it in the context is what makes the next
+		// 5. The SDK emits the CRC32C of everything uploaded so far; keeping it in the context is what makes the next
 		//    chunk resumable with an intact checksum
 		stream.on('crc32c', (hash: string) => {
 			// 1. Written to the map the context carries, so the value survives into the next `writeChunk` call
 			metadata['hash'] = hash;
 		});
 
-		// 4. Count the bytes as they pass, since the SDK does not report how much of the stream it consumed
+		// 6. Count the bytes as they pass, since the SDK does not report how much of the stream it consumed
 		let bytesUploaded = offset || 0;
 
 		content.on('data', (chunk: Buffer) => {
@@ -465,17 +535,27 @@ export class StorageDriverGcs implements TusDriver {
 	 *
 	 * @param _filepath - Final object path relative to the root; unused.
 	 * @param _context - Upload context; unused.
+	 * @throws Error naming `tus.enabled` when the location has resumable uploads disabled.
 	 */
-	async finishChunkedUpload(_filepath: string, _context: ChunkedUploadContext): Promise<void> {}
+	async finishChunkedUpload(_filepath: string, _context: ChunkedUploadContext): Promise<void> {
+		// 1. A location with resumable uploads switched off refuses the call instead of silently "finishing" an
+		//    upload it never accepted
+		this.assertTusEnabled();
+	}
 
 	/**
 	 * Abort a chunked upload and remove whatever was stored under its path.
 	 *
 	 * @param filepath - Object path relative to the root.
 	 * @param _context - Upload context; unused, the object name is enough to clean up.
+	 * @throws Error naming `tus.enabled` when the location has resumable uploads disabled.
 	 */
 	async deleteChunkedUpload(filepath: string, _context: ChunkedUploadContext): Promise<void> {
-		// 1. GCS keeps no object for an unfinished session and lets the session expire on its own, so the only thing that
+		// 1. A location with resumable uploads switched off refuses the termination instead of deleting whatever the
+		//    path happens to name
+		this.assertTusEnabled();
+
+		// 2. GCS keeps no object for an unfinished session and lets the session expire on its own, so the only thing that
 		//    can be left behind is a finished object under this path. `ignoreNotFound` answers the SDK's 404 for the far
 		//    more common missing object with a no-op, the way the drivers whose delete never rejects do
 		await this.file(this.fullPath(filepath)).delete({ ignoreNotFound: true });

@@ -11,9 +11,9 @@ export const _cache: { id: string | undefined } = { id: undefined };
 /**
  * Return an id that is unique to the current process on the current machine.
  *
- * The id is an MD5 hash of the host name, the process id and the start time, so two processes on different hosts,
- * two processes on the same host and the same process before and after a restart all get different ids. It is
- * computed once and then reused for the lifetime of the process.
+ * The id is an MD5 hash of the host name, the process id and the time of the first call, so two processes on
+ * different hosts, two processes on the same host and the same process before and after a restart all get different
+ * ids. It is computed once and then reused for the lifetime of the process.
  *
  * @returns Hex-encoded hash identifying this process.
  * @example

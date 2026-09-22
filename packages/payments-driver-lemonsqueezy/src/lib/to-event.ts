@@ -36,14 +36,17 @@ export const SUBSCRIPTION_UPDATE_EVENTS: ReadonlySet<string> = new Set([
 export type IntervalResolver = (variantId: string) => Promise<BillingInterval>;
 
 /**
- * The id of a delivery: the `webhook_id` Lemon Squeezy puts under `meta`, stable across retries of one event;
- * without one, the event, the resource and its update time — the same for a retry, different for a later change.
+ * The id of a delivery: the event name, the resource id and its update time — the same for a retry of one event,
+ * different for a later change of the resource.
+ *
+ * `meta.webhook_id` is never used even though real deliveries carry it: it is the id of the *webhook configuration*
+ * the delivery was sent to — identical on every delivery of that endpoint — so deduplicating on it would apply the
+ * first event and drop every later one.
  *
  * @param payload - The delivery.
  * @returns The id.
  */
 export const deliveryIdOf = (payload: LsWebhookPayload<{ updated_at?: string }>): string =>
-	payload.meta.webhook_id ??
 	`${payload.meta.event_name}:${payload.data.id}:${payload.data.attributes.updated_at ?? ''}`;
 
 /**
@@ -62,6 +65,8 @@ export const deliveryIdOf = (payload: LsWebhookPayload<{ updated_at?: string }>)
  * @param payload - The delivery, parsed.
  * @param intervalOf - Reads a variant's billing interval, for the subscription events.
  * @returns The normalised event, or `null`.
+ * @throws Error for a status the kit does not know — a change on Lemon Squeezy's side the mapping has to learn.
+ * @throws LemonSqueezyApiError when the variant read a subscription event needs fails.
  */
 export const toEvent = async (
 	payload: LsWebhookPayload,

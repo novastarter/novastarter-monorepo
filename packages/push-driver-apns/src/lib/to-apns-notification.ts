@@ -3,16 +3,19 @@ import { Notification, type NotificationOptions, Priority } from 'apns2';
 import type { PushDriverApnsConfig } from './driver.js';
 
 /**
- * The APNs priority of a message's urgency: `high` wakes the device now, `normal` lets APNs batch, the low ones wait
- * for a power-friendly moment.
+ * The APNs priority of a message's urgency: `high` wakes the device now, everything else lets APNs pick a
+ * power-friendly moment.
+ *
+ * APNs accepts priority `1` for `background` pushes only and refuses an `alert` push at `1` with `400 BadPriority`, so
+ * both low urgencies take `5` — the lowest an alert push may use — instead of the `1` their name suggests.
  *
  * @param urgency - The message's urgency.
- * @returns APNs's 10, 5 or 1.
+ * @returns APNs's 10 or 5.
  */
 export const toApnsPriority = (urgency: PushMessage['urgency']): Priority => {
-	// 1. Three levels on Apple's side for four on ours: both low ones wait for a power-friendly moment
+	// 1. An alert push may only be sent at 10 or 5: priority 1 is legal for `background` pushes alone, so both low
+	//    urgencies take 5, the power-friendly moment, exactly like `normal`
 	if (urgency === 'high') return Priority.immediate;
-	if (urgency === 'low' || urgency === 'very-low') return Priority.low;
 
 	return Priority.throttled;
 };
@@ -29,13 +32,19 @@ export const toApnsPriority = (urgency: PushMessage['urgency']): Priority => {
  * @param config - The location's topic, ttl and sound.
  * @param now - The clock, for the expiration; the current time unless given.
  * @returns The notification.
+ * @throws Error when the message carries no token — a subscription belongs to the webpush driver.
  */
 export const toApnsNotification = (
 	message: PushMessage,
 	config: Pick<PushDriverApnsConfig, 'topic' | 'ttl' | 'sound'>,
 	now: Date = new Date(),
 ): Notification => {
-	// 1. The message's own ttl wins over the location's; the custom pairs carry the click target and the image
+	// 1. A subscription cannot be delivered here; `send()` guards, but a direct caller may not
+	if (!message.token) {
+		throw new Error('The apns push driver needs a token; a subscription belongs to the webpush driver');
+	}
+
+	// 2. The message's own ttl wins over the location's; the custom pairs carry the click target and the image
 	const ttl = message.ttl ?? config.ttl;
 	const sound = config.sound ?? 'default';
 	const collapseId = toCollapseId(message.tag);
@@ -46,7 +55,7 @@ export const toApnsNotification = (
 		...(message.image !== undefined ? { image: message.image } : {}),
 	};
 
-	// 2. `apns-expiration` is an absolute Unix time; `0` means "deliver now or drop". The alert's body is required by
+	// 3. `apns-expiration` is an absolute Unix time; `0` means "deliver now or drop". The alert's body is required by
 	//    the client's types; an empty one shows the title alone
 	const options: NotificationOptions = {
 		type: 'alert',
@@ -60,5 +69,5 @@ export const toApnsNotification = (
 		...(Object.keys(data).length > 0 ? { data } : {}),
 	};
 
-	return new Notification(message.token as string, options);
+	return new Notification(message.token, options);
 };

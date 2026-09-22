@@ -36,31 +36,42 @@ const isD1Database = (value: unknown): value is D1Database => {
 describe.skipIf(!D1_CONFIG)('DatabaseDriverD1 on D1', () => {
 	// D1 is SQLite, with no schema to isolate a run in, so the table and the journal carry the pid instead
 	const table = `notes_${process.pid}`;
+	const probeTable = `probe_${process.pid}`;
 	const migrationsTable = `__drizzle_migrations_${process.pid}`;
 	const logger = { error: vi.fn(), debug: vi.fn() };
 	let driver: DatabaseDriverD1;
 	let migrationsFolder: string;
-	let dispose: () => Promise<void>;
+	let dispose: (() => Promise<void>) | undefined;
 
 	// The proxy and the driver are opened inside the hook: the describe body runs at collection even when the suite
 	// is skipped
 	beforeAll(async () => {
 		// 1. The platform proxy serves the app's wrangler config locally; the D1 binding is the one in its env that
-		//    answers D1's API. The env var is read at module scope, so the suite's guard narrows nothing in here
+		//    answers D1's API. The env var is read at module scope, so the suite's guard narrows nothing in here.
+		//    The dispose handle is taken over before anything can throw: a misconfigured config must not leave the
+		//    proxy's process running and the run hanging
 		const proxy = await getPlatformProxy({ configPath: D1_CONFIG! });
+		dispose = proxy.dispose;
+
 		const binding = Object.values(proxy.env).find(isD1Database);
 
 		if (!binding) {
 			throw new Error(`The wrangler config ${D1_CONFIG} names no D1 binding`);
 		}
 
-		dispose = proxy.dispose;
 		driver = new DatabaseDriverD1({ binding, logger: logger as never });
 
-		// 2. A drizzle-kit folder of one migration, written per run, since the table name carries the pid
+		// 2. The fixture table the statements below write is made here, not by the migration: every test must pass
+		//    run alone, under `vitest -t` as well as whole-file
+		await driver.db.run(
+			sql.raw(`CREATE TABLE \`${table}\` (\`id\` integer PRIMARY KEY AUTOINCREMENT NOT NULL, \`text\` text NOT NULL)`),
+		);
+
+		// 3. A drizzle-kit folder of one migration, written per run, since the table name carries the pid
 		migrationsFolder = await mkdtemp(join(tmpdir(), 'novastarter-migrations-'));
 		await mkdir(join(migrationsFolder, 'meta'));
 
+		// 4. The journal is what the migrator reads to find what to apply: one entry tagging the migration below
 		await writeFile(
 			join(migrationsFolder, 'meta', '_journal.json'),
 			JSON.stringify({
@@ -70,20 +81,29 @@ describe.skipIf(!D1_CONFIG)('DatabaseDriverD1 on D1', () => {
 			}),
 		);
 
+		// 5. The migration itself: a probe table nothing reads — the migrator running it and journaling it is the point
 		await writeFile(
 			join(migrationsFolder, '0000_init.sql'),
-			`CREATE TABLE \`${table}\` (\`id\` integer PRIMARY KEY AUTOINCREMENT NOT NULL, \`text\` text NOT NULL);`,
+			`CREATE TABLE \`${probeTable}\` (\`id\` integer PRIMARY KEY AUTOINCREMENT NOT NULL);`,
 		);
 	});
 
 	afterAll(async () => {
-		// 1. The pid-scoped tables go, so two runs on the same database never meet each other's fixtures
-		await driver.db.run(sql.raw(`DROP TABLE IF EXISTS \`${table}\``));
-		await driver.db.run(sql.raw(`DROP TABLE IF EXISTS \`${migrationsTable}\``));
+		// 1. A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
+		//    real failure stays the one reported
+		if (driver) {
+			// 2. The pid-scoped tables go, so two runs on the same database never meet each other's fixtures
+			await driver.db.run(sql.raw(`DROP TABLE IF EXISTS \`${table}\``));
+			await driver.db.run(sql.raw(`DROP TABLE IF EXISTS \`${probeTable}\``));
+			await driver.db.run(sql.raw(`DROP TABLE IF EXISTS \`${migrationsTable}\``));
+		}
 
-		// 2. The folder is a temp one of this run; then the proxy's process follows
-		await rm(migrationsFolder, { recursive: true, force: true });
-		await dispose();
+		// 3. The folder is a temp one of this run; then the proxy's process follows
+		if (migrationsFolder) {
+			await rm(migrationsFolder, { recursive: true, force: true });
+		}
+
+		await dispose?.();
 	});
 
 	test('ping answers', async () => {

@@ -372,16 +372,31 @@ describe('increment', () => {
 		},
 	);
 
-	test('Throws the error of the local store for a value INCRBY cannot read, with the reply as cause', async () => {
+	test.each([
+		// 1. The reply of a plain `INCRBY` on a value that is no integer
+		'ERR value is not an integer or out of range',
+		// 2. The same reply as a script failure, which Redis wraps — the match is on the exact sentence, not the
+		//    start of the message
+		'ERR Error running script (call to f_6b1bf486c81ce7c696ab12ec092a6f1f8c1a1c9f): @user_script:1: ERR value is not an integer or out of range',
+	])('Throws the error of the local store for the INCRBY reply %j, with the reply as cause', async (message) => {
 		// 1. The reply error of Redis is the backend's own wording; the caller gets the shared message and can still
 		//    reach the reply through `cause`
-		const reply = new Error('ERR value is not an integer or out of range');
+		const reply = new Error(message);
 		(kv['redis'] as any).increment = vi.fn().mockRejectedValue(reply);
 
 		const error = await kv.increment(mockKey).catch((caught: unknown) => caught);
 
 		expect(error).toBeInstanceOf(Error);
 		expect(error).toMatchObject({ message: `The value for key "${mockKey}" is not an integer.`, cause: reply });
+	});
+
+	test('Passes an error that merely says "not an integer" through unchanged', async () => {
+		// 1. Only the exact INCRBY reply is translated; an error that happens to carry the words must reach the
+		//    caller as it is, not be renamed into a value error
+		const reply = new Error('ERR value is not an integer');
+		(kv['redis'] as any).increment = vi.fn().mockRejectedValue(reply);
+
+		await expect(kv.increment(mockKey)).rejects.toBe(reply);
 	});
 
 	test('Passes any other failure through unchanged', async () => {
@@ -395,7 +410,7 @@ describe('increment', () => {
 
 describe('setMax', () => {
 	test('Calls custom setMax on Redis instance', async () => {
-		// 1. ioredis makes custom functions available as methods, but those aren't typeable
+		// 1. ioredis makes custom functions available as methods, but those aren't typeable; the value goes as text
 		(kv['redis'] as any).setMax = vi.fn();
 
 		const mockAmount = 15;
@@ -403,7 +418,19 @@ describe('setMax', () => {
 		await kv.setMax(mockKey, mockAmount);
 
 		expect(withNamespace).toHaveBeenCalledWith(mockKey, mockNamespace);
-		expect((kv['redis'] as any).setMax).toHaveBeenCalledWith(mockNamespacedKey, mockAmount);
+		expect((kv['redis'] as any).setMax).toHaveBeenCalledWith(mockNamespacedKey, '15');
+	});
+
+	test('Passes a float as text, so the script stores it verbatim', async () => {
+		// 1. As a Lua number the value would go back to text with 17 significant digits (`0.10000000000000001`);
+		//    handed over as text, the script stores exactly what `set` stores
+		const setMax = vi.fn().mockResolvedValue(1);
+		(kv['redis'] as any).setMax = setMax;
+
+		const wasSet = await kv.setMax(mockKey, 0.1);
+
+		expect(setMax).toHaveBeenCalledExactlyOnceWith(mockNamespacedKey, '0.1');
+		expect(wasSet).toBe(true);
 	});
 
 	test('Returns true if setMax returns 1', async () => {
@@ -435,7 +462,7 @@ describe('setMax', () => {
 
 		await withTtl.setMax(mockKey, 15);
 
-		expect((withTtl['redis'] as any).setMax).toHaveBeenCalledWith(mockNamespacedKey, 15, 5000);
+		expect((withTtl['redis'] as any).setMax).toHaveBeenCalledWith(mockNamespacedKey, '15', 5000);
 	});
 
 	test('Returns false if setMax returns null', async () => {

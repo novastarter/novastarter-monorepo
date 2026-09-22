@@ -1,11 +1,12 @@
 {
 	"$schema": "https://json.schemastore.org/tsconfig",
-	"display": "Node.js 22",
+	"display": "Node.js 24",
 	"extends": "../base/tsconfig.json",
 	"compilerOptions": {
-		// Node.js 22 runs ES2022 syntax natively and ships the ES2023 standard library
-		"target": "ES2022",
-		"lib": ["ES2023"],
+		// Node.js 24 runs ES2024 syntax natively and ships the ES2024 standard library, matching the `engines.node`
+		// floor of the monorepo; the `node22` export name is kept so the tsconfigs extending it keep resolving
+		"target": "ES2024",
+		"lib": ["ES2024"],
 
 		// Node's own ESM/CJS resolution rules: `exports` maps and explicit file extensions in relative imports
 		"module": "Node16",

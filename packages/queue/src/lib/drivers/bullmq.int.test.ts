@@ -37,10 +37,11 @@ describe.skipIf(!REDIS)('QueueDriverBullmq on Redis', () => {
 
 	test('A job enqueued by the driver reaches a worker with its payload and context', async () => {
 		// 1. The producer is the driver under test; the worker resolves once a job arrives and closes itself when the
-		//    assertion is done with the payload
+		//    assertion is done with the payload. A failing `createWorker` rejects the promise instead of leaving it
+		//    pending, so the real error surfaces instead of the test burning its timeout
 		const driver = new QueueDriverBullmq({ connection: producer, prefix, logger: logger as any });
 
-		const received = new Promise<[unknown, unknown]>((resolve) => {
+		const received = new Promise<[unknown, unknown]>((resolve, reject) => {
 			void createWorker(
 				'inttest',
 				async (payload, context) => {
@@ -49,7 +50,7 @@ describe.skipIf(!REDIS)('QueueDriverBullmq on Redis', () => {
 				{ connection: consumer, prefix, logger: logger as any },
 			).then((worker) => {
 				received.finally(() => worker.close());
-			});
+			}, reject);
 		});
 
 		// 2. The job is enqueued on the producer's driver; what the worker received is checked against it

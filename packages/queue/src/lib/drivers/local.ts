@@ -5,6 +5,7 @@ import type { QueueDriver } from '../../driver.js';
 import type { EnqueuedJob, EnqueueOptions, JobContract, JobOptions } from '../../types.js';
 import { getJobHandler } from '../handlers.js';
 import { runContract } from '../run-job.js';
+import { validateJobDelay } from '../validate-delay.js';
 
 /**
  * Options accepted by {@link QueueDriverLocal}: the options of a `local` location.
@@ -54,7 +55,7 @@ export class QueueDriverLocal implements QueueDriver {
 	 * @param id - Job id from `enqueue()`.
 	 * @returns The job's identity.
 	 * @throws Error when the driver is closed, or when no handler is registered for the job — silently dropping work
-	 * would hide a missing module; `RangeError` for a `delay` that is negative or `NaN`.
+	 * would hide a missing module; `RangeError` for a `delay` that is negative, `NaN` or not finite.
 	 */
 	async enqueue(
 		contract: JobContract,
@@ -73,13 +74,12 @@ export class QueueDriverLocal implements QueueDriver {
 			throw new Error(`No handler registered for job "${contract.name}"`);
 		}
 
-		// 3. A negative or `NaN` delay is refused like `sleep` refuses it: Node would arm 1 ms and run the job at once,
-		//    which the caller who asked for a wait would never notice
-		const delay = options.delay ?? 0;
+		// 3. A delay a timer could not honour — negative, `NaN` or not finite — is refused through the shared check, so
+		//    both drivers answer a bad delay identically: Node would arm 1 ms and run the job at once, or re-arm an
+		//    infinite delay for ever, which the caller who asked for a wait would never notice
+		validateJobDelay(contract.name, options.delay);
 
-		if (!(delay >= 0)) {
-			throw new RangeError(`The delay of job "${contract.name}" must be 0 or more milliseconds, got ${delay}`);
-		}
+		const delay = options.delay ?? 0;
 
 		// 4. The identity and the enqueue time are fixed now, so a delayed run reports when it was queued, not when
 		//    it ran

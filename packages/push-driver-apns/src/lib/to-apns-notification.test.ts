@@ -7,13 +7,14 @@ import { describe, expect, test } from 'vitest';
 import { toApnsNotification, toApnsPriority } from './to-apns-notification.js';
 
 describe('toApnsPriority', () => {
-	test('Maps the urgency onto 10 / 5 / 1', () => {
-		// 1. Four urgencies on our side, three priorities on Apple's: both low ones share the lowest
+	test('Maps the urgency onto 10 or 5', () => {
+		// 1. Four urgencies on our side, two priorities an alert push may use on Apple's: priority 1 is refused with
+		//    BadPriority, so both low ones take 5, the power-friendly moment, exactly like `normal`
 		expect(toApnsPriority('high')).toBe(Priority.immediate);
 		expect(toApnsPriority('normal')).toBe(Priority.throttled);
 		expect(toApnsPriority(undefined)).toBe(Priority.throttled);
-		expect(toApnsPriority('low')).toBe(Priority.low);
-		expect(toApnsPriority('very-low')).toBe(Priority.low);
+		expect(toApnsPriority('low')).toBe(Priority.throttled);
+		expect(toApnsPriority('very-low')).toBe(Priority.throttled);
 	});
 });
 
@@ -67,6 +68,11 @@ describe('toApnsNotification', () => {
 		const notification = toApnsNotification({ token: 'tok', title: 'Hi', tag: 'счёт-42' }, { topic: 't' });
 
 		expect(notification.options.collapseId).toBe('____-42');
+	});
+
+	test('Refuses a message without a token', () => {
+		// 1. A subscription is the webpush driver's business; the mapper throws for a direct caller without a token
+		expect(() => toApnsNotification({ title: 'Hi' }, { topic: 't' })).toThrow(/needs a token/);
 	});
 
 	test('Takes the location ttl and sound, an empty body for a title alone, and no data block when empty', () => {

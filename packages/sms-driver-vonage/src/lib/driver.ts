@@ -29,6 +29,9 @@ declare module '@novastarter/sms' {
 /**
  * Driver for [Vonage](https://www.vonage.com) (formerly Nexmo) on its SMS API.
  *
+ * The driver holds nothing to release, so there is no `close()`: the SDK's client and `verify()` go through the
+ * global `fetch`, whose connection pool is process-wide rather than owned by the driver.
+ *
  * @example
  * ```ts
  * import { useSms } from '@novastarter/sms';
@@ -56,11 +59,19 @@ export class SmsDriverVonage implements SmsDriver {
 	private readonly client: SMS;
 
 	/**
-	 * The credentials, kept for {@link verify}, which reads the account over plain HTTP.
+	 * The credentials, kept for {@link verify}, which reads the account balance directly.
 	 *
 	 * @internal
 	 */
 	private readonly credentials: { apiKey: string; apiSecret: string };
+
+	/**
+	 * How long a request may take, in milliseconds — what the SDK client is built with and {@link verify} applies to
+	 * its own `fetch`, which takes no other deadline.
+	 *
+	 * @internal
+	 */
+	private readonly timeout?: number | undefined;
 
 	/**
 	 * Create a driver on a client of its own for the given key.
@@ -78,9 +89,12 @@ export class SmsDriverVonage implements SmsDriver {
 			throw new Error('The vonage sms driver needs an "apiSecret"');
 		}
 
+		// 2. The credentials are kept for `verify()`, which reads the account balance directly; the timeout bounds that
+		//    fetch the way the SDK client's own requests are bounded
 		this.credentials = { apiKey: config.apiKey, apiSecret: config.apiSecret };
+		this.timeout = config.timeout;
 
-		// 2. Only the SMS product is built, not the whole Vonage client: nothing else of the SDK is loaded
+		// 3. Only the SMS product is built, not the whole Vonage client: nothing else of the SDK is loaded
 		this.client = new SMS(this.credentials, config.timeout !== undefined ? { timeout: config.timeout } : {});
 	}
 
@@ -116,14 +130,20 @@ export class SmsDriverVonage implements SmsDriver {
 	 * @throws Error naming the status when the account cannot be read.
 	 */
 	async verify(): Promise<void> {
-		// 1. The balance endpoint takes the credentials as query parameters and creates nothing; asked with `fetch`
-		//    rather than through `@vonage/accounts`, which would be a second SDK for one request
-		const query = new URLSearchParams({
-			api_key: this.credentials.apiKey,
-			api_secret: this.credentials.apiSecret,
-		});
+		// 1. The balance endpoint accepts the credentials as a Basic `Authorization` header and creates nothing; it is
+		//    asked with `fetch` rather than through `@vonage/accounts`, which would be a second SDK for one request.
+		//    A timeout, when the location sets one, bounds this fetch too — the SDK client's own requests are bounded
+		//    the same way. The credentials never go in the URL: a full request URL is what proxies, traces and error
+		//    output record, and the account's secret must not leak into any of those
+		const headers = {
+			Authorization: `Basic ${Buffer.from(`${this.credentials.apiKey}:${this.credentials.apiSecret}`).toString('base64')}`,
+		};
 
-		const response = await fetch(`${BALANCE_URL}?${query.toString()}`).catch((error: unknown) => {
+		const response = await (
+			this.timeout === undefined
+				? fetch(BALANCE_URL, { headers })
+				: fetch(BALANCE_URL, { headers, signal: AbortSignal.timeout(this.timeout) })
+		).catch((error: unknown) => {
 			throw describeError(error);
 		});
 

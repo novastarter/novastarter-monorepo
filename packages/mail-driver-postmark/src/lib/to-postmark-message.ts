@@ -51,7 +51,8 @@ export const toPostmarkAttachment = async (attachment: MailAttachment): Promise<
  *
  * Postmark refuses a metadata value past {@link POSTMARK_METADATA_VALUE_LENGTH} characters, so the comma-joined
  * tags are cut into as many values as they need: `tags`, then `tags2`, `tags3` and so on. A tag longer than one
- * value is cut to the limit, so its prefix still shows in the activity view. The category takes one of the
+ * value is cut to the limit, so its prefix still shows in the activity view. A tag left empty by the cut joins
+ * nothing and is skipped, so no stray comma lands in a value. The category takes one of the
  * {@link POSTMARK_METADATA_FIELDS}; tags that do not fit into the fields left over are dropped rather than failing
  * the send.
  *
@@ -59,11 +60,17 @@ export const toPostmarkAttachment = async (attachment: MailAttachment): Promise<
  * @returns The `tags`, `tags2`, … fields, none for no tags.
  */
 export const toPostmarkTagsMetadata = (tags: string[]): Record<string, string> => {
-	// 1. Fill each value greedily: a tag joins the current value while the comma and the tag still fit
+	// 1. Fill each value greedily: a tag joins the current value while the comma and the tag still fit; a tag left
+	//    empty by the cut is skipped, so it leaves no stray comma in the value
 	const values: string[] = [];
 
 	for (const tag of tags) {
 		const cut = tag.slice(0, POSTMARK_METADATA_VALUE_LENGTH);
+
+		if (cut === '') {
+			continue;
+		}
+
 		const last = values.at(-1);
 
 		if (last !== undefined && last.length + 1 + cut.length <= POSTMARK_METADATA_VALUE_LENGTH) {
@@ -82,9 +89,10 @@ export const toPostmarkTagsMetadata = (tags: string[]): Record<string, string> =
 /**
  * Translate a message into Postmark's `sendEmail()` payload.
  *
- * Postmark takes one tag per message: the first of ours; the category and the remaining tags go to `Metadata`, which
- * the activity view and the webhooks carry — split across `tags`, `tags2`, … so no value passes Postmark's length
- * limit (see {@link toPostmarkTagsMetadata}). Recipients are comma-joined strings, as its API wants them.
+ * Postmark takes one tag per message: the first of ours (empty labels dropped); the category and the remaining tags
+ * go to `Metadata`, which the activity view and the webhooks carry — split across `tags`, `tags2`, … so no value
+ * passes Postmark's length limit (see {@link toPostmarkTagsMetadata}). Recipients are comma-joined strings, as its
+ * API wants them.
  *
  * @param message - Ours, with `from` set (`sendMail()` fills it in).
  * @param streams - The stream per category, from the location options.
@@ -97,9 +105,10 @@ export const toPostmarkMessage = async (message: MailMessage, streams: PostmarkS
 		throw new Error('Postmark needs a "from" address');
 	}
 
-	// 2. Marketing mail goes to the broadcast stream when there is one; everything else to the message stream
+	// 2. Marketing mail goes to the broadcast stream when there is one; everything else to the message stream. Empty
+	//    tags record nothing in Postmark, so they are dropped before the first of the rest becomes `Tag`
 	const category = message.category ?? 'transactional';
-	const [tag, ...moreTags] = message.tags ?? [];
+	const [tag, ...moreTags] = (message.tags ?? []).filter((tag) => tag !== '');
 	const stream = category === 'marketing' ? (streams.broadcastStream ?? streams.messageStream) : streams.messageStream;
 
 	// 3. Metadata keeps what the single `Tag` cannot: the category and the tags past the first, within Postmark's limits

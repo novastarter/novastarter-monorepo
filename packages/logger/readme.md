@@ -60,12 +60,12 @@ http.createServer((req, res) => {
 Streaming logs to every instance through the message bus:
 
 ```ts
-import { createLogger, getLogsStream } from '@novastarter/logger';
+import { createLogger, useLogsStream } from '@novastarter/logger';
 import { useBus } from '@novastarter/memory';
 
 const logger = createLogger({
 	logsStream: {
-		stream: getLogsStream(true, useBus().location('default')),
+		stream: useLogsStream(true, useBus().location('default')),
 		level: 'debug',
 	},
 });

@@ -8,7 +8,7 @@
  * {@link toMigrationConfig}, {@link createQueryLogger}, {@link resolveLogger}, {@link ensureDirectory},
  * {@link toUnavailableError}.
  */
-export * from './driver.js';
+export type { DatabaseDriver } from './driver.js';
 export * from './errors/index.js';
 export * from './lib/create-query-logger.js';
 export * from './lib/database-manager.js';

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { PushDriver, PushMessage, PushPlatform, PushResult } from '@novastarter/push';
-import { toErrorMessage } from '@novastarter/utils';
+import { toErrorMessage, withTimeout } from '@novastarter/utils';
 import { type App, cert, type Credential, deleteApp, initializeApp } from 'firebase-admin/app';
 import { getMessaging, type Messaging } from 'firebase-admin/messaging';
 import { describeError } from './describe-error.js';
@@ -29,6 +29,12 @@ export type PushDriverFcmConfig = {
 	ttl?: number | undefined;
 	/** Label the messages carry into the Firebase analytics, for the console's delivery reports. */
 	analyticsLabel?: string | undefined;
+	/**
+	 * Milliseconds a send may take before it fails with a timeout error; only the HTTP client's own limits, minutes
+	 * long, bound it unless given. The request itself runs on when the deadline passes, since the SDK call cannot be
+	 * told to stop.
+	 */
+	timeout?: number | undefined;
 };
 
 /**
@@ -72,7 +78,7 @@ export class PushDriverFcm implements PushDriver {
 	readonly platforms: readonly PushPlatform[] = ['fcm'];
 
 	/**
-	 * TTL and analytics label, as the location was registered with.
+	 * TTL, analytics label and timeout, as the location was registered with.
 	 *
 	 * @internal
 	 */
@@ -126,13 +132,22 @@ export class PushDriverFcm implements PushDriver {
 		});
 
 		// 3. Its own Firebase app: the SDK keeps apps in a global registry by name, and the default name would clash
-		//    with a second location or with the app's own Firebase use
+		//    with a second location or with the app's own Firebase use. The project id is validated above, so it is
+		//    passed unconditionally
 		this.app = initializeApp(
-			{ credential: this.credential, ...(account.projectId ? { projectId: account.projectId } : {}) },
+			{ credential: this.credential, projectId: account.projectId },
 			`novastarter-push-${randomUUID()}`,
 		);
 
-		this.messaging = getMessaging(this.app);
+		// 4. The messaging client comes from the new app; when that fails, the app is already in the SDK's global
+		//    registry holding live agents, unreachable and never deleted — so it is deleted, best-effort, before the
+		//    error propagates
+		try {
+			this.messaging = getMessaging(this.app);
+		} catch (error) {
+			void deleteApp(this.app).catch(() => {});
+			throw error;
+		}
 	}
 
 	/**
@@ -142,6 +157,8 @@ export class PushDriverFcm implements PushDriver {
 	 * @returns FCM's message name (`projects/<id>/messages/<id>`) as the id.
 	 * @throws PushTargetGoneError for a token FCM no longer knows.
 	 * @throws Error carrying FCM's error code for any other refusal, or the network error.
+	 * @throws Error naming the deadline when `timeout` passes before FCM answers, the `TimeoutError` of
+	 * `@novastarter/utils` as the cause; the request itself runs on, since the SDK call cannot be told to stop.
 	 */
 	async send(message: PushMessage): Promise<PushResult> {
 		// 1. A subscription cannot be delivered here; `sendPush()` routes by platform, but a direct caller may not
@@ -149,9 +166,14 @@ export class PushDriverFcm implements PushDriver {
 			throw new Error('The fcm push driver needs a token; a subscription belongs to the webpush driver');
 		}
 
-		// 2. The SDK answers the message name on success and throws a coded error otherwise
+		// 2. The SDK answers the message name on success and throws a coded error otherwise. It takes no timeout, so
+		//    the deadline is raced here: a stalled request would otherwise sit out the HTTP client's minutes-long
+		//    limits, and a queue job around the send with it. The request itself runs on past the deadline — the SDK
+		//    call cannot be told to stop
 		try {
-			const messageId = await this.messaging.send(toFcmMessage(message, this.config));
+			const request = this.messaging.send(toFcmMessage(message, this.config));
+
+			const messageId = await (this.config.timeout === undefined ? request : withTimeout(request, this.config.timeout));
 
 			return { messageId, status: 'accepted' };
 		} catch (error) {
