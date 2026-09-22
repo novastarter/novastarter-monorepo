@@ -44,6 +44,9 @@ yarn-error.log*
 *~
 Thumbs.db
 
+# PGlite data of the apps (DATABASE_PGLITE_DIR)
+apps/*/data/
+
 # Env: only the example is committed
 .env.*
 !.env.example
