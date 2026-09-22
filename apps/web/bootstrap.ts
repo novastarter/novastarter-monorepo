@@ -8,6 +8,7 @@ import { useMail } from '@novastarter/mail';
 import { useBus, useCache, useKv, useLimiter } from '@novastarter/memory';
 import { registerJobHandlers, useQueue } from '@novastarter/queue';
 import { useRedis } from '@novastarter/redis';
+import { useSms } from '@novastarter/sms';
 import { useStorage } from '@novastarter/storage';
 import { StorageDriverLocal } from '@novastarter/storage-driver-local';
 import { databaseConfig } from './config/database';
@@ -16,9 +17,11 @@ import { mailConfig } from './config/mail';
 import { memoryConfig } from './config/memory';
 import { queueConfig } from './config/queue';
 import { redisConfig } from './config/redis';
+import { smsConfig } from './config/sms';
 import { storageConfig } from './config/storage';
 import { type AppEnv, readEnv } from './env';
 import { createMailSendHandler } from './jobs/mail-send';
+import { createSmsSendHandler } from './jobs/sms-send';
 import { createSystemPingHandler } from './jobs/system-ping';
 
 /**
@@ -37,7 +40,7 @@ export const _state: { booted: boolean; handlers: boolean } = { booted: false, h
  *
  * The one place the environment meets the packages: the variables are parsed against the app's schema, turned into
  * the location configs under `config/`, and registered on the managers — logger, Redis, memory, queue, storage,
- * database, mail — then the handlers of the app's jobs under `jobs/`. Each package reads nothing itself; a location
+ * database, mail, SMS — then the handlers of the app's jobs under `jobs/`. Each package reads nothing itself; a location
  * opens its connections on first use. Registering is idempotent across calls, so a second `bootstrap()` (Next.js
  * reloading the server module in development, a test suite) is a no-op.
  *
@@ -96,11 +99,18 @@ export const bootstrap = (): AppEnv => {
 	useMail().registerLocation('default', mail.location);
 	useMail().registerRoutes(mail.routes);
 
-	// 9. Jobs: the handlers of the contracts under `jobs/`, so a worker or the local queue can run them — once per
-	//    process, since a handler holds nothing a shutdown would release and the queue refuses a second registration
+	// 9. SMS: the built-in driver comes with the manager; the `default` location and the routes are the app's
+	const sms = smsConfig(env);
+
+	useSms().registerLocation('default', sms.location);
+	useSms().registerRoutes(sms.routes);
+
+	// 10. Jobs: the handlers of the contracts under `jobs/`, so a worker or the local queue can run them — once per
+	//     process, since a handler holds nothing a shutdown would release and the queue refuses a second registration
 	if (!_state.handlers) {
 		registerJobHandlers({
 			'mail.send': createMailSendHandler(),
+			'sms.send': createSmsSendHandler(),
 			'system.ping': createSystemPingHandler(),
 		});
 
@@ -132,6 +142,7 @@ export const shutdown = async (): Promise<void> => {
 	const outcomes = await Promise.allSettled([
 		useQueue().close(),
 		useMail().close(),
+		useSms().close(),
 		useStorage().close(),
 		useDatabase().close(),
 		useBus().close(),

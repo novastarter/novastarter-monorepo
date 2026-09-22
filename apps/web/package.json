@@ -28,6 +28,7 @@
 		"@novastarter/payments": "workspace:*",
 		"@novastarter/queue": "workspace:*",
 		"@novastarter/redis": "workspace:*",
+		"@novastarter/sms": "workspace:*",
 		"@novastarter/storage": "workspace:*",
 		"@novastarter/storage-driver-local": "workspace:*",
 		"@novastarter/utils": "workspace:*",

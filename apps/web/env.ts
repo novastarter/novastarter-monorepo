@@ -62,6 +62,8 @@ export const envSchema = z.object({
 	STORAGE_LOCAL_ROOT: z.string().default('./uploads'),
 	/** Sender of every message without a `from` of its own. */
 	MAIL_FROM: z.string().default('noreply@localhost'),
+	/** Sender of every SMS without a `from` of its own: a number in E.164, or an alphanumeric sender id. */
+	SMS_FROM: z.string().default('Novastarter'),
 });
 
 /**
