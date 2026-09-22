@@ -51,6 +51,13 @@ export abstract class LocationManager<Instance, Config extends unknown[]> {
 	private instances: Map<string, Instance> = new Map();
 
 	/**
+	 * The `close()` under way, while one is, so a second call joins it instead of releasing the same instances again.
+	 *
+	 * @internal
+	 */
+	private closing: Promise<void> | undefined;
+
+	/**
 	 * Register a named location: what to build its instance from, on first use.
 	 *
 	 * Registering a name twice replaces the configuration and drops the instance built from the earlier one, so the
@@ -132,21 +139,43 @@ export abstract class LocationManager<Instance, Config extends unknown[]> {
 	 * Release every instance built so far; the process is shutting down.
 	 *
 	 * Every instance is released, whether or not another one fails to: a shutdown must not leave a connection open
-	 * because a different one refused to close. The registrations stay: a location asked for after closing is built
-	 * afresh rather than answered with a closed instance.
+	 * because a different one refused to close. The registrations stay, and the instances leave the registry before
+	 * their release starts: a location asked for after closing, or while the releases are still running, is built
+	 * afresh rather than answered with a closed or closing instance, and such an instance is kept for the next
+	 * `close()`. A `close()` that overlaps another joins it rather than releasing the same instances twice.
 	 *
 	 * @returns Once every instance let go of what it held.
 	 * @throws What the one failing {@link LocationManager.release} threw, or an `AggregateError` of all of them when
-	 * several failed — after every instance was released and dropped, so a second `close()` releases nothing twice.
+	 * several failed — after every instance was released and dropped, so a later `close()` releases nothing twice.
 	 */
-	async close(): Promise<void> {
-		// 1. Only the instances built so far hold anything; they release in parallel, each its own connections, and
-		//    every outcome is waited for, so one failure does not abandon the releases still running
-		const outcomes = await Promise.allSettled([...this.instances.values()].map((instance) => this.release(instance)));
+	close(): Promise<void> {
+		// 1. One release run at a time: a second `close()` while the first is under way answers with the same promise,
+		//    so no instance is released twice — a second `quit()` on a client would fail — and both callers learn how
+		//    the run ended. The field is cleared once it settles, so a later `close()` starts a fresh run
+		this.closing ??= this.releaseAll().finally(() => {
+			this.closing = undefined;
+		});
 
-		// 2. Dropped rather than kept — failed or not: a stray call after closing rebuilds instead of failing on a
-		//    dead instance, and a retried `close()` does not release an already released instance again
+		return this.closing;
+	}
+
+	/**
+	 * Take every built instance out of the registry and release them all, reporting the failures at the end.
+	 *
+	 * @returns Once every instance let go of what it held.
+	 * @throws See {@link LocationManager.close}.
+	 * @internal
+	 */
+	private async releaseAll(): Promise<void> {
+		// 1. Out of the registry before the first release starts, so a `location()` during the run builds a fresh
+		//    instance instead of being handed one that is about to be closed under it; what it builds stays for the
+		//    next `close()`
+		const released = [...this.instances.values()];
 		this.instances.clear();
+
+		// 2. Only the instances built so far hold anything; they release in parallel, each its own connections, and
+		//    every outcome is waited for, so one failure does not abandon the releases still running
+		const outcomes = await Promise.allSettled(released.map((instance) => this.release(instance)));
 
 		// 3. Report the failures once nothing is left open: the one error as it came, several as an `AggregateError`
 		const failures = outcomes.filter((outcome) => outcome.status === 'rejected').map((outcome) => outcome.reason);

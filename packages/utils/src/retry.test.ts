@@ -181,6 +181,21 @@ test('Refuses a retries budget that is not a whole number of zero or more', asyn
 	expect(sleep).not.toHaveBeenCalled();
 });
 
+test('Refuses a negative or NaN pause as a misconfiguration, keeping the attempt error as cause', async () => {
+	// 1. A `delay` function that answers below zero: the RangeError names the options, not `sleep`, and no pause runs
+	const fn = failing(2);
+	const error: unknown = await retry(fn, { retries: 2, delay: () => -1 }).catch((thrown: unknown) => thrown);
+
+	expect(error).toBeInstanceOf(RangeError);
+	expect((error as RangeError).message).toMatch(/"delay", "factor" and "maxDelay"/);
+	expect((error as RangeError).cause).toBeInstanceOf(Error);
+	expect(fn).toHaveBeenCalledOnce();
+	expect(sleep).not.toHaveBeenCalled();
+
+	// 2. A `NaN` pause — a `NaN` base, here — is refused the same way
+	await expect(retry(failing(1), { delay: Number.NaN })).rejects.toThrow(RangeError);
+});
+
 test('Never asks for a pause longer than a timer can hold', async () => {
 	// 1. An uncapped `maxDelay` used to let an overgrown pause reach `sleep`, which Node would arm as 1 ms: the base
 	//    pause here is already past the limit, and the second one ten times so

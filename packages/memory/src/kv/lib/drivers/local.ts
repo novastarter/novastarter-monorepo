@@ -220,6 +220,7 @@ export class KvDriverLocal implements KvDriver {
 		//    grow with every key ever locked
 		return {
 			release: async () => {
+				// 1. Let the next holder in, then forget the key when this was the last turn queued for it
 				release();
 
 				if (this.locks.get(key) === turn) {

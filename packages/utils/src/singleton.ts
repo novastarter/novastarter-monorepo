@@ -94,11 +94,13 @@ export const singleton = <T, Args extends unknown[] = []>(build: (...args: Args)
 	// 2. `replace()` and `reset()` ride on the function itself, so a registration or a test goes through the same
 	//    import the code uses
 	use.replace = (next: T): void => {
+		// 1. Counts as built, so the builder never runs over a replaced instance
 		instance = next;
 		built = true;
 	};
 
 	use.reset = (): void => {
+		// 1. Both go, so the next call builds — and takes its arguments — as if it were the first
 		instance = undefined;
 		built = false;
 	};

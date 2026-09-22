@@ -188,6 +188,7 @@ export class BusDriverRedis implements BusDriver {
 		const subscription = this.sub.subscribe(namespaced).then(
 			() => {},
 			(error: unknown) => {
+				// 1. Only this call's own set goes; the error still reaches every caller awaiting this subscription
 				if (this.handlers[namespaced] === set) {
 					delete this.handlers[namespaced];
 				}
@@ -243,8 +244,10 @@ export class BusDriverRedis implements BusDriver {
 	 * @returns Once the server acknowledged the quit.
 	 */
 	async close(): Promise<void> {
-		// 1. Only the duplicate is the driver's own; its subscriptions end with it, so the handlers can go too
+		// 1. Only the duplicate is the driver's own; its subscriptions end with it, so the handlers and any `SUBSCRIBE`
+		//    still under way can go too
 		this.handlers = {};
+		this.pending = {};
 		await this.sub.quit();
 	}
 

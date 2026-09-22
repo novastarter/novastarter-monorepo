@@ -144,10 +144,13 @@ describe('subscription', () => {
 		const failed = new CacheDriverMulti({ local: mockLocalConfig, redis: mockRedisConfig });
 		await Promise.resolve();
 
-		// 2. The first write tries again, fails again, and reports it without publishing. The automock records calls
-		//    on the instance's method, so the assertions go through the driver's own bus
+		// 2. The first write tries again, fails again, and reports it without writing or publishing: a key put into
+		//    L1 by a process that receives no invalidations would go stale unseen. The automock records calls on the
+		//    instance's method, so the assertions go through the driver's own bus
 		await expect(failed.set(mockKey, mockValue)).rejects.toBe(error);
 		expect(failed['bus'].subscribe).toHaveBeenCalledTimes(2);
+		expect(failed['local'].set).not.toHaveBeenCalled();
+		expect(failed['redis'].set).not.toHaveBeenCalled();
 		expect(failed['bus'].publish).not.toHaveBeenCalled();
 
 		// 3. Once Redis is back the next write subscribes, publishes and succeeds; later writes reuse the subscription
@@ -165,6 +168,17 @@ describe('close', () => {
 		await cache.close();
 
 		expect(cache['bus'].close).toHaveBeenCalledOnce();
+	});
+
+	test('Refuses a write after close instead of filling an L1 nobody invalidates any more', async () => {
+		await cache.close();
+
+		await expect(cache.set(mockKey, mockValue)).rejects.toThrow('The multi cache is closed');
+		expect(cache['local'].set).not.toHaveBeenCalled();
+		expect(cache['bus'].publish).not.toHaveBeenCalled();
+
+		// Reads still answer from what is cached
+		await expect(cache.get(mockKey)).resolves.toBe(mockLocalValue);
 	});
 });
 

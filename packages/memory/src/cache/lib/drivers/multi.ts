@@ -95,14 +95,23 @@ export class CacheDriverMulti implements CacheDriver {
 	 * The subscription to the invalidations of other processes, settled once Redis confirmed it; `undefined` while
 	 * none is under way, which is where a failed one puts it back.
 	 *
-	 * Every write awaits it before publishing: a process that never managed to subscribe would keep serving a stale
-	 * L1 for good, so a write is where the failure comes out rather than in an unhandled rejection at construction —
-	 * and where the subscription is tried again, so a Redis that was unreachable at start does not leave the cache
-	 * dead for the rest of the process.
+	 * Every write awaits it before touching either level: a process that never managed to subscribe would keep
+	 * serving a stale L1 for good, so a write is where the failure comes out rather than in an unhandled rejection at
+	 * construction — before the key lands in L1, where it would sit unseen by the invalidations the process cannot
+	 * receive — and where the subscription is tried again, so a Redis that was unreachable at start does not leave
+	 * the cache dead for the rest of the process.
 	 *
 	 * @internal
 	 */
 	private subscribed: Promise<void> | undefined;
+
+	/**
+	 * Whether `close()` ran: the bus receives no invalidations any more, so a write would put a key into L1 that no
+	 * `clear` message can reach.
+	 *
+	 * @internal
+	 */
+	private closed = false;
 
 	/**
 	 * Create both cache levels and subscribe to invalidations from other processes.
@@ -131,14 +140,21 @@ export class CacheDriverMulti implements CacheDriver {
 	 * @internal
 	 */
 	private subscribe(): Promise<void> {
-		// 1. Reuse the subscription under way or already confirmed; only a missing one — never started, or failed and
+		// 1. A closed cache subscribes to nothing: its bus is gone, so a write after `close()` is refused rather than
+		//    let into an L1 nobody invalidates
+		if (this.closed) {
+			return Promise.reject(new Error('The multi cache is closed; it receives no invalidations any more'));
+		}
+
+		// 2. Reuse the subscription under way or already confirmed; only a missing one — never started, or failed and
 		//    forgotten — starts a new `SUBSCRIBE`
 		if (this.subscribed === undefined) {
-			// 2. Wrap the handler in a lambda, so `this` still points at the cache when the bus calls it; a failure
+			// 3. Wrap the handler in a lambda, so `this` still points at the cache when the bus calls it; a failure
 			//    clears the field before it is passed on, so the caller sees the error and the next call retries
 			this.subscribed = this.bus
 				.subscribe<CacheMultiMessageClear>(CACHE_CHANNEL_KEY, (payload) => this.onMessageClear(payload))
 				.catch((error: unknown) => {
+					// 1. Forgotten, so the next `subscribe()` starts over; the error still reaches the caller awaiting this one
 					this.subscribed = undefined;
 
 					throw error;
@@ -174,10 +190,13 @@ export class CacheDriverMulti implements CacheDriver {
 	 * @param value - Value to save. Can be any JavaScript primitive, plain object or array.
 	 */
 	async set(key: string, value: unknown): Promise<void> {
-		// 1. Write both levels in parallel; they are independent
+		// 1. Subscribed first: a key written into L1 by a process that receives no invalidations would go stale unseen
+		await this.subscribe();
+
+		// 2. Write both levels in parallel; they are independent
 		await Promise.all([this.local.set(key, value), this.redis.set(key, value)]);
 
-		// 2. Tell other processes their L1 copy of this key is stale
+		// 3. Tell other processes their L1 copy of this key is stale
 		await this.clearOthers(key);
 	}
 
@@ -187,10 +206,13 @@ export class CacheDriverMulti implements CacheDriver {
 	 * @param key - Key to remove.
 	 */
 	async delete(key: string): Promise<void> {
-		// 1. Delete from both levels in parallel
+		// 1. Subscribed first, for the same reason as in `set`
+		await this.subscribe();
+
+		// 2. Delete from both levels in parallel
 		await Promise.all([this.local.delete(key), this.redis.delete(key)]);
 
-		// 2. Other processes drop the key from their L1 as well
+		// 3. Other processes drop the key from their L1 as well
 		await this.clearOthers(key);
 	}
 
@@ -212,11 +234,8 @@ export class CacheDriverMulti implements CacheDriver {
 	 * @internal
 	 */
 	private async clearOthers(key?: string) {
-		// 1. A process that could not subscribe must not write as if it took part in the invalidation: the write
-		//    subscribes again when the earlier attempt failed, and throws when this one fails too
-		await this.subscribe();
-
-		// 2. Stamp the message with this process's id, so the sender can skip it when it comes back
+		// 1. Stamp the message with this process's id, so the sender can skip it when it comes back; the caller made
+		//    sure of the subscription before writing
 		await this.bus.publish(CACHE_CHANNEL_KEY, {
 			type: 'clear',
 			key: key,
@@ -228,10 +247,13 @@ export class CacheDriverMulti implements CacheDriver {
 	 * Remove all keys from both levels and from the L1 of other processes.
 	 */
 	async clear(): Promise<void> {
-		// 1. Clear both levels in parallel
+		// 1. Subscribed first, for the same reason as in `set`
+		await this.subscribe();
+
+		// 2. Clear both levels in parallel
 		await Promise.all([this.local.clear(), this.redis.clear()]);
 
-		// 2. A message without a key means "drop everything"
+		// 3. A message without a key means "drop everything"
 		await this.clearOthers();
 	}
 
@@ -263,12 +285,18 @@ export class CacheDriverMulti implements CacheDriver {
 	 * Quit the bus's subscriber connection; the process is shutting down.
 	 *
 	 * The only connection of the driver's own: L2 runs on the connection the caller handed in and is closed there, L1
-	 * holds nothing.
+	 * holds nothing. Reads still answer from what is cached; a write afterwards is refused, since no invalidation
+	 * would reach this process any more.
 	 *
 	 * @returns Once the server acknowledged the quit.
 	 */
 	async close(): Promise<void> {
-		// 1. The bus duplicated the L2 connection for subscribing; that duplicate is what would keep the process alive
+		// 1. Closed first, so a write racing the quit is already refused; the subscription is forgotten with the
+		//    connection it lived on
+		this.closed = true;
+		this.subscribed = undefined;
+
+		// 2. The bus duplicated the L2 connection for subscribing; that duplicate is what would keep the process alive
 		await this.bus.close?.();
 	}
 

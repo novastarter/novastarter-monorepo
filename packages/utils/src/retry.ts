@@ -108,7 +108,9 @@ export const DEFAULT_RETRY_OPTIONS: Readonly<Required<Omit<RetryOptions, 'signal
  * @returns The result of the first attempt that succeeds.
  * @throws The error of the last attempt, or the abort reason when `options.signal` aborts during a pause or was
  * aborted before the call; what `options.onRetry` threw, when it did; a `RangeError` before any attempt when
- * `options.retries` is not a whole number of zero or more or `options.jitter` is outside `0` to `1`.
+ * `options.retries` is not a whole number of zero or more or `options.jitter` is outside `0` to `1`, and one after a
+ * failed attempt — with that attempt's error as `cause` — when `delay`, `factor` and `maxDelay` give a pause that is
+ * negative or `NaN`.
  * @example
  * ```ts
  * const parts = await retry(() => listParts(uploadId), {
@@ -173,7 +175,17 @@ export const retry = async <T>(fn: (attempt: number) => Promise<T>, options: Ret
 			const spread = jitter === 0 ? base : base * (1 + (Math.random() * 2 - 1) * jitter);
 			const pause = Math.min(spread, maxDelay, MAX_TIMER_DELAY);
 
-			// 9. Report, then wait: the callback sees the pause that is about to happen
+			// 9. A pause that is negative or `NaN` — a `delay` function or a `factor` gone wrong — is a misconfiguration
+			//    named as such, with the attempt's error as `cause`, rather than a `RangeError` out of `sleep` that
+			//    reads as if the wait itself were at fault
+			if (!(pause >= 0)) {
+				throw new RangeError(
+					`retry: the pause before attempt ${attempt + 1} is ${pause}; "delay", "factor" and "maxDelay" must give zero or more`,
+					{ cause: error },
+				);
+			}
+
+			// 10. Report, then wait: the callback sees the pause that is about to happen
 			onRetry?.(error, attempt, pause);
 
 			await sleep(pause, signal);

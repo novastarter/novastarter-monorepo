@@ -99,11 +99,13 @@ export const withTimeout = <T>(
 	// 3. One controller serves the function form: its signal carries the timeout or the outer abort to the operation
 	const controller = new AbortController();
 
+	// 4. The race itself lives in the executor, whose steps are numbered on their own
 	return new Promise<T>((resolve, reject) => {
-		// 4. The deadline: reject the caller and abort the operation's signal with the same error, so a function
+		// 1. The deadline: reject the caller and abort the operation's signal with the same error, so a function
 		//    operation that watches its signal sees why it was stopped. A factory that throws rejects with what it
 		//    threw: inside a timer callback the exception would otherwise be uncaught and take the process down
 		const timer = setTimeout(() => {
+			// 1. The error comes from the factory, or is what the factory threw
 			let reason: unknown;
 
 			try {
@@ -112,28 +114,31 @@ export const withTimeout = <T>(
 				reason = thrown;
 			}
 
+			// 2. Nothing else may fire now; the operation's signal and the caller get the same reason
 			cleanup();
 			controller.abort(reason);
 			reject(reason);
 		}, ms);
 
-		// 5. An outer abort ends the wait with the signal's reason and passes it on to the operation's signal
+		// 2. An outer abort ends the wait with the signal's reason and passes it on to the operation's signal
 		function onAbort(): void {
+			// 1. Nothing else may fire now; the operation's signal and the caller get the outer signal's reason
 			cleanup();
 			controller.abort(signal?.reason);
 			reject(signal?.reason);
 		}
 
-		// 6. Whichever way the wait ends, the timer and the listener go, so nothing fires on a settled promise and a
+		// 3. Whichever way the wait ends, the timer and the listener go, so nothing fires on a settled promise and a
 		//    long-lived signal keeps no reference to this call
 		function cleanup(): void {
+			// 1. Both are safe to repeat: a cleared timer and a removed listener are no-ops the second time
 			clearTimeout(timer);
 			signal?.removeEventListener('abort', onAbort);
 		}
 
 		signal?.addEventListener('abort', onAbort, { once: true });
 
-		// 7. Start the work — a function gets the controller's signal; one that throws before returning a promise
+		// 4. Start the work — a function gets the controller's signal; one that throws before returning a promise
 		//    fails the call at once, with the timer already gone. `Promise.resolve` covers a function that answers with
 		//    a plain value despite its type, so the settle below always has a `then` and the timer never leaks
 		let pending: Promise<T>;
@@ -146,7 +151,7 @@ export const withTimeout = <T>(
 			return;
 		}
 
-		// 8. Settle with the operation's outcome when it comes in time; a settle after the deadline or the abort is
+		// 5. Settle with the operation's outcome when it comes in time; a settle after the deadline or the abort is
 		//    a no-op on an already rejected promise
 		pending.then(
 			(value) => {

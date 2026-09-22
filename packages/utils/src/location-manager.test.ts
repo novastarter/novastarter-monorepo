@@ -46,8 +46,18 @@ class TestManager extends LocationManager<Handle, [config: string, extra?: numbe
 			throw new Error(`${handle.config} refuses to close`);
 		}
 
+		// 2. A handle whose config says so waits for the test to let it go, for the tests of a concurrent `location()`
+		if (handle.config.endsWith('/slow')) {
+			await this.slowRelease;
+		}
+
 		handle.released = true;
 	}
+
+	/**
+	 * What a `/slow` handle's release waits for; the test resolves it.
+	 */
+	slowRelease: Promise<void> = Promise.resolve();
 }
 
 /**
@@ -195,6 +205,70 @@ describe('#close', () => {
 		expect(ok.released).toBe(true);
 		expect(manager.instantiated().size).toBe(0);
 		await expect(manager.close()).resolves.toBeUndefined();
+	});
+
+	test('Builds afresh for a location asked for while its instance is being released, and keeps it for the next close()', async () => {
+		const manager = new TestManager();
+		let letGo!: () => void;
+
+		manager.slowRelease = new Promise<void>((resolve) => {
+			letGo = resolve;
+		});
+
+		manager.registerLocation('slow', 'redis://a/slow');
+		manager.registerLocation('late', 'redis://b');
+		const slow = manager.location('slow');
+
+		// 1. `close()` is releasing `slow` when both locations are asked for: neither caller gets the instance under
+		//    release, and what they get is not dropped unreleased when the run ends
+		const closing = manager.close();
+		const slowAgain = manager.location('slow');
+		const late = manager.location('late');
+
+		expect(slowAgain).not.toBe(slow);
+
+		letGo();
+		await closing;
+
+		expect(slow.released).toBe(true);
+		expect(slowAgain.released).toBe(false);
+		expect(late.released).toBe(false);
+		expect([...manager.instantiated().keys()]).toEqual(['slow', 'late']);
+
+		// 2. The next `close()` releases what the first one could not know about
+		await manager.close();
+		expect(slowAgain.released).toBe(true);
+		expect(late.released).toBe(true);
+		expect(manager.instantiated().size).toBe(0);
+	});
+
+	test('Joins a close() already under way instead of releasing the same instance twice', async () => {
+		const manager = new TestManager();
+		const releases = vi.spyOn(manager as never, 'release' as never);
+		let letGo!: () => void;
+
+		manager.slowRelease = new Promise<void>((resolve) => {
+			letGo = resolve;
+		});
+
+		manager.registerLocation('slow', 'redis://a/slow');
+		const slow = manager.location('slow');
+
+		// 1. Two overlapping calls, one release; both settle once it is done, and a later call starts a fresh run
+		const first = manager.close();
+		const second = manager.close();
+
+		expect(second).toBe(first);
+
+		letGo();
+		await Promise.all([first, second]);
+
+		expect(releases).toHaveBeenCalledTimes(1);
+		expect(slow.released).toBe(true);
+
+		manager.location('slow');
+		await manager.close();
+		expect(releases).toHaveBeenCalledTimes(2);
 	});
 
 	test('Throws an AggregateError when several instances refuse to close', async () => {

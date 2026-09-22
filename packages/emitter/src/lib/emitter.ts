@@ -215,6 +215,8 @@ export class Emitter {
 
 		if (!wrapper) {
 			wrapper = async (meta, context) => {
+				// 1. The handler's own failure, sync or async, ends here: logged with the event it failed on, which
+				//    `emitAction` puts into the meta, and never passed on to the other handlers or the emitting code
 				try {
 					await handler(meta, context);
 				} catch (error) {
@@ -242,6 +244,7 @@ export class Emitter {
 
 		if (!wrapper) {
 			wrapper = async (meta) => {
+				// 1. The hook's own failure ends here, logged with the stage it failed at, so the start-up goes on
 				try {
 					await handler(meta);
 				} catch (error) {
