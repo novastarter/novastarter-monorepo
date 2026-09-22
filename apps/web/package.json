@@ -15,6 +15,10 @@
 		"db:studio": "drizzle-kit studio"
 	},
 	"dependencies": {
+		"@novastarter/auth": "workspace:*",
+		"@novastarter/auth-driver-credentials": "workspace:*",
+		"@novastarter/auth-driver-github": "workspace:*",
+		"@novastarter/auth-driver-google": "workspace:*",
 		"@novastarter/database": "workspace:*",
 		"@novastarter/database-driver-neon": "workspace:*",
 		"@novastarter/database-driver-pglite": "workspace:*",

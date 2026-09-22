@@ -1,0 +1,237 @@
+/**
+ * Tests of `auth/providers/lib/sign-in` on fake drivers registered through `useAuth()`.
+ *
+ * `@novastarter/logger` and `@novastarter/emitter` are mocked; the limiter is the real local one of
+ * `@novastarter/memory`.
+ */
+import { useEmitter } from '@novastarter/emitter';
+import { InvalidCredentialsError } from '@novastarter/errors';
+import { useLogger } from '@novastarter/logger';
+import { LimiterDriverLocal } from '@novastarter/memory';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { useAuth } from '../../lib/use-auth.js';
+import type { AuthDriver } from '../driver.js';
+import type { AuthIdentity, AuthorizeParams, Credentials } from '../types.js';
+import { AUTH_SIGN_IN_FAILED_EVENT, AUTH_SIGN_IN_FILTER, AUTH_SIGNED_IN_EVENT } from './events.js';
+import { signIn } from './sign-in.js';
+
+vi.mock('@novastarter/logger');
+vi.mock('@novastarter/emitter');
+
+// The fake drivers join the driver map the way a driver package does, so their registrations type-check
+declare module '../../lib/auth-manager.js' {
+	interface AuthDrivers {
+		fake: Record<string, never>;
+		fakeOAuth: Record<string, never>;
+	}
+}
+
+/**
+ * Logger double; nothing in `signIn()` should write to it.
+ */
+const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+/**
+ * Emitter double: the filter hands the identity back unchanged unless a test says otherwise, the action only records.
+ */
+const emitter = { emitFilter: vi.fn(async (_event: string, payload: unknown) => payload), emitAction: vi.fn() };
+
+/**
+ * Every set of credentials the fake driver was asked to check.
+ */
+const checked: Credentials[] = [];
+
+/**
+ * A credentials driver that accepts the password `right` for any identifier.
+ */
+class FakeCredentialsDriver implements AuthDriver {
+	/**
+	 * Check the password.
+	 *
+	 * @param credentials - Identifier and password.
+	 * @returns An identity whose subject is the identifier as typed.
+	 * @throws InvalidCredentialsError for any other password.
+	 */
+	async authenticate(credentials: Credentials): Promise<AuthIdentity> {
+		// 1. Recorded, so the tests can tell whether the driver was reached at all
+		checked.push(credentials);
+
+		// 2. One fixed password, so a test picks success or failure by what it types
+		if (credentials.password !== 'right') {
+			throw new InvalidCredentialsError();
+		}
+
+		return { provider: 'credentials', subject: `id:${credentials.identifier}`, email: credentials.identifier };
+	}
+}
+
+/**
+ * An OAuth-only driver, which cannot check credentials.
+ */
+class FakeOAuthDriver implements AuthDriver {
+	/**
+	 * Build a fixed consent URL.
+	 *
+	 * @param params - Ignored.
+	 * @returns The URL.
+	 */
+	async authorize(params: AuthorizeParams): Promise<URL> {
+		// 1. Only there so the driver is an OAuth one; never called by `signIn()`
+		return new URL(`https://provider.example/authorize?state=${params.state}`);
+	}
+}
+
+/**
+ * Register the fake drivers and their locations: `credentials`, `staff` (both credentials) and `github` (OAuth).
+ *
+ * @param signInLimiter - The `signIn` limiter of the settings, if the test wants one.
+ */
+const register = (signInLimiter?: LimiterDriverLocal): void => {
+	// 1. Every location the tests use; the limiter is the only setting `signIn()` reads
+	const auth = useAuth();
+
+	auth.registerDriver('fake', FakeCredentialsDriver);
+	auth.registerDriver('fakeOAuth', FakeOAuthDriver);
+	auth.registerLocation('credentials', { driver: 'fake', options: {} });
+	auth.registerLocation('staff', { driver: 'fake', options: {} });
+	auth.registerLocation('github', { driver: 'fakeOAuth', options: {} });
+	auth.registerSettings({ limiters: { signIn: signInLimiter } });
+};
+
+beforeEach(() => {
+	vi.mocked(useLogger).mockReturnValue(logger as any);
+	vi.mocked(useEmitter).mockReturnValue(emitter as any);
+});
+
+afterEach(() => {
+	useAuth.reset();
+	checked.length = 0;
+	vi.clearAllMocks();
+});
+
+describe('signIn', () => {
+	test('Returns the identity the driver proved, after the filter, and announces the sign-in', async () => {
+		register();
+
+		const identity = await signIn('credentials', { identifier: 'user@example.com', password: 'right' });
+
+		// 1. The driver's identity, passed through the filter with the location in the meta
+		const expected = { provider: 'credentials', subject: 'id:user@example.com', email: 'user@example.com' };
+
+		expect(identity).toStrictEqual(expected);
+		expect(emitter.emitFilter).toHaveBeenCalledWith(AUTH_SIGN_IN_FILTER, expected, { location: 'credentials' });
+
+		// 2. The action carries the identity under `payload`
+		expect(emitter.emitAction).toHaveBeenCalledWith(AUTH_SIGNED_IN_EVENT, {
+			location: 'credentials',
+			payload: expected,
+		});
+
+		expect(emitter.emitAction).toHaveBeenCalledTimes(1);
+	});
+
+	test('Returns what the filter made of the identity', async () => {
+		register();
+
+		// 1. A handler may enrich the identity; the caller gets the enriched one
+		emitter.emitFilter.mockImplementationOnce(async (_event: string, payload: unknown) => ({
+			...(payload as AuthIdentity),
+			name: 'From filter',
+		}));
+
+		expect(await signIn('credentials', { identifier: 'a', password: 'right' })).toMatchObject({ name: 'From filter' });
+	});
+
+	test('Rethrows the refusal of the driver and announces it with its code', async () => {
+		register();
+
+		// 1. The driver's own error reaches the caller
+		await expect(signIn('credentials', { identifier: 'a', password: 'wrong' })).rejects.toBeInstanceOf(
+			InvalidCredentialsError,
+		);
+
+		// 2. Announced as failed, the code as the reason; no filter ran, no sign-in was announced
+		expect(emitter.emitAction).toHaveBeenCalledWith(AUTH_SIGN_IN_FAILED_EVENT, {
+			location: 'credentials',
+			reason: 'INVALID_CREDENTIALS',
+		});
+
+		expect(emitter.emitFilter).not.toHaveBeenCalled();
+		expect(emitter.emitAction).not.toHaveBeenCalledWith(AUTH_SIGNED_IN_EVENT, expect.anything());
+	});
+
+	test('Refuses the sign-in when a filter vetoes it, as wrong credentials', async () => {
+		register();
+
+		// 1. `null` from the filter: the client sees the same error as a wrong password
+		emitter.emitFilter.mockResolvedValueOnce(null);
+
+		await expect(signIn('credentials', { identifier: 'a', password: 'right' })).rejects.toMatchObject({
+			code: 'INVALID_CREDENTIALS',
+		});
+
+		// 2. The failure names the filter as the reason and the provider it came through
+		expect(emitter.emitAction).toHaveBeenCalledWith(AUTH_SIGN_IN_FAILED_EVENT, {
+			location: 'credentials',
+			provider: 'credentials',
+			reason: 'filter',
+		});
+
+		expect(emitter.emitAction).not.toHaveBeenCalledWith(AUTH_SIGNED_IN_EVENT, expect.anything());
+	});
+
+	test('Charges the limiter per location and identifier, folding case and spaces', async () => {
+		register(new LimiterDriverLocal({ points: 2, duration: 60 }));
+
+		// 1. Two misses under two spellings of one address spend one budget
+		await expect(signIn('credentials', { identifier: ' User@Example.com ', password: 'x' })).rejects.toMatchObject({
+			code: 'INVALID_CREDENTIALS',
+		});
+
+		await expect(signIn('credentials', { identifier: 'user@example.com', password: 'x' })).rejects.toMatchObject({
+			code: 'INVALID_CREDENTIALS',
+		});
+
+		// 2. The right password is now refused by the limiter, before the driver is asked
+		await expect(signIn('credentials', { identifier: 'USER@example.com', password: 'right' })).rejects.toMatchObject({
+			code: 'REQUESTS_EXCEEDED',
+		});
+
+		expect(checked).toHaveLength(2);
+
+		// 3. Another identifier and another location have budgets of their own
+		await expect(signIn('credentials', { identifier: 'other@example.com', password: 'right' })).resolves.toBeDefined();
+		await expect(signIn('staff', { identifier: 'user@example.com', password: 'right' })).resolves.toBeDefined();
+	});
+
+	test('Clears the count after a success, so earlier typos do not linger', async () => {
+		register(new LimiterDriverLocal({ points: 2, duration: 60 }));
+
+		const credentials = { identifier: 'user@example.com', password: 'x' };
+
+		// 1. A miss and a success
+		await expect(signIn('credentials', credentials)).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
+		await signIn('credentials', { ...credentials, password: 'right' });
+
+		// 2. The full budget of two misses is there again before the limiter kicks in
+		await expect(signIn('credentials', credentials)).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
+		await expect(signIn('credentials', credentials)).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
+		await expect(signIn('credentials', credentials)).rejects.toMatchObject({ code: 'REQUESTS_EXCEEDED' });
+	});
+
+	test('Refuses a location whose driver cannot check credentials, or that does not exist', async () => {
+		register(new LimiterDriverLocal({ points: 1, duration: 60 }));
+
+		// 1. An OAuth location is a configuration mistake, reported before the limiter is charged
+		await expect(signIn('github', { identifier: 'a', password: 'right' })).rejects.toThrow(
+			'Auth location "github" does not sign in with credentials',
+		);
+
+		// 2. An unknown location is named
+		await expect(signIn('nope', { identifier: 'a', password: 'right' })).rejects.toThrow(
+			'Location "nope" doesn\'t exist.',
+		);
+
+		expect(emitter.emitAction).not.toHaveBeenCalled();
+	});
+});

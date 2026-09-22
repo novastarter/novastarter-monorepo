@@ -81,6 +81,32 @@ export const envSchema = z.object({
 	SMS_DRIVER: z.enum(['console']).optional(),
 	/** Sender of every SMS without a `from` of its own: a number in E.164, or an alphanumeric sender id. */
 	SMS_FROM: z.string().default('Novastarter'),
+	/**
+	 * The HMAC secret JWT access tokens are signed with: at least 32 characters of random data
+	 * (`openssl rand -base64 32`). Required in production; a fixed development value is used elsewhere.
+	 */
+	AUTH_JWT_SECRET: optional(z.string().min(32)),
+	/**
+	 * The key TOTP secrets are encrypted with at rest: at least 32 characters of random data. Required in production;
+	 * changing it makes every enrolled authenticator unreadable.
+	 */
+	AUTH_MFA_ENCRYPTION_KEY: optional(z.string().min(32)),
+	/**
+	 * The secret the OAuth cookie is encrypted with — it carries the state, the PKCE verifier and the nonce through
+	 * the provider's redirect: at least 32 characters of random data. Required in production; a fixed development
+	 * value is used elsewhere.
+	 */
+	AUTH_OAUTH_SECRET: optional(z.string().min(32)),
+	/** The name authenticator apps show above the code. */
+	AUTH_MFA_ISSUER: z.string().default('Novastarter'),
+	/** Google sign-in: the OAuth client id; the provider is registered when it and the secret are set. */
+	AUTH_GOOGLE_CLIENT_ID: optional(z.string()),
+	/** Google sign-in: the OAuth client secret. */
+	AUTH_GOOGLE_CLIENT_SECRET: optional(z.string()),
+	/** GitHub sign-in: the OAuth app's client id; the provider is registered when it and the secret are set. */
+	AUTH_GITHUB_CLIENT_ID: optional(z.string()),
+	/** GitHub sign-in: the OAuth app's client secret. */
+	AUTH_GITHUB_CLIENT_SECRET: optional(z.string()),
 });
 
 /**
