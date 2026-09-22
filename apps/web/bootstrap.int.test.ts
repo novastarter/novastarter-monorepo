@@ -3,6 +3,7 @@
  * on the real managers and a job goes through the real queue. No service is needed — every driver is the in-process
  * one — so the suite always runs.
  */
+import { useDatabase } from '@novastarter/database';
 import { useMail } from '@novastarter/mail';
 import { useBus, useCache, useKv, useLimiter } from '@novastarter/memory';
 import { _handlers, enqueue, QueueDriverLocal, registerJobHandlers, useQueue } from '@novastarter/queue';
@@ -19,6 +20,7 @@ afterEach(() => {
 	useQueue.reset();
 	useRedis.reset();
 	useStorage.reset();
+	useDatabase.reset();
 	useMail.reset();
 	_handlers.clear();
 	useKv.reset();
@@ -30,6 +32,7 @@ afterEach(() => {
 
 test('Registers every subsystem in-process without a Redis and runs a job end to end', async () => {
 	vi.stubEnv('REDIS', '');
+	vi.stubEnv('DATABASE_URL', '');
 	vi.stubEnv('STORAGE_LOCAL_ROOT', './uploads');
 	vi.stubEnv('MAIL_FROM', 'no-reply@acme.test');
 
@@ -38,6 +41,11 @@ test('Registers every subsystem in-process without a Redis and runs a job end to
 	expect(env.NODE_ENV).toBe('test');
 	expect(useRedis().locationNames()).toEqual([]);
 	expect(useStorage().hasLocation('default')).toBe(true);
+
+	// Without a `DATABASE_URL` the drivers are registered and no location is: a schema is bound to its dialect, so
+	// there is no in-process database to fall back on
+	expect(useDatabase().locationNames()).toEqual([]);
+	expect(useDatabase()['drivers'].size).toBe(2);
 	expect(useQueue().location('anything')).toBeInstanceOf(QueueDriverLocal);
 	expect(useMail().hasLocation('default')).toBe(true);
 	expect(useMail().routes().from).toBe('no-reply@acme.test');
@@ -58,6 +66,33 @@ test('Registers every subsystem in-process without a Redis and runs a job end to
 
 	expect(job.queue).toBe('system');
 	expect(handler).toHaveBeenCalledWith({ message: 'boot' }, expect.objectContaining({ id: job.id }));
+});
+
+test('Registers the default database location from DATABASE_URL without opening a pool', () => {
+	vi.stubEnv('REDIS', '');
+	vi.stubEnv('DATABASE_URL', 'postgresql://postgres:secret@127.0.0.1:5432/app');
+
+	bootstrap();
+
+	// 1. Registered on the postgres driver by default; the pool opens on the first `location()`, so a boot with a
+	//    URL nobody can reach still succeeds
+	expect(useDatabase().hasLocation('default')).toBe(true);
+	expect(useDatabase().instantiated().size).toBe(0);
+	expect(useDatabase()['configs'].get('default')?.[0]).toMatchObject({ driver: 'postgres' });
+
+	// 2. `DATABASE_DRIVER` picks the Supabase driver for the same URL
+	_state.booted = false;
+	readEnv.reset();
+	vi.stubEnv('DATABASE_DRIVER', 'supabase');
+
+	bootstrap();
+
+	expect(useDatabase()['configs'].get('default')?.[0]).toMatchObject({
+		driver: 'supabase',
+		options: { url: 'postgresql://postgres:secret@127.0.0.1:5432/app' },
+	});
+
+	expect(useDatabase().instantiated().size).toBe(0);
 });
 
 test('Boots once per process', () => {
@@ -88,6 +123,7 @@ test('Shuts every manager down, leaving the registrations for a later boot', asy
 	expect(useQueue().instantiated().size).toBe(0);
 	expect(useMail().instantiated().size).toBe(0);
 	expect(useStorage().instantiated().size).toBe(0);
+	expect(useDatabase().instantiated().size).toBe(0);
 	expect(useKv().instantiated().size).toBe(0);
 	expect(useMail().hasLocation('default')).toBe(true);
 	expect(useStorage().hasLocation('default')).toBe(true);

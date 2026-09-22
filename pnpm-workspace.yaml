@@ -9,6 +9,7 @@ minimumReleaseAgeExclude:
   - '@turbo/windows-64@2.11.1'
   - '@turbo/windows-arm64@2.11.1'
   - turbo@2.11.1
+  - drizzle-orm@0.45.3
 catalog:
   '@aws-sdk/client-s3': 3.1111.0
   '@aws-sdk/client-sesv2': 3.1129.0
@@ -30,21 +31,25 @@ catalog:
   '@smithy/node-http-handler': 4.11.2
   '@supabase/storage-js': 2.112.3
   '@tus/utils': 0.7.1
+  '@types/better-sqlite3': 9.6.0
   '@types/express': 4.17.21
   '@types/js-yaml': 4.0.9
   '@types/lodash-es': 4.17.12
   '@types/ms': 2.1.0
   '@types/node': 22.13.14
   '@types/nodemailer': 8.0.1
+  '@types/pg': 8.23.1
   '@types/react': 19.2.18
   '@types/react-dom': 19.2.5
   '@types/semver': 7.7.1
   '@types/web-push': 3.6.4
   '@vitest/coverage-v8': 3.2.7
   apns2: 12.2.0
+  better-sqlite3: 13.0.3
   bullmq: 6.3.4
   croner: 10.0.1
   dotenv: 17.2.3
+  drizzle-orm: 0.45.3
   eslint: 10.9.1
   eslint-config-prettier: 10.1.8
   eslint-plugin-import-x: 4.17.1
@@ -66,6 +71,7 @@ catalog:
   node-mailjet: 6.0.11
   nodemailer: 10.0.3
   p-queue: 8.1.0
+  pg: 8.23.0
   pino: 9.7.0
   pino-http: 10.5.0
   pino-pretty: 13.1.2
@@ -93,6 +99,8 @@ catalogs:
     typescript: 7.0.2
 allowBuilds:
   '@firebase/util': false
+  # Ships Node-API prebuilds for every platform; a build from source would only be slower
+  better-sqlite3: false
   esbuild: true
   lefthook: true
   msgpackr-extract: true

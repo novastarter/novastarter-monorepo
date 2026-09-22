@@ -32,6 +32,12 @@ export const envSchema = z.object({
 	REDIS: optional(z.url()),
 	/** Prefix of the BullMQ keys, so several projects can share a Redis. */
 	QUEUE_PREFIX: z.string().default('novastarter'),
+	/** The PostgreSQL connection string; unset, the app registers no database location. */
+	DATABASE_URL: optional(z.url()),
+	/** Which driver carries `DATABASE_URL`: plain node-postgres, or Supabase with its TLS defaults. */
+	DATABASE_DRIVER: z.enum(['postgres', 'supabase']).default('postgres'),
+	/** PEM of the Supabase root certificate, for `DATABASE_DRIVER=supabase`; `DATABASE_SSL_CA_FILE` mounts a secret. */
+	DATABASE_SSL_CA: optional(z.string()),
 	/** Directory of the local storage location. */
 	STORAGE_LOCAL_ROOT: z.string().default('./uploads'),
 	/** Sender of every message without a `from` of its own. */
