@@ -62,6 +62,22 @@ chat id belongs to one bot. The chat ids are the application's to store — the 
 A message needs a recipient and text or an attachment; the messenger's own limits — text length, file size — are not
 checked here, the messenger refuses what it cannot take and its reason travels as the error's `cause`.
 
+## Any other request
+
+`send()` covers what messengers share. The rest of a messenger's API — a reaction, an edit, a method the driver has no
+wrapper for yet — is `call(method, params)`, optional on every driver, with the location's credentials, timeout and
+errors. The signature is the same for all; what `method` means is the messenger's:
+
+```ts
+const messenger = useMessenger();
+
+await messenger.location('telegram').call?.('sendPhoto', { chat_id: chatId, photo: file }); // an RPC method
+await messenger.location('discord').call?.('POST /channels/123/messages', { content: 'Hi' }); // a REST verb and path
+```
+
+A `Blob` or `File` among the parameters is uploaded where the API takes files. The `console` driver logs the call and
+answers `undefined`.
+
 ## Events and errors
 
 - `messenger.send` (filter): a handler may rewrite the message or return `null` to drop it.
@@ -72,8 +88,8 @@ checked here, the messenger refuses what it cannot take and its reason travels a
 
 ## Writing a driver
 
-A driver implements `send(message)` of `MessengerDriver` (optionally `verify()` and `close()`) and adds itself to the
-driver map:
+A driver implements `send(message)` of `MessengerDriver` (optionally `call()`, `verify()` and `close()`) and adds itself
+to the driver map:
 
 ```ts
 declare module '@novastarter/messenger' {

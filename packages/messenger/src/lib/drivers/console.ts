@@ -75,4 +75,40 @@ export class MessengerDriverConsole implements MessengerDriver {
 
 		return { messageId };
 	}
+
+	/**
+	 * Log a request of the messenger's API as if it were made.
+	 *
+	 * Lets code written against a messenger's `call()` run in development without the messenger; files are named, not
+	 * dumped.
+	 *
+	 * @typeParam T - What the caller expects back; there is no answer, so it gets `undefined`.
+	 * @param method - The method, or the verb and path.
+	 * @param params - Its parameters.
+	 * @returns `undefined`.
+	 */
+	async call<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+		// 1. A file stands for itself by its name, so the log line stays readable
+		const logged = Object.fromEntries(Object.entries(params).map(([key, value]) => [key, describeValue(value)]));
+
+		// 2. One line per request, what a developer reads; nothing comes back, as no messenger answered
+		this.logger.info({ method, params: logged }, `Messenger call ${method}`);
+
+		return undefined as T;
+	}
 }
+
+/**
+ * What the log shows for a parameter: a file by its name, anything else as it is.
+ *
+ * @param value - The parameter.
+ * @returns The file's name, `blob` for a nameless one, or the value.
+ * @internal
+ */
+const describeValue = (value: unknown): unknown => {
+	// 1. A `File` has a name worth showing; a bare `Blob` only its kind
+	if (value instanceof File) return value.name;
+	if (value instanceof Blob) return 'blob';
+
+	return value;
+};

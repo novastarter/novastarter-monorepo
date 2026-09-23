@@ -67,8 +67,7 @@ interface TelegramAnswer<T> {
  * });
  *
  * // a method without a wrapper
- * const telegram = useMessenger().location('telegram') as MessengerDriverTelegram;
- * await telegram.call('setMessageReaction', {
+ * await useMessenger().location('telegram').call?.('setMessageReaction', {
  * 	chat_id: chatId,
  * 	message_id: 7,
  * 	reaction: [{ type: 'emoji', emoji: '👍' }],

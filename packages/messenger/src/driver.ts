@@ -26,6 +26,30 @@ export declare class MessengerDriver {
 	send(message: MessengerMessage): Promise<MessengerResult>;
 
 	/**
+	 * Make a request of the messenger's own API, with the location's credentials, timeout and errors — the way to
+	 * whatever `send()` does not cover, a method the driver has no wrapper for yet included.
+	 *
+	 * The signature is the same for every driver; what `method` and `params` mean is the messenger's, so code calling
+	 * it is written for one messenger: a method name of an RPC-style API — Telegram's `sendPhoto`, Slack's
+	 * `chat.postMessage` — or the verb and path of a REST one — Discord's `POST /channels/123/messages`. A `Blob` or
+	 * `File` among the parameters is uploaded, where the API takes files.
+	 *
+	 * Optional: a driver whose messenger has no API to reach may leave it out; the `console` driver logs the request.
+	 *
+	 * @typeParam T - What the request answers with; the caller knows it from the messenger's documentation.
+	 * @param method - The method, or the verb and path, in the messenger's terms.
+	 * @param params - Its parameters or body.
+	 * @returns The messenger's answer to the request.
+	 * @throws MessengerTargetGoneError when the recipient can no longer be reached.
+	 * @throws Error when the messenger refused the request or could not be reached.
+	 * @example
+	 * ```ts
+	 * await useMessenger().location('telegram').call?.('sendPhoto', { chat_id: chatId, photo: file });
+	 * ```
+	 */
+	call?<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>;
+
+	/**
 	 * Check the driver can be used — the token, connectivity — without sending anything.
 	 *
 	 * @throws When it cannot.

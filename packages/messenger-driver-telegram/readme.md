@@ -50,14 +50,14 @@ not know yet included — with the location's token, timeout and errors. A `Blob
 call as multipart.
 
 ```ts
-const telegram = useMessenger().location('telegram') as MessengerDriverTelegram;
+const telegram = useMessenger().location('telegram');
 
-await telegram.call('setMessageReaction', {
+await telegram.call?.('setMessageReaction', {
 	chat_id: chatId,
 	message_id: 7,
 	reaction: [{ type: 'emoji', emoji: '👍' }],
 });
-await telegram.call('sendPhoto', { chat_id: chatId, photo: new File([png], 'chart.png'), caption: 'Today' });
+await telegram.call?.('sendPhoto', { chat_id: chatId, photo: new File([png], 'chart.png'), caption: 'Today' });
 ```
 
 ## Without registration
