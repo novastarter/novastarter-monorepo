@@ -17,6 +17,11 @@ minimumReleaseAgeExclude:
   - miniflare@5.20260921.0-alpha
   - wrangler@4.136.2
 catalog:
+  '@ai-sdk/anthropic': 4.0.58
+  '@ai-sdk/gateway': 4.0.87
+  '@ai-sdk/google': 4.0.76
+  '@ai-sdk/openai': 4.0.71
+  '@ai-sdk/provider': 4.0.17
   '@aws-sdk/client-s3': 3.1111.0
   '@aws-sdk/client-sesv2': 3.1129.0
   '@aws-sdk/lib-storage': 3.1111.0
@@ -53,6 +58,7 @@ catalog:
   '@types/web-push': 3.6.4
   '@vitest/coverage-v8': 3.2.7
   '@vonage/sms': 1.24.1
+  ai: 7.0.107
   apns2: 12.2.0
   better-sqlite3: 13.0.3
   bullmq: 6.3.4

@@ -107,6 +107,14 @@ export const envSchema = z.object({
 	AUTH_GITHUB_CLIENT_ID: optional(z.string()),
 	/** GitHub sign-in: the OAuth app's client secret. */
 	AUTH_GITHUB_CLIENT_SECRET: optional(z.string()),
+	/** OpenAI API key; the `openai` AI provider is registered when it is set. */
+	AI_OPENAI_API_KEY: optional(z.string()),
+	/** Anthropic API key; the `anthropic` AI provider is registered when it is set. */
+	AI_ANTHROPIC_API_KEY: optional(z.string()),
+	/** Google Generative AI (Gemini) API key; the `google` AI provider is registered when it is set. */
+	AI_GOOGLE_API_KEY: optional(z.string()),
+	/** Vercel AI Gateway API key; the `gateway` AI provider is registered when it is set. */
+	AI_GATEWAY_API_KEY: optional(z.string()),
 });
 
 /**

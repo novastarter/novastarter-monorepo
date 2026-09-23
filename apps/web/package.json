@@ -15,6 +15,11 @@
 		"db:studio": "drizzle-kit studio"
 	},
 	"dependencies": {
+		"@ai-sdk/anthropic": "catalog:",
+		"@ai-sdk/gateway": "catalog:",
+		"@ai-sdk/google": "catalog:",
+		"@ai-sdk/openai": "catalog:",
+		"@novastarter/ai": "workspace:*",
 		"@novastarter/auth": "workspace:*",
 		"@novastarter/auth-driver-credentials": "workspace:*",
 		"@novastarter/auth-driver-github": "workspace:*",

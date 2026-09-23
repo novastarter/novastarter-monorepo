@@ -1,3 +1,4 @@
+import { useAi } from '@novastarter/ai';
 import { useAuth } from '@novastarter/auth';
 import { AuthDriverCredentials } from '@novastarter/auth-driver-credentials';
 import { AuthDriverGithub } from '@novastarter/auth-driver-github';
@@ -15,6 +16,7 @@ import { useRedis } from '@novastarter/redis';
 import { useSms } from '@novastarter/sms';
 import { useStorage } from '@novastarter/storage';
 import { StorageDriverLocal } from '@novastarter/storage-driver-local';
+import { aiConfig } from './config/ai';
 import { authConfig } from './config/auth';
 import { databaseConfig } from './config/database';
 import { loggerConfig } from './config/logger';
@@ -45,7 +47,7 @@ export const _state: { booted: boolean; handlers: boolean } = { booted: false, h
  *
  * The one place the environment meets the packages: the variables are parsed against the app's schema, turned into
  * the location configs under `config/`, and registered on the managers — logger, Redis, memory, queue, storage,
- * database, mail, SMS, auth — then the handlers of the app's jobs under `jobs/`. Each package reads nothing itself; a
+ * database, mail, SMS, auth, AI — then the handlers of the app's jobs under `jobs/`. Each package reads nothing itself; a
  * location opens its connections on first use, with the one exception of the `default` Redis location, whose client
  * the boot resolves eagerly to hand to the memory locations — so an unreachable `REDIS` fails the boot rather than
  * the first request. Registering is idempotent across calls, so a second `bootstrap()` (Next.js reloading the server
@@ -138,7 +140,17 @@ export const bootstrap = (): AppEnv => {
 		},
 	});
 
-	// 11. Jobs: the handlers of the contracts under `jobs/`, so a worker or the local queue can run them — once per
+	// 11. AI: a provider per key the app has, then the aliases of the models the code asks for; a provider opens
+	//     nothing until a model of it is called
+	const ai = aiConfig(env);
+
+	for (const [name, provider] of Object.entries(ai.providers)) {
+		useAi().registerProvider(name, provider);
+	}
+
+	useAi().registerModels(ai.models);
+
+	// 12. Jobs: the handlers of the contracts under `jobs/`, so a worker or the local queue can run them — once per
 	//     process, since a handler holds nothing a shutdown would release and the queue refuses a second registration
 	if (!_state.handlers) {
 		registerJobHandlers({
