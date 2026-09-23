@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/mail-driver-mailjet",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Mailjet mail driver for `@novastarter/mail`",
 	"repository": {
 		"type": "git",

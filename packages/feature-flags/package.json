@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/feature-flags",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Feature flags for Novastarter: a driver contract, rules by user, organization and percentage, and a static driver",
 	"repository": {
 		"type": "git",

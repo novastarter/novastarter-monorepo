@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/storage",
-	"version": "0.0.2",
+	"version": "0.1.0",
 	"description": "Object storage abstraction layer for Novastarter",
 	"repository": {
 		"type": "git",

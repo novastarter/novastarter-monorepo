@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/redis",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Named Redis servers — locations — and the shared ioredis client of each",
 	"repository": {
 		"type": "git",

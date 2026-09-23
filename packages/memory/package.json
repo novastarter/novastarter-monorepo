@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/memory",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Memory / Redis abstraction: key-value store, cache, pub/sub bus and rate limiter",
 	"repository": {
 		"type": "git",

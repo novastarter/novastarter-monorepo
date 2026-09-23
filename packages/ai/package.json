@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/ai",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "AI models for Novastarter, on top of the Vercel AI SDK",
 	"repository": {
 		"type": "git",

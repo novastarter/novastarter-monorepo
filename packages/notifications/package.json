@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/notifications",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Notifications for Novastarter: one notification to a user over mail, SMS, push, messengers and an in-app inbox, with their preferences",
 	"repository": {
 		"type": "git",

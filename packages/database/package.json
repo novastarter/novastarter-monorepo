@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/database",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Relational database abstraction layer for Novastarter on Drizzle ORM",
 	"repository": {
 		"type": "git",

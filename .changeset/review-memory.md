@@ -1,5 +1,0 @@
----
-'@novastarter/memory': minor
----
-
-Kv `increment` is integer-only on both backends (a non-integer `amount` throws `RangeError`, a stored non-integer throws `The value for key "k" is not an integer.`), `setMax` refuses `NaN`/`Infinity`, `set` of a non-finite number stores `null` on Redis instead of a key `get` cannot parse, a refused Redis `increment` no longer renews the ttl, a lock held past `lockTimeout` fails with `Lock "k" was not acquired within N ms` on Redis too, `clear()` escapes glob characters in the namespace; `CacheDriverLocalConfig`/`CacheDriverRedisConfig` accept `lockTimeout` and `CacheDriverMulti` gives L1 the L2 `ttl`, refuses a longer one and keeps a write out of L1 when another process invalidated the key meanwhile; the Redis bus keeps publish order while gzipping, `subscribe()` rejects after `close()`, the local bus rejects an unserialisable payload and a handler subscribed from inside a handler no longer receives the message being delivered; both limiter drivers throw `RangeError` unless `duration` is a whole number of seconds ≥ 1 and `points` a whole number ≥ 0.

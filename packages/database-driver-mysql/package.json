@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/database-driver-mysql",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "MySQL driver for `@novastarter/database` on mysql2 and Drizzle ORM",
 	"repository": {
 		"type": "git",

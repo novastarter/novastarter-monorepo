@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/auth",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Authentication for Novastarter: sign-in providers, sessions, passwords, one-time and JWT tokens, TOTP",
 	"repository": {
 		"type": "git",

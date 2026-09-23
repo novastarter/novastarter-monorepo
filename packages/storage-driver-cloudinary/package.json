@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/storage-driver-cloudinary",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Cloudinary storage driver for `@novastarter/storage`",
 	"repository": {
 		"type": "git",

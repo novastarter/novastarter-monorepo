@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/push-driver-fcm",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Firebase Cloud Messaging push driver for `@novastarter/push`",
 	"repository": {
 		"type": "git",

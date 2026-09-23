@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/validation",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Validate a payload against filter rules and get structured per-field errors back",
 	"repository": {
 		"type": "git",

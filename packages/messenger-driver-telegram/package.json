@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/messenger-driver-telegram",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Telegram Bot API driver for `@novastarter/messenger`",
 	"repository": {
 		"type": "git",

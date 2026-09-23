@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/utils",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"description": "Utilities shared between the Novastarter packages",
 	"repository": {
 		"type": "git",

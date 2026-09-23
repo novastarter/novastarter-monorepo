@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/storage-driver-supabase",
-	"version": "0.1.1",
+	"version": "0.2.0",
 	"description": "Supabase Storage driver for `@novastarter/storage`",
 	"repository": {
 		"type": "git",

@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/database-driver-neon",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Neon Postgres drivers for `@novastarter/database` on @neondatabase/serverless and Drizzle ORM",
 	"repository": {
 		"type": "git",

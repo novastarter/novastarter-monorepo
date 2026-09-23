@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/auth-driver-magic-link",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Sign-in by a link or a code sent by mail, a driver for `@novastarter/auth`",
 	"repository": {
 		"type": "git",

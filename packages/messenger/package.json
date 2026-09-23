@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/messenger",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Messenger messages for Novastarter: a driver contract, a manager of bot locations and sendMessage(), with text, formatting and attachments",
 	"repository": {
 		"type": "git",

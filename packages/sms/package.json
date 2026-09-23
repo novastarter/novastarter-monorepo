@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/sms",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "SMS abstraction layer for Novastarter",
 	"repository": {
 		"type": "git",

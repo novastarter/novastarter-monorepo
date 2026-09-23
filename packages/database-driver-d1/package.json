@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/database-driver-d1",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Cloudflare D1 driver for `@novastarter/database` on Drizzle ORM",
 	"repository": {
 		"type": "git",

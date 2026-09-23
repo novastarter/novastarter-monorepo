@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/push-driver-apns",
-	"version": "0.0.1",
+	"version": "1.0.0",
 	"description": "Apple Push Notification service driver for `@novastarter/push`",
 	"repository": {
 		"type": "git",

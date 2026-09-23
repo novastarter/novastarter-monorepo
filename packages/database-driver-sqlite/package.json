@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/database-driver-sqlite",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "SQLite driver for `@novastarter/database` on better-sqlite3 and Drizzle ORM",
 	"repository": {
 		"type": "git",

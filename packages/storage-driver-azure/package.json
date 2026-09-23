@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/storage-driver-azure",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Azure Blob Storage driver for `@novastarter/storage`",
 	"repository": {
 		"type": "git",

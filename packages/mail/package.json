@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/mail",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Outgoing mail abstraction layer for Novastarter",
 	"repository": {
 		"type": "git",

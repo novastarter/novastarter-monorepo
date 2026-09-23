@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/auth-driver-passkey",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Passkey (WebAuthn) sign-in driver for `@novastarter/auth`",
 	"repository": {
 		"type": "git",

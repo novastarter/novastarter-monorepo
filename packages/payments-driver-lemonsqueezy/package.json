@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/payments-driver-lemonsqueezy",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Lemon Squeezy payments driver for `@novastarter/payments`",
 	"repository": {
 		"type": "git",

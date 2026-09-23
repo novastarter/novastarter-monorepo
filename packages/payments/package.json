@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/payments",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Billing for Novastarter: a driver contract over the payment providers and a manager of named provider locations",
 	"repository": {
 		"type": "git",

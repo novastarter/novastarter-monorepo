@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/pressure",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Event loop and memory pressure monitor, with an Express middleware that sheds load",
 	"repository": {
 		"type": "git",

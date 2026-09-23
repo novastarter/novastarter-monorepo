@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/sms-driver-twilio",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Twilio SMS driver for `@novastarter/sms`",
 	"repository": {
 		"type": "git",

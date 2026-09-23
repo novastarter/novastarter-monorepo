@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/database-driver-pglite",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "PGlite driver for `@novastarter/database`: in-process Postgres on WebAssembly and Drizzle ORM",
 	"repository": {
 		"type": "git",

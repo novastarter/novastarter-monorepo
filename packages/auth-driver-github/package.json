@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/auth-driver-github",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "GitHub sign-in driver for `@novastarter/auth`",
 	"repository": {
 		"type": "git",

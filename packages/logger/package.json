@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/logger",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Structured logging for Novastarter, built on pino",
 	"repository": {
 		"type": "git",

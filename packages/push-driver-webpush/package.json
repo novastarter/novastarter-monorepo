@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/push-driver-webpush",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Web Push (VAPID) driver for `@novastarter/push`",
 	"repository": {
 		"type": "git",

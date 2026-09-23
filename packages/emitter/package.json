@@ -1,6 +1,6 @@
 {
 	"name": "@novastarter/emitter",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Filter, action and init hooks for Novastarter",
 	"repository": {
 		"type": "git",
