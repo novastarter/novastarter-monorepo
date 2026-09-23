@@ -30,9 +30,33 @@ await http(
 
 `http(method, params, options)` takes the verb and a full URL, fills its `{name}` from the parameters, and sends the
 others as the query of a `GET`, `HEAD` or `DELETE` and the body otherwise. `options` takes `headers`, a `timeout` (30 s
-unless given) and a `signal`. It answers `{ status, headers, data }` and throws `ProviderCallError` for an error status
-— named by the URL's host and path, never its query or headers — `HitRateLimitError` for a 429 and `TimeoutError` at the
-deadline. The path is sent as written: a `:send` in it or a trailing slash stays.
+unless given), a `signal` and `hooks`. It answers `{ status, headers, data }` and throws `ProviderCallError` for an
+error status — named by the URL's host and path, never its query or headers — `HitRateLimitError` for a 429 and
+`TimeoutError` at the deadline. The path is sent as written: a `:send` in it or a trailing slash stays.
+
+## Hooks
+
+`hooks` — in the `options` of `http()` or on a driver's `HttpApi` — are called around every request, for logs, metrics
+and traces:
+
+```ts
+import { http, type HttpHooks } from '@novastarter/http';
+import { useLogger } from '@novastarter/logger';
+
+const hooks: HttpHooks = {
+	onResponse: ({ provider, label, status, duration }) => useLogger().info({ provider, status, duration }, label),
+	onError: ({ provider, label, error, duration }) => useLogger().error({ provider, duration, err: error }, label),
+};
+
+await http('GET https://api.github.com/repos/{owner}/{repo}', { owner: 'acme', repo: 'web' }, { hooks });
+```
+
+`onRequest` is called before the request with `{ provider, label, verb, url }`; `onResponse` once the answer is read,
+whatever its status and before an error status is thrown, with the `status` and the `duration` in milliseconds on top;
+`onError` when no answer came — the network, the deadline, an abort, a redirect refused — with the `error`, which goes
+on to the caller as it is. The `url` is the origin and the path, the `label` the one errors carry: no hook ever sees the
+headers, the parameters, the body or the driver's secret query. A hook is not awaited, and one that throws or rejects
+never breaks the request.
 
 ## In a driver
 
