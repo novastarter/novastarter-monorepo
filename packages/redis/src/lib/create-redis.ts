@@ -1,3 +1,4 @@
+import { type Logger, useLogger } from '@novastarter/logger';
 import { Redis, type RedisOptions } from 'ioredis';
 // ioredis's URL parser is the one its constructor uses; the deep import is the only way to reach it, and an upgrade
 // that moves it fails loudly here, at import, rather than by connecting somewhere else
@@ -12,8 +13,14 @@ import type { RedisConfig } from '../types.js';
  * set up its own way: BullMQ, for one, requires `maxRetriesPerRequest: null`. Every call opens a new connection;
  * application code shares one per location through {@link RedisManager}.
  *
+ * Connection trouble — a server that is unreachable at boot, a connection that drops and is retried mid-run — is
+ * reported through `logger`, or the process logger when none is given: ioredis surfaces it as `error` events, and
+ * while its most common failure path only prints to stderr, an `error` event emitted on any other path with nothing
+ * listening crashes the process, so every client opened here listens and logs instead.
+ *
  * @param config - Connection URL or ioredis options.
  * @param overrides - ioredis options that win over `config`.
+ * @param logger - Where connection errors are reported; the process logger unless given.
  * @returns A connecting ioredis client.
  * @example
  * ```ts
@@ -29,7 +36,7 @@ import type { RedisConfig } from '../types.js';
  * );
  * ```
  */
-export const createRedis = (config: RedisConfig, overrides: RedisOptions = {}): Redis => {
+export const createRedis = (config: RedisConfig, overrides: RedisOptions = {}, logger?: Logger): Redis => {
 	// 1. A URL is taken apart here rather than handed to ioredis next to the overrides: ioredis keeps whatever the
 	//    URL carries — a `?maxRetriesPerRequest=20` query, a `/2` database — over options given beside it, the
 	//    opposite of what an override is for. Taken apart by ioredis's own parser, so every form it accepts — an
@@ -37,7 +44,18 @@ export const createRedis = (config: RedisConfig, overrides: RedisOptions = {}): 
 	//    that, the overrides win
 	const base = typeof config === 'string' ? fromUrl(config) : config;
 
-	return new Redis({ ...base, ...overrides });
+	// 2. The client itself, opened with the overrides laid over whatever the connection carried
+	const redis = new Redis({ ...base, ...overrides });
+
+	// 3. A failing connection — refused at boot, dropped and retried mid-run — surfaces as `error` events, and an
+	//    `error` event nothing listens for throws straight out of the event emitter; the listener turns that into a
+	//    log line. The logger is resolved on the error, not here, so a client that never errs builds no logger, and
+	//    a caller's own logger wins over the process one
+	redis.on('error', (error: Error) => {
+		(logger ?? useLogger()).error(error, 'Redis connection error');
+	});
+
+	return redis;
 };
 
 /**

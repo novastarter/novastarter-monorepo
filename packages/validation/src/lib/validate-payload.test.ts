@@ -164,6 +164,56 @@ describe('validatePayload', () => {
 		}
 	});
 
+	it('reports a value inside the _nbetween range as nbetween instead of throwing', () => {
+		// 1. The exact input `_nbetween` exists to reject surfaced as an unmapped `alternatives.match` before, which
+		//    crashed the converter with a plain error; it must come back as one structured validation error
+		const errors = validatePayload({ v: { _nbetween: [1, 3] } }, { v: 2 });
+
+		expect(errors).toHaveLength(1);
+		expect(errors[0]).toBeInstanceOf(FailedValidationError);
+		expect(errors[0]!.extensions).toStrictEqual({ field: 'v', path: [], type: 'nbetween', valid: [1, 3] });
+	});
+
+	it('reports a date inside the _nbetween range as nbetween with ISO bounds', () => {
+		// 1. The date form fails the same way; the bounds come back as the ISO strings the caller can echo
+		const errors = validatePayload(
+			{ v: { _nbetween: ['2024-01-01T00:00:00.000Z', '2024-01-03T00:00:00.000Z'] } },
+			{ v: '2024-01-02T00:00:00.000Z' },
+		);
+
+		expect(errors).toHaveLength(1);
+
+		expect(errors[0]!.extensions).toStrictEqual({
+			field: 'v',
+			path: [],
+			type: 'nbetween',
+			valid: ['2024-01-01T00:00:00.000Z', '2024-01-03T00:00:00.000Z'],
+		});
+	});
+
+	it('reports values failing malformed range and list operators as failed fields instead of throwing', () => {
+		// 1. A filter is caller-supplied data and may be malformed; the payload must not pay with a thrown
+		//    `TypeError` / Joi assert out of schema building — each `_in` / range rule degrades to the never-validating
+		//    schema, so the field fails as one structured error instead of the call crashing
+		const cases: [Filter, Record<string, unknown>][] = [
+			[{ v: { _in: 5 } } as Filter, { v: 'anything' }],
+			[{ v: { _gt: 'garbage' } }, { v: 'anything' }],
+			[{ v: { _between: [5] } }, { v: 5 }],
+			[{ v: { _nbetween: [Number.MAX_SAFE_INTEGER + 1, Number.MAX_SAFE_INTEGER + 2] } }, { v: 0 }],
+		];
+
+		for (const [filter, payload] of cases) {
+			const errors = validatePayload(filter, payload);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0]).toBeInstanceOf(FailedValidationError);
+			expect(errors[0]!.code).toBe('FAILED_VALIDATION');
+		}
+
+		// 2. A malformed `_nin` degrades the other way: forbidding nothing passes everything
+		expect(validatePayload({ v: { _nin: null } } as Filter, { v: 'anything' })).toStrictEqual([]);
+	});
+
 	describe('empty string against the substring operators', () => {
 		test.each([
 			['_contains', 'contains'],

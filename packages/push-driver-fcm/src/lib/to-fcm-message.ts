@@ -1,4 +1,4 @@
-import { type PushMessage, toCollapseId } from '@novastarter/push';
+import { type PushMessage, toCollapseId, toWebPushPayload } from '@novastarter/push';
 import type { TokenMessage } from 'firebase-admin/messaging';
 import type { PushDriverFcmConfig } from './driver.js';
 
@@ -7,10 +7,13 @@ import type { PushDriverFcmConfig } from './driver.js';
  * `notification` cannot.
  *
  * `data` goes out as given, with the click target under `url` for native clients; the web block gets the icon,
- * badge, image and tag and — for an `https:` target only, since FCM refuses anything else — the link. The image
- * reaches the common block and the APNs block only as an absolute `http(s):` URL, the one form FCM accepts there; a
- * relative one is delivered to the web block alone. A ttl of `0` is "now or never" on every platform; the tag is
- * sanitised by {@link toCollapseId} for the APNs collapse id, whose limit APNs enforces on what FCM relays.
+ * badge, image and tag and — for an `https:` target only, since FCM refuses anything else — the link, plus the
+ * stringified {@link toWebPushPayload} under `data.payload` (FCM data values are strings): FCM wraps the web block
+ * in its own envelope, so a service worker written against the kit's payload contract reads it back with one
+ * `JSON.parse` of `data.payload`. The image reaches the common block and the APNs block only as an absolute
+ * `http(s):` URL, the one form FCM accepts there; a relative one is delivered to the web block alone. A ttl of `0`
+ * is "now or never" on every platform; the tag is sanitised by {@link toCollapseId} for the APNs collapse id, whose
+ * limit APNs enforces on what FCM relays.
  *
  * @param message - The message, with its `token`.
  * @param config - The location's TTL and analytics label.
@@ -46,7 +49,12 @@ export const toFcmMessage = (
 		expiration = ttl > 0 ? String(Math.floor(now.getTime() / 1000) + ttl) : '0';
 	}
 
-	// 5. The common block carries the text; each platform block what only it understands
+	// 5. The raw Web Push payload as a string: FCM relays the webpush block in its own `{ notification, data }`
+	//    envelope, so a service worker written against the kit's payload contract gets the documented payload back
+	//    with one `JSON.parse` of `data.payload` — FCM data values are strings, hence the stringify
+	const payload = JSON.stringify(toWebPushPayload(message));
+
+	// 6. The common block carries the text; each platform block what only it understands
 	return {
 		token: message.token,
 		notification: {
@@ -66,7 +74,7 @@ export const toFcmMessage = (
 				...(expiration !== undefined ? { 'apns-expiration': expiration } : {}),
 				...(collapseId !== undefined ? { 'apns-collapse-id': collapseId } : {}),
 			},
-			// 6. An image needs the app's notification service extension to run: `mutable-content`
+			// 7. An image needs the app's notification service extension to run: `mutable-content`
 			payload: { aps: { sound: 'default', ...(image !== undefined ? { 'mutable-content': 1 } : {}) } },
 			...(image !== undefined ? { fcmOptions: { imageUrl: image } } : {}),
 		},
@@ -75,6 +83,7 @@ export const toFcmMessage = (
 				Urgency: message.urgency ?? 'normal',
 				...(ttl !== undefined ? { TTL: String(ttl) } : {}),
 			},
+			data: { payload },
 			notification: {
 				...(message.icon !== undefined ? { icon: message.icon } : {}),
 				...(message.badge !== undefined ? { badge: message.badge } : {}),

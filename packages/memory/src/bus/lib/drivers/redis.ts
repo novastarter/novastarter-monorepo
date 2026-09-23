@@ -1,3 +1,5 @@
+import { useLogger } from '@novastarter/logger';
+import { toError } from '@novastarter/utils';
 import type { Redis } from 'ioredis';
 import {
 	bufferToUint8Array,
@@ -159,7 +161,16 @@ export class BusDriverRedis implements BusDriver {
 		this.pub = config.redis;
 		this.sub = config.redis.duplicate();
 
-		// 2. One listener for every channel; the binary event keeps compressed payloads intact, and every message is
+		// 2. The duplicate is the driver's own connection, so an error on it is the driver's to handle: ioredis emits
+		//    `error` as a matter of course while a flapping connection retries, and an `error` event with no listener is
+		//    fatal to the host process — the failure is logged the way every other failure of the bus is, and the
+		//    connection keeps retrying underneath
+		this.sub.on('error', (error: Error) => {
+			// 1. `toError`, so whatever shape the connection failure has still reaches the log as an error
+			useLogger().warn(toError(error), 'The Redis subscriber connection of the bus failed');
+		});
+
+		// 3. One listener for every channel; the binary event keeps compressed payloads intact, and every message is
 		//    handled after the one before it, so an asynchronous decompression cannot reorder the stream
 		this.sub.on('messageBuffer', (channel, message) => {
 			// 1. Payload errors are handled inside the handler, but its logging can still throw; a rejection is
@@ -168,7 +179,7 @@ export class BusDriverRedis implements BusDriver {
 			this.inbox = this.inbox.then(() => this.messageBufferHandler(channel, message)).catch(() => {});
 		});
 
-		// 3. Apply the documented defaults: compress, but only from 1 kB up
+		// 4. Apply the documented defaults: compress, but only from 1 kB up
 		this.compression = config.compression ?? true;
 		this.compressionMinSize = config.compressionMinSize ?? 1000;
 		this.handlers = new Map();
@@ -287,12 +298,25 @@ export class BusDriverRedis implements BusDriver {
 	/**
 	 * Remove a callback from a channel, unsubscribing in Redis once the channel has no callbacks left.
 	 *
+	 * Once the bus is closed the call does nothing: {@link BusDriverRedis.close} has quit or dropped the subscribing
+	 * connection, so a Redis command issued now would sit in the offline queue of a connection that can never answer
+	 * and the promise would never settle.
+	 *
 	 * @typeParam T - Payload type the callback expects.
 	 * @param channel - Channel to unsubscribe from.
 	 * @param callback - The callback that was passed to `subscribe`.
 	 */
 	async unsubscribe<T = unknown>(channel: string, callback: MessageHandler<T>): Promise<void> {
-		// 1. Handlers are keyed by the namespaced name, the form Redis reports incoming messages under
+		// 1. A closed bus unsubscribes from nothing, and must not reach for the connection to do it: quit or dropped by
+		//    `close()`, it can no longer answer — on a never-ready connection the command waits in ioredis' offline
+		//    queue forever, and a caller cleaning up after or racing the close hangs on a promise that never settles.
+		//    `close()` dropped every handler set as well; the check states the invariant outright instead of relying on
+		//    the map being empty
+		if (this.closed) {
+			return;
+		}
+
+		// 2. Handlers are keyed by the namespaced name, the form Redis reports incoming messages under
 		const namespaced = withNamespace(channel, this.namespace);
 
 		const set = this.handlers.get(namespaced);
@@ -301,11 +325,11 @@ export class BusDriverRedis implements BusDriver {
 			return;
 		}
 
-		// 2. The set keeps handlers of `unknown` payloads, so the typed callback is cast to be found in it — the same
+		// 3. The set keeps handlers of `unknown` payloads, so the typed callback is cast to be found in it — the same
 		//    widening as on the way in through `subscribe`
 		set.delete(callback as MessageHandler<unknown>);
 
-		// 3. Drop the Redis subscription once nobody listens, so the connection stops receiving those messages
+		// 4. Drop the Redis subscription once nobody listens, so the connection stops receiving those messages
 		if (set.size === 0) {
 			this.handlers.delete(namespaced);
 
@@ -380,16 +404,17 @@ export class BusDriverRedis implements BusDriver {
 			return;
 		}
 
-		// 2. Decode the payload — compression is decided per payload on publish, so it is detected from the gzip
-		//    header. A payload this bus did not write, a foreign client's plain text or a truncated gzip, fails here;
-		//    the listener is fire-and-forget, so the failure is logged rather than left as an unhandled rejection
-		//    that would end the process
+		// 2. Decode the payload — compression is decided per payload on publish, so it is detected from the gzip header
+		//    alone: a payload gzipped by a publisher with compression on must read back fine for a bus with it off. A
+		//    payload this bus did not write, a foreign client's plain text or a truncated gzip, fails here; the listener
+		//    is fire-and-forget, so the failure is logged rather than left as an unhandled rejection that would end the
+		//    process
 		let payload: unknown;
 
 		try {
 			let binaryArray = bufferToUint8Array(message);
 
-			if (this.compression === true && isCompressed(binaryArray)) {
+			if (isCompressed(binaryArray)) {
 				binaryArray = await decompress(binaryArray);
 			}
 

@@ -12,33 +12,44 @@ describe('describeRefusal', () => {
 				status: 400,
 				ok: false,
 				body: { error: 'invalid_grant', error_description: 'Bad Request' },
+				headers: new Headers(),
 			}),
 		).toBe('invalid_grant: Bad Request');
 
-		expect(describeRefusal('the token endpoint', { status: 401, ok: false, body: { error: 'invalid_client' } })).toBe(
-			'invalid_client',
-		);
+		expect(
+			describeRefusal('the token endpoint', {
+				status: 401,
+				ok: false,
+				body: { error: 'invalid_client' },
+				headers: new Headers(),
+			}),
+		).toBe('invalid_client');
 	});
 
 	test('Falls back to the status for a body without an OAuth error', () => {
 		// 1. No body, a body that is not an object, or an object without `error`: the status is all there is
-		expect(describeRefusal('the token endpoint', { status: 503, ok: false, body: undefined })).toBe(
-			'the token endpoint answered 503',
-		);
+		expect(
+			describeRefusal('the token endpoint', { status: 503, ok: false, body: undefined, headers: new Headers() }),
+		).toBe('the token endpoint answered 503');
 
-		expect(describeRefusal('the user endpoint', { status: 500, ok: false, body: 'oops' })).toBe(
+		expect(describeRefusal('the user endpoint', { status: 500, ok: false, body: 'oops', headers: new Headers() })).toBe(
 			'the user endpoint answered 500',
 		);
 
-		expect(describeRefusal('the user endpoint', { status: 500, ok: false, body: { error: '' } })).toBe(
-			'the user endpoint answered 500',
-		);
+		expect(
+			describeRefusal('the user endpoint', { status: 500, ok: false, body: { error: '' }, headers: new Headers() }),
+		).toBe('the user endpoint answered 500');
 	});
 
 	test('Reads the message of a REST API refusal', () => {
 		// 1. `/user` answers a bad token with `{ message }`, which is worth more than the status alone
-		expect(describeRefusal('the user endpoint', { status: 401, ok: false, body: { message: 'Bad credentials' } })).toBe(
-			'the user endpoint answered 401: Bad credentials',
-		);
+		expect(
+			describeRefusal('the user endpoint', {
+				status: 401,
+				ok: false,
+				body: { message: 'Bad credentials' },
+				headers: new Headers(),
+			}),
+		).toBe('the user endpoint answered 401: Bad credentials');
 	});
 });

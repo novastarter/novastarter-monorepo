@@ -3,6 +3,7 @@
  *
  * `ioredis` is mocked, so these check what reaches the ioredis constructor rather than any real connection.
  */
+import { type Logger, registerLogger, useLogger } from '@novastarter/logger';
 import { Redis } from 'ioredis';
 import { afterEach, expect, test, vi } from 'vitest';
 import { createRedis } from './create-redis.js';
@@ -11,6 +12,9 @@ vi.mock('ioredis');
 
 afterEach(() => {
 	vi.clearAllMocks();
+
+	// 1. A test that registered a process logger must not leak it into the next one
+	useLogger.reset();
 });
 
 test("Takes a connection URL apart with ioredis's own parser and lays the overrides over what it carries", () => {
@@ -66,4 +70,32 @@ test('Returns the created client', () => {
 	const redis = createRedis('redis://localhost:6379');
 
 	expect(redis).toBe(vi.mocked(Redis).mock.instances[0]);
+});
+
+test('Reports a client error through the given logger instead of letting it crash the process', () => {
+	// 1. A caller's own logger receives the connection errors of the client it created; an `error` event with no
+	//    listener throws out of the event emitter, so the listener registered on the client must take it
+	const logger = { error: vi.fn() } as unknown as Logger;
+	const redis = createRedis('redis://cache.internal:6379', {}, logger);
+
+	// 2. The client registered an `error` listener; invoking it — what ioredis does on every failed reconnect of a
+	//    server that is down at boot or drops mid-run — reports the error and throws nowhere
+	const listener = vi.mocked(redis.on).mock.calls.find(([event]) => event === 'error')![1] as (error: Error) => void;
+
+	expect(() => listener(new Error('connect ECONNREFUSED 10.0.0.8:6379'))).not.toThrow();
+	expect(logger.error).toHaveBeenCalledWith(expect.any(Error), 'Redis connection error');
+});
+
+test('Reports a client error through the process logger when none is given', () => {
+	// 1. No logger of its own: the process-wide one takes the line — the path every RedisManager location's client
+	//    takes, which is the one an unhandled `error` event would crash
+	registerLogger({ error: vi.fn() } as unknown as Logger<never>);
+
+	const redis = createRedis('redis://cache.internal:6379');
+
+	// 2. Emitting the error — ioredis's plain `emit`, the path that throws with no listener — must log and not throw
+	const listener = vi.mocked(redis.on).mock.calls.find(([event]) => event === 'error')![1] as (error: Error) => void;
+
+	expect(() => listener(new Error('Command queue state error'))).not.toThrow();
+	expect(useLogger().error).toHaveBeenCalledWith(expect.any(Error), 'Redis connection error');
 });

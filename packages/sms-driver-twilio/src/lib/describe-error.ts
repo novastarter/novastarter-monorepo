@@ -1,4 +1,5 @@
-import { toErrorMessage } from '@novastarter/utils';
+import { DEFAULT_REQUEST_TIMEOUT } from '@novastarter/http';
+import { TimeoutError, toErrorMessage } from '@novastarter/utils';
 import twilio from 'twilio';
 
 /**
@@ -44,10 +45,14 @@ export const describeError = (error: unknown): Error => {
  * Describe a failure of the SDK's HTTP client — a timeout, a refused connection — without keeping the error itself.
  *
  * An axios error holds the request config, the `Authorization` header with the account's credentials included, so
- * the error returned names its code and message only and has no `cause`.
+ * the error returned names its code and message only and has no `cause`. One exception: the axios timeout —
+ * `ECONNABORTED` — becomes the kit's `TimeoutError` with the deadline the request config carried. The SDK is given the
+ * same deadline `call()` races it against, so the axios timeout almost always wins the race; reported as a plain
+ * error, it would slip past every caller matching `TimeoutError`.
  *
  * @param error - What the SDK's client threw.
- * @returns A plain error naming the code and the message, with no cause.
+ * @returns The kit's `TimeoutError` for the SDK's axios timeout; otherwise a plain error naming the code and the
+ * message, with no cause.
  * @example
  * ```ts
  * await client.request(options).catch((error: unknown) => {
@@ -58,9 +63,39 @@ export const describeError = (error: unknown): Error => {
 export const describeTransportError = (error: unknown): Error => {
 	// 1. The code (`ECONNABORTED`, `ENOTFOUND`) is what a caller matches on; the message of axios names no header
 	const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
+
+	// 2. The axios timeout is the kit's TimeoutError, so a caller matching it catches the race the SDK usually wins;
+	//    the error itself — config with the credentials included — is still dropped, only the deadline is read off it
+	if (code === 'ECONNABORTED') {
+		return new TimeoutError(deadlineOf(error));
+	}
+
 	const prefix = typeof code === 'string' && code ? `${code}: ` : '';
 
 	return new Error(`Twilio: ${prefix}${toErrorMessage(error)}`);
+};
+
+/**
+ * Read the deadline an axios timeout aborted on — the `timeout` of the request config the error carries.
+ *
+ * The config itself is never kept: it holds the `Authorization` header. Only the deadline number is taken, and an
+ * error without one — hand-rolled in a test, cut down by a wrapper — falls back to the SDK's default request timeout.
+ *
+ * @param error - The axios error, or one shaped like it.
+ * @returns The deadline in milliseconds.
+ * @internal
+ */
+const deadlineOf = (error: unknown): number => {
+	// 1. The config is reached for its `timeout` field only
+	const config =
+		typeof error === 'object' && error !== null && 'config' in error
+			? (error.config as { timeout?: unknown } | undefined)
+			: undefined;
+
+	const timeout = config?.timeout;
+
+	// 2. No usable deadline on the error: the SDK's own default is the closest there is
+	return typeof timeout === 'number' && Number.isFinite(timeout) ? timeout : DEFAULT_REQUEST_TIMEOUT;
 };
 
 /**

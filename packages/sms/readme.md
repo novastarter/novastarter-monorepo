@@ -88,9 +88,12 @@ releases the drivers built so far at shutdown and keeps the registrations. `regi
 4. Picks the chain: `transactional` / `marketing` by `category`; without routes every location in registration order is
    the chain. Names the manager does not know are dropped, and a rule left with no name at all is passed over.
 5. Tries the chain in order. A location whose limiter is spent is skipped, and so is one whose driver throws (logged as
-   a warning).
+   a warning) — except a partial delivery: a driver error with the code `SMS_PARTIAL_DELIVERY` means the provider
+   accepted some parts of a long text and those are already on their way, so the error is rethrown as-is rather than
+   sent through the next location, which would deliver those parts again.
 6. Emits `sms.sent` with the location and the result, or `sms.failed` and throws: the limiter's `HitRateLimitError` when
-   the limit was all that stood in the way, otherwise an `Error` with the last failure as `cause`.
+   the limit was all that stood in the way, otherwise an `Error` with the last failure as `cause`. A partial delivery
+   throws the driver's error itself and emits neither.
 
 An explicit `location` short-circuits the routes; it has to be registered, a name nobody registered throws before
 anything is sent or logged. The routes carry everything the chain needs:

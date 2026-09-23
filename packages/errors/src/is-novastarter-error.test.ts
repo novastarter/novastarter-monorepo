@@ -41,6 +41,17 @@ test('Reports false for non Novastarter-errors', () => {
 	}
 });
 
+test('Reports false instead of throwing for a revoked Proxy', () => {
+	// 1. A revoked Proxy throws a TypeError on every structural probe (`Array.isArray`, `in`, property reads), so it
+	//    exercises the guard's totality: caught `unknown` values must be safe to pass
+	const { proxy, revoke } = Proxy.revocable<Record<string, unknown>>({}, {});
+	revoke();
+
+	// 2. Both the plain check and the code check must return false rather than throw
+	expect(isNovastarterError(proxy)).toBe(false);
+	expect(isNovastarterError(proxy, sample.code)).toBe(false);
+});
+
 test('Reports true for Novastarter error', () => {
 	const SampleError = createError(sample.code, sample.message, sample.status);
 	const error = new SampleError();

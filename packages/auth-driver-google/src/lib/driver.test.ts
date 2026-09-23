@@ -7,7 +7,7 @@
 import { AuthProviderFailedError } from '@novastarter/auth';
 import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
-import { createLocalJWKSet, type CryptoKey, exportJWK, generateKeyPair, SignJWT } from 'jose';
+import { createLocalJWKSet, type CryptoKey, exportJWK, generateKeyPair, type JWK, SignJWT } from 'jose';
 import { beforeAll, describe, expect, test, vi } from 'vitest';
 import defaultExport from '../index.js';
 import { JWKS_URL, TOKEN_URL } from './constants.js';
@@ -15,17 +15,20 @@ import { AuthDriverGoogle } from './driver.js';
 import type { AuthFetch } from './request.js';
 
 /**
- * The key Google would sign with, and the local set holding its public half.
+ * The key Google would sign with, the local set holding its public half, and that public half alone — what a fake
+ * publishes at the key set's URL.
  */
 let privateKey: CryptoKey;
 let jwks: ReturnType<typeof createLocalJWKSet>;
+let publicJwk: JWK;
 
 beforeAll(async () => {
 	// 1. One RS256 pair for the whole file: generating keys is the slow part
 	const pair = await generateKeyPair('RS256');
 
 	privateKey = pair.privateKey;
-	jwks = createLocalJWKSet({ keys: [{ ...(await exportJWK(pair.publicKey)), kid: 'k1', alg: 'RS256' }] });
+	publicJwk = { ...(await exportJWK(pair.publicKey)), kid: 'k1', alg: 'RS256' };
+	jwks = createLocalJWKSet({ keys: [publicJwk] });
 });
 
 /**
@@ -168,6 +171,39 @@ describe('AuthDriverGoogle', () => {
 				RangeError,
 			);
 		}
+	});
+
+	test('Reads the key set of a callback through the injected fetch, redirect and all', async () => {
+		// 1. No local key set is handed in, so the callback must fetch Google's — over the injected fetch, or a location
+		//    behind an egress proxy would read it around the fetch it configured
+		const fetch = vi.fn<AuthFetch>(async (url) => {
+			if (url === TOKEN_URL) {
+				return {
+					status: 200,
+					ok: true,
+					text: async () => JSON.stringify({ access_token: 'at', id_token: await idToken('nonce-1') }),
+				};
+			}
+
+			if (url === JWKS_URL) {
+				return { status: 200, ok: true, text: async () => JSON.stringify({ keys: [publicJwk] }) };
+			}
+
+			return { status: 599, ok: false, text: async () => '' };
+		});
+
+		const driver = new AuthDriverGoogle({ clientId: 'client-1', clientSecret: 'secret-1', fetch });
+
+		await expect(driver.callback(callbackParams)).resolves.toMatchObject({
+			subject: '1234567890',
+			email: 'ada@example.com',
+		});
+
+		// 2. The key set came from the injected fetch, asked to keep redirects manual so nothing is followed
+		const jwksCall = fetch.mock.calls.find(([url]) => url === JWKS_URL);
+
+		expect(jwksCall).toBeDefined();
+		expect((jwksCall![1] as { redirect?: string }).redirect).toBe('manual');
 	});
 
 	test('Verifies by reading the key set', async () => {

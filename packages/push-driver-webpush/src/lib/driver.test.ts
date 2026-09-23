@@ -73,6 +73,32 @@ describe('PushDriverWebPush', () => {
 		);
 	});
 
+	test('Refuses malformed keys at construction, before any send', () => {
+		// 1. The usual copy-paste mistakes — a truncated key, padding characters, a key that decodes to the wrong
+		//    length — must fail here at registration, not on every send with the library's raw error
+		expect(() => new PushDriverWebPush({ ...keys, publicKey: keys.publicKey.slice(0, 10), subject })).toThrow(
+			/not valid URL-safe base64/,
+		);
+
+		expect(() => new PushDriverWebPush({ ...keys, publicKey: `${keys.publicKey}=`, subject })).toThrow(
+			/not valid URL-safe base64/,
+		);
+
+		expect(() => new PushDriverWebPush({ ...keys, privateKey: 'not-a-key', subject })).toThrow(
+			/not valid URL-safe base64/,
+		);
+
+		// 2. The library's own complaint stays on as the cause, naming the key it rejects
+		try {
+			new PushDriverWebPush({ ...keys, privateKey: 'not-a-key', subject });
+			expect.unreachable();
+		} catch (error) {
+			expect(error).toBeInstanceOf(Error);
+			expect((error as Error).cause).toBeInstanceOf(Error);
+			expect(((error as Error).cause as Error).message).toMatch(/Vapid private key/);
+		}
+	});
+
 	test('Posts the JSON payload with the VAPID details and answers the status', async () => {
 		const { driver, sendNotification } = build();
 
@@ -128,11 +154,11 @@ describe('PushDriverWebPush', () => {
 		// 1. A generated pair passes
 		await expect(build().driver.verify()).resolves.toBeUndefined();
 
-		// 2. A private key of another pair, or a key that does not decode, fails before any push does
+		// 2. A private key of another pair fails before any push does — the decode-and-length check moved to the
+		//    constructor, so keys that do not parse never reach `verify()`
 		const other = webpush.generateVAPIDKeys();
 
 		await expect(build({ privateKey: other.privateKey }).driver.verify()).rejects.toThrow(/VAPID keys are invalid/);
-		await expect(build({ publicKey: 'not-a-key' }).driver.verify()).rejects.toThrow(/VAPID keys are invalid/);
 	});
 
 	test('Is the default export too', () => {

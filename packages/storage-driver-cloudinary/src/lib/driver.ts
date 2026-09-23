@@ -215,7 +215,7 @@ export class StorageDriverCloudinary implements TusDriver {
 	 *
 	 * @param config - Credentials and behaviour options.
 	 * @throws Error when `cloudName`, `apiKey` or `apiSecret` is missing, or when resumable uploads are enabled with a
-	 * chunk size below {@link MINIMUM_CHUNK_SIZE}.
+	 * `chunkSize` that is not at least {@link MINIMUM_CHUNK_SIZE}.
 	 */
 	constructor(config: StorageDriverCloudinaryConfig) {
 		// 1. Refuse a missing credential here: every request is signed with it, and Cloudinary would only answer 401
@@ -237,8 +237,10 @@ export class StorageDriverCloudinary implements TusDriver {
 		this.accessMode = config.accessMode;
 
 		// 3. Cloudinary rejects chunks smaller than 5 MB, so a TUS chunk size below that would fail on every upload;
-		//    refuse it at construction instead
-		if (config.tus?.enabled && config.tus.chunkSize && config.tus?.chunkSize < MINIMUM_CHUNK_SIZE) {
+		//    refuse it at construction. The check is written as `!(size >= MINIMUM)`, the NaN-safe form the azure and S3
+		//    drivers use, since comparisons never catch NaN: kept as the per-chunk bound, a zero would refuse every chunk
+		//    and NaN would silently disable the limit `writeChunk` enforces
+		if (config.tus?.enabled && config.tus.chunkSize !== undefined && !(config.tus.chunkSize >= MINIMUM_CHUNK_SIZE)) {
 			throw new Error('The cloudinary storage driver got a "tus.chunkSize" below 5 MB');
 		}
 

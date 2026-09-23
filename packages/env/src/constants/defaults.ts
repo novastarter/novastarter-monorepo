@@ -1,5 +1,3 @@
-import { resolve } from 'node:path';
-import { cwd } from 'node:process';
 import type { Env } from '../types/env.js';
 
 /**
@@ -8,8 +6,12 @@ import type { Env } from '../types/env.js';
  * Applied before the process environment and the config file, so anything set there wins. Defaults of the
  * application's own variables belong in its schema, not here.
  *
- * @defaultValue `CONFIG_PATH` resolves to `.env` in the working directory.
+ * `CONFIG_PATH` is kept relative and resolved against the working directory when `getConfigPath` reads it, so an
+ * application that changes directory between import and the first `useEnv()` still reads the config file of the
+ * directory it ends up in.
+ *
+ * @defaultValue `CONFIG_PATH` is `.env`, resolved to the working directory at lookup time.
  */
 export const DEFAULTS: Env = {
-	CONFIG_PATH: resolve(cwd(), '.env'),
+	CONFIG_PATH: '.env',
 };

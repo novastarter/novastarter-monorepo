@@ -111,10 +111,13 @@ export class AiManager {
 	 * The replacement is whole: registering again without `options.api` drops the API registered before, so
 	 * {@link call} never sends the old credentials along with a new provider.
 	 *
-	 * @param name - What model ids name it by: `openai` in `openai:gpt-5-mini`; must not contain a colon.
+	 * @param name - What model ids name it by: `openai` in `openai:gpt-5-mini`; must not contain a colon, nor be
+	 * `__proto__`.
 	 * @param provider - The provider, as its `@ai-sdk/*` package builds it.
 	 * @param options - The provider's HTTP API, when the application wants {@link call} for it.
 	 * @throws Error when the name is empty or contains a colon, since no model id could name it.
+	 * @throws Error when the name is `__proto__`, since the records are plain objects and the assignment would swap
+	 * their prototype instead of registering the provider.
 	 * @throws Error when `options.api.baseURL` is not an http(s) URL.
 	 * @example
 	 * ```ts
@@ -127,9 +130,11 @@ export class AiManager {
 	 * ```
 	 */
 	registerProvider(name: string, provider: AiProvider, options: AiProviderOptions = {}): void {
-		// 1. The colon separates the provider from the model in an id, so a name holding one could never be reached
-		if (name === '' || name.includes(':')) {
-			throw new Error(`AI provider name "${name}" must be non-empty and must not contain ":"`);
+		// 1. The colon separates the provider from the model in an id, so a name holding one could never be reached;
+		//    `__proto__` passes that rule, but the assignment below would invoke the Object.prototype setter on the plain
+		//    records objects and swap their prototype instead of registering the provider, leaving it unreachable
+		if (name === '' || name.includes(':') || name === '__proto__') {
+			throw new Error(`AI provider name "${name}" must be non-empty, must not contain ":" and must not be "__proto__"`);
 		}
 
 		// 2. A base URL that does not parse would only fail on the first call, far from the configuration that set it;

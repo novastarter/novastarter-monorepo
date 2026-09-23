@@ -56,8 +56,9 @@ export const createHttpLogger = (options: CreateHttpLoggerOptions): HttpLogger =
 
 	// 2. Ignored paths are matched on the pathname only, so a query string cannot un-silence them. The built `ignore`
 	//    is layered over the caller's own `autoLogging` rather than replacing it wholesale; a boolean `autoLogging`
-	//    carries no settings, so only an object is spread
-	if (options.ignorePaths?.length) {
+	//    carries no settings, so only an object is spread. `false` is left alone: pino-http gates completion logging
+	//    on `autoLogging !== false`, and an object built here would replace the boolean and switch it back on
+	if (options.ignorePaths?.length && httpOptions.autoLogging !== false) {
 		const ignorePathsSet = new Set(options.ignorePaths);
 		const callerAutoLogging = typeof httpOptions.autoLogging === 'object' ? httpOptions.autoLogging : undefined;
 

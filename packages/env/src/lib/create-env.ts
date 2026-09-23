@@ -104,7 +104,20 @@ export const createEnv = (options: CreateEnvOptions = {}): Env => {
 		// 11. A cast prefix on a source value is applied; everything else is kept as the source gave it. A payload the
 		//     prefix cannot read is reported with the variable's name, which the cast alone does not know
 		try {
-			output[key] = cast(value);
+			// 12. A plain assignment of a `__proto__` key runs the `Object.prototype` setter and swaps the returned
+			//     object's prototype: dynamic lookups then resolve through the attacker's object while `Object.entries`
+			//     stays clean, bypassing the guard `parseJSON` carries for exactly this key. Defining the property
+			//     stores the value as an own data property instead, like any other variable
+			if (key === '__proto__') {
+				Object.defineProperty(output, key, {
+					value: cast(value),
+					enumerable: true,
+					writable: true,
+					configurable: true,
+				});
+			} else {
+				output[key] = cast(value);
+			}
 		} catch (error) {
 			throw new Error(`Environment variable "${key}": ${toErrorMessage(error)}`, { cause: error });
 		}

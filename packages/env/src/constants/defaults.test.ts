@@ -1,16 +1,14 @@
 /**
  * Tests of `env/constants/defaults`.
  */
-import { resolve } from 'node:path';
-import { cwd } from 'node:process';
 import { expect, expectTypeOf, test } from 'vitest';
 import type { Env } from '../types/env.js';
 import { DEFAULTS } from './defaults.js';
 
-test('Points CONFIG_PATH at .env in the working directory', () => {
-	// 1. The fallback is the conventional dotenv location, resolved so a change of working directory cannot break
-	//    the lookup later
-	expect(DEFAULTS['CONFIG_PATH']).toBe(resolve(cwd(), '.env'));
+test('Keeps CONFIG_PATH relative, so the working directory at lookup time decides', () => {
+	// 1. The default is the conventional dotenv name, resolved lazily by getConfigPath; resolving it here at import
+	//    time would freeze the directory of the first import and ignore a later chdir
+	expect(DEFAULTS['CONFIG_PATH']).toBe('.env');
 });
 
 test('Is typed as the parsed configuration', () => {

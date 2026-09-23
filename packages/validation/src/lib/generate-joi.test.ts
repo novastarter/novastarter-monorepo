@@ -332,6 +332,29 @@ describe(`generateJoi`, () => {
 		expect(error).toBeUndefined();
 	});
 
+	it(`fails every value for an _in match with a non-array, non-string value`, () => {
+		// 1. A number cannot hold a list of allowed values: spreading it would throw a `TypeError`, so the rule
+		//    degrades to the never-validating schema the malformed compare values get — the documented string spread
+		//    above keeps working
+		expectSchema({ field: { _in: 5 } }, Joi.any().equal(true));
+
+		// 2. Behaviourally: whatever the payload holds, the field fails — the schema still builds and validates
+		const { error } = generateJoi({ field: { _in: 5 } } as unknown as FieldFilter).validate({ field: 'anything' });
+
+		expect(error).toBeDefined();
+	});
+
+	it(`passes every value for a _nin match with a non-array, non-string value`, () => {
+		// 1. `null` cannot hold forbidden values, so forbidding nothing passes everything, like the empty list above —
+		//    instead of throwing a `TypeError` on the spread of a non-iterable
+		expectSchema({ field: { _nin: null } }, Joi.any());
+
+		// 2. Behaviourally: whatever the payload holds, the field passes
+		const { error } = generateJoi({ field: { _nin: null } } as unknown as FieldFilter).validate({ field: 'anything' });
+
+		expect(error).toBeUndefined();
+	});
+
 	it(`returns the correct schema for an _gt number match`, () => {
 		// 1. A numeric compare value selects the number schema, where "greater" is the exclusive bound
 		expectSchema({ field: { _gt: 1 } }, Joi.number().greater(1));
@@ -391,6 +414,22 @@ describe(`generateJoi`, () => {
 		// 1. A string that does not parse as a number is read as a date
 		expectSchema({ field: { _lte: date.toISOString() } }, Joi.date().max(date));
 	});
+
+	it.each(['_gt', '_gte', '_lt', '_lte'])(
+		`fails every value for %s with a string bound that is neither numeric nor a date`,
+		(operator) => {
+			// 1. An unparseable string bound can never be reached by a real value: the rule degrades to the
+			//    never-validating schema, instead of Joi throwing an assert at schema-build time
+			expectSchema({ field: { [operator]: 'garbage' } }, Joi.any().equal(true));
+
+			// 2. Behaviourally: the schema builds and whatever the payload holds, the field fails
+			const { error } = generateJoi({ field: { [operator]: 'garbage' } } as FieldFilter).validate({
+				field: 'anything',
+			});
+
+			expect(error).toBeDefined();
+		},
+	);
 
 	it(`returns the correct schema for an _null match`, () => {
 		// 1. The null check is an allow list with a single entry, so it reports as `any.only`
@@ -471,6 +510,34 @@ describe(`generateJoi`, () => {
 		expect(schema.validate({ field: 2 }).error).not.toBeUndefined();
 		expect(schema.validate({ field: 0 }).error).toBeUndefined();
 		expect(schema.validate({ field: 4 }).error).toBeUndefined();
+	});
+
+	it.each(['_between', '_nbetween'])(`fails every value for %s with fewer than two bounds`, (operator) => {
+		// 1. One bound leaves the other `undefined`, and Joi rejects `min` / `max` of `undefined` with an assert at
+		//    schema-build time: the rule degrades to the never-validating schema instead
+		expectSchema({ field: { [operator]: [5] } }, Joi.any().equal(true));
+
+		// 2. Behaviourally: the schema builds and whatever the payload holds, the field fails
+		const { error } = generateJoi({ field: { [operator]: [5] } } as FieldFilter).validate({ field: 'anything' });
+
+		expect(error).toBeDefined();
+	});
+
+	it.each(['_between', '_nbetween'])(`fails every value for %s with unsafe numeric bounds`, (operator) => {
+		// 1. Bounds above `Number.MAX_SAFE_INTEGER` are neither safe numbers nor dates: the pair degrades to the
+		//    never-validating schema, instead of the date branch rejecting the raw numbers with an assert at
+		//    schema-build time
+		expectSchema(
+			{ field: { [operator]: [Number.MAX_SAFE_INTEGER + 1, Number.MAX_SAFE_INTEGER + 2] } },
+			Joi.any().equal(true),
+		);
+
+		// 2. Behaviourally: whatever the payload holds, the field fails
+		const { error } = generateJoi({
+			field: { [operator]: [Number.MAX_SAFE_INTEGER + 1, Number.MAX_SAFE_INTEGER + 2] },
+		} as FieldFilter).validate({ field: 'anything' });
+
+		expect(error).toBeDefined();
 	});
 
 	it(`returns the correct schema for an _submitted match`, () => {

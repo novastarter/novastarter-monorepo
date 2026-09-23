@@ -7,6 +7,10 @@ import type { ExtensionsMap } from './types.js';
  * The check is structural (`name === 'NovastarterError'`) instead of `instanceof`, because every `createError` call
  * yields its own class and the error may have been created by another copy of this package.
  *
+ * The guard never throws: it is meant for values caught as `unknown`, and a hostile value such as a revoked Proxy
+ * throws on every structural probe (`Array.isArray`, `in`, property reads), so anything that throws while being
+ * probed is reported as `false` instead.
+ *
  * @typeParam T - Extensions type to narrow to when it cannot be derived from `code`; pass it for codes outside
  * {@link ExtensionsMap}, otherwise the extensions stay `unknown`.
  * @typeParam C - Code being checked, used to look the extensions up in {@link ExtensionsMap}.
@@ -30,20 +34,29 @@ export const isNovastarterError = <T = never, C extends string = string>(
 ): value is NovastarterError<
 	[T] extends [never] ? (C extends keyof ExtensionsMap ? ExtensionsMap[C] : unknown) : T
 > => {
-	// 1. Only a non-array object carrying the shared name qualifies; arrays are objects too, hence the extra check.
-	//    The local is named `matches` rather than after the exported function, so the two never shadow each other
-	const matches =
-		typeof value === 'object' &&
-		value !== null &&
-		Array.isArray(value) === false &&
-		'name' in value &&
-		value.name === 'NovastarterError';
+	// 1. Probe the value inside a try block: a hostile object such as a revoked Proxy throws on every structural
+	//    probe (`Array.isArray`, `in`, property reads), and a guard applied to caught `unknown` values must be
+	//    total — anything that throws while being probed is simply not a match
+	try {
+		// 2. Only a non-array object carrying the shared name qualifies; arrays are objects too, hence the extra
+		//    check. The local is named `matches` rather than after the exported function, so the two never shadow
+		//    each other
+		const matches =
+			typeof value === 'object' &&
+			value !== null &&
+			Array.isArray(value) === false &&
+			'name' in value &&
+			value.name === 'NovastarterError';
 
-	// 2. When a code is requested, compare it upper-cased, the way `createError` stores it
-	if (code) {
-		return matches && 'code' in value && value.code === code.toUpperCase();
+		// 3. When a code is requested, compare it upper-cased, the way `createError` stores it
+		if (code) {
+			return matches && 'code' in value && value.code === code.toUpperCase();
+		}
+
+		// 4. Without a code any Novastarter error matches
+		return matches;
+	} catch {
+		// 5. A value that fights the probe cannot be a Novastarter error, and the guard must not throw
+		return false;
 	}
-
-	// 3. Without a code any Novastarter error matches
-	return matches;
 };

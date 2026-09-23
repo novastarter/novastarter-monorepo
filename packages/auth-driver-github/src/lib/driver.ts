@@ -172,6 +172,7 @@ export class AuthDriverGithub implements AuthDriver {
 	 * the avatar; and under `tokens` the access token with the scopes granted, and the refresh token and expiry of an
 	 * expiring one.
 	 * @throws AuthProviderFailedError when GitHub refuses the code, or a profile request fails.
+	 * @throws HitRateLimitError when GitHub refuses the addresses for a spent rate limit, reset at GitHub's wait.
 	 */
 	async callback(params: CallbackParams): Promise<OAuthCallbackResult> {
 		// 1. The code, bound to this sign-in by the PKCE verifier, buys the tokens

@@ -1,7 +1,7 @@
 import { AuthProviderFailedError } from '@novastarter/auth';
 import { toErrorMessage } from '@novastarter/utils';
 import { type JWTPayload, jwtVerify, type JWTVerifyGetKey } from 'jose';
-import { ISSUERS, PROVIDER } from './constants.js';
+import { CLOCK_TOLERANCE, ISSUERS, PROVIDER } from './constants.js';
 
 /**
  * What an ID token is checked against.
@@ -19,8 +19,9 @@ export interface VerifyIdTokenOptions {
  * Verify an ID token from Google and answer its claims.
  *
  * The signature (RS256 only, so a token cannot choose a weaker algorithm), the issuer, the audience and the expiry
- * are checked by `jose`; the nonce is checked here, since it ties the token to the sign-in `startOAuth()` began, and
- * a token without a subject is refused, as the subject is what identifies the person.
+ * are checked by `jose`, with {@link CLOCK_TOLERANCE} of clock skew allowed — a server a few seconds fast must not
+ * reject a token in the last moments of its validity; the nonce is checked here, since it ties the token to the
+ * sign-in `startOAuth()` began, and a token without a subject is refused, as the subject is what identifies the person.
  *
  * @param idToken - The compact JWT from the token endpoint.
  * @param options - The keys, the audience and the nonce.
@@ -32,7 +33,8 @@ export interface VerifyIdTokenOptions {
  * ```
  */
 export const verifyIdToken = async (idToken: string, options: VerifyIdTokenOptions): Promise<JWTPayload> => {
-	// 1. `jose` checks the signature, the issuer, the audience and the time claims in one go
+	// 1. `jose` checks the signature, the issuer, the audience and the time claims in one go; the tolerance forgives a
+	//    verifying clock a little ahead of Google's, so a token at the end of its life is not refused by skew alone
 	let payload: JWTPayload;
 
 	try {
@@ -40,6 +42,7 @@ export const verifyIdToken = async (idToken: string, options: VerifyIdTokenOptio
 			issuer: ISSUERS,
 			audience: options.audience,
 			algorithms: ['RS256'],
+			clockTolerance: CLOCK_TOLERANCE,
 		}));
 	} catch (error) {
 		throw new AuthProviderFailedError(

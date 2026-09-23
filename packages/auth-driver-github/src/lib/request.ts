@@ -43,6 +43,8 @@ export interface ProviderResponse {
 	ok: boolean;
 	/** The parsed JSON body; `undefined` for a body that is empty or not JSON. */
 	body: unknown;
+	/** The response headers; empty when the answer carries none, as a narrow fake's does not. */
+	headers: Headers;
 }
 
 /**
@@ -54,7 +56,7 @@ export interface ProviderResponse {
  * @param context - The fetch and the deadline.
  * @param url - Where to send.
  * @param init - The method, the headers and the body.
- * @returns The status and the parsed body.
+ * @returns The status, the headers and the parsed body.
  * @throws AuthProviderFailedError when the request fails or outlives the deadline, with the original as the cause.
  * @example
  * ```ts
@@ -70,7 +72,15 @@ export const request = async (context: RequestContext, url: string, init: Reques
 			const response = await context.fetch(url, { ...init, signal });
 			const text = await response.text();
 
-			return { status: response.status, ok: response.ok, body: tryParseJSON(text) };
+			// 2. The headers are read too: a refusal may name a rate limit in them, which the caller must not miss
+			const { headers } = response as { headers?: unknown };
+
+			return {
+				status: response.status,
+				ok: response.ok,
+				body: tryParseJSON(text),
+				headers: headers instanceof Headers ? headers : new Headers(),
+			};
 		}, context.timeout);
 	} catch (error) {
 		// 2. No answer at all is still the provider failing, reported the same way as a refusal

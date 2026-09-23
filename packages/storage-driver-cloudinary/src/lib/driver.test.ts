@@ -255,6 +255,24 @@ describe('#constructor', () => {
 		).toThrowErrorMatchingInlineSnapshot(`[Error: The cloudinary storage driver got a "tus.chunkSize" below 5 MB]`);
 	});
 
+	test.each([[0], [Number.NaN]])(
+		'Refuses a chunk size of %s that comparisons never catch when resumable uploads are on',
+		(chunkSize) => {
+			// 1. A zero or NaN size slips through every truthiness or threshold comparison: kept as the per-chunk bound,
+			//    a zero refuses every chunk that arrives and NaN silently disables the limit `writeChunk` enforces
+			expect(
+				() =>
+					new StorageDriverCloudinary({
+						cloudName: sample.config.cloudName,
+						apiKey: sample.config.apiKey,
+						apiSecret: sample.config.apiSecret,
+						accessMode: sample.config.accessMode,
+						tus: { enabled: true, chunkSize },
+					}),
+			).toThrowError('The cloudinary storage driver got a "tus.chunkSize" below 5 MB');
+		},
+	);
+
 	test('Saves apiKey internally', () => {
 		// 1. The key is sent with every signed request, so it has to survive construction unchanged
 		expect(driver['apiKey']).toBe(sample.config.apiKey);

@@ -21,7 +21,7 @@ export const DEFAULT_TELEGRAM_TIMEOUT = 30_000;
  * Options accepted by {@link MessengerDriverTelegram}.
  */
 export type MessengerDriverTelegramConfig = {
-	/** The bot's token, from @BotFather. */
+	/** The bot's token from @BotFather: `<bot id>:<hash>`. */
 	token: string;
 	/** The Bot API server: a local one, or a fake in tests; {@link TELEGRAM_API_URL} unless given. */
 	apiUrl?: string | undefined;
@@ -91,7 +91,7 @@ export class MessengerDriverTelegram implements MessengerDriver {
 	 * Create the driver from its location options.
 	 *
 	 * @param config - The token, and the server, timeout and format when not the defaults.
-	 * @throws Error without a token, or with an `apiUrl` that is not a URL.
+	 * @throws Error without a token, with a token that is not `<id>:<hash>`, or with an `apiUrl` that is not a URL.
 	 */
 	constructor(config: MessengerDriverTelegramConfig) {
 		// 1. A missing token would only fail on the first message, far from the configuration that forgot it
@@ -99,7 +99,14 @@ export class MessengerDriverTelegram implements MessengerDriver {
 			throw new Error('The Telegram driver needs a bot "token"');
 		}
 
-		// 2. A server that is not a URL is refused here, on its own: the URL a call builds holds the token, and the
+		// 2. The token goes into the request URL raw, so one holding `#`, `?` or `/` would split the path and end as a
+		//    confusing 404. A bot token is `<id>:<hash>`; anything else is refused here, at construction, and the value
+		//    is left out of the message — it is a secret
+		if (!/^\d+:[\w-]+$/.test(config.token)) {
+			throw new Error('The Telegram driver\'s "token" is not a bot token of the shape "<id>:<hash>"');
+		}
+
+		// 3. A server that is not a URL is refused here, on its own: the URL a call builds holds the token, and the
 		//    `TypeError` of an invalid one would carry it in its `input`. The value is left out of the message too
 		const apiUrl = (config.apiUrl ?? TELEGRAM_API_URL).replace(/\/+$/, '');
 
@@ -109,7 +116,7 @@ export class MessengerDriverTelegram implements MessengerDriver {
 			throw new Error('The Telegram driver\'s "apiUrl" is not a valid URL');
 		}
 
-		// 3. A trailing slash on the server, dropped above, would double up in every URL
+		// 4. A trailing slash on the server, dropped above, would double up in every URL
 		this.config = {
 			token: config.token,
 			apiUrl,

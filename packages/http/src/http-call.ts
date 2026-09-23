@@ -344,7 +344,8 @@ const globalFetch: HttpCallFetch = (input, { body, ...init }) => {
  * `fetch` would follow a redirect by itself and drop only `Authorization` on the way to another host; a key in a header
  * of the provider's own — `x-api-key`, `X-Postmark-Server-Token` — would go along. Here a redirect on the same origin
  * keeps every header, one to another origin keeps none but `accept`, must stay on TLS and may not carry a body, and a
- * `303`, or a `301`/`302` of a `POST`, turns into a `GET` without a body, the way browsers do.
+ * a `303`, or a `301`/`302` of a `POST`, turns into a `GET` without a body, the way browsers do — except a `HEAD`,
+ * which stays a `HEAD` on a `303` per fetch semantics.
  *
  * @param fetcher - The `fetch` to use.
  * @param start - The first URL.
@@ -386,10 +387,15 @@ const follow = async (
 			return response;
 		}
 
-		// 2. The next hop: a `303`, or a `301`/`302` of a `POST`, becomes a `GET` without a body, the way browsers do
+		// 2. The next hop: a `303`, or a `301`/`302` of a `POST`, becomes a `GET` without a body, the way browsers do —
+		//    a `HEAD` stays a `HEAD` on a `303`, so a redirect does not smuggle a full GET body into a caller that asked
+		//    for headers only
 		const next = new URL(location, url);
 
-		if (response.status === 303 || ((response.status === 301 || response.status === 302) && method === 'POST')) {
+		if (
+			(response.status === 303 && method !== 'HEAD') ||
+			((response.status === 301 || response.status === 302) && method === 'POST')
+		) {
 			method = 'GET';
 			sentBody = undefined;
 			delete sentHeaders['content-type'];

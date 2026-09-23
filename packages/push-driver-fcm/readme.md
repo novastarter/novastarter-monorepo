@@ -41,10 +41,12 @@ Firebase use, never collide.
 
 The message goes out with a `notification` block for every platform and the blocks each one needs: the Android priority,
 TTL and collapse key, the APNs headers and `mutable-content` for an image, the web push icon, badge, image, tag and —
-for an `https:` target — the click link; `data` carries the custom pairs with the click target under `url`. An image
-reaches the common block and the APNs block as an absolute `http(s):` URL only, the one form FCM accepts there; a
-relative one is delivered to browsers alone. A `ttl` of `0` is "now or never" on every platform, and the tag is cut to
-the 64 bytes APNs takes as a collapse id. The result is FCM's message name as the id.
+for an `https:` target — the click link, plus the stringified Web Push payload under `webpush.data.payload`, which a
+service worker written against the kit's payload contract reads back with one `JSON.parse` of `data.payload` (FCM data
+values are strings, and FCM relays the web block in its own envelope). `data` carries the custom pairs with the click
+target under `url`. An image reaches the common block and the APNs block as an absolute `http(s):` URL only, the one
+form FCM accepts there; a relative one is delivered to browsers alone. A `ttl` of `0` is "now or never" on every
+platform, and the tag is cut to the 64 bytes APNs takes as a collapse id. The result is FCM's message name as the id.
 
 A token FCM reports as `registration-token-not-registered` or `invalid-registration-token` is dead and is thrown as
 `PushTargetGoneError`; any other refusal throws an error naming FCM's code, the network error as is — both with the

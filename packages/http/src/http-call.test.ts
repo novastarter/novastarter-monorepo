@@ -272,6 +272,23 @@ describe('httpCall', () => {
 		).rejects.toThrow('redirected more than 5 times');
 	});
 
+	test('Keeps a HEAD as a HEAD across a 303', async () => {
+		fetchMock
+			.mockResolvedValueOnce(new Response(null, { status: 303, headers: { location: '/result' } }))
+			.mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+		// 1. The redirected request must not become a GET, or the server may send a full body the caller never asked for
+		await httpCall({
+			url: new URL('https://api.example/x'),
+			verb: 'HEAD',
+			timeout: 1000,
+			fetch: fetchMock,
+		});
+
+		// 2. The second hop repeats the HEAD, the way fetch and browsers follow a 303
+		expect(fetchMock.mock.calls[1]![1]).toMatchObject({ method: 'HEAD' });
+	});
+
 	test('Repeats a list of files, one part each, and leaves null out', async () => {
 		fetchMock.mockImplementation(async () => new Response(null, { status: 204 }));
 

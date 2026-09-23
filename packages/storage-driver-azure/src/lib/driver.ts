@@ -506,9 +506,10 @@ export class StorageDriverAzure implements TusDriver {
 	 * `method` is a `GET`, `HEAD` or `DELETE` and the path from the blob endpoint — a `{name}` in it is filled from the
 	 * parameter of that name, which is then not sent again, and `{container}` without one stands for the location's
 	 * container — or a full URL on that endpoint's host. The request is authorised with an account SAS signed for it
-	 * alone and valid for a few minutes, since the SDK keeps its signing pipeline to itself; operations an account SAS
-	 * cannot authorise are refused by Azure. The parameters go into the query, where the Blob service takes them. Blob
-	 * names in a path are not placed under the location's root.
+	 * alone — scoped to the read, delete, list and tag permissions these operations need, so a URL that leaks cannot
+	 * write — and valid for a few minutes, since the SDK keeps its signing pipeline to itself; operations an account
+	 * SAS cannot authorise are refused by Azure. The parameters go into the query, where the Blob service takes them.
+	 * Blob names in a path are not placed under the location's root.
 	 *
 	 * @typeParam T - What the service answers with, most often XML text; the caller knows it from Azure's documentation.
 	 * @param method - The verb and path: `GET /?restype=service&comp=properties`, `HEAD /{container}/a.jpg`.
@@ -544,15 +545,16 @@ export class StorageDriverAzure implements TusDriver {
 		}
 
 		// 2. A SAS for this request only — signed locally, it leaves the process only with the request, after the host
-		//    check: every blob permission, since the operation is the caller's choice, and a lifetime of minutes. The
-		//    start lies a minute back, so a service clock slightly behind still accepts it
+		//    check: read, delete, list and tag, the permissions the operations above need — a list for `comp=list`, a tag
+		//    for `comp=tags`, never write or create, so a SAS that leaks cannot change anything — and a lifetime of
+		//    minutes. The start lies a minute back, so a service clock slightly behind still accepts it
 		const now = Date.now();
 
 		const sas = generateAccountSASQueryParameters(
 			{
 				startsOn: new Date(now - 60_000),
 				expiresOn: new Date(now + CALL_SAS_LIFETIME),
-				permissions: AccountSASPermissions.parse('rwdxylacuptfi'),
+				permissions: AccountSASPermissions.parse('rdlt'),
 				services: 'b',
 				resourceTypes: 'sco',
 				...(new URL(this.endpoint).protocol === 'https:' ? { protocol: SASProtocol.Https } : {}),

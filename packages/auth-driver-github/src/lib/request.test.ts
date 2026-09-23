@@ -16,8 +16,9 @@ describe('request', () => {
 			body: 'a=1',
 		});
 
-		// 1. The status and the parsed body come back; the fetch saw the request plus a signal for the deadline
-		expect(response).toStrictEqual({ status: 200, ok: true, body: { a: 1 } });
+		// 1. The status, the headers and the parsed body come back; the fetch saw the request plus a signal for the
+		//    deadline
+		expect(response).toStrictEqual({ status: 200, ok: true, body: { a: 1 }, headers: expect.any(Headers) });
 
 		expect(fetch).toHaveBeenCalledWith('https://x.test/token', {
 			method: 'POST',
@@ -35,6 +36,7 @@ describe('request', () => {
 			status: 502,
 			ok: false,
 			body: undefined,
+			headers: expect.any(Headers),
 		});
 	});
 

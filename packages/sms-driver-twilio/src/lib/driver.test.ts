@@ -347,29 +347,47 @@ describe('SmsDriverTwilio.call', () => {
 		const authorization = `Basic ${Buffer.from('AC1:super-secret-token').toString('base64')}`;
 
 		// 1. An axios error of the SDK holds the request config with the `Authorization` header
-		const axiosError = Object.assign(new Error('timeout of 30000ms exceeded'), {
+		const refused = Object.assign(new Error('connect ECONNREFUSED'), {
 			isAxiosError: true,
-			code: 'ECONNABORTED',
+			code: 'ECONNREFUSED',
 			config: { headers: { Authorization: authorization } },
 		});
 
-		request.mockRejectedValueOnce(axiosError);
+		request.mockRejectedValueOnce(refused);
 
 		const error = (await driver.call('GET /2010-04-01/Accounts.json').catch((e: unknown) => e)) as Error;
 
 		// 2. A plain error names the code; neither it, its cause nor its serialization carries the credentials
-		expect(error.message).toBe('Twilio: ECONNABORTED: timeout of 30000ms exceeded');
+		expect(error.message).toBe('Twilio: ECONNREFUSED: connect ECONNREFUSED');
 		expect(error.cause).toBeUndefined();
 		expect(JSON.stringify(error)).not.toContain(authorization);
 		expect(error.message).not.toContain('super-secret-token');
 
-		// 3. The same failure of `send()` is described without it too
-		create.mockRejectedValueOnce(axiosError);
+		// 3. The SDK's own timeout is the kit's TimeoutError with the deadline the request carried — it gets the same
+		//    deadline `call()` races it against, so it usually wins the race — still without the credentials
+		const timedOut = Object.assign(new Error('timeout of 5000ms exceeded'), {
+			isAxiosError: true,
+			code: 'ECONNABORTED',
+			config: { headers: { Authorization: authorization }, timeout: 5_000 },
+		});
+
+		request.mockRejectedValueOnce(timedOut);
+
+		const timeout = (await driver.call('GET /2010-04-01/Accounts.json').catch((e: unknown) => e)) as Error;
+
+		expect(timeout).toBeInstanceOf(TimeoutError);
+		expect(timeout).toMatchObject({ name: 'TimeoutError', message: 'Timed out after 5000 ms', ms: 5_000 });
+		expect(timeout.cause).toBeUndefined();
+		expect(JSON.stringify(timeout)).not.toContain(authorization);
+
+		// 4. The same failure of `send()` is described without the credentials too
+		create.mockRejectedValueOnce(timedOut);
 
 		const sendError = (await driver
 			.send({ to: '+14155550123', from: '+14155550100', text: 'Hi' })
 			.catch((e: unknown) => e)) as Error;
 
+		expect(sendError).toBeInstanceOf(TimeoutError);
 		expect(sendError.cause).toBeUndefined();
 		expect(JSON.stringify(sendError)).not.toContain(authorization);
 	});

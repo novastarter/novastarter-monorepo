@@ -3,6 +3,7 @@
  */
 import { MessageSendAllFailure, MessageSendPartialFailure } from '@vonage/sms';
 import { describe, expect, test } from 'vitest';
+import { SmsPartialDeliveryError } from '../index.js';
 import { describeError } from './describe-error.js';
 
 describe('describeError', () => {
@@ -16,9 +17,9 @@ describe('describeError', () => {
 		expect(describeError(refusal)).toMatchObject({ message: 'Vonage: 4: Bad Credentials', cause: refusal });
 	});
 
-	test('Skips the parts that went out and keeps the whole answer on the cause', () => {
-		// 1. A long message may be refused in part only; the failed part is what the caller acts on, the rest stays
-		//    reachable through the cause
+	test('Turns a partial failure into the non-retryable SmsPartialDeliveryError', () => {
+		// 1. A long message may be refused in part only; the delivered parts already went out, so the failure is the
+		//    non-retryable SmsPartialDeliveryError — not a refusal a fallback would re-send
 		const partial = new MessageSendPartialFailure({
 			messageCount: 2,
 			messages: [
@@ -27,8 +28,14 @@ describe('describeError', () => {
 			],
 		} as never);
 
-		expect(describeError(partial).message).toBe('Vonage: 9: Partner quota violation');
-		expect((describeError(partial).cause as MessageSendPartialFailure).getSuccessfulMessages()).toHaveLength(1);
+		const described = describeError(partial);
+
+		expect(described).toBeInstanceOf(SmsPartialDeliveryError);
+
+		expect(described).toMatchObject({
+			extensions: { delivered: 1, parts: 2, reason: '9: Partner quota violation' },
+			cause: partial,
+		});
 	});
 
 	test('Falls back to the SDK message when the answer names no failed part', () => {

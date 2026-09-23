@@ -367,9 +367,9 @@ export class StorageDriverLocal implements TusDriver {
 
 			const fileName = join(prefixDirectory, file.name);
 
-			// 4. Case-insensitive comparison, so the result is the same on case-insensitive filesystems (macOS,
-			//    Windows) as on case-sensitive ones
-			if (fileName.toLowerCase().startsWith(prefix.toLowerCase()) === false) continue;
+			// 4. Exact, case-sensitive comparison: object stores match prefixes byte-for-byte, and a case-insensitive
+			//    filesystem resolves case only when looking up a concrete path, so a listing must not fold case either
+			if (fileName.startsWith(prefix) === false) continue;
 
 			// 5. Only files are yielded, in the root-relative form callers pass in, with forward slashes whatever the
 			//    platform separator is, since the contract speaks in forward slashes

@@ -7,6 +7,7 @@ import {
 	MAILGUN_TAG_COUNT,
 	MAILGUN_TAG_LENGTH,
 	toMailgunFile,
+	toMailgunHeader,
 	toMailgunMessage,
 	toMailgunTags,
 } from './to-mailgun-message.js';
@@ -37,6 +38,35 @@ describe('toMailgunTags', () => {
 			'____',
 			'v2_1',
 		]);
+	});
+});
+
+describe('toMailgunHeader', () => {
+	test('Passes a token name and a one-line value through as an `h:` field', () => {
+		// 1. The common case: a header name of token characters, a value of one line — both reach the field as given
+		expect(toMailgunHeader('X-Campaign', 'welcome')).toStrictEqual({ field: 'h:X-Campaign', value: 'welcome' });
+
+		expect(toMailgunHeader('X-Trace_ID.v2', "a'$value`here")).toStrictEqual({
+			field: 'h:X-Trace_ID.v2',
+			value: "a'$value`here",
+		});
+	});
+
+	test('Refuses a name that is no token, with a colon or whitespace in it', () => {
+		// 1. A name holding a colon would make Mailgun's raw header name two headers; whitespace or a folded name is
+		//    no single header either — the name has to be one RFC 7230 token
+		expect(() => toMailgunHeader('X-Injected: Bcc', 'x')).toThrow(/cannot be sent/);
+		expect(() => toMailgunHeader('X Bad', 'x')).toThrow(/cannot be sent/);
+		expect(() => toMailgunHeader('X-Folded\r\nBcc', 'x')).toThrow(/cannot be sent/);
+	});
+
+	test('Refuses a value with CR or LF in it, which would forge a header line', () => {
+		// 1. A line break in the value reaches Mailgun's raw header verbatim, so a value of more than one line is
+		//    refused; the same goes for other control characters, a tab excepted
+		expect(() => toMailgunHeader('X-Campaign', 'a\r\nBcc: attacker@evil.com')).toThrow(/cannot be sent/);
+		expect(() => toMailgunHeader('X-Campaign', 'a\nBcc: attacker@evil.com')).toThrow(/cannot be sent/);
+		expect(() => toMailgunHeader('X-Campaign', 'a\x00b')).toThrow(/cannot be sent/);
+		expect(toMailgunHeader('X-Campaign', 'a\tb')).toStrictEqual({ field: 'h:X-Campaign', value: 'a\tb' });
 	});
 });
 
@@ -120,5 +150,27 @@ describe('toMailgunMessage', () => {
 	test('Requires a sender', async () => {
 		// 1. A message without a sender is refused by name
 		await expect(toMailgunMessage({ to: 'a@example.com', subject: 'S' })).rejects.toThrow('"from"');
+	});
+
+	test('Refuses a custom header whose name is no token or whose value holds a line break', async () => {
+		// 1. A forged header name or a value with CR/LF in it would reach Mailgun's raw headers verbatim, so the
+		//    message is refused before the request goes out
+		await expect(
+			toMailgunMessage({
+				to: 'a@example.com',
+				from: 'me@acme.test',
+				subject: 'S',
+				headers: { 'X-Injected: Bcc': 'attacker@evil.com' },
+			}),
+		).rejects.toThrow(/cannot be sent/);
+
+		await expect(
+			toMailgunMessage({
+				to: 'a@example.com',
+				from: 'me@acme.test',
+				subject: 'S',
+				headers: { 'X-Campaign': 'welcome\r\nBcc: attacker@evil.com' },
+			}),
+		).rejects.toThrow(/cannot be sent/);
 	});
 });

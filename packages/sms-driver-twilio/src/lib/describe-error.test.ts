@@ -1,6 +1,7 @@
 /**
  * Tests of `describe-error`: how what the Twilio SDK throws becomes the error `sendSms()` reports.
  */
+import { TimeoutError } from '@novastarter/utils';
 import twilio from 'twilio';
 import { describe, expect, test } from 'vitest';
 import { describeError } from './describe-error.js';
@@ -59,6 +60,23 @@ describe('describeError', () => {
 		const described = describeError(axiosError);
 
 		expect(described.message).toBe('Twilio: ECONNREFUSED: connect ECONNREFUSED');
+		expect(described.cause).toBeUndefined();
+		expect(JSON.stringify(described)).not.toContain('c2VjcmV0');
+	});
+
+	test('Maps the axios timeout to the kit TimeoutError, without keeping the config', () => {
+		// 1. The SDK aborts a slow request with ECONNABORTED; the caller matches the kit's TimeoutError, and the
+		//    deadline reported is the one the request config carried
+		const axiosError = Object.assign(new Error('timeout of 5000ms exceeded'), {
+			isAxiosError: true,
+			code: 'ECONNABORTED',
+			config: { headers: { Authorization: 'Basic c2VjcmV0' }, timeout: 5_000 },
+		});
+
+		const described = describeError(axiosError);
+
+		expect(described).toBeInstanceOf(TimeoutError);
+		expect(described).toMatchObject({ name: 'TimeoutError', message: 'Timed out after 5000 ms', ms: 5_000 });
 		expect(described.cause).toBeUndefined();
 		expect(JSON.stringify(described)).not.toContain('c2VjcmV0');
 	});

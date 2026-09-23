@@ -31,10 +31,13 @@ test('Resolves configured CONFIG_PATH from env', () => {
 	expect(res).toBe('test-resolved-path');
 });
 
-test('Resolves configured CONFIG_PATH from defaults if it does not exist in env', () => {
-	// 1. An unset variable falls back to the package default, so the lookup works with no configuration at all
+test('Resolves the relative default CONFIG_PATH against the working directory', () => {
+	// 1. An unset variable falls back to the package default; the default is kept relative, so the resolution
+	//    happens against the working directory of the call — which getConfigPath performs — and not of the module
+	//    import
 	process.env['CONFIG_PATH'] = undefined;
 	const res = getConfigPath();
-	expect(resolve).toHaveBeenCalledWith(DEFAULTS['CONFIG_PATH']);
+	expect(resolve).toHaveBeenCalledWith('.env');
+	expect(DEFAULTS['CONFIG_PATH']).toBe('.env');
 	expect(res).toBe('test-resolved-path');
 });

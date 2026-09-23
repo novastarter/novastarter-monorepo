@@ -615,6 +615,30 @@ describe('#listGenerator', () => {
 		});
 	});
 
+	test('Matches the prefix case-sensitively', async () => {
+		// 1. `img.png` starts with `IMG` only when case is folded; object stores compare prefixes byte-for-byte and a
+		//    case-insensitive filesystem resolves case only when looking up a concrete path, so it must stay excluded
+		vi.mocked(relative).mockImplementation((_, x) => x);
+
+		vi.mocked(opendir).mockResolvedValue(
+			(function* () {
+				yield { name: 'img.png', isFile: () => true, isDirectory: () => false };
+				yield { name: 'IMG_001.png', isFile: () => true, isDirectory: () => false };
+			})() as unknown as Dir,
+		);
+
+		vi.mocked(join).mockImplementation((_, filepath) => filepath);
+
+		const output = [];
+
+		for await (const filename of driver['listGenerator']('IMG')) {
+			output.push(filename);
+		}
+
+		// 2. Only the entry that truly starts with the prefix comes out, exactly as the S3 driver would list it
+		expect(output).toStrictEqual(['IMG_001.png']);
+	});
+
 	test('Returns filepath string relative from configured root if path is file', async () => {
 		// 1. `relative` is auto-mocked; returning its second argument shows the yielded value is the relativised path
 		vi.mocked(relative).mockImplementation((_, x) => x);

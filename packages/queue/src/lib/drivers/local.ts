@@ -21,6 +21,8 @@ export type QueueDriverLocalConfig = {
  * The zero-config mode: no Redis, no worker. A job without a delay runs before `enqueue()` resolves, so a test can
  * assert on its effect right away; a delayed one waits on a timer that does not keep the process alive. Failures are
  * logged and not retried — retries are what BullMQ is for — and never reach the caller, exactly as with a real queue.
+ * An enqueue whose id is still in flight — the same `unique` work or explicit `jobId` — collapses into that job and
+ * answers its identity, so a duplicate never runs the handler a second time, as the `bullmq` driver deduplicates.
  */
 export class QueueDriverLocal implements QueueDriver {
 	/** Where a failing handler is reported. */
@@ -28,6 +30,15 @@ export class QueueDriverLocal implements QueueDriver {
 
 	/** Pending delayed jobs, cleared on close. */
 	private readonly timers: Set<NodeJS.Timeout> = new Set();
+
+	/**
+	 * Ids of jobs still in flight — running or waiting on a delayed timer — to the identity the first enqueue answered.
+	 *
+	 * A second enqueue of the same id collapses into the first while its id is here and runs nothing, the
+	 * deduplication the `bullmq` driver gets from BullMQ; an id leaves the map when its run settles, so the same work
+	 * can be enqueued again afterwards, as the contract documents.
+	 */
+	private readonly inFlight: Map<string, EnqueuedJob> = new Map();
 
 	/**
 	 * Whether `close()` ran: a job enqueued afterwards would arm a timer nothing clears any more.
@@ -53,7 +64,8 @@ export class QueueDriverLocal implements QueueDriver {
 	 * @param payload - Validated payload, as the caller passed it; parsed here before the handler runs.
 	 * @param options - Effective options; only `delay` matters here.
 	 * @param id - Job id from `enqueue()`.
-	 * @returns The job's identity.
+	 * @returns The job's identity; the in-flight job's when the same id was still queued or running and this enqueue
+	 * collapsed into it — the deduplication the `bullmq` driver answers too.
 	 * @throws Error when the driver is closed, or when no handler is registered for the job — silently dropping work
 	 * would hide a missing module; `RangeError` for a `delay` that is negative, `NaN` or not finite.
 	 */
@@ -86,6 +98,16 @@ export class QueueDriverLocal implements QueueDriver {
 		const job: EnqueuedJob = { id, name: contract.name, queue: contract.queue };
 		const enqueuedAt = new Date();
 
+		// 5. The same id still in flight — the same `unique` work or explicit `jobId` — collapses into the queued job:
+		//    its identity is answered and nothing runs, which is how the `bullmq` driver deduplicates, so a duplicate
+		//    never double-fires side effects. The id is registered before the run or the timer is armed, so a duplicate
+		//    racing in the same tick collapses too
+		const pending = this.inFlight.get(id);
+
+		if (pending) return pending;
+
+		this.inFlight.set(id, job);
+
 		const run = async (): Promise<void> => {
 			try {
 				// 1. The same path a delivered job takes (`runJob` → `runContract`), so both parse and dispatch alike
@@ -94,17 +116,21 @@ export class QueueDriverLocal implements QueueDriver {
 				// 2. A failing job is the handler's problem to log in detail; here it is recorded and dropped, no retries.
 				//    Wrapped through `toError`, so a thrown string is not taken for the message and the job's name lost
 				this.logger.error(toError(error), `Job "${contract.name}" (${id}) failed`);
+			} finally {
+				// 3. The id leaves the map as the run settles — a local job never retries — so the next enqueue of the
+				//    same work runs again, as the contract documents; a delayed run holds its id until its timer fired
+				this.inFlight.delete(id);
 			}
 		};
 
-		// 5. A delay becomes a timer that does not keep the process alive; the process ending is the queue ending
+		// 6. A delay becomes a timer that does not keep the process alive; the process ending is the queue ending
 		if (delay > 0) {
 			this.schedule(delay, () => void run());
 
 			return job;
 		}
 
-		// 6. Without a delay the handler has run before the caller gets the identity back, so a test asserts right away
+		// 7. Without a delay the handler has run before the caller gets the identity back, so a test asserts right away
 		await run();
 
 		return job;
@@ -124,6 +150,9 @@ export class QueueDriverLocal implements QueueDriver {
 		}
 
 		this.timers.clear();
+
+		// 3. Delayed jobs went with their timers and will never settle on their own, so their ids leave the map with them
+		this.inFlight.clear();
 	}
 
 	/**

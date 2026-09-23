@@ -375,3 +375,23 @@ test('Casts regular values', () => {
 		DEFAULT_ARRAY: 'one,two,three',
 	});
 });
+
+test('Stores a `__proto__` variable as an own property instead of swapping the prototype', () => {
+	// 1. A config file (YAML, JS or JSON) can carry a `__proto__` key with an object value; `Object.fromEntries`
+	//    defines it as an own property, the way a real parser hands it over
+	const malicious = Object.fromEntries([['__proto__', { admin: true }]]);
+
+	vi.mocked(readConfigurationFromProcess).mockReturnValue({});
+	vi.mocked(readConfigurationFromFile).mockReturnValue(malicious);
+
+	const env = createEnv();
+
+	// 2. The variable survives as an own data property, enumerable like every other variable
+	expect(Object.hasOwn(env, '__proto__')).toBe(true);
+	expect(env['__proto__']).toEqual({ admin: true });
+
+	// 3. No lookup resolves through a swapped prototype: foreign keys stay undefined and the prototype is the
+	//    ordinary `Object.prototype`
+	expect(env['admin']).toBeUndefined();
+	expect(Object.getPrototypeOf(env)).toBe(Object.prototype);
+});

@@ -97,6 +97,28 @@ test('Publishes a fallback line for a chunk that is not JSON', () => {
 	});
 });
 
+test('Publishes the fallback line for a chunk that is not a string', () => {
+	// 1. A Buffer piped into the multistream has no `replace`, so without the guard `_write` throws a TypeError and
+	//    the stream's lack of an `error` listener turns it into a process crash; the chunk is reported as the
+	//    fallback line instead
+	const logStream = new LogsStream('basic', messenger);
+
+	const callback = vi.fn();
+	const buffer = Buffer.from(JSON.stringify(sample.log));
+	expect(() => logStream._write(buffer as unknown as string, 'buffer', callback)).not.toThrow();
+	expect(callback).toHaveBeenCalledWith();
+
+	expect(messenger.publish).toHaveBeenCalledOnce();
+
+	// 2. The payload is compared parsed, since `expect.any` cannot survive the JSON serialisation of the expectation
+	const payload = JSON.parse(vi.mocked(messenger.publish).mock.calls[0]![1]);
+
+	expect(payload).toStrictEqual({
+		log: { level: 50, time: expect.any(Number), msg: 'Received an unreadable log line' },
+		nodeId: 'a-process-id',
+	});
+});
+
 test('Publishes http log when pretty is false', () => {
 	// 1. Request fields stay untouched in raw mode: folding is a pretty concern
 	const logStream = new LogsStream(false, messenger);
