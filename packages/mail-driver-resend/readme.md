@@ -42,15 +42,23 @@ caller can still read Resend's status code.
 ## Any other request
 
 `call()` makes a request of the [Resend API](https://resend.com/docs/api-reference/introduction) with the location's key
-— the parameters of a `GET`, `HEAD` or `DELETE` go in the query, the rest as JSON, unless `paramsIn` says otherwise. A
-refusal throws `ProviderCallError` (`HitRateLimitError` on a 429); the default timeout is 30 s.
+— the parameters of a `GET`, `HEAD` or `DELETE` go in the query, the rest as JSON. It answers
+`{ status, headers, data }`. A refusal throws `ProviderCallError` (`HitRateLimitError` on a 429); the default timeout is
+30 s.
 
 ```ts
 const mail = useMail().location('main');
 
-const domains = await mail.call?.('GET /domains');
+const { data: domains } = await mail.call!('GET /domains');
+```
 
-const domain = await mail.call?.('GET /domains/d91cd9bd-1176-453e-8fc1-35364d380206');
+A `{name}` in the path takes the parameter of that name, URL-encoded, and that parameter is not sent again. The headers
+carry Resend's rate limit:
+
+```ts
+const { data, headers } = await mail.call!('GET /domains/{id}', { id: 'd91cd9bd-1176-453e-8fc1-35364d380206' });
+
+console.log(headers['ratelimit-remaining'], data);
 ```
 
 A path is joined to `https://api.resend.com`; a full URL may only point at `api.resend.com`.

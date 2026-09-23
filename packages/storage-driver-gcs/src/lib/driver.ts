@@ -10,7 +10,7 @@ import type {
 } from '@google-cloud/storage';
 import { Storage } from '@google-cloud/storage';
 import { DEFAULT_CHUNK_SIZE } from '@novastarter/constants';
-import { toProviderCallError } from '@novastarter/errors';
+import { type CallOptions, type CallResponse, type HttpApi, request } from '@novastarter/http';
 import {
 	type ChunkedUploadContext,
 	type ReadOptions,
@@ -20,8 +20,7 @@ import {
 	toRelativePath,
 	type TusDriver,
 } from '@novastarter/storage';
-import { type CallOptions, confinePath, joinPath, parseCallMethod, withTimeout } from '@novastarter/utils';
-import { httpCall, resolveCallUrl } from '@novastarter/utils/node';
+import { confinePath, joinPath } from '@novastarter/utils';
 
 /**
  * Smallest chunk size GCS accepts for a resumable upload: 256 KiB, `262_144` bytes.
@@ -30,13 +29,6 @@ import { httpCall, resolveCallUrl } from '@novastarter/utils/node';
  * the first PATCH.
  */
 const MINIMUM_CHUNK_SIZE = 262_144;
-
-/**
- * How long a {@link StorageDriverGcs.call} may take when the caller names no timeout, in milliseconds.
- *
- * @defaultValue 30 000 ms.
- */
-export const DEFAULT_GCS_CALL_TIMEOUT = 30_000;
 
 /**
  * The root of the GCS JSON API a `call()` path is joined to, when the location names no `apiEndpoint`.
@@ -132,26 +124,29 @@ export class StorageDriverGcs implements TusDriver {
 	private root: string;
 
 	/**
-	 * Bucket handle every object operation goes through.
+	 * The location's `Bucket` of `@google-cloud/storage` — the SDK's own API, with the location's Application Default
+	 * Credentials and `apiEndpoint` — for what {@link StorageDriverGcs.call} does not cover: signed URLs, streamed
+	 * uploads and downloads, object metadata; `client.storage` is the `Storage` behind it, for other buckets and HMAC
+	 * keys. Every object operation of the driver goes through it too.
 	 *
-	 * @internal
+	 * Object names given to it are not placed under the location's root.
+	 *
+	 * @example
+	 * ```ts
+	 * const { client } = useStorage().location('gcs') as StorageDriverGcs;
+	 * const [url] = await client.file('report.pdf').getSignedUrl({ action: 'read', expires: Date.now() + 60_000 });
+	 * ```
 	 */
-	private bucket: Bucket;
+	readonly client: Bucket;
 
 	/**
-	 * Name of the bucket, put in place of `{bucket}` in a {@link StorageDriverGcs.call} path.
+	 * The JSON API as {@link StorageDriverGcs.call} requests it: under the `apiEndpoint`, or GCS's own, with
+	 * `/storage/v1` after it; `{bucket}` standing for the location's bucket; an access token of the client's
+	 * credentials per call.
 	 *
 	 * @internal
 	 */
-	private readonly bucketName: string;
-
-	/**
-	 * Root of the JSON API a {@link StorageDriverGcs.call} path is joined to: the `apiEndpoint`, or GCS's own, with
-	 * `/storage/v1` after it.
-	 *
-	 * @internal
-	 */
-	private readonly apiRoot: string;
+	private readonly api: HttpApi;
 
 	/**
 	 * Chunk size handed to resumable uploads, taken from `tus.chunkSize` or {@link DEFAULT_CHUNK_SIZE}.
@@ -199,15 +194,29 @@ export class StorageDriverGcs implements TusDriver {
 		// 4. Build the client and bucket up front, so configuration mistakes fail at construction instead of on the
 		//    first request
 		const storage = new Storage(storageOptions);
-		this.bucket = storage.bucket(bucket);
-		this.bucketName = bucket;
+		this.client = storage.bucket(bucket);
 
-		// 5. The JSON API root for `call()`: the endpoint the client talks to, with `https` assumed like the SDK does
-		//    for an endpoint without a scheme, so a raw request goes where the driver's own ones go
+		// 5. The JSON API for `call()`: the endpoint the client talks to, with `https` assumed like the SDK does for an
+		//    endpoint without a scheme, so a raw request goes where the driver's own ones go. The request goes through
+		//    `request()` rather than the SDK's client, whose errors carry the request's `Authorization` header, which
+		//    ignores a per-request timeout and which retries a POST; the token is fetched under the call's deadline
 		const endpoint = apiEndpoint ?? GCS_API_ENDPOINT;
 		const withScheme = /^https?:\/\//i.test(endpoint) ? endpoint : `https://${endpoint}`;
 
-		this.apiRoot = `${withScheme.replace(/\/+$/, '')}/storage/v1`;
+		this.api = {
+			provider: 'gcs',
+			baseUrl: `${withScheme.replace(/\/+$/, '')}/storage/v1`,
+			hosts: GCS_CALL_HOSTS,
+			headers: async (signal) => {
+				// 1. The token of the client's credentials; the call stops here when the deadline passed meanwhile
+				const token = await this.getCallToken();
+
+				signal.throwIfAborted();
+
+				return { authorization: `Bearer ${token}` };
+			},
+			placeholders: { bucket },
+		};
 
 		// 6. The chunk size handed to resumable uploads: the configured value when one was given, the package default
 		//    otherwise. `??` rather than `||`, so a configured `0` or `NaN` stays what it is and is caught by the
@@ -253,7 +262,7 @@ export class StorageDriverGcs implements TusDriver {
 	 */
 	private file(filepath: string) {
 		// 1. Kept as a separate method so tests can swap the handle factory without touching the bucket
-		return this.bucket.file(filepath);
+		return this.client.file(filepath);
 	}
 
 	/**
@@ -425,7 +434,7 @@ export class StorageDriverGcs implements TusDriver {
 
 		// 2. The SDK hands back the query for the next page, or nothing once the listing is exhausted
 		while (query) {
-			const [files, nextQuery] = await this.bucket.getFiles(query);
+			const [files, nextQuery] = await this.client.getFiles(query);
 
 			// 3. Skip folder placeholders, as the S3 driver does: a name ending in `/` is a zero-byte marker the console
 			//    creates for an empty "folder", not an object a caller can read, and listing it would hand a consumer a
@@ -579,85 +588,51 @@ export class StorageDriverGcs implements TusDriver {
 	 * Make any request of the GCS JSON API with the location's credentials, bucket and a timeout — the way to what the
 	 * storage contract does not cover: IAM policies, bucket metadata, lifecycle rules, notifications.
 	 *
-	 * `method` is the verb and the path under `/storage/v1` — `{bucket}` in it stands for the location's bucket — or
-	 * a full URL on `storage.googleapis.com` or the configured `apiEndpoint`. The request carries an OAuth access token
+	 * `method` is the verb and the path under `/storage/v1` — a `{name}` in it is filled from the parameter of that
+	 * name, which is then not sent again, and `{bucket}` without one stands for the location's bucket — or a full URL
+	 * on `storage.googleapis.com` or the configured `apiEndpoint`. The request carries an OAuth access token
 	 * of the client's Application Default Credentials, the ones the driver's own requests use. The parameters are the
-	 * query of a `GET`, `HEAD` or `DELETE` and the JSON body otherwise, unless `options.paramsIn` says; object names in
-	 * a path are not placed under the location's root. The request is made once: a failed call is not retried.
+	 * query of a `GET`, `HEAD` or `DELETE` and the JSON body otherwise; object names in a path are not placed under the
+	 * location's root. The request is made once: a failed call is not retried. For signed URLs and streams, use
+	 * {@link StorageDriverGcs.client}.
 	 *
 	 * @typeParam T - What the API answers with; the caller knows it from the GCS documentation.
 	 * @param method - The verb and path: `GET /b/{bucket}/iam`, `PATCH /b/{bucket}`.
 	 * @param params - The query or the JSON body.
-	 * @param options - A timeout over {@link DEFAULT_GCS_CALL_TIMEOUT} covering the token and the request, an abort
-	 * signal, extra headers, where the parameters go.
-	 * @returns The parsed JSON answer, else its text; `undefined` for an empty one.
+	 * @param options - A timeout over the default 30 s covering the token and the request, an abort signal, extra
+	 * headers.
+	 * @returns The status, the headers — names lower-cased — and the parsed JSON answer, else its text; `undefined` for
+	 * an empty one.
 	 * @throws ProviderCallError when GCS answers with an error status — its status and `{ error: { code, message } }`
 	 * in `extensions`.
 	 * @throws HitRateLimitError when GCS answers 429.
 	 * @throws TimeoutError when the token and the request outlive the timeout.
-	 * @throws Error when the method is malformed, its URL is not on a GCS host, or no access token can be had.
+	 * @throws Error when the method is malformed, a placeholder is left unfilled, its URL is not on a GCS host, or no
+	 * access token can be had.
 	 * @example
 	 * ```ts
-	 * const policy = await gcs.call<{ bindings: { role: string; members: string[] }[] }>('GET /b/{bucket}/iam');
+	 * const { data } = await gcs.call<{ bindings: { role: string; members: string[] }[] }>('GET /b/{bucket}/iam');
 	 *
 	 * await gcs.call('PATCH /b/{bucket}', { versioning: { enabled: true } });
+	 *
+	 * await gcs.call('GET /b/{bucket}/o/{object}', { object: 'media/a.jpg' }); // media%2Fa.jpg
 	 * ```
 	 */
-	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, options: CallOptions = {}): Promise<T> {
-		// 1. The verb and the URL; a full URL off the GCS hosts is refused here, before a token is even fetched
-		const { verb, target } = parseCallMethod(method);
-
-		const url = resolveCallUrl(this.apiRoot, target.replaceAll('{bucket}', encodeURIComponent(this.bucketName)), [
-			...GCS_CALL_HOSTS,
-		]);
-
-		// 2. The token and the request under one deadline and the caller's signal: a slow metadata server counts
-		//    against the timeout too. The request goes through `httpCall` rather than the SDK's client, whose errors
-		//    carry the request's `Authorization` header, which ignores a per-request timeout and which retries a POST
-		const timeout = options.timeout ?? DEFAULT_GCS_CALL_TIMEOUT;
-
-		const response = await withTimeout(
-			async (signal) => {
-				// 1. The token of the client's credentials; the call stops here when the deadline passed meanwhile
-				const token = await this.getCallToken();
-
-				signal.throwIfAborted();
-
-				// 2. The request under the same signal; its own deadline is the outer one, which fires first
-				return httpCall({
-					url,
-					verb,
-					params,
-					paramsIn: options.paramsIn,
-					headers: { authorization: `Bearer ${token}`, ...options.headers },
-					timeout,
-					signal,
-				});
-			},
-			timeout,
-			options.signal ? { signal: options.signal } : {},
-		);
-
-		// 3. An error status becomes the kit's error, a 429 the rate-limit one; GCS's `{ error: { code, message } }`
-		//    body names the reason, and nothing of the request goes into it
-		if (response.status >= 400) {
-			throw toProviderCallError({
-				provider: 'gcs',
-				method,
-				status: response.status,
-				body: response.body,
-				headers: response.headers,
-			});
-		}
-
-		return response.body as T;
+	async call<T = unknown>(
+		method: string,
+		params?: Record<string, unknown>,
+		options?: CallOptions,
+	): Promise<CallResponse<T>> {
+		// 1. The JSON API does the rest: placeholders — the caller's, then `{bucket}` — the host check before a token
+		//    is fetched, the token and the request under one deadline, and GCS's refusals mapped without the token
+		return request<T>(this.api, method, params, options);
 	}
 
 	/**
 	 * Get an OAuth access token of the client's credentials for {@link StorageDriverGcs.call}.
 	 *
-	 * The credentials library's errors carry the token request — a signed assertion, a refresh token — so one is never
-	 * passed on: a plain error with its code takes its place.
+	 * Its errors are not wrapped here: `request()` replaces any of them with one of its own, since the credentials
+	 * library's errors carry the token request — a signed assertion, a refresh token.
 	 *
 	 * @returns The access token.
 	 * @throws Error when no token can be had.
@@ -665,22 +640,11 @@ export class StorageDriverGcs implements TusDriver {
 	 */
 	private async getCallToken(): Promise<string> {
 		// 1. The auth client of the bucket's `Storage`, so the call authenticates exactly as the driver's own requests
-		let token: string | null | undefined;
-
-		try {
-			token = await this.bucket.storage.authClient.getAccessToken();
-		} catch (error) {
-			// 1. Only the error's code — `ENOTFOUND`, `401` — is kept; its message and fields may hold the credentials
-			const code = (error as { code?: unknown } | null)?.code;
-			const safeCode = typeof code === 'string' || typeof code === 'number' ? ` (${String(code)})` : '';
-
-			// eslint-disable-next-line preserve-caught-error -- the cause carries the token request
-			throw new Error(`The gcs storage driver could not get an access token${safeCode}`);
-		}
+		const token = await this.client.storage.authClient.getAccessToken();
 
 		// 2. Credentials that yield no token cannot authenticate the call; better said here than as a GCS 401
 		if (!token) {
-			throw new Error('The gcs storage driver could not get an access token');
+			throw new Error('The gcs storage driver got no access token');
 		}
 
 		return token;

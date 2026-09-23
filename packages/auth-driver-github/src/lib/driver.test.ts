@@ -137,7 +137,7 @@ describe('AuthDriverGithub', () => {
 			const fetch = answer(200, [{ id: 1, full_name: 'octo/hello' }]);
 			const driver = new AuthDriverGithub({ ...credentials, fetch });
 
-			const repos = await driver.call(
+			const { data: repos } = await driver.call(
 				'GET /user/repos',
 				{ per_page: 100, sort: 'updated' },
 				{
@@ -145,7 +145,7 @@ describe('AuthDriverGithub', () => {
 				},
 			);
 
-			// 1. The parsed answer, from the API root, with the Bearer token and no body
+			// 1. The parsed answer, from the API root, with the Bearer token and no body; no header of the token's own
 			expect(repos).toStrictEqual([{ id: 1, full_name: 'octo/hello' }]);
 
 			const [url, init] = fetch.mock.calls[0]!;
@@ -160,6 +160,8 @@ describe('AuthDriverGithub', () => {
 				'user-agent': '@novastarter/auth-driver-github',
 				authorization: `Bearer ${ACCESS_TOKEN}`,
 			});
+
+			expect(Object.keys(init.headers)).not.toContain('accesstoken');
 		});
 
 		test('Requests as the app with Basic credentials and the client id put in, the params as the JSON body', async () => {
@@ -178,6 +180,62 @@ describe('AuthDriverGithub', () => {
 			expect(JSON.parse(init.body as string)).toStrictEqual({ access_token: 'gho_checked' });
 		});
 
+		test('Fills a placeholder from the params, encoded, and does not send that param again', async () => {
+			const fetch = answer(200, []);
+			const driver = new AuthDriverGithub({ ...credentials, fetch });
+
+			await driver.call(
+				'GET /repos/{owner}/{repo}/issues',
+				{ owner: 'acme', repo: 'web/app', state: 'open' },
+				{ accessToken: ACCESS_TOKEN },
+			);
+
+			// 1. `{owner}` and `{repo}` take their params, a `/` cannot reshape the path, and only `state` is left
+			expect(fetch.mock.calls[0]![0]).toBe('https://api.github.com/repos/acme/web%2Fapp/issues?state=open');
+		});
+
+		test('Keeps {client_id} the one of the app, a client_id param sent as a param', async () => {
+			const fetch = answer(200, {});
+			const driver = new AuthDriverGithub({ ...credentials, fetch });
+
+			await driver.call('POST /applications/{client_id}/token', { client_id: 'other', access_token: 'gho_x' });
+
+			// 1. The Basic credentials are this app's, so the path names this app; the param goes in the body as given
+			const [url, init] = fetch.mock.calls[0]!;
+
+			expect(url).toBe('https://api.github.com/applications/client-1/token');
+			expect(JSON.parse(init.body as string)).toStrictEqual({ client_id: 'other', access_token: 'gho_x' });
+		});
+
+		test('Refuses a placeholder nobody filled before any request', async () => {
+			const fetch = answer(200, {});
+			const driver = new AuthDriverGithub({ ...credentials, fetch });
+
+			// 1. Sent, `{repo}` would reach GitHub as `%7Brepo%7D`
+			await expect(driver.call('GET /repos/{owner}/{repo}', { owner: 'acme' })).rejects.toThrow(
+				'needs a "repo" parameter',
+			);
+
+			expect(fetch).not.toHaveBeenCalled();
+		});
+
+		test('Answers with the status, the headers lower-cased and the body', async () => {
+			const fetch = answer(200, [{ id: 1 }], { Link: '<https://api.github.com/user/repos?page=2>; rel="next"' });
+			const driver = new AuthDriverGithub({ ...credentials, fetch });
+
+			const result = await driver.call('GET /user/repos', {}, { accessToken: ACCESS_TOKEN });
+
+			// 1. The `link` to the next page is read by its lower-case name
+			expect(result).toStrictEqual({
+				status: 200,
+				headers: {
+					'content-type': 'text/plain;charset=UTF-8',
+					link: '<https://api.github.com/user/repos?page=2>; rel="next"',
+				},
+				data: [{ id: 1 }],
+			});
+		});
+
 		test('Answers nothing for a 204 and accepts a full URL on the upload host', async () => {
 			const fetch = answer(204);
 			const driver = new AuthDriverGithub({ ...credentials, fetch });
@@ -185,7 +243,7 @@ describe('AuthDriverGithub', () => {
 			// 1. An empty answer is `undefined`, and the upload host is GitHub's own
 			await expect(
 				driver.call('DELETE https://uploads.github.com/repos/o/r/releases/assets/1', {}, { accessToken: ACCESS_TOKEN }),
-			).resolves.toBeUndefined();
+			).resolves.toMatchObject({ status: 204, data: undefined });
 
 			expect(fetch.mock.calls[0]![0]).toBe('https://uploads.github.com/repos/o/r/releases/assets/1');
 		});

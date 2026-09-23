@@ -6,9 +6,8 @@ import {
 	type CallbackParams,
 	type OAuthCallbackResult,
 } from '@novastarter/auth';
-import { toProviderCallError } from '@novastarter/errors';
-import { MAX_TIMER_DELAY, parseCallMethod } from '@novastarter/utils';
-import { httpCall, resolveCallUrl } from '@novastarter/utils/node';
+import { type CallResponse, type HttpApi, request as requestApi } from '@novastarter/http';
+import { MAX_TIMER_DELAY } from '@novastarter/utils';
 import { createRemoteJWKSet, type JWTVerifyGetKey } from 'jose';
 import { buildAuthorizeUrl } from './build-authorize-url.js';
 import { API_URL, CALL_HOSTS, DEFAULT_SCOPES, DEFAULT_TIMEOUT, JWKS_URL, PROVIDER } from './constants.js';
@@ -207,7 +206,8 @@ export class AuthDriverGoogle implements AuthDriver {
 	 *
 	 * With `options.accessToken` the request carries it as a Bearer token and acts as that person — within the scopes
 	 * they granted. Without it no `Authorization` goes out: for the endpoints that need none, or take an API key the
-	 * caller passes as the `key` parameter. The caller's headers go on top. The parameters are the query of a `GET`,
+	 * caller passes as the `key` parameter. A `{name}` in the method is filled from the parameter of that name, which
+	 * is then not sent again. The caller's headers go on top. The parameters are the query of a `GET`,
 	 * `HEAD` or `DELETE` and the JSON body otherwise.
 	 *
 	 * @typeParam T - What the endpoint answers with; the caller knows it from Google's documentation.
@@ -215,57 +215,56 @@ export class AuthDriverGoogle implements AuthDriver {
 	 * host — `https://people.googleapis.com/v1/people/me`.
 	 * @param params - Its query or body.
 	 * @param options - The person's access token, a timeout (the location's unless given), an abort signal, extra
-	 * headers, where the parameters go (`paramsIn`).
-	 * @returns Google's answer: parsed JSON, else text; `undefined` for an empty one — a `204`.
+	 * headers.
+	 * @returns The status, the headers — names lower-cased — and Google's answer: parsed JSON, else text; `undefined`
+	 * for an empty one — a `204`.
 	 * @throws ProviderCallError when Google answers with an error status — its status and answer in `extensions`.
 	 * @throws HitRateLimitError when Google answers 429.
 	 * @throws TimeoutError when the request outlives its timeout.
-	 * @throws Error when the method is malformed or its URL is not on a `googleapis.com` host.
+	 * @throws Error when the method is malformed, a placeholder is left unfilled or its URL is not on a
+	 * `googleapis.com` host.
 	 * @example
 	 * ```ts
-	 * const calendars = await useAuth()
+	 * const { data: calendars } = await useAuth()
 	 * 	.location('google')
-	 * 	.call?.('GET /calendar/v3/users/me/calendarList', { maxResults: 50 }, { accessToken: tokens.accessToken });
+	 * 	.call!('GET /calendar/v3/users/me/calendarList', { maxResults: 50 }, { accessToken: tokens.accessToken });
+	 *
+	 * const { data: events } = await useAuth()
+	 * 	.location('google')
+	 * 	.call!('GET /calendar/v3/calendars/{calendarId}/events', { calendarId: 'primary' }, { accessToken });
 	 * ```
 	 */
 	async call<T = unknown>(
 		method: string,
-		params: Record<string, unknown> = {},
+		params?: Record<string, unknown>,
 		options: AuthCallOptions = {},
-	): Promise<T> {
-		// 1. The method taken apart and its URL checked against Google's hosts before the token goes near it
-		const { verb, target } = parseCallMethod(method);
-		const url = resolveCallUrl(API_URL, target, CALL_HOSTS);
+	): Promise<CallResponse<T>> {
+		// 1. The token stays out of the options handed on, so it is never sent as a header of its own; the API built
+		//    for it does the rest: placeholders, the host check, the deadline and the mapping of Google's refusals,
+		//    which never name the token
+		const { accessToken, ...rest } = options;
 
-		// 2. The request under the caller's deadline or the location's, with the person's token when there is one; the
-		//    driver's fetch is the one tests replace, and it answers what `httpCall` reads of a response
-		const response = await httpCall({
-			url,
-			verb,
-			params,
-			paramsIn: options.paramsIn,
-			headers: {
-				...(options.accessToken ? { Authorization: `Bearer ${options.accessToken}` } : {}),
-				...options.headers,
-			},
-			timeout: options.timeout ?? this.context.timeout,
-			signal: options.signal,
+		return requestApi<T>(this.api(accessToken), method, params, rest);
+	}
+
+	/**
+	 * Google's APIs as {@link AuthDriverGoogle.call} requests them: on a `googleapis.com` host only, under the
+	 * location's deadline, through the driver's fetch.
+	 *
+	 * @param accessToken - The person's token, sent as a Bearer token; no `Authorization` at all without one.
+	 * @returns The API description for `request()` of `@novastarter/http`.
+	 * @internal
+	 */
+	private api(accessToken: string | undefined): HttpApi {
+		// 1. Built per call, as the credentials are the caller's
+		return {
+			provider: PROVIDER,
+			baseUrl: API_URL,
+			hosts: CALL_HOSTS,
+			headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+			timeout: this.context.timeout,
 			fetch: toHttpCallFetch(this.context.fetch),
-		});
-
-		// 3. A status outside 2xx becomes the kit's error; its message names the method and Google's reason, never the
-		//    token, which stays in the request
-		if (response.status < 200 || response.status >= 300) {
-			throw toProviderCallError({
-				provider: PROVIDER,
-				method,
-				status: response.status,
-				body: response.body,
-				headers: response.headers,
-			});
-		}
-
-		return response.body as T;
+		};
 	}
 
 	/**

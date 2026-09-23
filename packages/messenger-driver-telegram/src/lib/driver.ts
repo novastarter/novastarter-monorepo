@@ -1,5 +1,5 @@
+import { type CallOptions, type CallResponse, httpCall, toHeaderRecord } from '@novastarter/http';
 import type { MessengerDriver, MessengerFormat, MessengerMessage, MessengerResult } from '@novastarter/messenger';
-import { type CallOptions, withTimeout } from '@novastarter/utils';
 import { type TelegramErrorAnswer, toTelegramError } from './to-telegram-error.js';
 import { toTelegramRequest } from './to-telegram-request.js';
 
@@ -91,7 +91,7 @@ export class MessengerDriverTelegram implements MessengerDriver {
 	 * Create the driver from its location options.
 	 *
 	 * @param config - The token, and the server, timeout and format when not the defaults.
-	 * @throws Error without a token.
+	 * @throws Error without a token, or with an `apiUrl` that is not a URL.
 	 */
 	constructor(config: MessengerDriverTelegramConfig) {
 		// 1. A missing token would only fail on the first message, far from the configuration that forgot it
@@ -99,10 +99,20 @@ export class MessengerDriverTelegram implements MessengerDriver {
 			throw new Error('The Telegram driver needs a bot "token"');
 		}
 
-		// 2. A trailing slash on the server would double up in every URL
+		// 2. A server that is not a URL is refused here, on its own: the URL a call builds holds the token, and the
+		//    `TypeError` of an invalid one would carry it in its `input`. The value is left out of the message too
+		const apiUrl = (config.apiUrl ?? TELEGRAM_API_URL).replace(/\/+$/, '');
+
+		try {
+			new URL(apiUrl);
+		} catch {
+			throw new Error('The Telegram driver\'s "apiUrl" is not a valid URL');
+		}
+
+		// 3. A trailing slash on the server, dropped above, would double up in every URL
 		this.config = {
 			token: config.token,
-			apiUrl: (config.apiUrl ?? TELEGRAM_API_URL).replace(/\/+$/, ''),
+			apiUrl,
 			timeout: config.timeout ?? DEFAULT_TELEGRAM_TIMEOUT,
 			defaultFormat: config.defaultFormat,
 		};
@@ -120,7 +130,7 @@ export class MessengerDriverTelegram implements MessengerDriver {
 	async send(message: MessengerMessage): Promise<MessengerResult> {
 		// 1. The method and its parameters, then the call
 		const { method, params } = toTelegramRequest(message, this.config.defaultFormat);
-		const result = await this.call<{ message_id?: number } | { message_id?: number }[]>(method, params);
+		const { data: result } = await this.call<{ message_id?: number } | { message_id?: number }[]>(method, params);
 
 		// 2. An album answers a list of messages; the first one stands for it
 		const first = Array.isArray(result) ? result[0] : result;
@@ -148,75 +158,64 @@ export class MessengerDriverTelegram implements MessengerDriver {
 	 * @param method - The method: `sendPhoto`, `setMessageReaction`.
 	 * @param params - Its parameters; `undefined` ones are left out.
 	 * @param options - A timeout over the location's, an abort signal, extra headers.
-	 * @returns The `result` of Telegram's answer.
+	 * @returns The HTTP status, the lower-cased headers and the `result` of Telegram's answer, without the
+	 * `{ ok, result }` envelope.
 	 * @throws MessengerTargetGoneError when the bot was blocked or the chat is gone.
 	 * @throws HitRateLimitError when Telegram asks to slow down.
 	 * @throws TimeoutError when the call takes longer than the timeout.
 	 * @throws Error when Telegram refused the call or answered something that is not JSON.
 	 * @example
 	 * ```ts
-	 * await telegram.call('sendPhoto', { chat_id: chatId, photo: new File([png], 'chart.png'), caption: 'Today' });
+	 * const { data } = await telegram.call<{ message_id: number }>('sendPhoto', {
+	 * 	chat_id: chatId,
+	 * 	photo: new File([png], 'chart.png'),
+	 * 	caption: 'Today',
+	 * });
 	 * ```
 	 */
-	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, options: CallOptions = {}): Promise<T> {
-		// 1. JSON unless a file is among the parameters: the Bot API takes files only in a form
+	async call<T = unknown>(
+		method: string,
+		params: Record<string, unknown> = {},
+		options: CallOptions = {},
+	): Promise<CallResponse<T>> {
+		// 1. With a file among the parameters the call is multipart, and the Bot API reads every other field of a form
+		//    as text: a number as its digits, an object — `media`, `reply_markup` — as its JSON. `httpCall()` would
+		//    repeat a list's field instead, so the values are turned into text here; without a file it sends JSON as is
 		const defined = Object.entries(params).filter(([, value]) => value !== undefined);
 		const multipart = defined.some(([, value]) => value instanceof Blob);
-		const body = multipart ? toFormData(defined) : JSON.stringify(Object.fromEntries(defined));
 
-		// 2. The call, abandoned at the timeout or the caller's abort; the token is in the URL, so the URL never goes into
-		//    an error. A multipart body sets its own content type, with the boundary
-		const headers = { ...(multipart ? {} : { 'content-type': 'application/json' }), ...options.headers };
+		const body = multipart
+			? Object.fromEntries(
+					defined.map(([key, value]) => [
+						key,
+						value instanceof Blob || typeof value === 'string' ? value : JSON.stringify(value),
+					]),
+				)
+			: Object.fromEntries(defined);
 
-		const response = await withTimeout(
-			(signal) =>
-				fetch(`${this.config.apiUrl}/bot${this.config.token}/${method}`, {
-					method: 'POST',
-					body,
-					signal,
-					...(Object.keys(headers).length > 0 ? { headers } : {}),
-				}),
-			options.timeout ?? this.config.timeout,
-			options.signal ? { signal: options.signal } : {},
-		);
+		// 2. One `POST /bot<token>/<method>`, its answer read under the same deadline; the method is encoded so it
+		//    stays one path segment. The token is in the URL; `httpCall()` puts nothing of the request into an error
+		const response = await httpCall({
+			url: new URL(`${this.config.apiUrl}/bot${this.config.token}/${encodeURIComponent(method)}`),
+			verb: 'POST',
+			params: body,
+			headers: options.headers,
+			timeout: options.timeout ?? this.config.timeout,
+			signal: options.signal,
+		});
 
 		// 3. Telegram answers JSON even on a refusal; anything else is a proxy or an outage in between
-		let answer: TelegramAnswer<T> | TelegramErrorAnswer;
+		const answer = response.body as TelegramAnswer<T> | TelegramErrorAnswer | undefined;
 
-		try {
-			answer = (await response.json()) as TelegramAnswer<T> | TelegramErrorAnswer;
-		} catch {
+		if (typeof answer !== 'object' || answer === null || !('ok' in answer)) {
 			throw new Error(`Telegram answered ${method} with HTTP ${response.status} and no JSON`);
 		}
 
-		// 4. A refusal becomes the kit's error for it
+		// 4. A refusal becomes the kit's error for it; an accepted call answers its `result`, not the envelope
 		if (!answer.ok) {
 			throw toTelegramError(method, answer, response.status);
 		}
 
-		return answer.result;
+		return { status: response.status, headers: toHeaderRecord(response.headers), data: answer.result };
 	}
 }
-
-/**
- * Build the form of a multipart call.
- *
- * @param entries - The defined parameters.
- * @returns The form: files as files, strings as they are, everything else as JSON.
- * @internal
- */
-const toFormData = (entries: [string, unknown][]): FormData => {
-	const form = new FormData();
-
-	// 1. The Bot API reads a form field as text, so a number is its digits and an object — `media`, `reply_markup` —
-	//    its JSON
-	for (const [key, value] of entries) {
-		if (value instanceof Blob) {
-			form.append(key, value, value instanceof File ? value.name : key);
-		} else {
-			form.append(key, typeof value === 'string' ? value : JSON.stringify(value));
-		}
-	}
-
-	return form;
-};

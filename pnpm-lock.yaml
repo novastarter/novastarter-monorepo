@@ -67,6 +67,9 @@ catalogs:
     '@ngneat/falso':
       specifier: 8.0.2
       version: 8.0.2
+    '@octokit/request':
+      specifier: 10.0.16
+      version: 10.0.16
     '@paddle/paddle-node-sdk':
       specifier: 3.10.0
       version: 3.10.0
@@ -509,6 +512,9 @@ importers:
       '@novastarter/errors':
         specifier: workspace:*
         version: link:../errors
+      '@novastarter/http':
+        specifier: workspace:*
+        version: link:../http
       '@novastarter/utils':
         specifier: workspace:*
         version: link:../utils
@@ -546,6 +552,9 @@ importers:
       '@novastarter/errors':
         specifier: workspace:*
         version: link:../errors
+      '@novastarter/http':
+        specifier: workspace:*
+        version: link:../http
       '@novastarter/logger':
         specifier: workspace:*
         version: link:../logger
@@ -620,6 +629,9 @@ importers:
       '@novastarter/errors':
         specifier: workspace:*
         version: link:../errors
+      '@novastarter/http':
+        specifier: workspace:*
+        version: link:../http
       '@novastarter/utils':
         specifier: workspace:*
         version: link:../utils
@@ -648,9 +660,9 @@ importers:
       '@novastarter/auth':
         specifier: workspace:*
         version: link:../auth
-      '@novastarter/errors':
+      '@novastarter/http':
         specifier: workspace:*
-        version: link:../errors
+        version: link:../http
       '@novastarter/utils':
         specifier: workspace:*
         version: link:../utils
@@ -658,6 +670,9 @@ importers:
         specifier: 'catalog:'
         version: 6.2.12
     devDependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
@@ -1238,6 +1253,37 @@ importers:
         specifier: 'catalog:'
         version: 3.2.7(@types/node@24.13.6)(jiti@2.7.0)(supports-color@10.2.2)(tsx@4.23.15)(yaml@2.9.1)
 
+  packages/http:
+    dependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
+      '@novastarter/utils':
+        specifier: workspace:*
+        version: link:../utils
+      '@octokit/request':
+        specifier: 'catalog:'
+        version: 10.0.16
+    devDependencies:
+      '@novastarter/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.6
+      '@vitest/coverage-v8':
+        specifier: 'catalog:'
+        version: 3.2.7(supports-color@10.2.2)(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(supports-color@10.2.2)(tsx@4.23.15)(yaml@2.9.1))
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.15.11(@emnapi/core@1.10.0)(@emnapi/runtime@1.11.3)(supports-color@10.2.2)(typescript@5.9.3)
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 3.2.7(@types/node@24.13.6)(jiti@2.7.0)(supports-color@10.2.2)(tsx@4.23.15)(yaml@2.9.1)
+
   packages/logger:
     dependencies:
       '@novastarter/constants':
@@ -1289,6 +1335,9 @@ importers:
       '@novastarter/errors':
         specifier: workspace:*
         version: link:../errors
+      '@novastarter/http':
+        specifier: workspace:*
+        version: link:../http
       '@novastarter/logger':
         specifier: workspace:*
         version: link:../logger
@@ -1323,9 +1372,9 @@ importers:
 
   packages/mail-driver-mailgun:
     dependencies:
-      '@novastarter/errors':
+      '@novastarter/http':
         specifier: workspace:*
-        version: link:../errors
+        version: link:../http
       '@novastarter/mail':
         specifier: workspace:*
         version: link:../mail
@@ -1336,6 +1385,9 @@ importers:
         specifier: 'catalog:'
         version: 14.0.1(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
     devDependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
@@ -1357,9 +1409,9 @@ importers:
 
   packages/mail-driver-mailjet:
     dependencies:
-      '@novastarter/errors':
+      '@novastarter/http':
         specifier: workspace:*
-        version: link:../errors
+        version: link:../http
       '@novastarter/mail':
         specifier: workspace:*
         version: link:../mail
@@ -1370,6 +1422,9 @@ importers:
         specifier: 'catalog:'
         version: 6.0.11(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
     devDependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
@@ -1391,9 +1446,9 @@ importers:
 
   packages/mail-driver-mailtrap:
     dependencies:
-      '@novastarter/errors':
+      '@novastarter/http':
         specifier: workspace:*
-        version: link:../errors
+        version: link:../http
       '@novastarter/mail':
         specifier: workspace:*
         version: link:../mail
@@ -1404,6 +1459,9 @@ importers:
         specifier: 'catalog:'
         version: 4.9.0(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
     devDependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
@@ -1425,9 +1483,9 @@ importers:
 
   packages/mail-driver-postmark:
     dependencies:
-      '@novastarter/errors':
+      '@novastarter/http':
         specifier: workspace:*
-        version: link:../errors
+        version: link:../http
       '@novastarter/mail':
         specifier: workspace:*
         version: link:../mail
@@ -1438,6 +1496,9 @@ importers:
         specifier: 'catalog:'
         version: 5.1.0
     devDependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
@@ -1459,9 +1520,9 @@ importers:
 
   packages/mail-driver-resend:
     dependencies:
-      '@novastarter/errors':
+      '@novastarter/http':
         specifier: workspace:*
-        version: link:../errors
+        version: link:../http
       '@novastarter/mail':
         specifier: workspace:*
         version: link:../mail
@@ -1472,6 +1533,9 @@ importers:
         specifier: 'catalog:'
         version: 6.27.0
     devDependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
@@ -1493,9 +1557,9 @@ importers:
 
   packages/mail-driver-sendgrid:
     dependencies:
-      '@novastarter/errors':
+      '@novastarter/http':
         specifier: workspace:*
-        version: link:../errors
+        version: link:../http
       '@novastarter/mail':
         specifier: workspace:*
         version: link:../mail
@@ -1506,6 +1570,9 @@ importers:
         specifier: 'catalog:'
         version: 8.1.6(supports-color@10.2.2)
     devDependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
@@ -1533,6 +1600,9 @@ importers:
       '@novastarter/errors':
         specifier: workspace:*
         version: link:../errors
+      '@novastarter/http':
+        specifier: workspace:*
+        version: link:../http
       '@novastarter/mail':
         specifier: workspace:*
         version: link:../mail
@@ -1613,6 +1683,9 @@ importers:
       '@novastarter/errors':
         specifier: workspace:*
         version: link:../errors
+      '@novastarter/http':
+        specifier: workspace:*
+        version: link:../http
       '@novastarter/logger':
         specifier: workspace:*
         version: link:../logger
@@ -1644,16 +1717,19 @@ importers:
       '@novastarter/errors':
         specifier: workspace:*
         version: link:../errors
+      '@novastarter/http':
+        specifier: workspace:*
+        version: link:../http
       '@novastarter/messenger':
         specifier: workspace:*
         version: link:../messenger
-      '@novastarter/utils':
-        specifier: workspace:*
-        version: link:../utils
     devDependencies:
       '@novastarter/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
+      '@novastarter/utils':
+        specifier: workspace:*
+        version: link:../utils
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.6
@@ -1724,6 +1800,9 @@ importers:
       '@novastarter/errors':
         specifier: workspace:*
         version: link:../errors
+      '@novastarter/http':
+        specifier: workspace:*
+        version: link:../http
       '@novastarter/logger':
         specifier: workspace:*
         version: link:../logger
@@ -1755,19 +1834,22 @@ importers:
       '@novastarter/errors':
         specifier: workspace:*
         version: link:../errors
+      '@novastarter/http':
+        specifier: workspace:*
+        version: link:../http
       '@novastarter/logger':
         specifier: workspace:*
         version: link:../logger
       '@novastarter/payments':
         specifier: workspace:*
         version: link:../payments
-      '@novastarter/utils':
-        specifier: workspace:*
-        version: link:../utils
     devDependencies:
       '@novastarter/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
+      '@novastarter/utils':
+        specifier: workspace:*
+        version: link:../utils
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.6
@@ -1789,6 +1871,9 @@ importers:
       '@novastarter/errors':
         specifier: workspace:*
         version: link:../errors
+      '@novastarter/http':
+        specifier: workspace:*
+        version: link:../http
       '@novastarter/payments':
         specifier: workspace:*
         version: link:../payments
@@ -1823,12 +1908,12 @@ importers:
       '@novastarter/errors':
         specifier: workspace:*
         version: link:../errors
+      '@novastarter/http':
+        specifier: workspace:*
+        version: link:../http
       '@novastarter/payments':
         specifier: workspace:*
         version: link:../payments
-      '@novastarter/utils':
-        specifier: workspace:*
-        version: link:../utils
       '@polar-sh/sdk':
         specifier: 'catalog:'
         version: 0.49.0
@@ -1836,6 +1921,9 @@ importers:
       '@novastarter/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
+      '@novastarter/utils':
+        specifier: workspace:*
+        version: link:../utils
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.6
@@ -1857,6 +1945,9 @@ importers:
       '@novastarter/errors':
         specifier: workspace:*
         version: link:../errors
+      '@novastarter/http':
+        specifier: workspace:*
+        version: link:../http
       '@novastarter/payments':
         specifier: workspace:*
         version: link:../payments
@@ -1925,6 +2016,9 @@ importers:
       '@novastarter/errors':
         specifier: workspace:*
         version: link:../errors
+      '@novastarter/http':
+        specifier: workspace:*
+        version: link:../http
       '@novastarter/logger':
         specifier: workspace:*
         version: link:../logger
@@ -1984,9 +2078,9 @@ importers:
 
   packages/push-driver-fcm:
     dependencies:
-      '@novastarter/errors':
+      '@novastarter/http':
         specifier: workspace:*
-        version: link:../errors
+        version: link:../http
       '@novastarter/push':
         specifier: workspace:*
         version: link:../push
@@ -1997,6 +2091,9 @@ importers:
         specifier: 'catalog:'
         version: 14.4.0(supports-color@10.2.2)
     devDependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
@@ -2184,6 +2281,9 @@ importers:
       '@novastarter/errors':
         specifier: workspace:*
         version: link:../errors
+      '@novastarter/http':
+        specifier: workspace:*
+        version: link:../http
       '@novastarter/logger':
         specifier: workspace:*
         version: link:../logger
@@ -2218,6 +2318,9 @@ importers:
       '@novastarter/errors':
         specifier: workspace:*
         version: link:../errors
+      '@novastarter/http':
+        specifier: workspace:*
+        version: link:../http
       '@novastarter/sms':
         specifier: workspace:*
         version: link:../sms
@@ -2249,9 +2352,9 @@ importers:
 
   packages/sms-driver-vonage:
     dependencies:
-      '@novastarter/errors':
+      '@novastarter/http':
         specifier: workspace:*
-        version: link:../errors
+        version: link:../http
       '@novastarter/sms':
         specifier: workspace:*
         version: link:../sms
@@ -2262,6 +2365,9 @@ importers:
         specifier: 'catalog:'
         version: 1.24.1(supports-color@10.2.2)
     devDependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
@@ -2286,6 +2392,9 @@ importers:
       '@novastarter/errors':
         specifier: workspace:*
         version: link:../errors
+      '@novastarter/http':
+        specifier: workspace:*
+        version: link:../http
       '@novastarter/utils':
         specifier: workspace:*
         version: link:../utils
@@ -2317,6 +2426,9 @@ importers:
       '@novastarter/errors':
         specifier: workspace:*
         version: link:../errors
+      '@novastarter/http':
+        specifier: workspace:*
+        version: link:../http
       '@novastarter/storage':
         specifier: workspace:*
         version: link:../storage
@@ -2351,6 +2463,9 @@ importers:
       '@novastarter/errors':
         specifier: workspace:*
         version: link:../errors
+      '@novastarter/http':
+        specifier: workspace:*
+        version: link:../http
       '@novastarter/storage':
         specifier: workspace:*
         version: link:../storage
@@ -2394,9 +2509,9 @@ importers:
       '@novastarter/constants':
         specifier: workspace:*
         version: link:../constants
-      '@novastarter/errors':
+      '@novastarter/http':
         specifier: workspace:*
-        version: link:../errors
+        version: link:../http
       '@novastarter/storage':
         specifier: workspace:*
         version: link:../storage
@@ -2407,6 +2522,9 @@ importers:
       '@ngneat/falso':
         specifier: 'catalog:'
         version: 8.0.2
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
@@ -2471,6 +2589,9 @@ importers:
       '@novastarter/errors':
         specifier: workspace:*
         version: link:../errors
+      '@novastarter/http':
+        specifier: workspace:*
+        version: link:../http
       '@novastarter/logger':
         specifier: workspace:*
         version: link:../logger
@@ -2523,9 +2644,9 @@ importers:
       '@novastarter/constants':
         specifier: workspace:*
         version: link:../constants
-      '@novastarter/errors':
+      '@novastarter/http':
         specifier: workspace:*
-        version: link:../errors
+        version: link:../http
       '@novastarter/storage':
         specifier: workspace:*
         version: link:../storage
@@ -2545,6 +2666,9 @@ importers:
       '@ngneat/falso':
         specifier: 'catalog:'
         version: 8.0.2
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
@@ -4216,6 +4340,24 @@ packages:
   '@nodable/entities@3.0.0':
     resolution: {integrity: sha512-8L9xFeTYKhm49xfIypoe2W5wV1m/3Z58kT+7kR9A8OyFxcPduI4VmxaUMQyKYrRjUoLLSXv6EKKID5Tvj9cUVw==}
 
+  '@octokit/endpoint@11.0.5':
+    resolution: {integrity: sha512-iXa654H3yFafF/ieHkukfbgWo2rmXD2ceD0ZOtrPhw1bc3FDch1d9N/TNs0FQ1/cIbwb7kspUX8jzIs8nzb9DQ==}
+    engines: {node: '>= 20'}
+
+  '@octokit/openapi-types@29.0.1':
+    resolution: {integrity: sha512-9qWOMFNxxLokERcms42rU0PTLqQmVs7g5E41TI4mCOxmpFayD1rfC7XxOL55cG9MBZLFlC31BrR37myMKardwg==}
+
+  '@octokit/request-error@7.1.2':
+    resolution: {integrity: sha512-XZRuT3xZ84D3gYErI1DZvhJ33dCWVV6uzBtWkaBB4TvA/L6eOeTZodxLFVB44bBEEo3vEx7y00UfX1tBLrtLRg==}
+    engines: {node: '>= 20'}
+
+  '@octokit/request@10.0.16':
+    resolution: {integrity: sha512-A0zWGjHzISIb+9ccG8s0dq7LKO5zVpJLRICjgUb+sJxEWqn8RUHB1rD3AE51+PECvXHIxqZ1VVvs4fHTSD9nUQ==}
+    engines: {node: '>= 20'}
+
+  '@octokit/types@18.0.0':
+    resolution: {integrity: sha512-l6bAF43PNxkJp6g+W4PjoUSSkxHomXw2nOum5CTftJz1NlV3vu93NImgOYtLf6CbBUb5j+fiuzW0PPQ5JTSvZA==}
+
   '@opentelemetry/api@1.9.1':
     resolution: {integrity: sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q==}
     engines: {node: '>=8.0.0'}
@@ -5619,6 +5761,10 @@ packages:
     resolution: {integrity: sha512-nTjqfcBFEipKdXCv4YDQWCfmcLZKm81ldF0pAopTvyrFGVbcR6P/VAAd5G7N+0tTr8QqiU0tFadD6FK4NtJwOA==}
     engines: {node: '>= 0.6'}
 
+  content-type@3.1.1:
+    resolution: {integrity: sha512-GW4qUsfFo59d0HbUibDlWv5wPz+vAAcaTWbKIuKCf0JkC7wWkSyf8f13IpXn5JkeMlB2P8iTSSIjwXljorg2vA==}
+    engines: {node: '>=22'}
+
   convert-source-map@2.0.0:
     resolution: {integrity: sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==}
 
@@ -6505,6 +6651,9 @@ packages:
 
   json-stable-stringify-without-jsonify@1.0.1:
     resolution: {integrity: sha512-Bdboy+l7tA3OGW6FjyFHWkP5LuByj1Tk33Ljyq0axyzdk9//JSi2u3fP1QSmd1KNwq6VOKYGlAu87CisVir6Pw==}
+
+  json-with-bigint@3.5.12:
+    resolution: {integrity: sha512-uwbF/wSSuOgC7qqlq27Xp5B6a2MHVug3t0idZdTqu0JnlFvgJuH7ju+KAk/J06C7GfhoYy2gnb9wz2INqcne7w==}
 
   json5@2.2.3:
     resolution: {integrity: sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg==}
@@ -7690,6 +7839,9 @@ packages:
   unique-string@2.0.0:
     resolution: {integrity: sha512-uNaeirEPvpZWSgzwsPGtU2zVSTrn/8L5q/IexZmH0eH6SA73CmAA5U4GwORTxQAZs95TAXLNqeLoPPNO5gZfWg==}
     engines: {node: '>=8'}
+
+  universal-user-agent@7.0.3:
+    resolution: {integrity: sha512-TmnEAEAsBJVZM/AADELsK76llnwcf9vMKuPz8JflO1frO8Lchitr0fNaN9d+Ap0BjKtqWqd/J17qeDnXh8CL2A==}
 
   universalify@2.0.1:
     resolution: {integrity: sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==}
@@ -9408,6 +9560,30 @@ snapshots:
 
   '@nodable/entities@3.0.0': {}
 
+  '@octokit/endpoint@11.0.5':
+    dependencies:
+      '@octokit/types': 18.0.0
+      universal-user-agent: 7.0.3
+
+  '@octokit/openapi-types@29.0.1': {}
+
+  '@octokit/request-error@7.1.2':
+    dependencies:
+      '@octokit/types': 18.0.0
+
+  '@octokit/request@10.0.16':
+    dependencies:
+      '@octokit/endpoint': 11.0.5
+      '@octokit/request-error': 7.1.2
+      '@octokit/types': 18.0.0
+      content-type: 3.1.1
+      json-with-bigint: 3.5.12
+      universal-user-agent: 7.0.3
+
+  '@octokit/types@18.0.0':
+    dependencies:
+      '@octokit/openapi-types': 29.0.1
+
   '@opentelemetry/api@1.9.1':
     optional: true
 
@@ -10752,6 +10928,8 @@ snapshots:
 
   content-type@1.0.5: {}
 
+  content-type@3.1.1: {}
+
   convert-source-map@2.0.0:
     optional: true
 
@@ -11761,6 +11939,8 @@ snapshots:
   json-schema@0.4.0: {}
 
   json-stable-stringify-without-jsonify@1.0.1: {}
+
+  json-with-bigint@3.5.12: {}
 
   json5@2.2.3:
     optional: true
@@ -13118,6 +13298,8 @@ snapshots:
   unique-string@2.0.0:
     dependencies:
       crypto-random-string: 2.0.0
+
+  universal-user-agent@7.0.3: {}
 
   universalify@2.0.1: {}
 

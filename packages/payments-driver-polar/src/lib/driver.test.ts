@@ -317,9 +317,9 @@ describe('call', () => {
 		answer({ items: [], pagination: { total_count: 0, max_page: 1 } });
 
 		// 1. The sandbox API, a list as its key repeated
-		await expect(
-			polar('sandbox').call('GET /v1/benefits/', { limit: 20, type: ['custom', 'discord'] }),
-		).resolves.toStrictEqual({ items: [], pagination: { total_count: 0, max_page: 1 } });
+		const { data } = await polar('sandbox').call('GET /v1/benefits/', { limit: 20, type: ['custom', 'discord'] });
+
+		expect(data).toStrictEqual({ items: [], pagination: { total_count: 0, max_page: 1 } });
 
 		expect(request().url).toBe('https://sandbox-api.polar.sh/v1/benefits/?limit=20&type=custom&type=discord');
 		expect(request().init.headers['authorization']).toBe('Bearer polar_oat_SECRET');
@@ -348,21 +348,16 @@ describe('call', () => {
 		expect(request().init.headers['x-request-id']).toBe('r1');
 	});
 
-	test('Puts the parameters of a POST in the query when asked', async () => {
-		answer({});
-
-		// 1. `paramsIn: 'query'` overrides the verb's body
-		await polar().call('POST /v1/orders/ord_1/invoice', { locale: 'en' }, { paramsIn: 'query' });
-
-		expect(request().url).toBe('https://api.polar.sh/v1/orders/ord_1/invoice?locale=en');
-		expect(request().init.body).toBeUndefined();
-	});
-
 	test('Reaches a full URL on the other Polar host, and refuses one on another host before any request', async () => {
 		answer(undefined, 204);
 
 		// 1. The sandbox host from a production driver answers nothing; a foreign host is never asked
-		await expect(polar().call('DELETE https://sandbox-api.polar.sh/v1/benefits/b_1')).resolves.toBeUndefined();
+		await expect(polar().call('DELETE https://sandbox-api.polar.sh/v1/benefits/b_1')).resolves.toStrictEqual({
+			status: 204,
+			headers: {},
+			data: undefined,
+		});
+
 		await expect(polar().call('GET https://evil.example/v1/benefits/')).rejects.toThrow('evil.example');
 
 		expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -407,5 +402,40 @@ describe('call', () => {
 
 		await expect(polar().call('GET /v1/products/', {}, { timeout: 10 })).rejects.toBeInstanceOf(TimeoutError);
 		expect(request().init.signal?.aborted).toBe(true);
+	});
+
+	test('Answers the status, the lower-cased headers and the body', async () => {
+		answer({ id: 'cus_1' }, 200, { 'X-RateLimit-Remaining': '99' });
+
+		// 1. Polar's rate-limit header readable under its lower-case name
+		await expect(polar().call('GET /v1/customers/cus_1')).resolves.toStrictEqual({
+			status: 200,
+			headers: { 'content-type': 'text/plain;charset=UTF-8', 'x-ratelimit-remaining': '99' },
+			data: { id: 'cus_1' },
+		});
+	});
+
+	test('Fills a {name} from its parameter, encoded, and sends that parameter nowhere else', async () => {
+		answer({});
+		answer({});
+
+		// 1. In a GET, the id leaves the query
+		await polar().call('GET /v1/customers/{id}', { id: 'cus 1/x', limit: 1 });
+
+		expect(request().url).toBe('https://api.polar.sh/v1/customers/cus%201%2Fx?limit=1');
+
+		// 2. In a PATCH, it leaves the body
+		await polar().call('PATCH /v1/customers/{id}', { id: 'cus_1', name: 'Ada' });
+
+		const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+
+		expect(url).toBe('https://api.polar.sh/v1/customers/cus_1');
+		expect(JSON.parse(init.body as string)).toStrictEqual({ name: 'Ada' });
+	});
+
+	test('Refuses a {name} no parameter fills before any request', async () => {
+		// 1. Sent, it would reach Polar as `%7Bid%7D`
+		await expect(polar().call('GET /v1/customers/{id}', { name: 'Ada' })).rejects.toThrow('{id}');
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 });

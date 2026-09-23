@@ -46,11 +46,20 @@ describe('SmsDriverConsole', () => {
 				{ purpose: 'import', file: new File(['x'], 'data.csv'), raw: new Blob(['y']) },
 				{ headers: { authorization: 'secret' } },
 			),
-		).resolves.toBeUndefined();
+		).resolves.toStrictEqual({ status: 200, headers: {}, data: undefined });
 
 		expect(logger.info).toHaveBeenCalledWith(
 			{ method: 'POST /v1/files', params: { purpose: 'import', file: 'data.csv', raw: 'blob' } },
 			'Sms call POST /v1/files',
 		);
+	});
+
+	test('Answers a plain 200 with no headers and no body', async () => {
+		// 1. Code that reads the status of a real provider's answer runs against the console too
+		await expect(new SmsDriverConsole({ logger: { info: vi.fn() } as any }).call('GET /v1/x')).resolves.toStrictEqual({
+			status: 200,
+			headers: {},
+			data: undefined,
+		});
 	});
 });

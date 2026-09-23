@@ -27,6 +27,7 @@
 	"dependencies": {
 		"@aws-sdk/client-sesv2": "catalog:",
 		"@novastarter/errors": "workspace:*",
+		"@novastarter/http": "workspace:*",
 		"@novastarter/mail": "workspace:*",
 		"@novastarter/utils": "workspace:*",
 		"nodemailer": "catalog:"

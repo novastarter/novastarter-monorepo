@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { DEFAULT_CHUNK_SIZE } from '@novastarter/constants';
-import { toProviderCallError } from '@novastarter/errors';
+import { type CallOptions, type CallResponse, type HttpApi, type HttpCallFetch, request } from '@novastarter/http';
 import {
 	type ChunkedUploadContext,
 	type ReadOptions,
@@ -11,8 +11,7 @@ import {
 	toRelativePath,
 	type TusDriver,
 } from '@novastarter/storage';
-import { type CallOptions, confinePath, joinPath, normalizePath, parseCallMethod } from '@novastarter/utils';
-import { httpCall, type HttpCallFetch, resolveCallUrl } from '@novastarter/utils/node';
+import { confinePath, joinPath, normalizePath } from '@novastarter/utils';
 import { StorageClient } from '@supabase/storage-js';
 import * as tus from 'tus-js-client';
 import type { RequestInit } from 'undici';
@@ -21,19 +20,12 @@ import { dirname } from './dirname.js';
 import { FileReader } from './tus-source.js';
 
 /**
- * How long a {@link StorageDriverSupabase.call} may take when the caller names no timeout, in milliseconds.
- *
- * @defaultValue 30 000 ms.
- */
-export const DEFAULT_SUPABASE_CALL_TIMEOUT = 30_000;
-
-/**
- * The `fetch` of `undici` in the shape {@link httpCall} takes, so `call()` goes out the way `read()` does.
+ * The `fetch` of `undici` in the shape `request()` takes, so `call()` goes out the way `read()` does.
  *
  * A multipart body arrives as the global `FormData`, which the `undici` package does not take for its own — it would
  * send `[object FormData]`; it is copied into `undici`'s `FormData` on the way. The rest of the request —
  * `redirect: 'manual'` included — is passed on as it is, so `undici` never follows a redirect with the credentials:
- * {@link httpCall} follows them itself.
+ * `request()` follows them itself.
  *
  * @param url - The URL.
  * @param init - The verb, headers, body and signal.
@@ -152,6 +144,15 @@ export class StorageDriverSupabase implements TusDriver {
 	private readonly preferredChunkSize: number;
 
 	/**
+	 * The Storage API as {@link StorageDriverSupabase.call} requests it: under the endpoint, on its host only, with the
+	 * service-role key as `apikey` and bearer token, `{bucket}` standing for the location's bucket, through `undici`
+	 * like `read()`.
+	 *
+	 * @internal
+	 */
+	private readonly api: HttpApi;
+
+	/**
 	 * Create a driver together with its client and bucket handle.
 	 *
 	 * @param config - Connection and behaviour options.
@@ -171,6 +172,15 @@ export class StorageDriverSupabase implements TusDriver {
 		//    first request
 		this.client = this.getClient();
 		this.bucket = this.getBucket();
+
+		// 3. The API of `call()`, from the options the client and bucket just checked
+		this.api = {
+			provider: 'supabase',
+			baseUrl: this.endpoint,
+			headers: { authorization: `Bearer ${this.config.serviceRole}`, apikey: this.config.serviceRole },
+			placeholders: { bucket: this.config.bucket },
+			fetch: undiciFetch,
+		};
 	}
 
 	/**
@@ -619,7 +629,8 @@ export class StorageDriverSupabase implements TusDriver {
 	 * way to what the storage contract does not cover: buckets, signed URLs, public URLs, bucket settings.
 	 *
 	 * `method` is the verb and the path under the Storage API root (`https://<projectId>.supabase.co/storage/v1` or the
-	 * configured `endpoint`) — `{bucket}` in it stands for the location's bucket — or a full URL on that root's host.
+	 * configured `endpoint`) — a `{name}` in it is filled from the parameter of that name, which is then not sent
+	 * again, and `{bucket}` without one stands for the location's bucket — or a full URL on that root's host.
 	 * The request carries the service-role key as `apikey` and bearer token, the way `read()` does. The parameters are
 	 * the query of a `GET`, `HEAD` or `DELETE` and the JSON body otherwise, multipart when a `Blob` is among them;
 	 * object names in a path are not placed under the location's root.
@@ -627,55 +638,33 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @typeParam T - What the API answers with; the caller knows it from Supabase's documentation.
 	 * @param method - The verb and path: `GET /bucket`, `POST /object/sign/{bucket}/a.png`.
 	 * @param params - The query or the body.
-	 * @param options - A timeout over {@link DEFAULT_SUPABASE_CALL_TIMEOUT}, an abort signal, extra headers.
-	 * @returns The parsed JSON answer, else its text; `undefined` for an empty one.
+	 * @param options - A timeout over the default 30 s, an abort signal, extra headers.
+	 * @returns The status, the headers — names lower-cased — and the parsed JSON answer, else its text; `undefined` for
+	 * an empty one.
 	 * @throws ProviderCallError when Supabase answers with an error status — its status and answer in `extensions`.
 	 * @throws HitRateLimitError when Supabase answers 429.
 	 * @throws TimeoutError when the request outlives its timeout.
-	 * @throws Error when the method is malformed or its URL is not on the Storage API's host.
+	 * @throws Error when the method is malformed, a placeholder is left unfilled or its URL is not on the Storage
+	 * API's host.
 	 * @example
 	 * ```ts
-	 * const buckets = await supabase.call<{ id: string; public: boolean }[]>('GET /bucket');
+	 * const { data: buckets } = await supabase.call<{ id: string; public: boolean }[]>('GET /bucket');
 	 *
-	 * const { signedURL } = await supabase.call<{ signedURL: string }>('POST /object/sign/{bucket}/report.pdf', {
+	 * const { data } = await supabase.call<{ signedURL: string }>('POST /object/sign/{bucket}/report.pdf', {
 	 * 	expiresIn: 3600,
 	 * });
+	 *
+	 * const { data: bucket } = await supabase.call<{ public: boolean }>('GET /bucket/{id}', { id: 'avatars' });
 	 * ```
 	 */
-	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, options: CallOptions = {}): Promise<T> {
-		// 1. The verb and the URL; a full URL off the Storage API's host is refused before the key is attached
-		const { verb, target } = parseCallMethod(method);
-		const url = resolveCallUrl(this.endpoint, target.replaceAll('{bucket}', encodeURIComponent(this.config.bucket)));
-
-		// 2. The key in both headers, as `read()` sends it, the caller's headers on top, through `undici` like `read()`
-		const response = await httpCall({
-			url,
-			verb,
-			params,
-			paramsIn: options.paramsIn,
-			headers: {
-				authorization: `Bearer ${this.config.serviceRole}`,
-				apikey: this.config.serviceRole,
-				...options.headers,
-			},
-			timeout: options.timeout ?? DEFAULT_SUPABASE_CALL_TIMEOUT,
-			signal: options.signal,
-			fetch: undiciFetch,
-		});
-
-		// 3. An error status becomes the kit's error; the answer is Supabase's `{ statusCode, error, message }`, which
-		//    names no key
-		if (response.status >= 400) {
-			throw toProviderCallError({
-				provider: 'supabase',
-				method,
-				status: response.status,
-				body: response.body,
-				headers: response.headers,
-			});
-		}
-
-		return response.body as T;
+	async call<T = unknown>(
+		method: string,
+		params?: Record<string, unknown>,
+		options?: CallOptions,
+	): Promise<CallResponse<T>> {
+		// 1. The Storage API does the rest: placeholders — the caller's, then `{bucket}` — the host check, the key, the
+		//    deadline and the mapping of Supabase's `{ statusCode, error, message }` refusals, which name no key
+		return request<T>(this.api, method, params, options);
 	}
 
 	/**

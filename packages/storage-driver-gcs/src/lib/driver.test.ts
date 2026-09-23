@@ -19,7 +19,7 @@ import { DEFAULT_CHUNK_SIZE } from '@novastarter/constants';
 import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import type { ChunkedUploadContext } from '@novastarter/storage';
 import { StorageFileNotFoundError } from '@novastarter/storage';
-import { confinePath, joinPath, parseCallMethod, withTimeout } from '@novastarter/utils';
+import { confinePath, joinPath, withTimeout } from '@novastarter/utils';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { StorageDriverGcsConfig } from './driver.js';
@@ -29,7 +29,7 @@ vi.mock('@novastarter/utils');
 vi.mock('@google-cloud/storage');
 vi.mock('node:stream/promises');
 
-const { parseCallMethod: parseCallMethodActual, withTimeout: withTimeoutActual } =
+const { withTimeout: withTimeoutActual } =
 	await vi.importActual<typeof import('@novastarter/utils')>('@novastarter/utils');
 
 /**
@@ -194,7 +194,7 @@ describe('#constructor', () => {
 		});
 
 		expect(mockStorage.bucket).toHaveBeenCalledWith(sample.config.bucket);
-		expect(driver['bucket']).toBe(mockBucket);
+		expect(driver.client).toBe(mockBucket);
 	});
 });
 
@@ -227,9 +227,11 @@ describe('#file', () => {
 		// 1. A bucket that hands out one known handle, so the test can check the driver returns it untouched
 		mockFile = {};
 
-		driver['bucket'] = {
-			file: vi.fn().mockReturnValue(mockFile),
-		} as unknown as Bucket;
+		Object.assign(driver, {
+			client: {
+				file: vi.fn().mockReturnValue(mockFile),
+			} as unknown as Bucket,
+		});
 	});
 
 	test('Returns file instance', () => {
@@ -634,14 +636,16 @@ describe('#list', () => {
 	beforeEach(() => {
 		mockFiles = randFilePath({ length: randNumber({ min: 1, max: 10 }) });
 
-		driver['bucket'] = {
-			getFiles: vi.fn(),
-		} as unknown as Bucket;
+		Object.assign(driver, {
+			client: {
+				getFiles: vi.fn(),
+			} as unknown as Bucket,
+		});
 
 		// 1. One page per file: every page but the last returns a next-page query, the last returns none, which is how
 		//    the SDK signals the end of a listing
 		mockFiles.forEach((file, index) => {
-			vi.mocked(driver['bucket'].getFiles).mockResolvedValueOnce([
+			vi.mocked(driver.client.getFiles).mockResolvedValueOnce([
 				[{ name: file }],
 				index === mockFiles.length - 1 ? undefined : {},
 			] as unknown as void);
@@ -652,7 +656,7 @@ describe('#list', () => {
 		await driver.list().next();
 
 		// 1. The stubbed `fullPath` returns `''` for an empty prefix, so the whole bucket is listed
-		expect(driver['bucket'].getFiles).toHaveBeenCalledWith({
+		expect(driver.client.getFiles).toHaveBeenCalledWith({
 			prefix: '',
 			autoPaginate: false,
 			maxResults: 500,
@@ -663,7 +667,7 @@ describe('#list', () => {
 		await driver.list(sample.path.input).next();
 
 		// 1. The prefix is resolved like any path, so the root applies to listings as well
-		expect(driver['bucket'].getFiles).toHaveBeenCalledWith({
+		expect(driver.client.getFiles).toHaveBeenCalledWith({
 			prefix: sample.path.inputFull,
 			autoPaginate: false,
 			maxResults: 500,
@@ -687,7 +691,7 @@ describe('#list', () => {
 		const placeholder = `${randDirectoryPath().replace(/^\/+/, '')}/`;
 		const object = `${placeholder}${randUnique()}.png`;
 
-		vi.mocked(driver['bucket'].getFiles)
+		vi.mocked(driver.client.getFiles)
 			.mockReset()
 			.mockResolvedValueOnce([[{ name: placeholder }, { name: object }], undefined] as unknown as void);
 
@@ -875,13 +879,12 @@ describe('#call', () => {
 	 */
 	const withAuth = (target: StorageDriverGcs): void => {
 		// 1. Only the auth client is read by `call()`; the rest of the bucket stays out of the picture
-		target['bucket'] = { storage: { authClient: { getAccessToken } } } as unknown as Bucket;
+		Object.assign(target, { client: { storage: { authClient: { getAccessToken } } } as unknown as Bucket });
 	};
 
 	beforeEach(() => {
-		// 1. The real method parser and deadline, credentials that hand out a known token, and a global `fetch` whose
-		//    requests are observable
-		vi.mocked(parseCallMethod).mockImplementation(parseCallMethodActual);
+		// 1. The real deadline, credentials that hand out a known token, and a global `fetch` whose requests are
+		//    observable
 		vi.mocked(withTimeout).mockImplementation(withTimeoutActual);
 
 		getAccessToken = vi.fn().mockResolvedValue(TOKEN);
@@ -908,7 +911,42 @@ describe('#call', () => {
 		expect(init.headers['authorization']).toBe(`Bearer ${TOKEN}`);
 		expect(init.body).toBeUndefined();
 		expect(init.redirect).toBe('manual');
-		expect(result).toEqual({ bindings: [] });
+		expect(result.data).toEqual({ bindings: [] });
+	});
+
+	test('Fills a placeholder from the parameters, encoded, and does not send that parameter again', async () => {
+		// 1. `{object}` takes the `object` parameter; `/` in it cannot reshape the path, and only the rest is the query
+		await driver.call('GET /b/{bucket}/o/{object}', { object: 'media/a b.jpg', alt: 'json' });
+
+		expect(request()[0]).toBe(
+			'https://storage.googleapis.com/storage/v1/b/media%20bucket/o/media%2Fa%20b.jpg?alt=json',
+		);
+	});
+
+	test('Refuses a placeholder nobody filled before a token is fetched', async () => {
+		// 1. Sent, `{object}` would reach GCS as `%7Bobject%7D`
+		await expect(driver.call('GET /b/{bucket}/o/{object}')).rejects.toThrow('needs a "object" parameter');
+
+		expect(getAccessToken).not.toHaveBeenCalled();
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	test('Answers with the status, the headers lower-cased and the body', async () => {
+		// 1. A response header GCS sends, read by its lower-case name
+		fetchMock.mockResolvedValue(
+			new Response('{"bindings":[]}', {
+				status: 200,
+				headers: { 'Content-Type': 'application/json', 'X-GUploader-UploadID': 'up-1' },
+			}),
+		);
+
+		const result = await driver.call('GET /b/{bucket}/iam');
+
+		expect(result).toEqual({
+			status: 200,
+			headers: { 'content-type': 'application/json', 'x-guploader-uploadid': 'up-1' },
+			data: { bindings: [] },
+		});
 	});
 
 	test('Sends the parameters of a PATCH as the JSON body, with the headers of the caller', async () => {
@@ -921,16 +959,6 @@ describe('#call', () => {
 		expect(init.method).toBe('PATCH');
 		expect(init.body).toBe('{"versioning":{"enabled":true}}');
 		expect(init.headers).toMatchObject({ 'content-type': 'application/json', 'x-goog-a': 'b' });
-	});
-
-	test('Puts the parameters where paramsIn says', async () => {
-		// 1. A POST whose parameters the API reads from the query
-		await driver.call('POST /b/{bucket}/o/a/rewriteTo/b/c/o/d', { maxBytes: 1 }, { paramsIn: 'query' });
-
-		const [url, init] = request();
-
-		expect(url).toContain('?maxBytes=1');
-		expect(init.body).toBeUndefined();
 	});
 
 	test('Uses the configured apiEndpoint as the root', async () => {
@@ -947,7 +975,9 @@ describe('#call', () => {
 		// 1. A 204 of a delete has no body
 		fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
 
-		await expect(driver.call('DELETE /b/{bucket}/o/a.txt')).resolves.toBeUndefined();
+		const result = await driver.call('DELETE /b/{bucket}/o/a.txt');
+
+		expect(result).toMatchObject({ status: 204, data: undefined });
 	});
 
 	test('Allows a full URL on storage.googleapis.com', async () => {
@@ -1007,7 +1037,7 @@ describe('#call', () => {
 	});
 
 	test('Replaces a failure of the credentials with an error that carries none of them', async () => {
-		// 1. The credentials library's error holds the token request; only its code survives, and no cause is kept
+		// 1. The credentials library's error holds the token request; none of it survives, and no cause is kept
 		const failure = Object.assign(new Error(`invalid_grant for ${TOKEN}`), {
 			code: '400',
 			config: { headers: { authorization: `Bearer ${TOKEN}` } },
@@ -1017,7 +1047,7 @@ describe('#call', () => {
 
 		const error = await driver.call('GET /b').catch((thrown: unknown) => thrown);
 
-		expect((error as Error).message).toBe('The gcs storage driver could not get an access token (400)');
+		expect((error as Error).message).toBe('gcs: the credentials for the call could not be had (Error)');
 		expect((error as Error).cause).toBeUndefined();
 		expect(JSON.stringify(error)).not.toContain(TOKEN);
 		expect(fetchMock).not.toHaveBeenCalled();
@@ -1027,7 +1057,7 @@ describe('#call', () => {
 		// 1. A request without a token would only earn a 401
 		getAccessToken.mockResolvedValue(null);
 
-		await expect(driver.call('GET /b')).rejects.toThrow('could not get an access token');
+		await expect(driver.call('GET /b')).rejects.toThrow('gcs: the credentials for the call could not be had (Error)');
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 

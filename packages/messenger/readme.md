@@ -72,12 +72,14 @@ and errors; `options` takes a `timeout`, a `signal` and extra `headers`. The sig
 ```ts
 const messenger = useMessenger();
 
-await messenger.location('telegram').call?.('sendPhoto', { chat_id: chatId, photo: file }); // an RPC method
-await messenger.location('discord').call?.('POST /channels/123/messages', { content: 'Hi' }); // a REST verb and path
+const { data } = await messenger.location('telegram').call!('sendPhoto', { chat_id: chatId, photo: file }); // an RPC method
+await messenger.location('discord').call!('POST /channels/{id}/messages', { id: '123', content: 'Hi' }); // a REST verb and path
 ```
 
-A `Blob` or `File` among the parameters is uploaded where the API takes files. The `console` driver logs the call and
-answers `undefined`.
+A `Blob` or `File` among the parameters is uploaded where the API takes files. Every `call()` answers
+`{ status, headers, data }`; a `{name}` in a path is filled from the parameter of that name, and headers and a timeout
+for every call of a location go in its registration's `call`. The `console` driver logs the call and answers a plain
+`200` with no data.
 
 ## Events and errors
 

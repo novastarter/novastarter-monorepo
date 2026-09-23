@@ -175,9 +175,9 @@ describe('LemonSqueezyApi.call', () => {
 		const { api, fetch } = setup([json({ data: [] })]);
 
 		// 1. The path names the version itself; the brackets of a JSON:API filter are in the key
-		await expect(api.call('GET /v1/discounts', { 'filter[store_id]': 1, 'page[size]': 10 })).resolves.toStrictEqual({
-			data: [],
-		});
+		const { data } = await api.call('GET /v1/discounts', { 'filter[store_id]': 1, 'page[size]': 10 });
+
+		expect(data).toStrictEqual({ data: [] });
 
 		const [url, init] = fetch.mock.calls[0]!;
 
@@ -202,7 +202,7 @@ describe('LemonSqueezyApi.call', () => {
 		// 1. The stand-in's origin with the caller's path; an empty answer is `undefined`
 		await expect(
 			api.call('POST /v1/orders/1/refund', document, { headers: { 'X-Trace': 't1' }, timeout: 5_000 }),
-		).resolves.toBeUndefined();
+		).resolves.toStrictEqual({ status: 204, headers: {}, data: undefined });
 
 		const [url, init] = fetch.mock.calls[0]!;
 
@@ -263,17 +263,53 @@ describe('LemonSqueezyApi.call', () => {
 		expect(fetch.mock.calls[0]![1].signal.aborted).toBe(true);
 	});
 
-	test('Keeps a stand-in’s path prefix, forwards redirect: manual and honours paramsIn', async () => {
+	test('Keeps a stand-in’s path prefix and forwards redirect: manual', async () => {
 		const { api, fetch } = setup([json({ data: {} })], { apiUrl: 'http://localhost:4010/proxy/ls/v1' });
 
-		// 1. Only the trailing `/v1` of the base goes; the fetch is told not to follow redirects; a POST's parameters
-		//    go in the query when asked
-		await api.call('POST /v1/orders/1/refund', { amount: 500 }, { paramsIn: 'query' });
+		// 1. Only the trailing `/v1` of the base goes; the fetch is told not to follow redirects
+		await api.call('GET /v1/orders/1');
 
 		const [url, init] = fetch.mock.calls[0]!;
 
-		expect(url).toBe('http://localhost:4010/proxy/ls/v1/orders/1/refund?amount=500');
+		expect(url).toBe('http://localhost:4010/proxy/ls/v1/orders/1');
 		expect(init.redirect).toBe('manual');
-		expect(init.body).toBeUndefined();
+	});
+
+	test('Answers the status, the lower-cased headers and the body', async () => {
+		const { api } = setup([json({ data: {} }, 200, { 'X-Ratelimit-Remaining': '59' })]);
+
+		// 1. The rate-limit header readable under its lower-case name
+		await expect(api.call('GET /v1/stores/1')).resolves.toStrictEqual({
+			status: 200,
+			headers: { 'content-type': 'text/plain;charset=UTF-8', 'x-ratelimit-remaining': '59' },
+			data: { data: {} },
+		});
+	});
+
+	test('Fills a {name} from its parameter, encoded, and sends that parameter nowhere else', async () => {
+		const { api, fetch } = setup([json({ data: {} }), json({ data: {} })]);
+
+		// 1. In a GET, the id leaves the query
+		await api.call('GET /v1/orders/{id}', { id: '1 /x', include: 'customer' });
+
+		expect(fetch.mock.calls[0]![0]).toBe('https://api.lemonsqueezy.com/v1/orders/1%20%2Fx?include=customer');
+
+		// 2. In a PATCH, it leaves the body
+		const document = { data: { type: 'customers', id: '7', attributes: { name: 'Ada' } } };
+
+		await api.call('PATCH /v1/customers/{customer}', { customer: 7, ...document });
+
+		const [url, init] = fetch.mock.calls[1]!;
+
+		expect(url).toBe('https://api.lemonsqueezy.com/v1/customers/7');
+		expect(JSON.parse(init.body as string)).toStrictEqual(document);
+	});
+
+	test('Refuses a {name} no parameter fills before any request', async () => {
+		const { api, fetch } = setup([]);
+
+		// 1. Sent, it would reach the API as `%7Bid%7D`
+		await expect(api.call('GET /v1/orders/{id}', { include: 'customer' })).rejects.toThrow('{id}');
+		expect(fetch).not.toHaveBeenCalled();
 	});
 });

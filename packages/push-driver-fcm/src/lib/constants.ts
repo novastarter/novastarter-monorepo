@@ -23,11 +23,3 @@ export const FCM_API_URL = 'https://fcm.googleapis.com';
  * @internal
  */
 export const FCM_CALL_HOSTS: readonly string[] = ['fcm.googleapis.com', 'iid.googleapis.com'];
-
-/**
- * How long a {@link PushDriverFcm.call} may take when neither the call nor the location sets a timeout, in
- * milliseconds.
- *
- * @defaultValue 30 000 ms.
- */
-export const DEFAULT_FCM_CALL_TIMEOUT = 30_000;

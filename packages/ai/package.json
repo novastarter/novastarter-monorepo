@@ -27,6 +27,7 @@
 	"dependencies": {
 		"@ai-sdk/provider": "catalog:",
 		"@novastarter/errors": "workspace:*",
+		"@novastarter/http": "workspace:*",
 		"@novastarter/utils": "workspace:*",
 		"ai": "catalog:",
 		"zod": "catalog:"

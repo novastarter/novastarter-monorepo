@@ -110,9 +110,15 @@ own credentials where the provider allows that:
 ```ts
 const { identity, tokens } = await finishOAuth('github', { state, code, cookie });
 
-const repos = await useAuth()
-	.location('github')
-	.call?.('GET /user/repos', { per_page: 100 }, { accessToken: tokens!.accessToken });
+const github = useAuth().location('github');
+const { data: repos, headers } = await github.call!(
+	'GET /user/repos',
+	{ per_page: 100 },
+	{
+		accessToken: tokens!.accessToken,
+	},
+);
+headers['link']; // the next page, when there is one
 ```
 
 A refusal throws `ProviderCallError` (502, the provider's status and answer in `extensions`), a 429 `HitRateLimitError`,
@@ -285,12 +291,15 @@ export class AuthDriverGitlab implements AuthDriver {
 	constructor(config: AuthDriverGitlabConfig) {}
 	async authorize(params: AuthorizeParams): Promise<URL> {}
 	async callback(params: CallbackParams): Promise<OAuthCallbackResult> {}
-	async call<T>(method: string, params?: Record<string, unknown>, options?: AuthCallOptions): Promise<T> {}
+	async call<T>(method: string, params?: Record<string, unknown>, options?: AuthCallOptions): Promise<CallResponse<T>> {
+		return request<T>(this.api, method, params, options);
+	}
 }
 ```
 
 `callback()` may return the provider's tokens under `tokens` beside the identity; `finishOAuth()` takes them off and
 hands them to the application. `call()` is optional: a raw request to the provider's API (`'GET /user/repos'`, or a full
-URL on the provider's own hosts only), with `options.accessToken` as a Bearer token for that person, else with the app's
-own credentials. It throws `toProviderCallError()` of `@novastarter/errors` on an error status and never puts a token or
-a secret into an error message.
+URL on the provider's own hosts only), answering `{ status, headers, data }` — `request()` of `@novastarter/http` does
+it all — with `options.accessToken` as a Bearer token for that person, else with the app's own credentials. It throws
+`toProviderCallError()` of `@novastarter/errors` on an error status and never puts a token or a secret into an error
+message.

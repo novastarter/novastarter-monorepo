@@ -26,11 +26,12 @@
 	},
 	"dependencies": {
 		"@novastarter/errors": "workspace:*",
-		"@novastarter/messenger": "workspace:*",
-		"@novastarter/utils": "workspace:*"
+		"@novastarter/http": "workspace:*",
+		"@novastarter/messenger": "workspace:*"
 	},
 	"devDependencies": {
 		"@novastarter/tsconfig": "workspace:*",
+		"@novastarter/utils": "workspace:*",
 		"@types/node": "catalog:",
 		"@vitest/coverage-v8": "catalog:",
 		"tsdown": "catalog:",

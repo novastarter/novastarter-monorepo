@@ -72,6 +72,17 @@ manager.instantiated(); // Map { 'uploads' => StorageDriverS3 }
 await manager.close(); // StorageDriverS3.close(), then instantiated() is empty
 ```
 
+A location may also set `call: { headers, timeout }`: the manager puts them under every `call()` of that location's
+driver — an API version or an account set once, at registration, the call's own headers and timeout on top.
+
+```ts
+useAuth().registerLocation('github', {
+	driver: 'github',
+	options: { clientId, clientSecret },
+	call: { headers: { 'X-GitHub-Api-Version': '2022-11-28' }, timeout: 10_000 },
+});
+```
+
 ## `LocationManager`
 
 What `DriverManager` is built on: named locations, each registered with the arguments it is built from and built on its
@@ -168,30 +179,7 @@ const response = await withTimeout((signal) => fetch(url, { signal }), 5_000);
 
 ## `call()` helpers
 
-What a driver's `call()` — the raw request to a provider's API — is built from. `parseCallMethod('POST /v1/refunds')`
-splits the verb and the path; `CallOptions` (`timeout`, `signal`, `headers`, `paramsIn`) is the third argument every
-`call()` takes. From `@novastarter/utils/node`, since they need `fetch` and `URL`:
-`resolveCallUrl(base, target, allowedHosts)` joins a path to the API's root and refuses a full URL on any host but the
-provider's, so credentials never leave for another one; `toQueryString(params)`; and
-`httpCall({ url, verb, params, headers, bodyType, timeout, signal })`, which sends the parameters as the query of a
-`GET`/`HEAD`/`DELETE` and as JSON, a form or multipart otherwise, and answers `{ status, headers, body }` without
-judging the status. It follows redirects itself: on the same origin with every header, to another origin with none but
-`accept`, so a key never leaves with a redirect; the deadline covers the whole chain and the reading of the answer.
-
-```ts
-import { type CallOptions, parseCallMethod } from '@novastarter/utils';
-import { httpCall, resolveCallUrl } from '@novastarter/utils/node';
-
-const { verb, target } = parseCallMethod(method);
-const { status, body } = await httpCall({
-	url: resolveCallUrl('https://api.polar.sh', target, ['sandbox-api.polar.sh']),
-	verb,
-	params,
-	headers: { authorization: `Bearer ${token}`, ...options.headers },
-	timeout: options.timeout ?? 30_000,
-	signal: options.signal,
-});
-```
+The helpers of a driver's `call()` — the request of a provider's own API — live in `@novastarter/http`.
 
 ## `joinPath`
 

@@ -4,6 +4,6 @@
  */
 import { StorageDriverS3 } from './lib/driver.js';
 
-export { DEFAULT_S3_CALL_TIMEOUT, StorageDriverS3, type StorageDriverS3Config } from './lib/driver.js';
+export { StorageDriverS3, type StorageDriverS3Config } from './lib/driver.js';
 export type { ChecksumMode } from './types.js';
 export default StorageDriverS3;

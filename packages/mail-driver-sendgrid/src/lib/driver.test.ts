@@ -133,9 +133,9 @@ describe('MailDriverSendgrid.call', () => {
 
 		const driver = new MailDriverSendgrid({ apiKey: 'SG.SECRET' });
 
-		const bounces = await driver.call('GET /v3/suppression/bounces', { limit: 100, email: ['a@b', 'c@d'] });
+		const { data } = await driver.call('GET /v3/suppression/bounces', { limit: 100, email: ['a@b', 'c@d'] });
 
-		expect(bounces).toStrictEqual([{ email: 'ada@example.com' }]);
+		expect(data).toStrictEqual([{ email: 'ada@example.com' }]);
 
 		expect(sent().url).toBe('https://api.sendgrid.com/v3/suppression/bounces?limit=100&email=a%40b&email=c%40d');
 		expect(sent().init.method).toBe('GET');
@@ -148,7 +148,7 @@ describe('MailDriverSendgrid.call', () => {
 		const body = { recipient_emails: ['ada@example.com'] };
 
 		expect(
-			await driver.call('POST /v3/asm/suppressions/global', body, { headers: { 'On-Behalf-Of': 'sub' } }),
+			(await driver.call('POST /v3/asm/suppressions/global', body, { headers: { 'On-Behalf-Of': 'sub' } })).data,
 		).toBeUndefined();
 
 		expect(sent().url).toBe('https://api.sendgrid.com/v3/asm/suppressions/global');
@@ -156,19 +156,6 @@ describe('MailDriverSendgrid.call', () => {
 		expect(sent().init.body).toBe(JSON.stringify(body));
 		expect(sent().init.headers['on-behalf-of']).toBe('sub');
 		expect(sent().init.headers['content-type']).toBe('application/json');
-	});
-
-	test('Sends a DELETE’s parameters as the body when `paramsIn` says so', async () => {
-		// 1. The bulk bounce removal reads a JSON body on a DELETE
-		fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
-
-		const driver = new MailDriverSendgrid({ apiKey: 'SG.SECRET' });
-
-		await driver.call('DELETE /v3/suppression/bounces', { emails: ['a@b.c'] }, { paramsIn: 'body' });
-
-		expect(sent().url).toBe('https://api.sendgrid.com/v3/suppression/bounces');
-		expect(sent().init.method).toBe('DELETE');
-		expect(sent().init.body).toBe('{"emails":["a@b.c"]}');
 	});
 
 	test('Turns an error status into ProviderCallError without the key, and a 429 into HitRateLimitError', async () => {
@@ -199,7 +186,7 @@ describe('MailDriverSendgrid.call', () => {
 		await expect(driver.call('GET /v3/user/profile')).rejects.toBeInstanceOf(HitRateLimitError);
 	});
 
-	test('Refuses a full URL on another host before any request, and accepts one on api.sendgrid.com', async () => {
+	test('Refuses a full URL on another host before any request, and accepts one on a SendGrid host', async () => {
 		// 1. The key must not travel to someone else's host
 		const driver = new MailDriverSendgrid({ apiKey: 'SG.SECRET' });
 
@@ -216,6 +203,14 @@ describe('MailDriverSendgrid.call', () => {
 
 		expect(sent().url).toBe('https://api.sendgrid.com/v3/suppression/bounces/ada@example.com');
 		expect(sent().init.method).toBe('DELETE');
+
+		// 3. So is the EU region's, which a full URL is the only way to reach
+		fetchMock.mockClear();
+		fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+		await driver.call('GET https://api.eu.sendgrid.com/v3/user/profile');
+
+		expect(sent().url).toBe('https://api.eu.sendgrid.com/v3/user/profile');
 	});
 
 	test('Aborts the request itself at the call’s timeout', async () => {
@@ -245,5 +240,47 @@ describe('MailDriverSendgrid.call', () => {
 		).rejects.toThrow('shutdown');
 
 		expect(fetchMock).not.toHaveBeenCalled();
+	});
+});
+
+describe('MailDriverSendgrid.call placeholders and answers', () => {
+	test('Fills a {name} from its parameter, encoded, and sends that parameter nowhere else', async () => {
+		fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+		fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+		const driver = new MailDriverSendgrid({ apiKey: 'SG.SECRET' });
+
+		// 1. A GET: the placeholder takes `id`, URL-encoded; the other parameters stay in the query
+		await driver.call('GET /v3/templates/{id}', { id: 'a/b', limit: 5 });
+		expect((fetchMock.mock.calls[0] as [string])[0]).toBe('https://api.sendgrid.com/v3/templates/a%2Fb?limit=5');
+
+		// 2. A POST: the placeholder's parameter is not in the body
+		await driver.call('POST /v3/templates/{id}/versions', { id: 42, name: 'welcome' });
+
+		const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+
+		expect(url).toBe('https://api.sendgrid.com/v3/templates/42/versions');
+		expect(init.body).toBe('{"name":"welcome"}');
+	});
+
+	test('Refuses a placeholder no parameter fills before any request', async () => {
+		await expect(new MailDriverSendgrid({ apiKey: 'SG.SECRET' }).call('GET /v3/templates/{id}')).rejects.toThrow(
+			/"id" parameter/,
+		);
+
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	test('Answers the status, the lower-cased headers and the body', async () => {
+		fetchMock.mockResolvedValueOnce(
+			new Response('{"ok":true}', { status: 201, headers: { 'X-RateLimit-Remaining': '9' } }),
+		);
+
+		const driver = new MailDriverSendgrid({ apiKey: 'SG.SECRET' });
+
+		// 1. Every call answers the whole response, headers named in lower case
+		const answer = await driver.call('GET /v3/templates/{id}', { id: 'x' });
+
+		expect(answer).toMatchObject({ status: 201, headers: { 'x-ratelimit-remaining': '9' }, data: { ok: true } });
 	});
 });

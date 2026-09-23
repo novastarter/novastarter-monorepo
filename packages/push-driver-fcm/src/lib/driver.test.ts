@@ -249,9 +249,10 @@ describe('PushDriverFcm.call', () => {
 
 		const driver = new PushDriverFcm({ serviceAccount: account });
 
-		const result = await driver.call('POST /v1/projects/{projectId}/messages:send', { message: { topic: 'news' } });
+		const method = 'POST /v1/projects/{projectId}/messages:send';
+		const { data } = await driver.call(method, { message: { topic: 'news' } });
 
-		expect(result).toStrictEqual({ name: 'projects/proj/messages/1' });
+		expect(data).toStrictEqual({ name: 'projects/proj/messages/1' });
 
 		const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
 
@@ -359,7 +360,7 @@ describe('PushDriverFcm.call', () => {
 		expect(getAccessToken).not.toHaveBeenCalled();
 	});
 
-	test('Reports a refused token without the SDK error, and honours paramsIn', async () => {
+	test('Reports a refused token without the SDK error', async () => {
 		vi.stubGlobal('fetch', fetchSpy);
 
 		const driver = new PushDriverFcm({ serviceAccount: account });
@@ -371,19 +372,64 @@ describe('PushDriverFcm.call', () => {
 
 		const error = (await driver.call('GET /v1/x').catch((thrown: unknown) => thrown)) as Error;
 
-		expect(error.message).toBe('FCM: the access token could not be had: invalid_grant');
+		expect(error.message).toBe('fcm: the credentials for the call could not be had (Error)');
+		expect(error.message).not.toContain('invalid_grant');
 		expect(error.cause).toBeUndefined();
 		expect(JSON.stringify(error)).not.toContain('secret-jwt');
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
 
-		// 2. A POST told to use the query sends no body
+	test('Answers the status, the lower-cased headers and the body', async () => {
+		// 1. Google's request id readable under its lower-case name
+		vi.stubGlobal('fetch', fetchSpy);
 		getAccessToken.mockResolvedValueOnce({ access_token: 'tok', expires_in: 3600 });
+		fetchSpy.mockResolvedValueOnce(answer(200, { name: 'n1' }, { 'X-Goog-Request-Id': 'g1' }));
+
+		const driver = new PushDriverFcm({ serviceAccount: account });
+
+		const method = 'POST /v1/projects/{projectId}/messages:send';
+
+		await expect(driver.call(method, { message: {} })).resolves.toStrictEqual({
+			status: 200,
+			headers: { 'content-type': 'text/plain;charset=UTF-8', 'x-goog-request-id': 'g1' },
+			data: { name: 'n1' },
+		});
+	});
+
+	test('Fills a {name} from its parameter, encoded, and sends that parameter nowhere else', async () => {
+		// 1. In a GET, the token leaves the query
+		vi.stubGlobal('fetch', fetchSpy);
+
+		getAccessToken
+			.mockResolvedValueOnce({ access_token: 'tok', expires_in: 3600 })
+			.mockResolvedValueOnce({ access_token: 'tok', expires_in: 3600 });
+
+		fetchSpy.mockResolvedValueOnce(answer(200, {}));
 		fetchSpy.mockResolvedValueOnce(answer(200, {}));
 
-		await driver.call('POST https://iid.googleapis.com/iid/v1:x', { a: 1 }, { paramsIn: 'query' });
+		const driver = new PushDriverFcm({ serviceAccount: account });
 
-		const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+		await driver.call('GET https://iid.googleapis.com/iid/info/{token}', { token: 'a:b/c', details: true });
 
-		expect(url).toBe('https://iid.googleapis.com/iid/v1:x?a=1');
-		expect(init.body).toBeUndefined();
+		expect(fetchSpy.mock.calls[0]?.[0]).toBe('https://iid.googleapis.com/iid/info/a%3Ab%2Fc?details=true');
+
+		// 2. In a POST, it leaves the body; `{projectId}` is still the location's
+		await driver.call('POST /v1/projects/{projectId}/messages/{id}:x', { id: 'm1', flag: true });
+
+		const [url, init] = fetchSpy.mock.calls[1] as [string, RequestInit];
+
+		expect(url).toBe('https://fcm.googleapis.com/v1/projects/proj/messages/m1:x');
+		expect(init.body).toBe(JSON.stringify({ flag: true }));
+	});
+
+	test('Refuses a {name} no parameter fills before fetching a token or making a request', async () => {
+		// 1. Sent, it would reach Google as `%7Btoken%7D`
+		vi.stubGlobal('fetch', fetchSpy);
+
+		const driver = new PushDriverFcm({ serviceAccount: account });
+
+		await expect(driver.call('GET https://iid.googleapis.com/iid/info/{token}')).rejects.toThrow('{token}');
+		expect(getAccessToken).not.toHaveBeenCalled();
+		expect(fetchSpy).not.toHaveBeenCalled();
 	});
 });

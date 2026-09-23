@@ -60,14 +60,31 @@ method is the action's name (with or without the SDK's `Command` suffix) and the
 ```ts
 const mail = useMail().location('main');
 
-const account = await mail.call?.('GetAccount');
+const { data: account } = await mail.call!('GetAccount');
 
-const bounced = await mail.call?.('ListSuppressedDestinations', { Reasons: ['BOUNCE'], PageSize: 100 });
+const { status, data } = await mail.call!('ListSuppressedDestinations', { Reasons: ['BOUNCE'], PageSize: 100 });
 ```
 
-The answer is the action's output without the SDK's `$metadata`. There are no URLs, so no host list: every request goes
-to the SES endpoint of the location's region (or its `endpoint`). A name that is not an SESv2 action is refused before
-anything is sent; a refusal of SES throws `ProviderCallError` with its HTTP status and `{ name, message }`, a 429 or
-`TooManyRequestsException` `HitRateLimitError`; the timeout is 30 seconds unless `{ timeout }` names another. The
-`headers` option adds headers to the HTTP request before the SDK signs it; `paramsIn` does not apply, since the SDK
-serializes the input itself.
+It answers `{ status, headers, data }`: the HTTP status, no headers — the SDK's output does not keep them — and the
+action's output without the SDK's `$metadata`. There are no URLs, so no host list: every request goes to the SES
+endpoint of the location's region (or its `endpoint`). A name that is not an SESv2 action is refused before anything is
+sent; a refusal of SES throws `ProviderCallError` with its HTTP status and `{ name, message }`, a 429 or
+`TooManyRequestsException` `HitRateLimitError`; the timeout is 30 seconds unless `{ timeout }` names another. The SDK
+signs its own requests and sends no extra header: a `headers` option — the call's or the location's — is refused with an
+error rather than dropped.
+
+## The SDK client
+
+`call()` covers plain actions only. For the rest of the SESv2 API — paginators, waiters, middleware — the driver's
+`client` is the SDK's own `SESv2Client`, on the location's region and credentials:
+
+```ts
+import { paginateListSuppressedDestinations } from '@aws-sdk/client-sesv2';
+import type { MailDriverSes } from '@novastarter/mail-driver-ses';
+
+const ses = useMail().location('main') as MailDriverSes;
+
+for await (const page of paginateListSuppressedDestinations({ client: ses.client }, { Reasons: ['BOUNCE'] })) {
+	console.log(page.SuppressedDestinationSummaries);
+}
+```

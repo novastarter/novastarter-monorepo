@@ -39,23 +39,30 @@ and the tags become SendGrid categories, attachments go base64-encoded, inline w
 ## Any other request
 
 `call()` makes a request of the [SendGrid v3 API](https://www.twilio.com/docs/sendgrid/api-reference) with the
-location's key — the parameters of a `GET`, `HEAD` or `DELETE` go in the query, the rest as JSON. A refusal throws
-`ProviderCallError` with SendGrid's `errors` in `extensions.body` (`HitRateLimitError` on a 429). The default timeout is
-30 s; a timeout or an abort stops the request itself, and a signal aborted before the call sends nothing.
-`paramsIn: 'body'` sends a `DELETE`'s parameters as JSON, for the bulk removals:
+location's key — the parameters of a `GET`, `HEAD` or `DELETE` go in the query, the rest as JSON. It answers
+`{ status, headers, data }`. A refusal throws `ProviderCallError` with SendGrid's `errors` in `extensions.body`
+(`HitRateLimitError` on a 429). The default timeout is 30 s; a timeout or an abort stops the request itself, and a
+signal aborted before the call sends nothing.
 
 ```ts
 const mail = useMail().location('main');
 
-const bounces = await mail.call?.('GET /v3/suppression/bounces', { start_time: 1_700_000_000 });
+const { data: bounces } = await mail.call!('GET /v3/suppression/bounces', { start_time: 1_700_000_000 });
 
-await mail.call?.('POST /v3/asm/suppressions/global', { recipient_emails: ['ada@example.com'] });
-
-await mail.call?.('DELETE /v3/suppression/bounces', { emails: ['ada@example.com'] }, { paramsIn: 'body' });
+await mail.call!('POST /v3/asm/suppressions/global', { recipient_emails: ['ada@example.com'] });
 ```
 
-A path is joined to `https://api.sendgrid.com`; a full URL may only point at `api.sendgrid.com`. The key needs the
-permission of the endpoint it calls.
+A `{name}` in the path takes the parameter of that name, URL-encoded, and that parameter is not sent again. The headers
+carry SendGrid's rate limit:
+
+```ts
+const { data, headers } = await mail.call!('GET /v3/templates/{id}', { id: 'd-f43daeeaef504760851f727007e0b5d0' });
+
+console.log(headers['x-ratelimit-remaining'], data);
+```
+
+A path is joined to `https://api.sendgrid.com`; a full URL may only point at `api.sendgrid.com` or, for the EU region,
+`api.eu.sendgrid.com`. The key needs the permission of the endpoint it calls.
 
 ## Options
 

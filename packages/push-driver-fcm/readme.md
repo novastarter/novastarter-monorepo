@@ -54,18 +54,18 @@ original as `cause`. `verify()` fetches an OAuth access token with the service a
 ## Any other request
 
 `call(method, params, options)` reaches the rest of FCM with an OAuth access token of the service account, the
-location's `timeout` (30 s unless given) and the kit's errors. A path goes under `https://fcm.googleapis.com`, where
-`{projectId}` stands for the service account's project; the parameters are the query of a `GET`, `HEAD` or `DELETE` and
-a JSON body otherwise (`options.paramsIn` moves them). The timeout and the signal bound the token's fetch too.
+location's `timeout` (30 s unless given) and the kit's errors, and answers `{ status, headers, data }`. A path goes
+under `https://fcm.googleapis.com`, where `{projectId}` stands for the service account's project; the parameters are the
+query of a `GET`, `HEAD` or `DELETE` and a JSON body otherwise. The timeout and the signal bound the token's fetch too.
 
 ```ts
 const fcm = usePush().location('fcm');
 
-await fcm.call?.('POST /v1/projects/{projectId}/messages:send', {
+const { data } = await fcm.call!('POST /v1/projects/{projectId}/messages:send', {
 	message: { topic: 'news', notification: { title: 'Breaking' } },
 });
 
-await fcm.call?.(
+await fcm.call!(
 	'POST https://iid.googleapis.com/iid/v1:batchAdd',
 	{ to: '/topics/news', registration_tokens: [token] },
 	{ headers: { access_token_auth: 'true' } },
@@ -75,6 +75,22 @@ await fcm.call?.(
 A full URL may point at `fcm.googleapis.com` and `iid.googleapis.com` only; any other host is refused before a token is
 fetched. An error status throws `ProviderCallError` with Google's `{ error: { code, message, status } }` in
 `extensions.body`, a `429` throws `HitRateLimitError`, and the timeout `TimeoutError`.
+
+Another `{name}` in the path is filled from the parameter of that name, URL-encoded, and that parameter is not sent
+again; a `{name}` no parameter fills is refused before a request. The headers come with names lower-cased — a
+`retry-after`, say.
+
+```ts
+const fcm = usePush().location('fcm');
+
+const { status, headers, data } = await fcm.call!<{ rel?: { topics?: Record<string, unknown> } }>(
+	'GET https://iid.googleapis.com/iid/info/{token}',
+	{ token, details: true },
+	{ headers: { access_token_auth: 'true' } },
+);
+
+console.log(status, Object.keys(data.rel?.topics ?? {}), headers['retry-after']);
+```
 
 ## Options
 

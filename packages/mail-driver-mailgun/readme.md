@@ -44,16 +44,24 @@ be `active`.
 ## Any other request
 
 `call()` makes a request of the [Mailgun API](https://documentation.mailgun.com/docs/mailgun/api-reference/) with the
-location's key, on the location's host; `{domain}` in the path is the location's domain. A `GET`'s parameters go in the
-query, the rest as a form (multipart when a `Blob` or `File` is among them), a list repeating its key. A refusal throws
-`ProviderCallError` (`HitRateLimitError` on a 429); the timeout is the location's `timeout`, 30 s unless set.
+location's key, on the location's host; `{domain}` in the path is the location's domain. The parameters of a `GET`,
+`HEAD` or `DELETE` go in the query, the body otherwise, as a form (multipart when a `Blob` or `File` is among them), a
+list repeating its key. A refusal throws `ProviderCallError` (`HitRateLimitError` on a 429); the timeout is the
+location's `timeout`, 30 s unless set. It answers `{ status, headers, data }`.
 
 ```ts
 const mail = useMail().location('main');
 
-const events = await mail.call?.('GET /v3/{domain}/events', { event: 'failed', limit: 50 });
+const { data: events } = await mail.call!('GET /v3/{domain}/events', { event: 'failed', limit: 50 });
 
-await mail.call?.('POST /v3/{domain}/unsubscribes', { address: 'ada@example.com', tag: '*' });
+await mail.call!('POST /v3/{domain}/unsubscribes', { address: 'ada@example.com', tag: '*' });
+```
+
+A `{name}` in the path takes the parameter of that name, URL-encoded, and that parameter is not sent again; `{domain}`
+is filled from a `domain` parameter first, the location's domain otherwise:
+
+```ts
+const { status, data } = await mail.call!('GET /v3/{domain}/bounces/{address}', { address: 'ada@example.com' });
 ```
 
 A path is joined to the location's host (`https://api.mailgun.net` unless `host` is set); a full URL may only point at

@@ -6,7 +6,7 @@ import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import defaultExport from '../index.js';
-import { DEFAULT_MAILTRAP_CALL_TIMEOUT, MailDriverMailtrap } from './driver.js';
+import { MailDriverMailtrap } from './driver.js';
 
 /**
  * The stubbed `fetch` a `call()` goes through.
@@ -206,9 +206,9 @@ describe('call', () => {
 		answer([{ id: 1, name: 'Acme', access_levels: [1000] }]);
 
 		// 1. The path goes under `https://mailtrap.io`, the parameters into the query
-		const result = await new MailDriverMailtrap({ token: 'TOKEN' }).call('GET /api/accounts', { page: 2 });
+		const { data } = await new MailDriverMailtrap({ token: 'TOKEN' }).call('GET /api/accounts', { page: 2 });
 
-		expect(result).toStrictEqual([{ id: 1, name: 'Acme', access_levels: [1000] }]);
+		expect(data).toStrictEqual([{ id: 1, name: 'Acme', access_levels: [1000] }]);
 		expect(fetched().url).toBe('https://mailtrap.io/api/accounts?page=2');
 		expect(fetched().init.method).toBe('GET');
 		expect(fetched().init.headers['authorization']).toBe('Bearer TOKEN');
@@ -224,7 +224,7 @@ describe('call', () => {
 
 		await expect(
 			driver.call('POST https://send.api.mailtrap.io/api/send', mail, { headers: { 'X-Trace': '1' } }),
-		).resolves.toStrictEqual({ success: true, message_ids: ['m-1'] });
+		).resolves.toMatchObject({ data: { success: true, message_ids: ['m-1'] } });
 
 		expect(fetched().url).toBe('https://send.api.mailtrap.io/api/send');
 		expect(JSON.parse(fetched().init.body as string)).toStrictEqual(mail);
@@ -237,7 +237,6 @@ describe('call', () => {
 		);
 
 		await expect(driver.call('GET /api/accounts', {}, { timeout: 10 })).rejects.toBeInstanceOf(TimeoutError);
-		expect(DEFAULT_MAILTRAP_CALL_TIMEOUT).toBe(30_000);
 	});
 
 	test('Turns an error status into ProviderCallError without the token in the message', async () => {
@@ -283,5 +282,47 @@ describe('call', () => {
 		await expect(driver.call('GET https://mailtrap.io.evil.example/api')).rejects.toThrow('not on a host');
 
 		expect(fetchMock).not.toHaveBeenCalled();
+	});
+});
+
+describe('MailDriverMailtrap.call placeholders and answers', () => {
+	test('Fills a {name} from its parameter, encoded, and sends that parameter nowhere else', async () => {
+		fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+		fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+		const driver = new MailDriverMailtrap({ token: 't' });
+
+		// 1. A GET: the placeholder takes `id`, URL-encoded; the other parameters stay in the query
+		await driver.call('GET /api/accounts/{id}', { id: 'a/b', limit: 5 });
+		expect((fetchMock.mock.calls[0] as [string])[0]).toBe('https://mailtrap.io/api/accounts/a%2Fb?limit=5');
+
+		// 2. A POST: the placeholder's parameter is not in the body
+		await driver.call('POST /api/accounts/{id}/contacts', { id: 42, name: 'welcome' });
+
+		const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+
+		expect(url).toBe('https://mailtrap.io/api/accounts/42/contacts');
+		expect(init.body).toBe('{"name":"welcome"}');
+	});
+
+	test('Refuses a placeholder no parameter fills before any request', async () => {
+		await expect(new MailDriverMailtrap({ token: 't' }).call('GET /api/accounts/{id}')).rejects.toThrow(
+			/"id" parameter/,
+		);
+
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	test('Answers the status, the lower-cased headers and the body', async () => {
+		fetchMock.mockResolvedValueOnce(
+			new Response('{"ok":true}', { status: 201, headers: { 'X-RateLimit-Remaining': '9' } }),
+		);
+
+		const driver = new MailDriverMailtrap({ token: 't' });
+
+		// 1. Every call answers the whole response, headers named in lower case
+		const answer = await driver.call('GET /api/accounts/{id}', { id: 'x' });
+
+		expect(answer).toMatchObject({ status: 201, headers: { 'x-ratelimit-remaining': '9' }, data: { ok: true } });
 	});
 });

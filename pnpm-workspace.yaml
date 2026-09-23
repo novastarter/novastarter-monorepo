@@ -35,6 +35,7 @@ catalog:
   '@libsql/client': 0.18.0
   '@neondatabase/serverless': 1.1.0
   '@ngneat/falso': 8.0.2
+  '@octokit/request': 10.0.16
   '@paddle/paddle-node-sdk': 3.10.0
   '@pnpm/types': 1000.7.0
   '@pnpm/workspace.pkgs-graph': 1000.0.25

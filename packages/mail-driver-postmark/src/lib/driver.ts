@@ -1,4 +1,4 @@
-import { toProviderCallError } from '@novastarter/errors';
+import { type CallOptions, type CallResponse, type HttpApi, request } from '@novastarter/http';
 import {
 	bareMailAddress,
 	type MailDriver,
@@ -6,8 +6,6 @@ import {
 	type MailResult,
 	toMailAddressList,
 } from '@novastarter/mail';
-import { type CallOptions, parseCallMethod } from '@novastarter/utils';
-import { httpCall, resolveCallUrl } from '@novastarter/utils/node';
 import { ServerClient } from 'postmark';
 import { describeError } from './describe-error.js';
 import { type PostmarkStreams, toPostmarkMessage } from './to-postmark-message.js';
@@ -27,27 +25,11 @@ export type MailDriverPostmarkConfig = {
 };
 
 /**
- * How long a {@link MailDriverPostmark.call} request may take when neither the caller nor the location's `timeout`
- * names one, in milliseconds.
- *
- * @defaultValue 30 000 ms.
- */
-export const DEFAULT_POSTMARK_CALL_TIMEOUT = 30_000;
-
-/**
  * The root of Postmark's API, which the paths of {@link MailDriverPostmark.call} are joined to.
  *
  * @internal
  */
 const POSTMARK_API_URL = 'https://api.postmarkapp.com';
-
-/**
- * The hosts a full URL given to {@link MailDriverPostmark.call} may point at, besides the API root's own: none, since
- * Postmark serves its server API from one host.
- *
- * @internal
- */
-const POSTMARK_CALL_HOSTS: readonly string[] = [];
 
 /**
  * Registers the driver's options in the map of `@novastarter/mail`, so a location naming `postmark` has its options
@@ -96,18 +78,13 @@ export class MailDriverPostmark implements MailDriver {
 	private readonly streams: PostmarkStreams;
 
 	/**
-	 * The location's server token, kept for the `X-Postmark-Server-Token` header of {@link MailDriverPostmark.call}.
+	 * Postmark's server API with the location's token in `X-Postmark-Server-Token`, which
+	 * {@link MailDriverPostmark.call} requests under the location's timeout; no host besides the root's own, since
+	 * Postmark serves its server API from one host.
 	 *
 	 * @internal
 	 */
-	private readonly serverToken: string;
-
-	/**
-	 * The location's request timeout in milliseconds, when it set one; the default of raw calls otherwise.
-	 *
-	 * @internal
-	 */
-	private readonly timeout: number | undefined;
+	private readonly api: HttpApi;
 
 	/**
 	 * Create a driver on a client of its own for the given token.
@@ -127,10 +104,16 @@ export class MailDriverPostmark implements MailDriver {
 			config.timeout !== undefined ? { timeout: config.timeout } : undefined,
 		);
 
-		// 3. The streams per category, and the token and timeout for raw calls, which bypass the SDK
+		// 3. The streams per category, and the API of raw calls, which bypass the SDK — the location's timeout is in
+		//    seconds, the API's in milliseconds
 		this.streams = { messageStream: config.messageStream, broadcastStream: config.broadcastStream };
-		this.serverToken = config.serverToken;
-		this.timeout = config.timeout === undefined ? undefined : config.timeout * 1000;
+
+		this.api = {
+			provider: 'postmark',
+			baseUrl: POSTMARK_API_URL,
+			headers: { 'x-postmark-server-token': config.serverToken },
+			timeout: config.timeout === undefined ? undefined : config.timeout * 1000,
+		};
 	}
 
 	/**
@@ -189,10 +172,11 @@ export class MailDriverPostmark implements MailDriver {
 	 * @typeParam T - What the endpoint answers with; the caller knows it from Postmark's documentation.
 	 * @param method - The verb and a path from `https://api.postmarkapp.com` (`GET /bounces`), or a full URL on that
 	 * host.
-	 * @param params - Its query or body.
-	 * @param options - A timeout over the location's (30 s unless it set one), an abort signal, extra headers,
-	 * where the parameters go (`paramsIn`).
-	 * @returns Postmark's answer: parsed JSON, else text; `undefined` for an empty one.
+	 * @param params - Its query or body. A `{name}` in the path takes the parameter of that name, URL-encoded,
+	 * which is then not sent again.
+	 * @param options - A timeout over the location's (30 s unless it set one), an abort signal, extra headers.
+	 * @returns The status, the lower-cased headers and Postmark's answer: parsed JSON, else text; `undefined` when
+	 * empty.
 	 * @throws ProviderCallError when Postmark answers with an error status — its status and answer (`ErrorCode`,
 	 * `Message`) in `extensions`.
 	 * @throws HitRateLimitError when Postmark asks to slow down.
@@ -200,38 +184,18 @@ export class MailDriverPostmark implements MailDriver {
 	 * @throws Error when the method is malformed or its URL is not on Postmark's host.
 	 * @example
 	 * ```ts
-	 * const bounces = await postmark.call<{ TotalCount: number }>('GET /bounces', { count: 50, offset: 0 });
+	 * const { data } = await postmark.call<{ TotalCount: number }>('GET /bounces', { count: 50, offset: 0 });
 	 *
-	 * await postmark.call('PUT /bounces/692560173/activate');
+	 * await postmark.call('PUT /bounces/{id}/activate', { id: 692560173 });
 	 * ```
 	 */
-	async call<T = unknown>(method: string, params?: Record<string, unknown>, options: CallOptions = {}): Promise<T> {
-		// 1. The verb and the URL, checked before any request so the token never travels to a host other than Postmark's
-		const { verb, target } = parseCallMethod(method);
-		const url = resolveCallUrl(POSTMARK_API_URL, target, POSTMARK_CALL_HOSTS);
-
-		// 2. The request with the token in Postmark's own header, the caller's headers on top, under the deadline
-		const response = await httpCall({
-			url,
-			verb,
-			params,
-			paramsIn: options.paramsIn,
-			headers: { 'x-postmark-server-token': this.serverToken, ...options.headers },
-			timeout: options.timeout ?? this.timeout ?? DEFAULT_POSTMARK_CALL_TIMEOUT,
-			signal: options.signal,
-		});
-
-		// 3. A non-2xx answer becomes the kit's error; it carries the method and Postmark's answer, never the token
-		if (response.status < 200 || response.status >= 300) {
-			throw toProviderCallError({
-				provider: 'postmark',
-				method,
-				status: response.status,
-				body: response.body,
-				headers: response.headers,
-			});
-		}
-
-		return response.body as T;
+	async call<T = unknown>(
+		method: string,
+		params?: Record<string, unknown>,
+		options?: CallOptions,
+	): Promise<CallResponse<T>> {
+		// 1. `request()` does the whole of it — placeholders, the host check before the token is sent, the deadline,
+		//    the kit's errors without the token — over the API the constructor described
+		return request<T>(this.api, method, params, options);
 	}
 }

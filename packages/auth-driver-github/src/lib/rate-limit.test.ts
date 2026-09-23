@@ -29,4 +29,20 @@ describe('githubRateLimitWait', () => {
 		expect(githubRateLimitWait(403, new Headers({ 'x-ratelimit-remaining': '12' }))).toBeUndefined();
 		expect(githubRateLimitWait(404, new Headers({ 'retry-after': '5' }))).toBeUndefined();
 	});
+
+	test('Reads a 403 whose message names a secondary rate limit as a limit of a minute', () => {
+		// 1. Some secondary limits carry no header at all, only GitHub's message; a header still names the wait
+		const body = { message: 'You have exceeded a secondary rate limit. Please wait a few minutes.' };
+
+		expect(githubRateLimitWait(403, new Headers(), body)).toBe(60);
+		expect(githubRateLimitWait(403, new Headers({ 'retry-after': '12' }), body)).toBe(12);
+		expect(githubRateLimitWait(403, new Headers(), { message: 'Resource not accessible' })).toBeUndefined();
+	});
+
+	test('Waits no time for a reset already past', () => {
+		// 1. A clock ahead of GitHub's never yields a negative wait
+		const headers = new Headers({ 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1000' });
+
+		expect(githubRateLimitWait(403, headers)).toBe(0);
+	});
 });

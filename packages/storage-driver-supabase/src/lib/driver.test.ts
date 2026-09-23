@@ -1241,7 +1241,7 @@ describe('#call', () => {
 		vi.mocked(fetch).mock.calls[0] as never;
 
 	beforeEach(() => {
-		// 1. The mocked `undici` fetch answers with a real response, so `httpCall` reads it as it would Supabase's
+		// 1. The mocked `undici` fetch answers with a real response, so `request()` reads it as it would Supabase's
 		vi.mocked(fetch).mockResolvedValue(new globalThis.Response('[{"id":"media"}]', { status: 200 }) as never);
 	});
 
@@ -1262,7 +1262,42 @@ describe('#call', () => {
 			apikey: sample.config.serviceRole,
 		});
 
-		expect(result).toEqual([{ id: 'media' }]);
+		expect(result.data).toEqual([{ id: 'media' }]);
+	});
+
+	test('Fills a placeholder from the parameters, encoded, and does not send that parameter again', async () => {
+		// 1. `{id}` takes the `id` parameter; a `/` in it cannot reshape the path, and only the rest is the query
+		await driver.call('GET /bucket/{id}', { id: 'a/b c', verbose: 1 });
+
+		const url = new URL(request()[0]);
+
+		expect(url.pathname).toBe('/storage/v1/bucket/a%2Fb%20c');
+		expect(url.search).toBe('?verbose=1');
+	});
+
+	test('Refuses a placeholder nobody filled before any request', async () => {
+		// 1. Sent, `{id}` would reach Supabase as `%7Bid%7D`
+		await expect(driver.call('GET /bucket/{id}')).rejects.toThrow('needs a "id" parameter');
+
+		expect(fetch).not.toHaveBeenCalled();
+	});
+
+	test('Answers with the status, the headers lower-cased and the body', async () => {
+		// 1. A response header, read by its lower-case name
+		vi.mocked(fetch).mockResolvedValue(
+			new globalThis.Response('[]', {
+				status: 200,
+				headers: { 'Content-Type': 'application/json', 'X-Request-Id': 'req-1' },
+			}) as never,
+		);
+
+		const result = await driver.call('GET /bucket');
+
+		expect(result).toEqual({
+			status: 200,
+			headers: { 'content-type': 'application/json', 'x-request-id': 'req-1' },
+			data: [],
+		});
 	});
 
 	test('Sends the parameters of a POST as JSON to a custom endpoint, with the headers of the caller', async () => {
@@ -1298,16 +1333,6 @@ describe('#call', () => {
 		await driver.call('GET /bucket');
 
 		expect(request()[1]).toMatchObject({ redirect: 'manual' });
-	});
-
-	test('Puts the parameters where paramsIn says', async () => {
-		// 1. A POST whose API reads a query: the parameters go into the URL, and no body is sent
-		await driver.call('POST /bucket', { a: 1 }, { paramsIn: 'query' });
-
-		const [url, init] = request();
-
-		expect(url).toContain('?a=1');
-		expect(init.body).toBeUndefined();
 	});
 
 	test('Refuses a full URL on a foreign host before any request', async () => {

@@ -126,16 +126,25 @@ useAi().registerProvider('anthropic', createAnthropic({ apiKey: env.AI_ANTHROPIC
 
 const { data } = await useAi().call<{ data: { id: string }[] }>('openai', 'GET /v1/models');
 
-const { input_tokens } = await useAi().call<{ input_tokens: number }>('anthropic', 'POST /v1/messages/count_tokens', {
+const { data: count } = await useAi().call<{ input_tokens: number }>('anthropic', 'POST /v1/messages/count_tokens', {
 	model: 'claude-sonnet-5',
 	messages: [{ role: 'user', content: 'Hello' }],
 });
 ```
 
+A `{name}` in the path takes the parameter of that name, URL-encoded, and that parameter is not sent again. Every call
+answers `{ status, headers, data }` — here with OpenAI's rate-limit header:
+
+```ts
+const { data: file, headers } = await useAi().call('openai', 'GET /v1/files/{id}', { id: 'file-abc123' });
+
+console.log(headers['x-ratelimit-remaining-requests'], file);
+```
+
 `method` is `'VERB /path'` from `baseURL`, or `'VERB https://host/path'` — a full URL only on the base URL's host or one
 of `allowedHosts`, so the key never reaches another party. `params` go in the query of a GET, HEAD or DELETE and as the
 JSON body otherwise (multipart when a `Blob` is among them). `options` takes a `timeout` over the API's, a `signal` and
-extra `headers`. The answer comes back parsed as JSON, else as text, `undefined` when empty.
+extra `headers`. `data` is the body parsed as JSON, else its text, `undefined` when empty.
 
 A 429 throws `HitRateLimitError`; any other error status throws `ProviderCallError` with the provider's `status` and
 `body` in `extensions`. An unknown provider throws `AiProviderNotFoundError` (`AI_PROVIDER_NOT_FOUND`); a provider

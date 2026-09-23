@@ -2,7 +2,7 @@
  * Tests of `utils/driver-manager`.
  */
 import { describe, expect, test, vi } from 'vitest';
-import { DriverManager } from './driver-manager.js';
+import { DriverManager, mergeCallOptions } from './driver-manager.js';
 
 describe('#registerDriver', () => {
 	test('Saves registered drivers locally', () => {
@@ -117,6 +117,68 @@ describe('#location', () => {
 	});
 });
 
+describe('location call defaults', () => {
+	/**
+	 * A driver whose `call()` answers with what it was given, so the tests can see the merged options.
+	 */
+	class CallingDriver {
+		/**
+		 * Echo the call.
+		 *
+		 * @param method - The method.
+		 * @param params - The parameters.
+		 * @param options - The options, as the manager merged them.
+		 * @returns What the driver got.
+		 */
+		async call(method: string, params?: Record<string, unknown>, options?: unknown): Promise<unknown> {
+			// 1. Echoed, so the assertions read the merge
+			return { method, params, options };
+		}
+	}
+
+	test('Puts the location’s headers and timeout under every call, the call’s own on top', async () => {
+		const manager = new DriverManager<CallingDriver & { close?(): Promise<void> }>();
+
+		manager.registerDriver('calling', CallingDriver as never);
+
+		manager.registerLocation('api', {
+			driver: 'calling',
+			options: {},
+			call: { headers: { 'X-Api-Version': '2024-01-01' }, timeout: 5_000 },
+		});
+
+		// 1. The call's header joins the location's; its timeout wins; the method and params go through untouched
+		await expect(
+			manager.location('api').call('GET /x', { a: 1 }, { headers: { 'x-trace': 't' }, timeout: 100 }),
+		).resolves.toStrictEqual({
+			method: 'GET /x',
+			params: { a: 1 },
+			options: { headers: { 'x-api-version': '2024-01-01', 'x-trace': 't' }, timeout: 100 },
+		});
+
+		// 2. The instance is still the driver's own class
+		expect(manager.location('api')).toBeInstanceOf(CallingDriver);
+	});
+
+	test('Leaves a driver alone without call defaults, or without call()', async () => {
+		const manager = new DriverManager<object>();
+
+		manager.registerDriver('calling', CallingDriver as never);
+		manager.registerDriver('plain', class {} as never);
+		manager.registerLocation('bare', { driver: 'calling', options: {} });
+		manager.registerLocation('plain', { driver: 'plain', options: {}, call: { timeout: 1 } });
+
+		// 1. No defaults: the prototype's own `call`, options passed as they are
+		const bare = manager.location('bare') as CallingDriver;
+
+		expect(Object.hasOwn(bare, 'call')).toBe(false);
+		await expect(bare.call('GET /x')).resolves.toMatchObject({ options: undefined });
+
+		// 2. No `call()` to wrap: nothing added
+		expect('call' in manager.location('plain')).toBe(false);
+	});
+});
+
 describe('#close', () => {
 	test('Closes the drivers built so far that have a close(), and leaves the rest alone', async () => {
 		// 1. Two driver classes: one holding connections, with a `close()`, one without — both are valid drivers
@@ -169,5 +231,29 @@ describe('#close', () => {
 		expect(manager.instantiated().size).toBe(0);
 		manager.location('a');
 		expect(built).toHaveBeenCalledTimes(2);
+	});
+});
+
+describe('mergeCallOptions', () => {
+	test('Puts the call’s headers over the location’s, case-insensitively, and prefers the call’s timeout', () => {
+		// 1. Both set: the call wins where they overlap, other options pass through
+		expect(
+			mergeCallOptions(
+				{ headers: { 'X-Version': '1', 'Content-Type': 'application/json' }, timeout: 5_000 },
+				{ headers: { 'content-type': 'text/plain' }, timeout: 100, accessToken: 't' },
+			),
+		).toStrictEqual({
+			headers: { 'x-version': '1', 'content-type': 'text/plain' },
+			timeout: 100,
+			accessToken: 't',
+		});
+
+		// 2. Only the location's
+		expect(mergeCallOptions({ timeout: 5_000 }, undefined)).toStrictEqual({ timeout: 5_000 });
+
+		// 3. No defaults: the call's options as they are
+		const options = { timeout: 1 };
+
+		expect(mergeCallOptions(undefined, options)).toBe(options);
 	});
 });

@@ -24,8 +24,7 @@ import {
 } from '@ngneat/falso';
 import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { StorageFileNotFoundError } from '@novastarter/storage';
-import { confinePath, joinPath, normalizePath, parseCallMethod } from '@novastarter/utils';
-import { httpCall, resolveCallUrl } from '@novastarter/utils/node';
+import { confinePath, joinPath, normalizePath, withTimeout } from '@novastarter/utils';
 import type { Response } from 'undici';
 import { fetch, FormData } from 'undici';
 import type { Mock } from 'vitest';
@@ -36,7 +35,6 @@ import { StorageDriverCloudinary } from './driver.js';
 import * as toFormUrlEncodedUtil from './to-form-url-encoded.js';
 import * as toSignatureStringUtil from './to-signature-string.js';
 
-vi.mock('@novastarter/utils/node');
 vi.mock('@novastarter/utils');
 vi.mock('node:path');
 vi.mock('node:buffer');
@@ -50,14 +48,8 @@ vi.mock('undici');
 const {
 	confinePath: confinePathActual,
 	joinPath: joinPathActual,
-	parseCallMethod: parseCallMethodActual,
+	withTimeout: withTimeoutActual,
 } = await vi.importActual<typeof import('@novastarter/utils')>('@novastarter/utils');
-
-/**
- * Real `call()` helpers, kept for the `#call` suite while `@novastarter/utils/node` stays mocked for the rest.
- */
-const { httpCall: httpCallActual, resolveCallUrl: resolveCallUrlActual } =
-	await vi.importActual<typeof import('@novastarter/utils/node')>('@novastarter/utils/node');
 
 /**
  * Real `Buffer` and `Blob`, kept for the suites that push actual bytes through the buffering code while `node:buffer`
@@ -1683,10 +1675,8 @@ describe('#list', () => {
 
 describe('#call', () => {
 	beforeEach(() => {
-		// 1. The real parser, URL check and request, over the mocked `undici` fetch
-		vi.mocked(parseCallMethod).mockImplementation(parseCallMethodActual);
-		vi.mocked(resolveCallUrl).mockImplementation(resolveCallUrlActual);
-		vi.mocked(httpCall).mockImplementation(httpCallActual);
+		// 1. The real request of `@novastarter/http`, with the real deadline, over the mocked `undici` fetch
+		vi.mocked(withTimeout).mockImplementation(withTimeoutActual);
 		vi.mocked(fetch).mockResolvedValue(new globalThis.Response('{"resources":[]}', { status: 200 }) as never);
 	});
 
@@ -1711,7 +1701,41 @@ describe('#call', () => {
 		expect(init.method).toBe('GET');
 		expect(init.headers['authorization']).toBe(sample.basicAuth);
 		expect(init.body).toBeUndefined();
-		expect(result).toEqual({ resources: [] });
+		expect(result.data).toEqual({ resources: [] });
+	});
+
+	test('Fills a placeholder from the parameters, encoded, and does not send that parameter again', async () => {
+		// 1. `{tag}` takes the `tag` parameter; a `/` in it cannot reshape the path, and only the rest is the query
+		await driver.call('GET /resources/image/tags/{tag}', { tag: 'a/b c', max_results: 10 });
+
+		expect(request()[0]).toBe(
+			`https://api.cloudinary.com/v1_1/${sample.config.cloudName}/resources/image/tags/a%2Fb%20c?max_results=10`,
+		);
+	});
+
+	test('Refuses a placeholder nobody filled before any request', async () => {
+		// 1. Sent, `{tag}` would reach Cloudinary as `%7Btag%7D`
+		await expect(driver.call('GET /resources/image/tags/{tag}')).rejects.toThrow('needs a "tag" parameter');
+
+		expect(fetch).not.toHaveBeenCalled();
+	});
+
+	test('Answers with the status, the headers lower-cased and the body', async () => {
+		// 1. The Admin API's hourly budget arrives in headers
+		vi.mocked(fetch).mockResolvedValue(
+			new globalThis.Response('{"resources":[]}', {
+				status: 200,
+				headers: { 'Content-Type': 'application/json', 'X-FeatureRateLimit-Remaining': '499' },
+			}) as never,
+		);
+
+		const result = await driver.call('GET /resources/image');
+
+		expect(result).toEqual({
+			status: 200,
+			headers: { 'content-type': 'application/json', 'x-featureratelimit-remaining': '499' },
+			data: { resources: [] },
+		});
 	});
 
 	test('Sends the parameters of a POST as JSON, with the headers of the caller', async () => {
@@ -1745,21 +1769,18 @@ describe('#call', () => {
 		expect(request()[1]).toMatchObject({ redirect: 'manual' });
 	});
 
-	test('Puts the parameters where paramsIn says', async () => {
-		// 1. A POST whose API reads a query: the parameters go into the URL, and no body is sent
-		await driver.call('POST /usage', { a: 1 }, { paramsIn: 'query' });
-
-		const [url, init] = request();
-
-		expect(url).toContain('?a=1');
-		expect(init.body).toBeUndefined();
-	});
-
 	test('Refuses a full URL on a foreign host before any request', async () => {
 		// 1. The key and secret would go wherever the URL points
 		await expect(driver.call('GET https://evil.example/usage')).rejects.toThrow('not on a host of this provider');
 
 		expect(fetch).not.toHaveBeenCalled();
+	});
+
+	test('Accepts a full URL on a regional API host', async () => {
+		// 1. A cloud in the EU region is reached through its own host, which only a full URL names
+		await driver.call(`GET https://api-eu.cloudinary.com/v1_1/${sample.config.cloudName}/usage`);
+
+		expect(request()[0]).toBe(`https://api-eu.cloudinary.com/v1_1/${sample.config.cloudName}/usage`);
 	});
 
 	test('Turns an error status into a ProviderCallError without the credentials', async () => {

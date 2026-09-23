@@ -37,29 +37,48 @@ contract.
 
 ## Any other request
 
-`call()` reaches any operation of the Blob service REST API on the location's account — service properties, container
-metadata, leases, tags, access tiers. The method is the verb and the path from the blob endpoint; `{container}` in it
-stands for the location's container. Every parameter goes in the query, except `body`: a string (XML) or a `Blob` sent
-as the request body. Headers such as `x-ms-meta-*` go in `options.headers`.
+`call()` makes a read of the Blob service REST API on the location's account — service properties and stats, container
+metadata and ACLs, blob tags and properties — or a `DELETE`. The method is a `GET`, `HEAD` or `DELETE` and the path from
+the blob endpoint; a `{name}` in it is filled from the parameter of that name, URL-encoded, and that parameter is not
+sent again; `{container}` without one stands for the location's container. The parameters go in the query. Every call
+answers `{ status, headers, data }`, header names lower-cased; `data` is XML text for most operations. Writes — a `PUT`,
+a `POST`, a body — are refused: they go through the SDK client below.
 
 ```ts
 const uploads = useStorage().location('uploads');
 
-const xml = await uploads.call?.<string>('GET /', { restype: 'service', comp: 'properties' });
+const { data: xml } = await uploads.call!<string>('GET /', { restype: 'service', comp: 'properties' });
 
-await uploads.call?.(
-	'PUT /{container}',
-	{ restype: 'container', comp: 'metadata' },
-	{ headers: { 'x-ms-meta-owner': 'media' } },
-);
+// `{blob}` takes the `blob` parameter, encoded: /<container>/media%2Fa.jpg
+const { data: tags } = await uploads.call!<string>('GET /{container}/{blob}', { blob: 'media/a.jpg', comp: 'tags' });
+
+// A HEAD's properties arrive in the headers
+const { headers } = await uploads.call!('HEAD /{container}/{blob}', { blob: 'media/a.jpg' });
+
+console.log(xml, tags, headers['x-ms-access-tier']);
 ```
 
 Each request is authorised with an account SAS signed for it alone from the account key and valid for five minutes;
 operations an account SAS cannot authorise are refused by Azure. A full URL may point only at the host of the blob
-endpoint (`<accountName>.blob.core.windows.net`, or the configured `endpoint`); any other host is refused before a SAS
-is signed. The answer is XML text for most operations. A refusal throws `ProviderCallError` with Azure's status and XML
-answer, the SAS struck from it; so does a redirect, which is not followed, since the SAS rides in the URL. A 429 throws
+endpoint (`<accountName>.blob.core.windows.net`, or the configured `endpoint`); any other host, like a placeholder
+nobody filled, is refused before a request is made. A refusal throws `ProviderCallError` with Azure's status and XML
+answer, the SAS struck from it; a redirect to another host is followed without the SAS. A 429 throws
 `HitRateLimitError`. The default timeout is 30 seconds.
+
+## The SDK client
+
+`client` of the driver — what `location()` answers — is the location's `ContainerClient` of `@azure/storage-blob`, with
+its shared-key credential and endpoint: every write, SAS URLs, leases, streamed uploads and downloads;
+`client.getBlockBlobClient(name)` and its kin reach single blobs. Blob names are not placed under `root`.
+
+```ts
+import type { StorageDriverAzure } from '@novastarter/storage-driver-azure';
+
+const { client } = useStorage().location('uploads') as StorageDriverAzure;
+
+await client.setMetadata({ owner: 'media' });
+await client.getBlockBlobClient('media/a.jpg').setAccessTier('Cool');
+```
 
 ## Options
 

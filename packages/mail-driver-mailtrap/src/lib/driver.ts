@@ -1,4 +1,4 @@
-import { toProviderCallError } from '@novastarter/errors';
+import { type CallOptions, type CallResponse, type HttpApi, request } from '@novastarter/http';
 import {
 	bareMailAddress,
 	type MailDriver,
@@ -6,18 +6,9 @@ import {
 	type MailResult,
 	toMailAddressList,
 } from '@novastarter/mail';
-import { type CallOptions, parseCallMethod } from '@novastarter/utils';
-import { httpCall, resolveCallUrl } from '@novastarter/utils/node';
 import { MailtrapClient } from 'mailtrap';
 import { describeError } from './describe-error.js';
 import { toMailtrapMail } from './to-mailtrap-mail.js';
-
-/**
- * How long a {@link MailDriverMailtrap.call} may take unless the caller names another deadline, in milliseconds.
- *
- * @defaultValue 30 seconds.
- */
-export const DEFAULT_MAILTRAP_CALL_TIMEOUT = 30_000;
 
 /**
  * The root of Mailtrap's general API — accounts, sending domains, contacts, sandbox inboxes — the one
@@ -99,11 +90,12 @@ export class MailDriverMailtrap implements MailDriver {
 	private readonly client: MailtrapClient;
 
 	/**
-	 * The API token, kept for {@link call}, which goes around the SDK since it has no generic request.
+	 * Mailtrap's API as {@link MailDriverMailtrap.call} requests it: the token as a bearer token, and Mailtrap's API
+	 * hosts as the only ones a full URL may point at.
 	 *
 	 * @internal
 	 */
-	private readonly token: string;
+	private readonly api: HttpApi;
 
 	/**
 	 * Create a driver on a client of its own for the given token.
@@ -134,8 +126,13 @@ export class MailDriverMailtrap implements MailDriver {
 			...(config.testInboxId !== undefined ? { testInboxId: config.testInboxId } : {}),
 		});
 
-		// 3. The token is kept for `call()`, the one request made without the SDK
-		this.token = config.token;
+		// 3. The token also goes to the API of `call()`, the one request made without the SDK
+		this.api = {
+			provider: 'mailtrap',
+			baseUrl: MAILTRAP_API_URL,
+			hosts: MAILTRAP_CALL_HOSTS,
+			headers: { authorization: `Bearer ${config.token}` },
+		};
 	}
 
 	/**
@@ -203,47 +200,27 @@ export class MailDriverMailtrap implements MailDriver {
 	 *
 	 * @typeParam T - What the request answers with, from Mailtrap's documentation.
 	 * @param method - The verb and the path, or a full URL on Mailtrap's API hosts.
-	 * @param params - The query or the body.
-	 * @param options - A timeout ({@link DEFAULT_MAILTRAP_CALL_TIMEOUT} unless given), an abort signal, extra headers,
-	 * where the parameters go (`paramsIn`).
-	 * @returns Mailtrap's answer: parsed JSON, else text; `undefined` for an empty one.
+	 * @param params - The query or the body. A `{name}` in the path takes the parameter of that name, URL-encoded,
+	 * which is then not sent again.
+	 * @param options - A timeout (30 s unless given), an abort signal, extra headers.
+	 * @returns The status, the lower-cased headers and Mailtrap's answer: parsed JSON, else text; `undefined` when
+	 * empty.
 	 * @throws ProviderCallError when Mailtrap answers with an error status — its status and answer in `extensions`.
 	 * @throws HitRateLimitError when Mailtrap answers 429.
 	 * @throws TimeoutError when the request outlives its timeout.
 	 * @throws Error when the method is malformed or its URL is not on Mailtrap's API hosts.
 	 * @example
 	 * ```ts
-	 * const accounts = await useMail().location('mailtrap').call?.('GET /api/accounts');
+	 * const { data: accounts } = await useMail().location('mailtrap').call!('GET /api/accounts');
 	 * ```
 	 */
-	async call<T = unknown>(method: string, params?: Record<string, unknown>, options: CallOptions = {}): Promise<T> {
-		// 1. The method is taken apart and its URL checked before any request, so a foreign host never sees the token
-		const { verb, target } = parseCallMethod(method);
-		const url = resolveCallUrl(MAILTRAP_API_URL, target, MAILTRAP_CALL_HOSTS);
-
-		// 2. The request with the token; the caller's headers go on top of the driver's
-		const response = await httpCall({
-			url,
-			verb,
-			params,
-			paramsIn: options.paramsIn,
-			headers: { authorization: `Bearer ${this.token}`, ...options.headers },
-			timeout: options.timeout ?? DEFAULT_MAILTRAP_CALL_TIMEOUT,
-			signal: options.signal,
-		});
-
-		// 3. A refusal becomes the kit's error; Mailtrap's `errors` or `error` names the reason, and nothing of the
-		//    request — the token included — goes into it
-		if (response.status < 200 || response.status >= 300) {
-			throw toProviderCallError({
-				provider: 'mailtrap',
-				method,
-				status: response.status,
-				body: response.body,
-				headers: response.headers,
-			});
-		}
-
-		return response.body as T;
+	async call<T = unknown>(
+		method: string,
+		params?: Record<string, unknown>,
+		options?: CallOptions,
+	): Promise<CallResponse<T>> {
+		// 1. `request()` does the whole of it — placeholders, the host check before the token is sent, the deadline,
+		//    the kit's errors with Mailtrap's `errors` and without the token — over the API the constructor described
+		return request<T>(this.api, method, params, options);
 	}
 }

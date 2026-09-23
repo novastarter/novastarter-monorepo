@@ -52,14 +52,19 @@ requires at least one.
 
 `call()` makes a request of Mailtrap's own API with the location's token — the way to sending domains, contacts,
 suppressions, sandbox inboxes and anything else the driver has no wrapper for. The method is the verb and a path from
-`https://mailtrap.io`; the parameters are the query of a `GET`, `HEAD` or `DELETE` and the JSON body otherwise.
+`https://mailtrap.io`; the parameters are the query of a `GET`, `HEAD` or `DELETE` and the JSON body otherwise. It
+answers `{ status, headers, data }`.
 
 ```ts
 const mail = useMail().location('main');
 
-const accounts = await mail.call?.<{ id: number; name: string }[]>('GET /api/accounts');
+const { data: accounts } = await mail.call!<{ id: number; name: string }[]>('GET /api/accounts');
+```
 
-const domains = await mail.call?.(`GET /api/accounts/${accounts?.[0]?.id}/sending_domains`);
+A `{name}` in the path takes the parameter of that name, URL-encoded, and that parameter is not sent again:
+
+```ts
+const { status, data } = await mail.call!('GET /api/accounts/{accountId}/sending_domains', { accountId: 1 });
 ```
 
 A full URL may point at `mailtrap.io`, `send.api.mailtrap.io`, `bulk.api.mailtrap.io` or `sandbox.api.mailtrap.io`; any

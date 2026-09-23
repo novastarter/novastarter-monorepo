@@ -6,7 +6,7 @@ import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import defaultExport from '../index.js';
-import { DEFAULT_MAILJET_CALL_TIMEOUT, MailDriverMailjet } from './driver.js';
+import { MailDriverMailjet } from './driver.js';
 
 /**
  * The stubbed `fetch` a `call()` goes through.
@@ -146,11 +146,11 @@ describe('call', () => {
 		answer({ Count: 1, Data: [{ ID: 1 }], Total: 1 });
 
 		// 1. The path goes under Mailjet's API root, the parameters into the query
-		const result = await new MailDriverMailjet({ apiKey: 'k', apiSecret: 's' }).call('GET /v3/REST/contact', {
+		const { data } = await new MailDriverMailjet({ apiKey: 'k', apiSecret: 's' }).call('GET /v3/REST/contact', {
 			Limit: 10,
 		});
 
-		expect(result).toStrictEqual({ Count: 1, Data: [{ ID: 1 }], Total: 1 });
+		expect(data).toStrictEqual({ Count: 1, Data: [{ ID: 1 }], Total: 1 });
 		expect(fetched().url).toBe('https://api.mailjet.com/v3/REST/contact?Limit=10');
 		expect(fetched().init.method).toBe('GET');
 		expect(fetched().init.headers['authorization']).toBe(basic);
@@ -165,7 +165,7 @@ describe('call', () => {
 
 		await expect(
 			driver.call('POST https://api.mailjet.com/v3.1/send', { Messages: [] }, { headers: { 'X-Trace': '1' } }),
-		).resolves.toBeUndefined();
+		).resolves.toMatchObject({ status: 204, data: undefined });
 
 		expect(fetched().url).toBe('https://api.mailjet.com/v3.1/send');
 		expect(JSON.parse(fetched().init.body as string)).toStrictEqual({ Messages: [] });
@@ -178,7 +178,6 @@ describe('call', () => {
 		);
 
 		await expect(driver.call('GET /v3/REST/sender', {}, { timeout: 10 })).rejects.toBeInstanceOf(TimeoutError);
-		expect(DEFAULT_MAILJET_CALL_TIMEOUT).toBe(30_000);
 	});
 
 	test('Turns an error status into ProviderCallError without the key pair in the message', async () => {
@@ -215,5 +214,58 @@ describe('call', () => {
 		).rejects.toThrow('not on a host of this provider');
 
 		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	test('Accepts a full URL on the US region, which only a full URL reaches', async () => {
+		fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+		// 1. The key pair goes to Mailjet's US API as it does to the default one
+		const driver = new MailDriverMailjet({ apiKey: 'k', apiSecret: 's' });
+
+		await driver.call('GET https://api.us.mailjet.com/v3/REST/contact');
+
+		expect(fetched().url).toBe('https://api.us.mailjet.com/v3/REST/contact');
+	});
+});
+
+describe('MailDriverMailjet.call placeholders and answers', () => {
+	test('Fills a {name} from its parameter, encoded, and sends that parameter nowhere else', async () => {
+		fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+		fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+		const driver = new MailDriverMailjet({ apiKey: 'k', apiSecret: 's' });
+
+		// 1. A GET: the placeholder takes `id`, URL-encoded; the other parameters stay in the query
+		await driver.call('GET /v3/REST/contact/{id}', { id: 'a/b', limit: 5 });
+		expect((fetchMock.mock.calls[0] as [string])[0]).toBe('https://api.mailjet.com/v3/REST/contact/a%2Fb?limit=5');
+
+		// 2. A POST: the placeholder's parameter is not in the body
+		await driver.call('POST /v3/REST/contact/{id}/managecontactslists', { id: 42, name: 'welcome' });
+
+		const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+
+		expect(url).toBe('https://api.mailjet.com/v3/REST/contact/42/managecontactslists');
+		expect(init.body).toBe('{"name":"welcome"}');
+	});
+
+	test('Refuses a placeholder no parameter fills before any request', async () => {
+		await expect(
+			new MailDriverMailjet({ apiKey: 'k', apiSecret: 's' }).call('GET /v3/REST/contact/{id}'),
+		).rejects.toThrow(/"id" parameter/);
+
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	test('Answers the status, the lower-cased headers and the body', async () => {
+		fetchMock.mockResolvedValueOnce(
+			new Response('{"ok":true}', { status: 201, headers: { 'X-RateLimit-Remaining': '9' } }),
+		);
+
+		const driver = new MailDriverMailjet({ apiKey: 'k', apiSecret: 's' });
+
+		// 1. Every call answers the whole response, headers named in lower case
+		const answer = await driver.call('GET /v3/REST/contact/{id}', { id: 'x' });
+
+		expect(answer).toMatchObject({ status: 201, headers: { 'x-ratelimit-remaining': '9' }, data: { ok: true } });
 	});
 });

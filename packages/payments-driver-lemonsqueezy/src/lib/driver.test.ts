@@ -585,7 +585,9 @@ describe('PaymentsDriverLemonSqueezy', () => {
 
 		// 1. The driver hands the request to its client, which the client's own tests cover in full
 		await expect(driver.call('GET /v1/discounts', { 'filter[store_id]': 12345 })).resolves.toStrictEqual({
-			data: [{ id: '1' }],
+			status: 200,
+			headers: {},
+			data: { data: [{ id: '1' }] },
 		});
 
 		expect(calls[0]).toMatchObject({

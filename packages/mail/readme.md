@@ -168,17 +168,30 @@ in a mail client.
 A driver may implement `call(method, params, options)`: a request of its provider's own API with the location's
 credentials, timeout and errors, for whatever the contract does not cover. `method` is the verb and path of a REST API
 (`POST /v1/refunds`), a full URL on one of the provider's own hosts, or the command name of an RPC-style SDK; the
-parameters are the query of a `GET`/`HEAD`/`DELETE` and the body otherwise; `options` takes a `timeout`, a `signal`,
-extra `headers` and `paramsIn` — `'body'` for an API that reads a `DELETE` body. A `content-type` among the headers
-picks the body's form: a form, multipart, or the `body` parameter as it is for XML or plain text. The answer is the
-provider's JSON, or its text. An error status throws `ProviderCallError` of `@novastarter/errors`, with the provider's
-status and answer in `extensions`; a 429 throws `HitRateLimitError`. Each driver's readme names its endpoints and hosts.
+parameters are the query of a `GET`/`HEAD`/`DELETE` and the body otherwise; `options` takes a `timeout`, a `signal` and
+extra `headers` — a `content-type` among them picks JSON, a form or multipart. The answer is
+`{ status, headers, data }`: the headers lower-cased, the provider's JSON, or its text. An error status throws
+`ProviderCallError` of `@novastarter/errors`, with the provider's status and answer in `extensions`; a 429 throws
+`HitRateLimitError`. Each driver's readme names its endpoints and hosts.
 
 ```ts
 await useMail().location('resend').call?.('GET /domains');
 ```
 
 The `console` driver logs the call; `smtp`, `sendmail` and `file` have no API and no `call()`.
+
+A `{name}` in the path is filled from the parameter of that name and not sent again; headers and a timeout for every
+call of a location go in its registration's `call`:
+
+```ts
+useMail().registerLocation('resend', {
+	driver: 'resend',
+	options: { apiKey: env.RESEND_API_KEY },
+	call: { timeout: 10_000 },
+});
+
+const { status, headers, data } = await useMail().location('resend').call!('GET /domains/{id}', { id: 'd_123' });
+```
 
 ## Writing a driver
 

@@ -8,7 +8,7 @@ import { TimeoutError } from '@novastarter/utils';
 import nodemailer from 'nodemailer';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import defaultExport from '../index.js';
-import { DEFAULT_SES_CALL_TIMEOUT, MailDriverSes } from './driver.js';
+import { MailDriverSes } from './driver.js';
 
 /**
  * Spy standing in for the transport's `sendMail()`, shared by every instance so a test can script nodemailer's answer.
@@ -44,24 +44,6 @@ vi.mock('@aws-sdk/client-sesv2', () => {
 		 * @param input - The action's input.
 		 */
 		constructor(public input: unknown) {}
-
-		/**
-		 * Stand-in for the command's middleware stack: the middlewares added to it, kept with their options.
-		 */
-		middlewareStack = {
-			added: [] as [unknown, unknown][],
-
-			/**
-			 * Keep a middleware and its options, so a test can run it.
-			 *
-			 * @param middleware - The middleware.
-			 * @param options - Its step and name.
-			 */
-			add(middleware: unknown, options: unknown): void {
-				// 1. Kept in order; nothing runs until a test runs it
-				this.added.push([middleware, options]);
-			},
-		};
 	}
 
 	/**
@@ -262,8 +244,9 @@ describe('call', () => {
 
 		// 1. The command class of the action, built on the input, sent on the location's client with a signal
 		await expect(driver.call('GetAccount', { Foo: 1 })).resolves.toStrictEqual({
-			SendingEnabled: true,
-			ProductionAccessEnabled: false,
+			status: 200,
+			headers: {},
+			data: { SendingEnabled: true, ProductionAccessEnabled: false },
 		});
 
 		const [command, options] = send.mock.calls[0] as [{ input: unknown; constructor: { name: string } }, unknown];
@@ -285,6 +268,17 @@ describe('call', () => {
 		await expect(driver.call('GetAcount')).rejects.toThrow('is not an SESv2 action');
 		await expect(driver.call('Something')).rejects.toThrow('is not an SESv2 action');
 		await expect(driver.call('GET /v2/email/account')).rejects.toThrow('is not an SESv2 action');
+
+		expect(send).not.toHaveBeenCalled();
+	});
+
+	test('Refuses headers before anything is sent, rather than dropping them', async () => {
+		const driver = new MailDriverSes();
+
+		// 1. The SDK signs its own request; a header of the call or the location could never reach it
+		await expect(driver.call('GetAccount', {}, { headers: { 'x-trace': '1' } })).rejects.toThrow(
+			'SES call() sends no extra headers; use the SDK client',
+		);
 
 		expect(send).not.toHaveBeenCalled();
 	});
@@ -360,7 +354,6 @@ describe('call', () => {
 
 		await expect(driver.call('GetAccount', {}, { timeout: 10 })).rejects.toBeInstanceOf(TimeoutError);
 		expect((send.mock.calls[0]?.[1] as { abortSignal: AbortSignal }).abortSignal.aborted).toBe(true);
-		expect(DEFAULT_SES_CALL_TIMEOUT).toBe(30_000);
 
 		// 2. A network failure is not SES refusing: it is thrown as it came
 		const failure = new Error('getaddrinfo ENOTFOUND');
@@ -370,37 +363,10 @@ describe('call', () => {
 		await expect(driver.call('GetAccount')).rejects.toBe(failure);
 	});
 
-	test('Adds the caller headers to the HTTP request in the build step, and adds nothing without them', async () => {
-		send.mockResolvedValue({ $metadata: {} });
+	test('Exposes the SDK client the driver sends through', () => {
+		// 1. The client is public, for what `call()` does not cover
+		const driver = new MailDriverSes({ region: 'eu-west-1' });
 
-		const driver = new MailDriverSes();
-
-		// 1. One middleware in the build step, before the SDK signs the request
-		await driver.call('GetAccount', {}, { headers: { 'x-amzn-trace-id': 'Root=1' } });
-
-		type Middleware = (next: (args: unknown) => Promise<unknown>) => (args: unknown) => Promise<unknown>;
-
-		const [command] = send.mock.calls[0] as [{ middlewareStack: { added: [Middleware, unknown][] } }];
-		const [[middleware, options]] = command.middlewareStack.added as [[Middleware, unknown]];
-
-		expect(options).toStrictEqual({ step: 'build', name: 'novastarterCallHeaders' });
-
-		// 2. Run on a request, it puts the headers over the SDK's and hands the request on
-		const next = vi.fn(async (args: unknown) => args);
-		const args = { input: {}, request: { headers: { host: 'email.eu-west-1.amazonaws.com' } } };
-
-		await middleware(next)(args);
-
-		expect(next).toHaveBeenCalledWith({
-			input: {},
-			request: { headers: { host: 'email.eu-west-1.amazonaws.com', 'x-amzn-trace-id': 'Root=1' } },
-		});
-
-		// 3. Without headers the stack is left alone
-		await driver.call('GetAccount');
-
-		const [plain] = send.mock.calls[1] as [{ middlewareStack: { added: unknown[] } }];
-
-		expect(plain.middlewareStack.added).toStrictEqual([]);
+		expect(driver.client).toMatchObject({ config: { region: 'eu-west-1' } });
 	});
 });

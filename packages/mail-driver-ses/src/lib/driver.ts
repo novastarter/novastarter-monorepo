@@ -1,6 +1,7 @@
 import * as sesv2 from '@aws-sdk/client-sesv2';
 import { SendEmailCommand, SESv2Client, SESv2ServiceException } from '@aws-sdk/client-sesv2';
 import { toProviderCallError } from '@novastarter/errors';
+import { type CallOptions, type CallResponse, DEFAULT_REQUEST_TIMEOUT } from '@novastarter/http';
 import {
 	type MailDriver,
 	type MailMessage,
@@ -8,18 +9,11 @@ import {
 	toMailResult,
 	toNodemailerMessage,
 } from '@novastarter/mail';
-import { type CallOptions, withTimeout } from '@novastarter/utils';
+import { withTimeout } from '@novastarter/utils';
 import nodemailer, { type SentMessageInfo, type Transporter } from 'nodemailer';
 import { describeError } from './describe-error.js';
 import { toSesClientConfig } from './to-ses-client-config.js';
 import { toSesMessageTags } from './to-ses-message-tags.js';
-
-/**
- * How long a {@link MailDriverSes.call} may take unless the caller names another deadline, in milliseconds.
- *
- * @defaultValue 30 seconds.
- */
-export const DEFAULT_SES_CALL_TIMEOUT = 30_000;
 
 /**
  * A command class of the SESv2 SDK, as {@link MailDriverSes.call} finds it by name in the SDK's exports.
@@ -91,11 +85,22 @@ export class MailDriverSes implements MailDriver {
 	private readonly transporter: Transporter;
 
 	/**
-	 * The SES client behind the transport, kept to destroy it at shutdown.
+	 * The SESv2 SDK's own client, on the location's region, credentials and endpoint — the one the transport sends
+	 * through. It is the whole SESv2 API, for what {@link MailDriverSes.call} does not cover: paginators, waiters,
+	 * middleware.
 	 *
-	 * @internal
+	 * @example
+	 * ```ts
+	 * import { paginateListSuppressedDestinations } from '@aws-sdk/client-sesv2';
+	 *
+	 * const ses = useMail().location('ses') as MailDriverSes;
+	 *
+	 * for await (const page of paginateListSuppressedDestinations({ client: ses.client }, {})) {
+	 * 	console.log(page.SuppressedDestinationSummaries);
+	 * }
+	 * ```
 	 */
-	private readonly sesClient: SESv2Client;
+	readonly client: SESv2Client;
 
 	/**
 	 * Configuration set every message is sent with, when the location names one.
@@ -113,9 +118,9 @@ export class MailDriverSes implements MailDriver {
 	constructor(config: MailDriverSesConfig = {}) {
 		// 1. A client per location, so two regions or two accounts never share credentials; `toSesClientConfig` is
 		//    what refuses half a credential pair
-		this.sesClient = new SESv2Client(toSesClientConfig(config));
+		this.client = new SESv2Client(toSesClientConfig(config));
 
-		this.transporter = nodemailer.createTransport({ SES: { sesClient: this.sesClient, SendEmailCommand } });
+		this.transporter = nodemailer.createTransport({ SES: { sesClient: this.client, SendEmailCommand } });
 		this.configurationSet = config.configurationSet;
 	}
 
@@ -156,7 +161,7 @@ export class MailDriverSes implements MailDriver {
 	async close(): Promise<void> {
 		// 1. The SES transport holds no sockets of its own and nodemailer defines no `close()` on it, so there is
 		//    nothing to release there; the SDK client's keep-alive agents are what keeps the process up
-		this.sesClient.destroy();
+		this.client.destroy();
 	}
 
 	/**
@@ -165,25 +170,37 @@ export class MailDriverSes implements MailDriver {
 	 *
 	 * SES is an RPC-style SDK, so `method` is the name of an action: `GetAccount`, `ListSuppressedDestinations`, with or
 	 * without the SDK's `Command` suffix. It is looked up among the SDK's command classes, so only a real SESv2 action
-	 * runs, always on the location's own client, region and credentials; `params` is the action's input.
+	 * runs, always on the location's own client, region and credentials; `params` is the action's input. The SDK
+	 * signs its own requests and sends no extra header, so `headers` — the call's or the location's — are refused
+	 * rather than dropped; for anything beyond a plain action, use {@link MailDriverSes.client}.
 	 *
 	 * @typeParam T - What the action answers with: its output shape from the SDK.
 	 * @param method - The action's name.
 	 * @param params - The action's input.
-	 * @param options - A timeout ({@link DEFAULT_SES_CALL_TIMEOUT} unless given), an abort signal, and extra headers,
-	 * added to the HTTP request before the SDK signs it; `paramsIn` does not apply, since the SDK serializes the input.
-	 * @returns The action's output, without the SDK's `$metadata`.
+	 * @param options - A timeout (30 s unless given) and an abort signal; `headers` are refused.
+	 * @returns The HTTP status, no headers — the SDK's output drops them — and the action's output without the SDK's
+	 * `$metadata`.
 	 * @throws ProviderCallError when SES refuses — its HTTP status in `extensions`, its `{ name, message }` as the body.
 	 * @throws HitRateLimitError when SES answers 429 or `TooManyRequestsException`.
 	 * @throws TimeoutError when the request outlives its timeout.
-	 * @throws Error when `method` names no SESv2 action.
+	 * @throws Error when `method` names no SESv2 action, or headers are given.
 	 * @example
 	 * ```ts
-	 * const account = await useMail().location('ses').call?.('GetAccount');
+	 * const { data: account } = await useMail().location('ses').call!('GetAccount');
 	 * ```
 	 */
-	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, options: CallOptions = {}): Promise<T> {
-		// 1. The action by name among the SDK's exports; only a command class passes, so a name such as `SESv2Client`
+	async call<T = unknown>(
+		method: string,
+		params: Record<string, unknown> = {},
+		options: CallOptions = {},
+	): Promise<CallResponse<T>> {
+		// 1. Headers — the call's or the location's `call.headers` — cannot reach the SDK's signed request; refused
+		//    rather than silently dropped
+		if (Object.keys(options.headers ?? {}).length > 0) {
+			throw new Error('SES call() sends no extra headers; use the SDK client');
+		}
+
+		// 2. The action by name among the SDK's exports; only a command class passes, so a name such as `SESv2Client`
 		//    or a typo is refused before anything is sent
 		const name = `${method.trim().replace(/Command$/, '')}Command`;
 
@@ -196,33 +213,14 @@ export class MailDriverSes implements MailDriver {
 			throw new Error(`The ses call method "${method}" is not an SESv2 action such as "GetAccount"`);
 		}
 
-		// 2. The caller's headers go onto the HTTP request in the SDK's build step — after the input is serialized,
-		//    before the request is signed and sent — since `send()` takes no headers of its own
-		const command = new (Command as SesCommandClass)(params);
-		const headers = options.headers;
-
-		if (headers) {
-			command.middlewareStack.add(
-				(next) => async (args) => {
-					// 1. The build step's request is the SDK's `HttpRequest`, typed `unknown`; its headers are a record
-					const request = args.request as { headers?: Record<string, string> } | undefined;
-
-					if (request?.headers) Object.assign(request.headers, headers);
-
-					return next(args);
-				},
-				{ step: 'build', name: 'novastarterCallHeaders' },
-			);
-		}
-
 		// 3. The action on the location's client, abandoned at the timeout or the caller's abort: the SDK takes the
 		//    signal and stops its request
 		let output: sesv2.ServiceOutputTypes;
 
 		try {
 			output = await withTimeout(
-				(signal) => this.sesClient.send(command, { abortSignal: signal }),
-				options.timeout ?? DEFAULT_SES_CALL_TIMEOUT,
+				(signal) => this.client.send(new (Command as SesCommandClass)(params), { abortSignal: signal }),
+				options.timeout ?? DEFAULT_REQUEST_TIMEOUT,
 				options.signal ? { signal: options.signal } : {},
 			);
 		} catch (error) {
@@ -243,9 +241,9 @@ export class MailDriverSes implements MailDriver {
 			throw error;
 		}
 
-		// 5. The output as SES described it; the SDK's request metadata is not part of the answer
-		const { $metadata: _metadata, ...result } = output;
+		// 5. The output as SES described it; the SDK's request metadata gives the status and is not part of the data
+		const { $metadata: metadata, ...data } = output;
 
-		return result as T;
+		return { status: metadata.httpStatusCode ?? 200, headers: {}, data: data as T };
 	}
 }

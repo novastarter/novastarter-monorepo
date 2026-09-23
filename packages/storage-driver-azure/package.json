@@ -27,6 +27,7 @@
 	"dependencies": {
 		"@azure/storage-blob": "catalog:",
 		"@novastarter/errors": "workspace:*",
+		"@novastarter/http": "workspace:*",
 		"@novastarter/storage": "workspace:*",
 		"@novastarter/utils": "workspace:*"
 	},

@@ -319,14 +319,23 @@ describe('call', () => {
 			requestId: 'req_1',
 		});
 
+	test('Exposes the SDK client it was given', () => {
+		// 1. The SDK's own API, for what `call()` does not cover — an upload through `files.create`
+		const { client, driver } = setup();
+
+		expect(driver.client).toBe(client);
+	});
+
 	test('Posts the body through rawRequest and answers what Stripe answered', async () => {
-		// 1. A POST carries its parameters as the body; the path and verb go to the SDK as given
+		// 1. A POST carries its parameters as the body; the path and verb go to the SDK as given; without a raw
+		//    response on the answer the status is 200 and there are no headers
 		const { client, driver } = setup();
 		const raw = vi.spyOn(client, 'rawRequest').mockResolvedValue({ id: 're_1', object: 'refund' });
 
 		await expect(driver.call('POST /v1/refunds', { payment_intent: 'pi_1', amount: 500 })).resolves.toStrictEqual({
-			id: 're_1',
-			object: 'refund',
+			status: 200,
+			headers: {},
+			data: { id: 're_1', object: 'refund' },
 		});
 
 		expect(raw).toHaveBeenCalledWith(
@@ -377,8 +386,8 @@ describe('call', () => {
 		expect(raw).not.toHaveBeenCalled();
 	});
 
-	test('Refuses parameters a PATCH cannot carry, and a file in a query', async () => {
-		// 1. Stripe takes a body on POST only, and a file has no place in a query; nothing is sent either way
+	test('Refuses parameters a PATCH cannot carry, and a file, before any request', async () => {
+		// 1. Stripe takes a body on POST only, and the raw request sends no multipart body; nothing is sent either way
 		const { client, driver } = setup();
 		const fetch = vi.fn();
 		const raw = vi.spyOn(client, 'rawRequest');
@@ -386,159 +395,10 @@ describe('call', () => {
 		vi.stubGlobal('fetch', fetch);
 
 		await expect(driver.call('PATCH /v1/customers/cus_1', { name: 'Ada' })).rejects.toThrow('POST only');
-		await expect(driver.call('GET /v1/files', { file: new Blob(['x']) })).rejects.toThrow('POST body only');
-
-		await expect(driver.call('POST /v1/files', { file: new Blob(['x']) }, { paramsIn: 'query' })).rejects.toThrow(
-			'POST body only',
-		);
+		await expect(driver.call('POST /v1/files', { file: new Blob(['x']) })).rejects.toThrow('files.create');
+		await expect(driver.call('POST /v1/files', { files: [new Blob(['x'])] })).rejects.toThrow('files.create');
 
 		expect(fetch).not.toHaveBeenCalled();
-		expect(raw).not.toHaveBeenCalled();
-	});
-
-	test("Uploads a file as multipart to Stripe's files host with the key and the client's API version", async () => {
-		// 1. The upload bypasses the SDK's raw request, which has no multipart; `fetch` answers Stripe's file object
-		const { client, driver } = setup();
-		const raw = vi.spyOn(client, 'rawRequest');
-
-		const fetch = vi.fn(
-			async (_url: string, _init: RequestInit) =>
-				new Response(JSON.stringify({ id: 'file_1', object: 'file' }), {
-					status: 200,
-					headers: { 'content-type': 'application/json' },
-				}),
-		);
-
-		vi.stubGlobal('fetch', fetch);
-
-		const file = new File(['%PDF-1'], 'receipt.pdf', { type: 'application/pdf' });
-
-		const result = await driver.call(
-			'POST https://files.stripe.com/v1/files',
-			{ purpose: 'dispute_evidence', file, skip: undefined },
-			{ headers: { 'Stripe-Account': 'acct_1' } },
-		);
-
-		expect(result).toStrictEqual({ id: 'file_1', object: 'file' });
-		expect(raw).not.toHaveBeenCalled();
-
-		// 2. The URL as given, Bearer auth, the pinned version, the caller's header, and a multipart body with the file
-		const [url, init] = fetch.mock.calls[0]!;
-		const headers = init.headers as Record<string, string>;
-
-		expect(url).toBe('https://files.stripe.com/v1/files');
-		expect(init.method).toBe('POST');
-		expect(init.redirect).toBe('manual');
-		expect(headers['authorization']).toBe('Bearer sk_test_x');
-		expect(headers['stripe-version']).toBe(Stripe.API_VERSION);
-		expect(headers['stripe-account']).toBe('acct_1');
-		expect(headers).not.toHaveProperty('content-type');
-
-		const body = init.body as FormData;
-
-		expect(body).toBeInstanceOf(FormData);
-		expect(body.get('purpose')).toBe('dispute_evidence');
-		expect(body.has('skip')).toBe(false);
-		expect((body.get('file') as File).name).toBe('receipt.pdf');
-		await expect((body.get('file') as File).text()).resolves.toBe('%PDF-1');
-	});
-
-	test('Uploads a file given in a list to the client host for a path', async () => {
-		// 1. A path goes to the client's own host; a list of files repeats its field
-		const { driver } = setup();
-		const fetch = vi.fn(async (_url: string, _init: RequestInit) => new Response(null, { status: 204 }));
-
-		vi.stubGlobal('fetch', fetch);
-
-		const files = [new Blob(['a']), new Blob(['b'])];
-
-		await expect(driver.call('POST /v1/files', { files })).resolves.toBeUndefined();
-
-		const [url, init] = fetch.mock.calls[0]!;
-
-		expect(url).toBe('https://api.stripe.com/v1/files');
-		expect((init.body as FormData).getAll('files')).toHaveLength(2);
-	});
-
-	test('Refuses an upload to a foreign host before any request', async () => {
-		// 1. The key would travel with the file, so nothing is sent at all
-		const { driver } = setup();
-		const fetch = vi.fn();
-
-		vi.stubGlobal('fetch', fetch);
-
-		await expect(driver.call('POST https://evil.example/v1/files', { file: new Blob(['x']) })).rejects.toThrow(
-			'not on a host',
-		);
-
-		expect(fetch).not.toHaveBeenCalled();
-	});
-
-	test('Turns a refused upload into ProviderCallError and a 429 into HitRateLimitError, no key in them', async () => {
-		// 1. A driver with a recognisable key, whose upload Stripe refuses
-		const secretKey = 'sk_test_SECRET_KEY_123';
-		const driver = new PaymentsDriverStripe({ secretKey, webhookSecret: 'whsec', client: new Stripe(secretKey) });
-		const refused = { error: { type: 'invalid_request_error', message: 'Invalid purpose' } };
-
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () => new Response(JSON.stringify(refused), { status: 400 })),
-		);
-
-		const error = (await driver
-			.call('POST https://files.stripe.com/v1/files', { purpose: 'x', file: new Blob(['x']) })
-			.catch((caught: unknown) => caught)) as InstanceType<typeof ProviderCallError>;
-
-		// 2. Stripe's status and `{ error }`; neither the message, the error nor its cause names the key
-		expect(error).toBeInstanceOf(ProviderCallError);
-		expect(error.extensions).toMatchObject({ provider: 'stripe', status: 400, body: refused });
-		expect(error.message).not.toContain('SECRET_KEY');
-		expect(JSON.stringify(error)).not.toContain('SECRET_KEY');
-		expect(JSON.stringify(error.cause ?? null)).not.toContain('SECRET_KEY');
-
-		// 3. Too many requests is a rate limit the caller may wait out
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () => new Response('{}', { status: 429, headers: { 'retry-after': '2' } })),
-		);
-
-		await expect(
-			driver.call('POST https://files.stripe.com/v1/files', { file: new Blob(['x']) }),
-		).rejects.toBeInstanceOf(HitRateLimitError);
-	});
-
-	test('Gives up an upload with TimeoutError at the timeout', async () => {
-		// 1. A `fetch` that never answers is cut at the call's timeout
-		const { driver } = setup();
-
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(() => new Promise(() => {})),
-		);
-
-		await expect(
-			driver.call('POST https://files.stripe.com/v1/files', { file: new Blob(['x']) }, { timeout: 10 }),
-		).rejects.toBeInstanceOf(TimeoutError);
-	});
-
-	test('Puts the parameters of a POST in the query when asked, and refuses a body on another verb', async () => {
-		// 1. `paramsIn: 'query'` moves a POST's parameters into the path, with no body
-		const { client, driver } = setup();
-		const raw = vi.spyOn(client, 'rawRequest').mockResolvedValue({});
-
-		await driver.call('POST /v1/invoices/in_1/pay', { expand: ['customer'] }, { paramsIn: 'query' });
-
-		expect(raw).toHaveBeenCalledWith('POST', '/v1/invoices/in_1/pay?expand[0]=customer', undefined, {
-			timeout: 30_000,
-		});
-
-		// 2. The raw request sends a body on POST only, so a body asked of a DELETE is refused before anything is sent
-		raw.mockClear();
-
-		const deletion = driver.call('DELETE /v1/customers/cus_1/discount', { a: 1 }, { paramsIn: 'body' });
-
-		await expect(deletion).rejects.toThrow('POST only');
-
 		expect(raw).not.toHaveBeenCalled();
 	});
 
@@ -603,5 +463,78 @@ describe('call', () => {
 		vi.spyOn(client, 'rawRequest').mockReturnValue(new Promise(() => {}));
 
 		await expect(driver.call('GET /v1/customers', {}, { timeout: 10 })).rejects.toBeInstanceOf(TimeoutError);
+	});
+
+	test("Answers with the status and headers of the SDK's raw response", async () => {
+		// 1. The SDK hangs the raw response on the answer, not enumerable; Node's client gives a record of headers
+		const { client, driver } = setup();
+		const answer = { id: 'cus_1', object: 'customer' };
+
+		Object.defineProperty(answer, 'lastResponse', {
+			enumerable: false,
+			value: { statusCode: 200, headers: { 'Request-Id': 'req_1', 'stripe-version': '2025-01-01' } },
+		});
+
+		vi.spyOn(client, 'rawRequest').mockResolvedValue(answer as never);
+
+		const result = await driver.call('GET /v1/customers/cus_1');
+
+		expect(result).toStrictEqual({
+			status: 200,
+			headers: { 'request-id': 'req_1', 'stripe-version': '2025-01-01' },
+			data: answer,
+		});
+
+		expect(result.data).toBe(answer);
+	});
+
+	test("Reads the fetch client's raw response", async () => {
+		// 1. The fetch client hangs a `Response`: `status` and `Headers`
+		const { client, driver } = setup();
+		const answer = { id: 'cus_1' };
+
+		Object.defineProperty(answer, 'lastResponse', {
+			enumerable: false,
+			value: new Response(null, { status: 201, headers: { 'Request-Id': 'req_2' } }),
+		});
+
+		vi.spyOn(client, 'rawRequest').mockResolvedValue(answer as never);
+
+		await expect(driver.call('POST /v1/customers')).resolves.toStrictEqual({
+			status: 201,
+			headers: { 'request-id': 'req_2' },
+			data: answer,
+		});
+	});
+
+	test('Fills a {name} from its parameter, encoded, and sends that parameter nowhere else', async () => {
+		// 1. The id goes in the path and not in the query; the other parameters stay where the verb puts them
+		const { client, driver } = setup();
+		const raw = vi.spyOn(client, 'rawRequest').mockResolvedValue({});
+
+		await driver.call('GET /v1/customers/{id}', { id: 'cus/1 x', expand: ['subscriptions'] });
+
+		expect(raw).toHaveBeenCalledWith('GET', '/v1/customers/cus%2F1%20x?expand[0]=subscriptions', undefined, {
+			timeout: 30_000,
+		});
+
+		// 2. In a POST, the body loses the parameter too
+		await driver.call('POST /v1/customers/{id}', { id: 'cus_1', name: 'Ada' });
+
+		expect(raw).toHaveBeenLastCalledWith('POST', '/v1/customers/cus_1', { name: 'Ada' }, { timeout: 30_000 });
+	});
+
+	test('Refuses a {name} no parameter fills before any request', async () => {
+		// 1. Sent, it would reach Stripe as `%7Bid%7D`; neither the SDK nor `fetch` is reached
+		const { client, driver } = setup();
+		const raw = vi.spyOn(client, 'rawRequest');
+		const fetch = vi.fn();
+
+		vi.stubGlobal('fetch', fetch);
+
+		await expect(driver.call('GET /v1/customers/{id}', { name: 'Ada' })).rejects.toThrow('{id}');
+		await expect(driver.call('POST /v1/files/{id}', { file: new Blob(['x']) })).rejects.toThrow('{id}');
+		expect(raw).not.toHaveBeenCalled();
+		expect(fetch).not.toHaveBeenCalled();
 	});
 });

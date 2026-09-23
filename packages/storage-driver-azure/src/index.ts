@@ -4,5 +4,5 @@
  */
 import { StorageDriverAzure } from './lib/driver.js';
 
-export { DEFAULT_AZURE_CALL_TIMEOUT, StorageDriverAzure, type StorageDriverAzureConfig } from './lib/driver.js';
+export { StorageDriverAzure, type StorageDriverAzureConfig } from './lib/driver.js';
 export default StorageDriverAzure;

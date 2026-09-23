@@ -1,4 +1,4 @@
-import type { CallOptions } from '@novastarter/utils';
+import type { CallOptions } from '@novastarter/http';
 
 /**
  * Who a sign-in driver says the person is, in the same shape for every provider.

@@ -35,6 +35,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { toProviderCallError } from '@novastarter/errors';
+import { type CallOptions, type CallResponse, DEFAULT_REQUEST_TIMEOUT } from '@novastarter/http';
 import { useLogger } from '@novastarter/logger';
 import {
 	type ChunkedUploadContext,
@@ -45,7 +46,7 @@ import {
 	toRelativePath,
 	type TusDriver,
 } from '@novastarter/storage';
-import { type CallOptions, confinePath, joinPath, retry, withTimeout } from '@novastarter/utils';
+import { confinePath, joinPath, retry, withTimeout } from '@novastarter/utils';
 import { isReadableStream } from '@novastarter/utils/node';
 import { Permit, Semaphore } from '@shopify/semaphore';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
@@ -53,13 +54,6 @@ import { ERRORS, StreamSplitter, TUS_RESUMABLE } from '@tus/utils';
 import ms, { type StringValue } from 'ms';
 import type { ChecksumMode } from '../types.js';
 import { KMS_KEY_ID_MODES } from './constants.js';
-
-/**
- * How long a {@link StorageDriverS3.call} may take when the caller names no timeout, in milliseconds.
- *
- * @defaultValue 30 000 ms.
- */
-export const DEFAULT_S3_CALL_TIMEOUT = 30_000;
 
 /**
  * The error codes S3 and other AWS services use to ask for fewer requests; {@link StorageDriverS3.call} reports each
@@ -209,11 +203,23 @@ export class StorageDriverS3 implements TusDriver {
 	private config: StorageDriverS3Config;
 
 	/**
-	 * Shared SDK client; one per driver so the connection pool is reused across calls.
+	 * The location's `S3Client` of `@aws-sdk/client-s3` — the SDK's own API, with the location's credentials, region
+	 * and endpoint — for what {@link StorageDriverS3.call} does not cover: presigned URLs, `@aws-sdk/lib-storage`
+	 * uploads, paginators, waiters. One per driver, so its connection pool is shared with the storage methods.
 	 *
-	 * @internal
+	 * Keys given to it are not placed under the location's root, and the bucket is the caller's to name.
+	 *
+	 * @example
+	 * ```ts
+	 * import { GetObjectCommand } from '@aws-sdk/client-s3';
+	 * import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+	 *
+	 * const { client } = useStorage().location('s3') as StorageDriverS3;
+	 * const command = new GetObjectCommand({ Bucket: 'uploads', Key: 'a.png' });
+	 * const url = await getSignedUrl(client, command, { expiresIn: 60 });
+	 * ```
 	 */
-	private readonly client: S3Client;
+	readonly client: S3Client;
 
 	/**
 	 * Normalised key prefix without a leading slash, or an empty string when no root was configured.
@@ -610,29 +616,43 @@ export class StorageDriverS3 implements TusDriver {
 	 *
 	 * `method` is the name of a command of `@aws-sdk/client-s3`, with or without its `Command` suffix; `params` is the
 	 * command's input, in the SDK's field names, and `Bucket` defaults to the location's bucket. Keys in `params` are
-	 * sent as given, not placed under the location's root.
+	 * sent as given, not placed under the location's root. For anything beyond one command — presigned URLs, streamed
+	 * uploads, extra headers — use {@link StorageDriverS3.client}.
 	 *
 	 * @typeParam T - The command's output; the caller knows it from the SDK's documentation.
 	 * @param method - The command: `GetBucketVersioning`, `PutBucketLifecycleConfiguration`, `HeadBucketCommand`.
 	 * @param params - The command's input; `Bucket` is the location's unless given.
-	 * @param options - A timeout over {@link DEFAULT_S3_CALL_TIMEOUT}, an abort signal, extra headers — signed with
-	 * the request. `paramsIn` does not apply: the command places its input itself.
-	 * @returns The command's output, without the SDK's `$metadata`.
+	 * @param options - A timeout over the default 30 s and an abort signal; `headers` — the call's or the location's —
+	 * are refused rather than dropped, the SDK building the request itself.
+	 * @returns The HTTP status, no headers — the SDK does not hand them out — and the command's output, without the
+	 * SDK's `$metadata`.
 	 * @throws ProviderCallError when S3 answers with an error status — its status and `{ name, message }` in
 	 * `extensions`.
 	 * @throws HitRateLimitError when S3 answers 429 or asks to slow down — a 503 `SlowDown`.
 	 * @throws TimeoutError when the command outlives its timeout.
-	 * @throws Error when the SDK has no command of that name.
+	 * @throws Error when the SDK has no command of that name, or headers are given.
 	 * @example
 	 * ```ts
-	 * const { Status } = await s3.call<{ Status?: string }>('GetBucketVersioning');
+	 * const { data } = await s3.call<{ Status?: string }>('GetBucketVersioning');
 	 *
 	 * await s3.call('PutBucketVersioning', { VersioningConfiguration: { Status: 'Enabled' } });
+	 *
+	 * const { status } = await s3.call('HeadBucket');
 	 * ```
 	 */
-	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, options: CallOptions = {}): Promise<T> {
-		// 1. The command class by its name, looked up among the SDK's exports only: a name that is not a command there is
-		//    refused before anything is sent
+	async call<T = unknown>(
+		method: string,
+		params: Record<string, unknown> = {},
+		options: CallOptions = {},
+	): Promise<CallResponse<T>> {
+		// 1. Headers — the call's or the location's `call.headers` — cannot reach the SDK's signed request; refused
+		//    rather than silently dropped
+		if (Object.keys(options.headers ?? {}).length > 0) {
+			throw new Error('S3 call() sends no extra headers; use the SDK client');
+		}
+
+		// 2. The command class by its name, looked up among the SDK's exports only: a name that is not a command there
+		//    is refused before anything is sent
 		const name = method.trim().replace(/Command$/, '');
 
 		const Command = /^[A-Z][A-Za-z0-9]*$/.test(name)
@@ -643,29 +663,8 @@ export class StorageDriverS3 implements TusDriver {
 			throw new Error(`The s3 call method "${method}" is not a command of @aws-sdk/client-s3`);
 		}
 
-		// 2. The location's bucket unless the caller names another one; a command without a bucket ignores the field
-		const input = { Bucket: this.config.bucket, ...params };
-		const command = new (Command as S3CommandConstructor)(input);
-
-		// 3. The caller's headers join the request at the build step, before the signing step, so they are signed with
-		//    the rest; a header of the same name the SDK set is replaced
-		const { headers } = options;
-
-		if (headers && Object.keys(headers).length > 0) {
-			command.middlewareStack.add(
-				(next) => async (args) => {
-					// 1. The request is an HTTP one at this step; anything else is passed on untouched
-					const request = args.request as { headers?: Record<string, string> } | undefined;
-
-					if (request?.headers) {
-						Object.assign(request.headers, headers);
-					}
-
-					return next(args);
-				},
-				{ step: 'build', name: 'novastarterCallHeaders' },
-			);
-		}
+		// 3. The location's bucket unless the caller names another one; a command without a bucket ignores the field
+		const command = new (Command as S3CommandConstructor)({ Bucket: this.config.bucket, ...params });
 
 		// 4. The command under the deadline; the SDK takes the abort signal, so a timed-out request really stops
 		let output: Record<string, unknown>;
@@ -673,7 +672,7 @@ export class StorageDriverS3 implements TusDriver {
 		try {
 			output = (await withTimeout(
 				(abortSignal) => this.client.send(command, { abortSignal }),
-				options.timeout ?? DEFAULT_S3_CALL_TIMEOUT,
+				options.timeout ?? DEFAULT_REQUEST_TIMEOUT,
 				options.signal ? { signal: options.signal } : {},
 			)) as unknown as Record<string, unknown>;
 		} catch (error) {
@@ -695,12 +694,11 @@ export class StorageDriverS3 implements TusDriver {
 			throw error;
 		}
 
-		// 6. The output as the command's documentation describes it; the SDK's request metadata is not part of it
-		const rest = { ...output };
+		// 6. The output as the command's documentation describes it; the SDK's request metadata is not part of it, but
+		//    its status is the answer's
+		const { $metadata: metadata, ...data } = output as { $metadata?: { httpStatusCode?: number } };
 
-		delete rest['$metadata'];
-
-		return rest as T;
+		return { status: metadata?.httpStatusCode ?? 200, headers: {}, data: data as T };
 	}
 
 	/**

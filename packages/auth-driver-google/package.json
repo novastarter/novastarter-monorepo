@@ -26,11 +26,12 @@
 	},
 	"dependencies": {
 		"@novastarter/auth": "workspace:*",
-		"@novastarter/errors": "workspace:*",
+		"@novastarter/http": "workspace:*",
 		"@novastarter/utils": "workspace:*",
 		"jose": "catalog:"
 	},
 	"devDependencies": {
+		"@novastarter/errors": "workspace:*",
 		"@novastarter/tsconfig": "workspace:*",
 		"@types/node": "catalog:",
 		"@vitest/coverage-v8": "catalog:",

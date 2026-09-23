@@ -25,12 +25,13 @@
 		"test:coverage": "vitest run --coverage"
 	},
 	"dependencies": {
-		"@novastarter/errors": "workspace:*",
+		"@novastarter/http": "workspace:*",
 		"@novastarter/mail": "workspace:*",
 		"@novastarter/utils": "workspace:*",
 		"resend": "catalog:"
 	},
 	"devDependencies": {
+		"@novastarter/errors": "workspace:*",
 		"@novastarter/tsconfig": "workspace:*",
 		"@types/node": "catalog:",
 		"@vitest/coverage-v8": "catalog:",

@@ -26,14 +26,14 @@ import {
 } from '@ngneat/falso';
 import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { StorageFileNotFoundError } from '@novastarter/storage';
-import { confinePath, joinPath, parseCallMethod, withTimeout } from '@novastarter/utils';
+import { confinePath, joinPath, withTimeout } from '@novastarter/utils';
 import { afterEach, beforeEach, describe, expect, type Mock, test, vi } from 'vitest';
 import { StorageDriverAzure, type StorageDriverAzureConfig } from './driver.js';
 
 vi.mock('@novastarter/utils');
 vi.mock('@azure/storage-blob');
 
-const { parseCallMethod: parseCallMethodActual, withTimeout: withTimeoutActual } =
+const { withTimeout: withTimeoutActual } =
 	await vi.importActual<typeof import('@novastarter/utils')>('@novastarter/utils');
 
 /**
@@ -179,7 +179,7 @@ describe('#constructor', () => {
 		expect(driver['signedCredentials']).toBeInstanceOf(StorageSharedKeyCredential);
 	});
 
-	test('Creates blob service client and sets containerClient', () => {
+	test('Creates blob service client and sets the client', () => {
 		// 1. Hand the SDK fixed instances, so the assertions can follow the wiring by identity instead of by shape
 		const mockSignedCredentials = {} as StorageSharedKeyCredential;
 		vi.mocked(StorageSharedKeyCredential).mockReturnValueOnce(mockSignedCredentials);
@@ -207,11 +207,11 @@ describe('#constructor', () => {
 
 		// 3. The container handle has to come from that same service client, or requests would go to another account
 		expect(mockBlobServiceClient.getContainerClient).toHaveBeenCalledWith(sample.config.containerName);
-		expect(driver['containerClient']).toBe(mockContainerClient);
+		expect(driver.client).toBe(mockContainerClient);
 	});
 
 	describe('Allows overriding endpoint with optional setting', () => {
-		test('Creates blob service client and sets containerClient', () => {
+		test('Creates blob service client and sets the client', () => {
 			// 1. Hand the SDK fixed instances, so the assertions can follow the wiring by identity instead of by shape
 			const mockSignedCredentials = {} as StorageSharedKeyCredential;
 			vi.mocked(StorageSharedKeyCredential).mockReturnValueOnce(mockSignedCredentials);
@@ -237,7 +237,7 @@ describe('#constructor', () => {
 
 			// 3. The container handle has to come from that same service client, or requests would go to another host
 			expect(mockBlobServiceClient.getContainerClient).toHaveBeenCalledWith(sample.config.containerName);
-			expect(driver['containerClient']).toBe(mockContainerClient);
+			expect(driver.client).toBe(mockContainerClient);
 		});
 	});
 
@@ -296,9 +296,11 @@ describe('#read', () => {
 			download: mockDownload,
 		});
 
-		driver['containerClient'] = {
-			getBlobClient: mockBlobClient,
-		} as unknown as ContainerClient;
+		Object.assign(driver, {
+			client: {
+				getBlobClient: mockBlobClient,
+			} as unknown as ContainerClient,
+		});
 	});
 
 	test('Throws StorageFileNotFoundError when the blob is missing, rethrows anything else', async () => {
@@ -317,7 +319,7 @@ describe('#read', () => {
 		await driver.read(sample.path.input);
 
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
-		expect(driver['containerClient'].getBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
+		expect(driver.client.getBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
 	});
 
 	test('Calls download with undefined undefined when no range is passed', async () => {
@@ -378,9 +380,11 @@ describe('#write', () => {
 			uploadStream: mockUploadStream,
 		});
 
-		driver['containerClient'] = {
-			getBlockBlobClient: mockBlockBlobClient,
-		} as unknown as ContainerClient;
+		Object.assign(driver, {
+			client: {
+				getBlockBlobClient: mockBlockBlobClient,
+			} as unknown as ContainerClient,
+		});
 	});
 
 	test('Gets BlockBlobClient for file path', async () => {
@@ -421,9 +425,11 @@ describe('#delete', () => {
 			deleteIfExists: mockDeleteIfExists,
 		});
 
-		driver['containerClient'] = {
-			getBlockBlobClient: mockBlockBlobClient,
-		} as unknown as ContainerClient;
+		Object.assign(driver, {
+			client: {
+				getBlockBlobClient: mockBlockBlobClient,
+			} as unknown as ContainerClient,
+		});
 	});
 
 	test('Uses blobClient at full path', async () => {
@@ -431,7 +437,7 @@ describe('#delete', () => {
 		await driver.delete(sample.path.input);
 
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
-		expect(driver['containerClient'].getBlockBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
+		expect(driver.client.getBlockBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
 	});
 
 	test('Returns delete result', async () => {
@@ -454,9 +460,11 @@ describe('#stat', () => {
 			getProperties: mockGetProperties,
 		});
 
-		driver['containerClient'] = {
-			getBlobClient: mockBlobClient,
-		} as unknown as ContainerClient;
+		Object.assign(driver, {
+			client: {
+				getBlobClient: mockBlobClient,
+			} as unknown as ContainerClient,
+		});
 	});
 
 	test('Uses blobClient at full path', async () => {
@@ -464,7 +472,7 @@ describe('#stat', () => {
 		await driver.stat(sample.path.input);
 
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
-		expect(driver['containerClient'].getBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
+		expect(driver.client.getBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
 	});
 
 	test('Returns contentLength/lastModified as size/modified from getProperties', async () => {
@@ -481,9 +489,11 @@ describe('#stat', () => {
 		// 1. The SDK's `RestError` carries the HTTP status as `statusCode`; 404 becomes the error every backend shares
 		const cause = Object.assign(new Error('BlobNotFound'), { statusCode: 404 });
 
-		driver['containerClient'] = {
-			getBlobClient: vi.fn().mockReturnValue({ getProperties: vi.fn().mockRejectedValue(cause) }),
-		} as unknown as ContainerClient;
+		Object.assign(driver, {
+			client: {
+				getBlobClient: vi.fn().mockReturnValue({ getProperties: vi.fn().mockRejectedValue(cause) }),
+			} as unknown as ContainerClient,
+		});
 
 		const error: unknown = await driver.stat(sample.path.input).catch((error: unknown) => error);
 
@@ -495,9 +505,11 @@ describe('#stat', () => {
 		// 1. A 403 says nothing about whether the blob exists, so it must not be reported as "not found"
 		const error = Object.assign(new Error('AuthorizationFailure'), { statusCode: 403 });
 
-		driver['containerClient'] = {
-			getBlobClient: vi.fn().mockReturnValue({ getProperties: vi.fn().mockRejectedValue(error) }),
-		} as unknown as ContainerClient;
+		Object.assign(driver, {
+			client: {
+				getBlobClient: vi.fn().mockReturnValue({ getProperties: vi.fn().mockRejectedValue(error) }),
+			} as unknown as ContainerClient,
+		});
 
 		await expect(driver.stat(sample.path.input)).rejects.toBe(error);
 	});
@@ -505,9 +517,11 @@ describe('#stat', () => {
 	test('Refuses a properties response missing size or modification time', async () => {
 		// 1. Both fields are optional in the SDK's types; answering `undefined` under the non-optional `Stat` type
 		//    would fail far from its cause, so a broken response is refused with the path named
-		driver['containerClient'] = {
-			getBlobClient: vi.fn().mockReturnValue({ getProperties: vi.fn().mockResolvedValue({}) }),
-		} as unknown as ContainerClient;
+		Object.assign(driver, {
+			client: {
+				getBlobClient: vi.fn().mockReturnValue({ getProperties: vi.fn().mockResolvedValue({}) }),
+			} as unknown as ContainerClient,
+		});
 
 		await expect(driver.stat(sample.path.input)).rejects.toThrowError(
 			`No stat returned for file "${sample.path.input}"`,
@@ -526,9 +540,11 @@ describe('#exists', () => {
 			exists: mockExists,
 		});
 
-		driver['containerClient'] = {
-			getBlockBlobClient: mockBlockBlobClient,
-		} as unknown as ContainerClient;
+		Object.assign(driver, {
+			client: {
+				getBlockBlobClient: mockBlockBlobClient,
+			} as unknown as ContainerClient,
+		});
 	});
 
 	test('Uses blobClient at full path', async () => {
@@ -536,7 +552,7 @@ describe('#exists', () => {
 		await driver.exists(sample.path.input);
 
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
-		expect(driver['containerClient'].getBlockBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
+		expect(driver.client.getBlockBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
 	});
 
 	test('Returns exists result', async () => {
@@ -569,9 +585,11 @@ describe('#move', () => {
 			deleteIfExists: mockDeleteIfExists,
 		});
 
-		driver['containerClient'] = {
-			getBlockBlobClient: mockBlockBlobClient,
-		} as unknown as ContainerClient;
+		Object.assign(driver, {
+			client: {
+				getBlockBlobClient: mockBlockBlobClient,
+			} as unknown as ContainerClient,
+		});
 
 		driver.copy = vi.fn();
 	});
@@ -619,9 +637,11 @@ describe('#copy', () => {
 				beginCopyFromURL: mockBeginCopyFromUrl,
 			});
 
-		driver['containerClient'] = {
-			getBlockBlobClient: mockBlockBlobClient,
-		} as unknown as ContainerClient;
+		Object.assign(driver, {
+			client: {
+				getBlockBlobClient: mockBlockBlobClient,
+			} as unknown as ContainerClient,
+		});
 	});
 
 	test('Gets BlockBlobClient for src and dest', async () => {
@@ -662,9 +682,11 @@ describe('#list', () => {
 		//    either
 		mockListBlobsFlat = vi.fn().mockReturnValue([]);
 
-		driver['containerClient'] = {
-			listBlobsFlat: mockListBlobsFlat,
-		} as unknown as ContainerClient;
+		Object.assign(driver, {
+			client: {
+				listBlobsFlat: mockListBlobsFlat,
+			} as unknown as ContainerClient,
+		});
 	});
 
 	test('Uses listBlobsFlat at default empty path', async () => {
@@ -726,9 +748,11 @@ describe('#writeChunk', () => {
 		// 1. The append call is recorded, so the chunk the driver sends can be asserted without any request
 		mockAppendBlock = vi.fn().mockResolvedValue(undefined);
 
-		driver['containerClient'] = {
-			getAppendBlobClient: vi.fn().mockReturnValue({ appendBlock: mockAppendBlock }),
-		} as unknown as ContainerClient;
+		Object.assign(driver, {
+			client: {
+				getAppendBlobClient: vi.fn().mockReturnValue({ appendBlock: mockAppendBlock }),
+			} as unknown as ContainerClient,
+		});
 	});
 
 	test('Appends the buffered chunk at the resolved blob name', async () => {
@@ -739,7 +763,7 @@ describe('#writeChunk', () => {
 
 		// 1. The chunk lands as one block under the resolved name, and the offset advances by the bytes appended
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
-		expect(driver['containerClient'].getAppendBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
+		expect(driver.client.getAppendBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
 
 		expect(mockAppendBlock).toHaveBeenCalledWith(Buffer.from(sample.text), Buffer.byteLength(sample.text), {
 			conditions: { appendPosition: 0 },
@@ -772,7 +796,7 @@ describe('#writeChunk', () => {
 		});
 
 		tusDriver['fullPath'] = driver['fullPath'];
-		tusDriver['containerClient'] = driver['containerClient'];
+		Object.assign(tusDriver, { client: driver.client });
 
 		await expect(
 			tusDriver.writeChunk(sample.path.input, Readable.from([Buffer.from(sample.text)]), 0, {
@@ -795,7 +819,7 @@ describe('#writeChunk', () => {
 		});
 
 		tusDriver['fullPath'] = driver['fullPath'];
-		tusDriver['containerClient'] = driver['containerClient'];
+		Object.assign(tusDriver, { client: driver.client });
 
 		let pulls = 0;
 
@@ -834,8 +858,7 @@ describe('#call', () => {
 	let fetchMock: Mock;
 
 	beforeEach(() => {
-		// 1. The real method parser and deadline, a SAS of known content, and a `fetch` that records the request
-		vi.mocked(parseCallMethod).mockImplementation(parseCallMethodActual);
+		// 1. The real deadline, a SAS of known content, and a `fetch` that records the request
 		vi.mocked(withTimeout).mockImplementation(withTimeoutActual);
 
 		vi.mocked(generateAccountSASQueryParameters).mockReturnValue({
@@ -872,7 +895,34 @@ describe('#call', () => {
 		expect(url.searchParams.get('sig')).toBe(signature);
 		expect(init).toMatchObject({ method: 'GET', headers: { 'x-ms-version': '2026-06-06' } });
 		expect(init.body).toBeUndefined();
-		expect(result).toBe('<xml/>');
+		expect(result.data).toBe('<xml/>');
+	});
+
+	test('Fills a placeholder from the parameters, encoded, and does not send that parameter again', async () => {
+		// 1. `{blob}` takes the `blob` parameter; `/` in it cannot reshape the path, and it is not in the query
+		await driver.call('GET /{container}/{blob}', { blob: 'media/a b.jpg', comp: 'tags' });
+
+		const url = new URL((fetchMock.mock.calls[0] as [string])[0]);
+
+		expect(url.pathname).toBe('/media/media%2Fa%20b.jpg');
+		expect(url.searchParams.get('comp')).toBe('tags');
+		expect(url.searchParams.has('blob')).toBe(false);
+	});
+
+	test('Refuses a placeholder nobody filled before anything is sent', async () => {
+		// 1. Sent, `{blob}` would reach Azure as `%7Bblob%7D`
+		await expect(driver.call('GET /{container}/{blob}')).rejects.toThrow('needs a "blob" parameter');
+
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	test('Answers with the status, the headers lower-cased and the body', async () => {
+		// 1. A HEAD's properties arrive in headers only
+		fetchMock.mockResolvedValue(new Response(null, { status: 200, headers: { 'X-Ms-Blob-Type': 'BlockBlob' } }));
+
+		const result = await driver.call('HEAD /{container}/a.jpg');
+
+		expect(result).toEqual({ status: 200, headers: { 'x-ms-blob-type': 'BlockBlob' }, data: undefined });
 	});
 
 	test('Signs a short-lived blob SAS with the account credential', async () => {
@@ -891,34 +941,30 @@ describe('#call', () => {
 		expect(values.expiresOn.getTime() - Date.now()).toBeLessThanOrEqual(5 * 60_000);
 	});
 
-	test('Sends an XML body and the headers of the caller on a PUT', async () => {
-		// 1. `body` is the request body, every other parameter stays in the query; the caller's headers go on top
-		fetchMock.mockResolvedValue(new Response(null, { status: 202 }));
+	test.each(['PUT /', 'POST /{container}', 'PATCH /'])(
+		'Refuses the write %j before anything is signed or sent',
+		async (method) => {
+			// 1. A write's body is the SDK's job; the caller is pointed at the client
+			await expect(driver.call(method)).rejects.toThrow('writes go through the client');
 
-		const result = await driver.call(
-			'PUT /',
-			{ restype: 'service', comp: 'properties', body: '<StorageServiceProperties/>' },
-			{ headers: { 'X-Ms-Client-Request-Id': 'abc' } },
-		);
+			expect(generateAccountSASQueryParameters).not.toHaveBeenCalled();
+			expect(fetchMock).not.toHaveBeenCalled();
+		},
+	);
 
-		const [href, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+	test('Sends the headers of the caller over its own', async () => {
+		// 1. The caller's headers go on top of the API version
+		await driver.call('GET /', { comp: 'list' }, { headers: { 'X-Ms-Client-Request-Id': 'abc' } });
 
-		expect(new URL(href).searchParams.get('body')).toBeNull();
+		const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
 
-		expect(init).toMatchObject({
-			method: 'PUT',
-			body: '<StorageServiceProperties/>',
-			headers: { 'content-type': 'application/xml', 'x-ms-client-request-id': 'abc' },
-		});
-
-		expect(result).toBeUndefined();
+		expect(init.headers).toMatchObject({ 'x-ms-version': '2026-06-06', 'x-ms-client-request-id': 'abc' });
 	});
 
-	test('Refuses a full URL on a foreign host before anything is signed or sent', async () => {
+	test('Refuses a full URL on a foreign host before anything is sent', async () => {
 		// 1. A SAS for the account must not travel to another party
 		await expect(driver.call('GET https://evil.example/')).rejects.toThrow('not on a host of this provider');
 
-		expect(generateAccountSASQueryParameters).not.toHaveBeenCalled();
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
@@ -964,23 +1010,20 @@ describe('#call', () => {
 		await expect(driver.call('GET /', {}, { timeout: 5 })).rejects.toMatchObject({ name: 'TimeoutError', ms: 5 });
 	});
 
-	test('Does not follow a redirect, and reports it as a ProviderCallError without the SAS', async () => {
-		// 1. The SAS rides in the URL, so following a `Location` would hand it to wherever it points
-		fetchMock.mockResolvedValue(
-			new Response(`moved to https://evil.example/?sig=${signature}`, {
-				status: 302,
-				headers: { location: 'https://evil.example/' },
-			}),
-		);
+	test('Follows a redirect to another host without the SAS or its headers', async () => {
+		// 1. The SAS rides in the first URL only, so the next hop carries neither it nor the API version
+		fetchMock
+			.mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: 'https://o.example/x' } }))
+			.mockResolvedValueOnce(new Response('<xml/>', { status: 200 }));
 
-		const error = await driver.call('GET /').catch((thrown: unknown) => thrown);
+		await driver.call('GET /');
+
+		const [href, init] = fetchMock.mock.calls[1] as [string, RequestInit & { headers: Record<string, string> }];
 
 		expect((fetchMock.mock.calls[0] as [string, RequestInit])[1].redirect).toBe('manual');
-		expect(fetchMock).toHaveBeenCalledOnce();
-		expect(error).toBeInstanceOf(ProviderCallError);
-		expect((error as InstanceType<typeof ProviderCallError>).extensions).toMatchObject({ status: 302 });
-		expect(JSON.stringify(error) + String(error)).not.toContain(signature);
-		expect(JSON.stringify(error)).not.toContain(encodeURIComponent(signature));
+		expect(href).toBe('https://o.example/x');
+		expect(href).not.toContain('sig=');
+		expect(init.headers).not.toHaveProperty('x-ms-version');
 	});
 
 	test('Reports a failure to reach Azure without its cause, which may quote the signed URL', async () => {
@@ -993,7 +1036,7 @@ describe('#call', () => {
 
 		const error = await driver.call('GET /').catch((thrown: unknown) => thrown);
 
-		expect((error as Error).message).toBe('The azure call "GET /" could not reach the service (ENOTFOUND)');
+		expect((error as Error).message).toBe('The azure call could not reach the service (ENOTFOUND)');
 		expect((error as Error).cause).toBeUndefined();
 		expect(JSON.stringify(error) + String(error)).not.toContain(encodeURIComponent(signature));
 	});
@@ -1032,9 +1075,11 @@ describe('#createChunkedUpload', () => {
 		// 1. The append blob is the whole upload state, so creation is one `createIfNotExists` on the resolved name
 		mockCreateIfNotExists = vi.fn().mockResolvedValue(undefined);
 
-		driver['containerClient'] = {
-			getAppendBlobClient: vi.fn().mockReturnValue({ createIfNotExists: mockCreateIfNotExists }),
-		} as unknown as ContainerClient;
+		Object.assign(driver, {
+			client: {
+				getAppendBlobClient: vi.fn().mockReturnValue({ createIfNotExists: mockCreateIfNotExists }),
+			} as unknown as ContainerClient,
+		});
 	});
 
 	test('Creates an empty append blob under the final name', async () => {
@@ -1043,7 +1088,7 @@ describe('#createChunkedUpload', () => {
 		const result = await driver.createChunkedUpload(sample.path.input, context);
 
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
-		expect(driver['containerClient'].getAppendBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
+		expect(driver.client.getAppendBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
 		expect(mockCreateIfNotExists).toHaveBeenCalledOnce();
 		expect(result).toBe(context);
 	});
@@ -1074,14 +1119,16 @@ describe('#deleteChunkedUpload', () => {
 		//    upload that never got a chunk from rejecting
 		const mockDeleteIfExists = vi.fn().mockResolvedValue(undefined);
 
-		driver['containerClient'] = {
-			getBlockBlobClient: vi.fn().mockReturnValue({ deleteIfExists: mockDeleteIfExists }),
-		} as unknown as ContainerClient;
+		Object.assign(driver, {
+			client: {
+				getBlockBlobClient: vi.fn().mockReturnValue({ deleteIfExists: mockDeleteIfExists }),
+			} as unknown as ContainerClient,
+		});
 
 		await driver.deleteChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} });
 
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
-		expect(driver['containerClient'].getBlockBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
+		expect(driver.client.getBlockBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
 		expect(mockDeleteIfExists).toHaveBeenCalledOnce();
 	});
 });
