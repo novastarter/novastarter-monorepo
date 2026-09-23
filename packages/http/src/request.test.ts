@@ -164,4 +164,27 @@ describe('request', () => {
 
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
+
+	test('Tells the API’s hooks of every call, without the credentials or the secret query', async () => {
+		const onRequest = vi.fn();
+		const onResponse = vi.fn();
+
+		fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+		// 1. Named by the method as the caller wrote it, the URL without the signature
+		await request(api({ query: { sig: 'SECRET' }, hooks: { onRequest, onResponse } }), 'GET /products', {
+			limit: 1,
+		});
+
+		const event = {
+			provider: 'acme',
+			label: 'GET /products',
+			verb: 'GET',
+			url: 'https://api.acme.example/v1/products',
+		};
+
+		expect(onRequest).toHaveBeenCalledWith(event);
+		expect(onResponse).toHaveBeenCalledWith(expect.objectContaining({ ...event, status: 204 }));
+		expect(JSON.stringify([onRequest.mock.calls, onResponse.mock.calls])).not.toContain('SECRET');
+	});
 });

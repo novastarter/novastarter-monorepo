@@ -215,4 +215,109 @@ describe('http', () => {
 			ProviderCallError,
 		);
 	});
+
+	test('Tells the hooks of the request and its answer, without the query, before an error status is thrown', async () => {
+		const onRequest = vi.fn();
+		const onResponse = vi.fn();
+		const onError = vi.fn();
+
+		fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+		fetchMock.mockResolvedValueOnce(new Response('', { status: 429, headers: { 'retry-after': '2' } }));
+
+		// 1. A success: the request first, then its answer with the status and how long it took
+		await http(
+			'GET https://api.example.com/v1/{id}?api_key=SECRET',
+			{ id: 'a1' },
+			{ fetch: fetchMock, hooks: { onRequest, onResponse, onError } },
+		);
+
+		const request = { provider: 'api.example.com', verb: 'GET', url: 'https://api.example.com/v1/a1' };
+
+		expect(onRequest).toHaveBeenCalledWith({ ...request, label: 'GET https://api.example.com/v1/a1' });
+		expect(onResponse).toHaveBeenCalledWith(expect.objectContaining({ ...request, status: 200 }));
+		expect(onResponse.mock.calls[0]?.[0].duration).toBeGreaterThanOrEqual(0);
+		expect(JSON.stringify([onRequest.mock.calls, onResponse.mock.calls])).not.toContain('SECRET');
+
+		// 2. An error status is an answer too, told before the kit's error is thrown
+		await expect(
+			http('GET https://api.example.com/x', {}, { fetch: fetchMock, hooks: { onResponse, onError } }),
+		).rejects.toBeInstanceOf(HitRateLimitError);
+
+		expect(onResponse).toHaveBeenLastCalledWith(expect.objectContaining({ status: 429 }));
+		expect(onError).not.toHaveBeenCalled();
+	});
+
+	test('Tells onError of a request with no answer, the error going on to the caller as it is', async () => {
+		const onResponse = vi.fn();
+		const onError = vi.fn();
+		const unreachable = new TypeError('fetch failed');
+
+		// 1. The host cannot be reached
+		fetchMock.mockRejectedValueOnce(unreachable);
+
+		await expect(
+			http('GET https://api.example.com/x', {}, { fetch: fetchMock, hooks: { onResponse, onError } }),
+		).rejects.toBe(unreachable);
+
+		expect(onError).toHaveBeenCalledWith(
+			expect.objectContaining({ url: 'https://api.example.com/x', error: unreachable }),
+		);
+
+		// 2. The answer never comes
+		fetchMock.mockImplementationOnce(
+			(_url, init) =>
+				new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason))),
+		);
+
+		await expect(
+			http('GET https://api.example.com/x', {}, { timeout: 10, fetch: fetchMock, hooks: { onError } }),
+		).rejects.toBeInstanceOf(TimeoutError);
+
+		expect(onError.mock.calls[1]?.[0].error).toBeInstanceOf(TimeoutError);
+		expect(onResponse).not.toHaveBeenCalled();
+	});
+
+	test('Never lets a failing hook break the request', async () => {
+		fetchMock.mockResolvedValueOnce(new Response('{"id":1}', { status: 200 }));
+
+		// 1. One hook throws, the other rejects
+		await expect(
+			http(
+				'GET https://api.example.com/x',
+				{},
+				{
+					fetch: fetchMock,
+					hooks: {
+						onRequest: () => {
+							throw new Error('logger down');
+						},
+						onResponse: async () => {
+							throw new Error('metrics down');
+						},
+					},
+				},
+			),
+		).resolves.toMatchObject({ status: 200, data: { id: 1 } });
+	});
+
+	test('Keeps what a hook changes in its event out of the error', async () => {
+		fetchMock.mockResolvedValueOnce(new Response('', { status: 500 }));
+
+		// 1. A hook rewrites the provider it was told of; the error still names the real one
+		const error = await http(
+			'GET https://api.example.com/x',
+			{},
+			{
+				fetch: fetchMock,
+				hooks: {
+					onRequest: (event) => {
+						event.provider = 'other';
+					},
+				},
+			},
+		).catch((caught: unknown) => caught);
+
+		expect(error).toBeInstanceOf(ProviderCallError);
+		expect((error as Error).message).toContain('api.example.com refused');
+	});
 });
