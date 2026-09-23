@@ -98,7 +98,9 @@ drivers built so far — the FCM app, the APNs HTTP/2 sessions — for a clean s
 `sendPush(message, { location? })` does, for every message:
 
 1. Refuses a message without a title, without a target, with both targets, or with a subscription missing its `https:`
-   endpoint or its `p256dh` / `auth` keys (`InvalidPayloadError`).
+   endpoint or its `p256dh` / `auth` keys (`InvalidPayloadError`). The endpoint must be on a browser push service
+   (`fcm.googleapis.com`, `android.googleapis.com`, `push.services.mozilla.com`, `push.apple.com`, `notify.windows.com`,
+   or a subdomain), so a client-supplied subscription cannot make the server post to an internal host.
 2. Runs the `push.send` filter of `@novastarter/emitter` — a handler may rewrite the message (a redirect to a test
    device) or return `null` to drop it; `sendPush()` then answers `null`. The rewrite is checked like the original and
    routed by its own target, so a subscription redirected to a token goes through the token's location.

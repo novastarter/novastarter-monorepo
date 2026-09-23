@@ -80,8 +80,9 @@ const stableStringify = (payload: unknown): string => {
  * @param payload - Parsed payload.
  * @param options - Effective options.
  * @returns The id.
- * @throws Error when a derived or explicit id contains `:`, which BullMQ reserves for its keys — caught here, so the
- * `local` driver of the tests reports it the same way the queue would.
+ * @throws Error when a derived or explicit id contains `:`, which BullMQ reserves for its keys, or is an integer
+ * string such as `"123"` or `"0"`, which BullMQ refuses as a custom id — caught here, so the `local` driver of the
+ * tests reports it the same way the queue would.
  */
 export const getJobId = (contract: JobContract, payload: unknown, options: JobOptions & EnqueueOptions): string => {
 	// 1. Explicit, derived or random: which one is the options' business, the check below is every id's
@@ -91,6 +92,15 @@ export const getJobId = (contract: JobContract, payload: unknown, options: JobOp
 	//    driver too, not only in production on BullMQ
 	if (id.includes(':')) {
 		throw new Error(`The id "${id}" of job "${contract.name}" must not contain ":" — BullMQ reserves it`);
+	}
+
+	// 3. BullMQ refuses a custom id that reads as an integer (`"123"`, `"0"`), since it hands out integer ids itself.
+	//    Only an explicit id can hit this — derived ids start with the job name and random ones are UUIDs — and
+	//    `String(order.id)` is a natural pick, so it is refused here rather than only once BullMQ runs in production
+	if (`${Number.parseInt(id, 10)}` === id) {
+		throw new Error(
+			`The id "${id}" of job "${contract.name}" must not be an integer — BullMQ refuses integer custom ids`,
+		);
 	}
 
 	return id;

@@ -7,7 +7,7 @@ import { toWebPushPayload } from './to-web-push-payload.js';
 /**
  * A browser subscription with everything `platformOf()` checks for; the payload never reads it.
  */
-const subscription = { endpoint: 'https://push.example/abc', keys: { p256dh: 'p', auth: 'a' } };
+const subscription = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys: { p256dh: 'p', auth: 'a' } };
 
 describe('toWebPushPayload', () => {
 	test('Keeps what is set and tucks the url into data', () => {

@@ -10,8 +10,8 @@ import {
 	toUnavailableError,
 } from '@novastarter/database';
 import { sql } from 'drizzle-orm';
+import { readMigrationFiles } from 'drizzle-orm/migrator';
 import { drizzle, type NeonHttpDatabase } from 'drizzle-orm/neon-http';
-import { migrate } from 'drizzle-orm/neon-http/migrator';
 
 /**
  * The query function of `@neondatabase/serverless` in the shape Drizzle drives: rows as objects, results unwrapped.
@@ -56,9 +56,8 @@ declare module '@novastarter/database' {
  * No connection is held between queries, which is what a serverless function or an edge runtime wants: nothing to
  * warm up, nothing to close, the lowest latency for a single statement. The price is sessions: `db.transaction()`
  * throws (`No transactions support in neon-http driver`) — `db.batch()` runs several statements in one
- * non-interactive transaction instead — and `migrate()` applies its statements one by one without a rollback, so a
- * failing migration leaves the ones before it applied. A process that needs interactive transactions is better off on
- * {@link DatabaseDriverNeon}. The query function is reachable as `db.$client`.
+ * non-interactive transaction instead, and `migrate()` sends each migration with its journal row as one such batch. A
+ * process that needs interactive transactions is better off on {@link DatabaseDriverNeon}. The query function is reachable as `db.$client`.
  *
  * @typeParam Schema - The Drizzle schema the database is typed with.
  * @example
@@ -145,17 +144,74 @@ export class DatabaseDriverNeonHttp<
 	}
 
 	/**
-	 * Apply the pending migrations of a drizzle-kit folder with Drizzle's Neon HTTP migrator.
+	 * Apply the pending migrations of a drizzle-kit folder, each one in a Neon HTTP transaction of its own.
 	 *
-	 * Statement by statement, each in its own request: there is no transaction to roll back when one fails, so the
-	 * statements before it stay applied and the journal does not record the migration. Fix the cause and run again.
+	 * Drizzle's Neon HTTP migrator runs every pending migration first and writes the journal rows only at the end, so a
+	 * failure in a later migration left the earlier ones applied but unrecorded, and the next run replayed them. Here a
+	 * migration's statements and its journal row go in one non-interactive transaction: a failing migration is rolled
+	 * back whole, the ones before it stay applied and recorded, and a re-run resumes from the failed one. The journal
+	 * table, its schema and the "pending" rule (`created_at` older than the migration) are Drizzle's, so a database
+	 * migrated by either stays readable by the other. Statements Postgres refuses inside a transaction block are not
+	 * supported: `CREATE INDEX CONCURRENTLY`, or an enum value added by `ALTER TYPE ... ADD VALUE` and used later in the
+	 * same migration. The `readOnly` and `deferrable` options of the connection do not apply to migrations.
 	 *
 	 * @param options - The folder and, optionally, the journal table and schema.
 	 * @returns Once every pending migration ran.
-	 * @throws Error when `migrationsFolder` is missing; what the migrator raised otherwise.
+	 * @throws Error when `migrationsFolder` is missing; what the migration files or the database raised otherwise.
 	 */
 	async migrate(options: MigrateOptions): Promise<void> {
-		// 1. The HTTP migrator sends each statement as a request of its own
-		await migrate(this.db, toMigrationConfig(options));
+		// 1. Validate the options and read the folder before any request, with Drizzle's own defaults for the journal
+		const config = toMigrationConfig(options);
+		const migrations = readMigrationFiles(config);
+
+		const journal = `${quoteIdentifier(config.migrationsSchema ?? 'drizzle')}.${quoteIdentifier(
+			config.migrationsTable ?? '__drizzle_migrations',
+		)}`;
+
+		const client = this.db.$client;
+
+		// 2. The journal as Drizzle creates it; both statements are idempotent, so running them every time is safe
+		await client.query(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(config.migrationsSchema ?? 'drizzle')}`);
+
+		await client.query(
+			`CREATE TABLE IF NOT EXISTS ${journal} (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at bigint)`,
+		);
+
+		// 3. The newest recorded migration marks where the folder is caught up to, the same rule Drizzle applies
+		const [last] = (await client.query(`select created_at from ${journal} order by created_at desc limit 1`)) as {
+			created_at: string | number | null;
+		}[];
+
+		// 4. Each pending migration and its journal row commit together or not at all, in folder order, so a failure
+		//    stops the run with everything before it recorded; `readOnly` and `deferrable` are pinned because the query
+		//    function's own defaults, meant for `db.batch()`, would otherwise open a migration as READ ONLY
+		for (const migration of migrations) {
+			if (last !== undefined && Number(last.created_at) >= migration.folderMillis) {
+				continue;
+			}
+
+			await client.transaction(
+				[
+					...migration.sql.map((statement) => client.query(statement)),
+					client.query(`insert into ${journal} ("hash", "created_at") values ($1, $2)`, [
+						migration.hash,
+						migration.folderMillis,
+					]),
+				],
+				{ readOnly: false, deferrable: false },
+			);
+		}
 	}
 }
+
+/**
+ * Quote a Postgres identifier, doubling any quote inside it, so a configured journal name cannot break the statement.
+ *
+ * @param name - The schema or table name.
+ * @returns The name in double quotes.
+ * @internal
+ */
+const quoteIdentifier = (name: string): string => {
+	// 1. Postgres escapes a double quote inside a quoted identifier by doubling it
+	return `"${name.replaceAll('"', '""')}"`;
+};

@@ -39,6 +39,14 @@ const MINIMUM_CHUNK_SIZE = 262_144;
 const RESUMABLE_INCOMPLETE_STATUS = 308;
 
 /**
+ * Context metadata key {@link StorageDriverGcs.writeChunk} sets to `'true'` once GCS has finalised the object, so
+ * {@link StorageDriverGcs.deleteChunkedUpload} knows whether the object under the path is this upload's or an older one.
+ *
+ * @internal
+ */
+const UPLOAD_COMPLETED_KEY = 'completed';
+
+/**
  * The part of an upload request's answer that the SDK's write stream re-emits as `response` and
  * {@link StorageDriverGcs.writeChunk} reads: the status and the lower-cased headers.
  *
@@ -528,6 +536,10 @@ export class StorageDriverGcs implements TusDriver {
 
 		metadata['uri'] = uri;
 
+		// 4. The completion flag is the driver's own; one sent by the client in `Upload-Metadata` is dropped, or a
+		//    DELETE on an upload that never finished would destroy the object it was meant to replace
+		delete metadata[UPLOAD_COMPLETED_KEY];
+
 		return context;
 	}
 
@@ -661,7 +673,14 @@ export class StorageDriverGcs implements TusDriver {
 			metadata['hash'] = hash;
 		}
 
-		// 10. The server's offset, not the bytes read: the TUS client resends whatever the session did not keep
+		// 10. An answer other than a 308 means GCS finalised the object, so the object under the path is now this
+		//     upload's own; the flag tells a later termination it may delete it. No answer at all proves nothing, so the
+		//     flag is left unset then
+		if (lastResponse !== undefined && lastResponse.status !== RESUMABLE_INCOMPLETE_STATUS) {
+			metadata[UPLOAD_COMPLETED_KEY] = 'true';
+		}
+
+		// 11. The server's offset, not the bytes read: the TUS client resends whatever the session did not keep
 		return persisted;
 	}
 
@@ -748,20 +767,30 @@ export class StorageDriverGcs implements TusDriver {
 	}
 
 	/**
-	 * Abort a chunked upload and remove whatever was stored under its path.
+	 * Abort a chunked upload, or remove the object it produced when it was completed before.
+	 *
+	 * An unfinished upload deletes nothing: GCS writes the object only when the session is finalised, so until then the
+	 * path still holds the object that was there before the upload, which a cancelled overwrite must not destroy. The
+	 * session itself is left to expire on its own. An upload GCS finalised, as recorded in the context metadata by
+	 * {@link StorageDriverGcs.writeChunk}, left its object under the path, so a termination then deletes it. The flag
+	 * only reaches this call when the TUS server saves the context after each chunk; without it, the object of a
+	 * finished upload is kept rather than risking the previous one.
 	 *
 	 * @param filepath - Object path relative to the root.
-	 * @param _context - Upload context; unused, the object name is enough to clean up.
+	 * @param context - Context carrying the completion flag set by {@link StorageDriverGcs.writeChunk}.
 	 * @throws Error naming `tus.enabled` when the location has resumable uploads disabled.
 	 */
-	async deleteChunkedUpload(filepath: string, _context: ChunkedUploadContext): Promise<void> {
+	async deleteChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<void> {
 		// 1. A location with resumable uploads switched off refuses the termination instead of deleting whatever the
 		//    path happens to name
 		this.assertTusEnabled();
 
-		// 2. GCS keeps no object for an unfinished session and lets the session expire on its own, so the only thing that
-		//    can be left behind is a finished object under this path. `ignoreNotFound` answers the SDK's 404 for the far
-		//    more common missing object with a no-op, the way the drivers whose delete never rejects do
+		// 2. Only a finished upload wrote the object; an unfinished one leaves the previous object there untouched
+		if (context.metadata?.[UPLOAD_COMPLETED_KEY] !== 'true') return;
+
+		// 3. The object under the path is the one this upload stored, so a termination removes it. `ignoreNotFound`
+		//    turns the SDK's 404 for an object already removed into a no-op, the way the drivers whose delete never
+		//    rejects do
 		await this.file(this.fullPath(filepath)).delete({ ignoreNotFound: true });
 	}
 }

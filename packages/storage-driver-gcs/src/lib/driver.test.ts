@@ -434,11 +434,19 @@ describe('#deleteChunkedUpload', () => {
 		driver['file'] = vi.fn().mockReturnValue(mockFile);
 	});
 
-	test('Deletes the object under the final path, ignoring a missing one', async () => {
+	test('Keeps the object under the path when the upload never finished', async () => {
 		await driver.deleteChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} });
 
-		// 1. The handle must be asked for the resolved name, not the caller's path; an unfinished session has no object
-		//    in the bucket, so the SDK's 404 for it must not reject the termination
+		// 1. GCS writes the object only when the session is finalised, so the object under the path is an older one the
+		//    aborted upload never replaced, and it must survive the termination
+		expect(mockFile.delete).not.toHaveBeenCalled();
+	});
+
+	test('Deletes the object of a finished upload, ignoring a missing one', async () => {
+		await driver.deleteChunkedUpload(sample.path.input, { size: sample.file.size, metadata: { completed: 'true' } });
+
+		// 1. The handle must be asked for the resolved name, not the caller's path; the object may already be gone, so
+		//    the SDK's 404 for it must not reject the termination
 		expect(driver['file']).toHaveBeenCalledWith(sample.path.inputFull);
 		expect(mockFile.delete).toHaveBeenCalledOnce();
 		expect(mockFile.delete).toHaveBeenCalledWith({ ignoreNotFound: true });
@@ -744,6 +752,17 @@ describe('#createChunkedUpload', () => {
 
 		expect(context.metadata).toStrictEqual({ uri });
 	});
+
+	test('Drops a completion flag sent by the client', async () => {
+		// 1. A client forging `completed` in `Upload-Metadata` must not make a later DELETE of an unfinished upload remove
+		//    the object it was meant to replace
+		const context = await driver.createChunkedUpload(sample.path.input, {
+			size: sample.file.size,
+			metadata: { completed: 'true' },
+		});
+
+		expect(context.metadata).toStrictEqual({ uri });
+	});
 });
 
 describe('#writeChunk', () => {
@@ -907,6 +926,28 @@ describe('#writeChunk', () => {
 		// 2. Nothing advanced: the client resends the whole chunk, resumed from the unchanged hash
 		expect(await pending).toBe(0);
 		expect(context.metadata).toStrictEqual({ uri, hash });
+	});
+
+	test('Marks the upload completed when GCS finalises the object', async () => {
+		// 1. The last request of the chunk gets a 200: GCS finalised the object with every byte sent
+		vi.mocked(pipeline).mockImplementation(
+			(source) =>
+				new Promise<void>((resolve) =>
+					(source as PassThrough).on('end', () => {
+						mockWriteStream.emit('response', { status: 200, headers: {} });
+						resolve();
+					}),
+				),
+		);
+
+		const context: ChunkedUploadContext = { size: undefined, metadata: { uri } };
+		const pending = driver.writeChunk(sample.path.input, sample.stream, 0, context);
+
+		sample.stream.end(Buffer.from(sample.text));
+		await pending;
+
+		// 2. The flag lets a later termination delete the object, which is now this upload's own
+		expect(context.metadata?.['completed']).toBe('true');
 	});
 
 	test('Refuses an offset reported by GCS that is not a point the driver can checksum', async () => {

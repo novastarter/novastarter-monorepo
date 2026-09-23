@@ -457,35 +457,55 @@ export class StorageDriverSupabase implements TusDriver {
 	}
 
 	/**
-	 * Move an object to a new name within the bucket.
+	 * Move an object to a new name within the bucket, replacing any object already there.
+	 *
+	 * Supabase's native move refuses an existing destination with a 409, and has no upsert switch, so the move is an
+	 * upserting {@link StorageDriverSupabase.copy} followed by removing the source — the way the S3 and Azure drivers
+	 * move.
 	 *
 	 * @param src - Current object path.
 	 * @param dest - Path to move the object to.
-	 * @throws Error wrapping the storage error when the move fails.
+	 * @throws Error wrapping the copy or removal error when the move fails.
 	 */
 	async move(src: string, dest: string): Promise<void> {
-		// 1. Supabase offers a native move, so unlike S3 this is a single request; the client reports a failure as a
-		//    return value rather than throwing, so it is thrown here — a move that did not happen must not read as done
-		const { error } = await this.bucket.move(this.fullPath(src), this.fullPath(dest));
+		// 1. A move onto the same key is a no-op, as in the S3 driver: the upserting copy would succeed onto itself and
+		//    the removal below would then delete the only copy. The comparison is on the resolved keys, so `a.png` and
+		//    `./a.png` count as the same object
+		if (this.fullPath(src) === this.fullPath(dest)) return;
 
-		if (error) {
+		// 2. Copy first and remove the source only once the copy landed: deleting the destination up front, or the
+		//    source before the copy, would lose data when the second step fails. A failure of either step is thrown, so a
+		//    move that did not happen does not read as done
+		try {
+			await this.copy(src, dest);
+			await this.delete(src);
+		} catch (error) {
 			throw new Error(`Error moving file "${src}" to "${dest}"`, { cause: error });
 		}
 	}
 
 	/**
-	 * Copy an object to a new name within the bucket.
+	 * Copy an object to a new name within the bucket, replacing any object already there.
+	 *
+	 * `@supabase/storage-js` sends its copy without `x-upsert`, so Supabase refuses an existing destination with a 409
+	 * while every other driver overwrites it; the copy endpoint is therefore called directly with `x-upsert: true`.
 	 *
 	 * @param src - Object to copy.
 	 * @param dest - Path of the copy.
-	 * @throws Error wrapping the storage error when the copy fails.
+	 * @throws Error wrapping the Storage API error when the copy fails.
 	 */
 	async copy(src: string, dest: string): Promise<void> {
-		// 1. The bucket API copies server-side, so the object never passes through this process; a failure comes back
-		//    as a return value and is thrown, so a copy that did not happen does not read as done
-		const { error } = await this.bucket.copy(this.fullPath(src), this.fullPath(dest));
-
-		if (error) {
+		// 1. The Storage API copies server-side, so the object never passes through this process; `x-upsert` makes a
+		//    copy onto an existing name replace it, as the driver contract expects. A refusal is thrown with the paths,
+		//    so a copy that did not happen does not read as done
+		try {
+			await request(
+				this.api,
+				'POST /object/copy',
+				{ bucketId: this.config.bucket, sourceKey: this.fullPath(src), destinationKey: this.fullPath(dest) },
+				{ headers: { 'x-upsert': 'true' } },
+			);
+		} catch (error) {
 			throw new Error(`Error copying file "${src}" to "${dest}"`, { cause: error });
 		}
 	}
@@ -635,7 +655,7 @@ export class StorageDriverSupabase implements TusDriver {
 	 */
 	get tusExtensions(): string[] {
 		// 1. Exactly what Supabase's own TUS endpoint supports: uploads are created lazily on the first chunk,
-		//    `deleteChunkedUpload` terminates them and Supabase expires unfinished ones itself; concatenation and
+		//    `deleteChunkedUpload` terminates them through the upload URL and Supabase expires unfinished ones itself; concatenation and
 		//    checksums are not offered, so advertising them would promise what the backend cannot honour
 		return ['creation', 'termination', 'expiration'];
 	}
@@ -707,10 +727,12 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @param offset - Byte offset within the whole upload where this chunk starts.
 	 * @param context - Context carrying the total `size`, the client metadata and, after the first chunk, the
 	 * `upload-url` to resume from.
-	 * @returns The new upload offset: `offset` plus the bytes Supabase acknowledged.
+	 * @returns The new upload offset, as Supabase acknowledged it.
 	 * @throws Error when the total size is unknown because the client defers the length: each chunk becomes its own
 	 * TUS upload, which `tus-js-client` cannot create without a known size.
 	 * @throws Error when the chunk exceeds the size configured as `tus.chunkSize`.
+	 * @throws Error when Supabase holds the upload at an offset other than `offset`, so the chunk would land in the
+	 * wrong place; an offset already past this very chunk is not an error but a retry of a chunk that landed.
 	 * @throws The `tus-js-client` error when the chunk is rejected.
 	 */
 	async writeChunk(
@@ -779,14 +801,20 @@ export class StorageDriverSupabase implements TusDriver {
 		}
 
 		// 7. `tus-js-client` reports through callbacks, so the one chunk is wrapped in a promise the callbacks settle
-		await new Promise((resolve, reject) => {
+		//    with the offset the upload reached
+		return new Promise<number>((resolve, reject) => {
 			// 1. The custom file reader feeds `tus-js-client` the buffered chunk as a one-shot source, so the library
 			//    sends exactly this chunk instead of trying to read the whole file. `x-upsert` lets a re-upload
 			//    replace the object; retries are disabled because the TUS server in front of this driver already
 			//    retries. The deferred-length refusal above guarantees a known size here, so `uploadSize` is always
-			//    set — an explicit `undefined` would not be an absent key to the library's option types
+			//    set — an explicit `undefined` would not be an absent key to the library's option types. The endpoint is
+			//    only given for the first chunk: with it, a resume HEAD Supabase answers with 4xx (an expired or unknown
+			//    upload) makes the library silently create a new upload and PATCH this chunk at offset 0, so without it
+			//    the library fails with "unable to resume upload" instead
+			const resumeUrl = contextMetadata['upload-url'];
+
 			const upload = new tus.Upload(Readable.from(chunks, { objectMode: false }), {
-				endpoint: this.getResumableUrl(),
+				endpoint: resumeUrl ? null : this.getResumableUrl(),
 				fileReader: new FileReader(),
 				headers: {
 					Authorization: `Bearer ${this.config.serviceRole}`,
@@ -799,15 +827,44 @@ export class StorageDriverSupabase implements TusDriver {
 				onError(error) {
 					reject(error);
 				},
-				onChunkComplete(chunkSize) {
-					// 1. Resolve after the first chunk completes: this call only ever carries one chunk, so waiting for
-					//    `onSuccess` would block until the whole upload finished
-					bytesUploaded += chunkSize;
+				onAfterResponse(req, res) {
+					// 1. Only the resume HEAD tells where Supabase holds the upload; the library would PATCH this chunk at
+					//    that offset whatever it is, since the one-shot source ignores the offset it is sliced at, so a
+					//    mismatch must be caught here, before the PATCH goes out
+					if (req.getMethod() !== 'HEAD') return;
 
-					resolve(null);
+					const serverOffset = Number.parseInt(res.getHeader('Upload-Offset') ?? '', 10);
+
+					// 2. A missing offset is left to the library, which refuses it itself; the expected one proceeds
+					if (Number.isNaN(serverOffset) || serverOffset === bytesUploaded) return;
+
+					// 3. An offset right past this chunk means an earlier attempt landed but its answer was lost: the
+					//    retry resolves with that offset instead of appending the bytes a second time. Any other offset
+					//    would put the chunk in the wrong place and is refused
+					if (serverOffset === bytesUploaded + chunkSize) {
+						resolve(serverOffset);
+					} else {
+						reject(
+							new Error(
+								`Supabase upload offset ${serverOffset} does not match chunk offset ${bytesUploaded} of "${filepath}"`,
+							),
+						);
+					}
+
+					// 4. Throwing stops the library before the PATCH; the promise is already settled, so the error it
+					//    reports through `onError` afterwards changes nothing
+					throw new Error('Chunk upload stopped after the offset check');
+				},
+				onChunkComplete(_chunkSize, bytesAccepted) {
+					// 1. Resolve after the first chunk completes: this call only ever carries one chunk, so waiting for
+					//    `onSuccess` would block until the whole upload finished. The offset Supabase acknowledged is
+					//    returned rather than a computed one, so the TUS server in front tracks the real position
+					bytesUploaded = bytesAccepted;
+
+					resolve(bytesUploaded);
 				},
 				onSuccess() {
-					resolve(null);
+					resolve(bytesUploaded);
 				},
 				onUploadUrlAvailable() {
 					// 1. Remember the upload URL Supabase assigned on creation: it is the only handle for appending
@@ -824,12 +881,12 @@ export class StorageDriverSupabase implements TusDriver {
 			// 2. On every chunk after the first, resume the existing upload instead of creating a new one; the literal
 			//    is the tus-js-client previous-upload contract, with an empty storage key and no parallel URLs because
 			//    this driver never stores uploads in a urlStorage and uploads a single stream
-			if (contextMetadata['upload-url']) {
+			if (resumeUrl) {
 				const previousUpload: tus.PreviousUpload = {
 					size: totalSize,
 					creationTime: contextMetadata['creation_date'] as string,
 					metadata,
-					uploadUrl: contextMetadata['upload-url'],
+					uploadUrl: resumeUrl,
 					urlStorageKey: '',
 					parallelUploadUrls: null,
 				};
@@ -839,8 +896,6 @@ export class StorageDriverSupabase implements TusDriver {
 
 			upload.start();
 		});
-
-		return bytesUploaded;
 	}
 
 	/**
@@ -854,14 +909,39 @@ export class StorageDriverSupabase implements TusDriver {
 	async finishChunkedUpload(_filepath: string, _context: ChunkedUploadContext): Promise<void> {}
 
 	/**
-	 * Abort a resumable upload by removing whatever sits under its name.
+	 * Abort a resumable upload by terminating it on Supabase's TUS endpoint.
 	 *
-	 * @param filepath - Final object path relative to the root.
-	 * @param _context - Upload context; unused, since Supabase expires unfinished TUS uploads on its own.
+	 * An unfinished TUS upload has not replaced the object under the final name yet, so that object — an earlier
+	 * version, if any — is left alone; only the upload recorded in the context is terminated.
+	 *
+	 * @param _filepath - Final object path relative to the root; unused, the upload URL names the upload.
+	 * @param context - Upload context carrying the `upload-url` recorded by the first `writeChunk`.
+	 * @throws The `tus-js-client` error when Supabase refuses the termination; an upload Supabase no longer knows
+	 * (404 or 410, e.g. expired or already finished) is not an error, since it is gone either way.
 	 */
-	async deleteChunkedUpload(filepath: string, _context: ChunkedUploadContext): Promise<void> {
-		// 1. Only the object under the final name is removed; an unfinished TUS upload has no handle the driver could
-		//    abort, and Supabase expires it on its own
-		await this.delete(filepath);
+	async deleteChunkedUpload(_filepath: string, context: ChunkedUploadContext): Promise<void> {
+		const uploadUrl = context.metadata?.['upload-url'];
+
+		// 1. No upload URL means no chunk was ever sent, so nothing exists on Supabase to terminate
+		if (!uploadUrl) return;
+
+		// 2. A TUS DELETE on the upload URL, authorised like the chunks; retries are left to the TUS server in front,
+		//    as for `writeChunk`. Removing the object under the final name instead would delete the previous version
+		try {
+			await tus.Upload.terminate(uploadUrl, {
+				headers: { Authorization: `Bearer ${this.config.serviceRole}` },
+				retryDelays: null,
+			});
+		} catch (error) {
+			// 3. An upload Supabase answers 404 or 410 for has already expired or finished, so there is nothing left to
+			//    abort; it resolves quietly, the way the other drivers answer a missing upload. Any other failure is
+			//    rethrown. The status is read off the library's `DetailedError` response by shape, so a failure that
+			//    never got a response (a network error) is rethrown too
+			const status = (error as tus.DetailedError | undefined)?.originalResponse?.getStatus();
+
+			if (status === 404 || status === 410) return;
+
+			throw error;
+		}
 	}
 }

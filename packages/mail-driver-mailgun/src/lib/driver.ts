@@ -1,4 +1,4 @@
-import { type CallOptions, type CallResponse, type HttpApi, request } from '@novastarter/http';
+import { type CallOptions, type CallResponse, DEFAULT_REQUEST_TIMEOUT, type HttpApi, request } from '@novastarter/http';
 import {
 	bareMailAddress,
 	type MailDriver,
@@ -27,7 +27,7 @@ export type MailDriverMailgunConfig = {
 	host?: string | undefined;
 	/** Accept the messages without delivering them — Mailgun's test mode (`o:testmode`). */
 	testMode?: boolean | undefined;
-	/** Request timeout in milliseconds; the SDK's default unless given. */
+	/** Request timeout in milliseconds; 30 s unless given. */
 	timeout?: number | undefined;
 };
 
@@ -109,15 +109,18 @@ export class MailDriverMailgun implements MailDriver {
 			throw new Error('The mailgun mail driver needs "apiKey" and "domain"');
 		}
 
-		// 2. The SDK takes a FormData implementation; Node's global one does, no `form-data` package needed
+		// 2. The SDK takes a FormData implementation; Node's global one does, no `form-data` package needed. The timeout
+		//    is always passed: without one the SDK's axios waits forever on a stalled connection, so a send would never
+		//    fail over to the next location
 		const host = config.host || DEFAULT_MAILGUN_HOST;
 		const apiUrl = /^https?:\/\//.test(host) ? host : `https://${host}`;
+		const timeout = config.timeout ?? DEFAULT_REQUEST_TIMEOUT;
 
 		this.client = new Mailgun(FormData).client({
 			username: 'api',
 			key: config.apiKey,
 			url: apiUrl,
-			...(config.timeout !== undefined ? { timeout: config.timeout } : {}),
+			timeout,
 		});
 
 		// 3. The rest of the location, and the API of raw calls, which bypass the SDK; Mailgun reads forms, not JSON
@@ -129,7 +132,7 @@ export class MailDriverMailgun implements MailDriver {
 			baseUrl: apiUrl,
 			headers: { authorization: `Basic ${Buffer.from(`api:${config.apiKey}`).toString('base64')}` },
 			placeholders: { domain: config.domain },
-			timeout: config.timeout,
+			timeout,
 			bodyType: 'form',
 		};
 	}

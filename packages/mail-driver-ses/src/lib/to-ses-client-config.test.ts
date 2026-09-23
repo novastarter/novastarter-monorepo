@@ -1,13 +1,23 @@
 /**
  * Tests of `to-ses-client-config`: how the location options become SESv2 client options.
  */
+import { DEFAULT_REQUEST_TIMEOUT } from '@novastarter/http';
 import { describe, expect, test } from 'vitest';
 import { toSesClientConfig } from './to-ses-client-config.js';
 
+/**
+ * Request handler options every client config carries, whatever else is given.
+ */
+const requestHandler = {
+	connectionTimeout: 10_000,
+	requestTimeout: DEFAULT_REQUEST_TIMEOUT,
+	throwOnRequestTimeout: true,
+};
+
 describe('toSesClientConfig', () => {
 	test('Passes region and endpoint through and builds credentials only from a full key pair', () => {
-		// 1. Nothing given, nothing set: the SDK's default chain decides
-		expect(toSesClientConfig({})).toStrictEqual({});
+		// 1. Nothing given, nothing set but the deadlines: the SDK's default chain decides the rest
+		expect(toSesClientConfig({})).toStrictEqual({ requestHandler });
 
 		// 2. Everything given: credentials include the session token
 		expect(
@@ -22,7 +32,14 @@ describe('toSesClientConfig', () => {
 			region: 'eu-west-1',
 			endpoint: 'http://localhost:4566',
 			credentials: { accessKeyId: 'AKIA', secretAccessKey: 'secret', sessionToken: 'tok' },
+			requestHandler,
 		});
+	});
+
+	test('Gives every request a connection and a request deadline that throws', () => {
+		// 1. The SDK defaults are no timer at all and a warning-only request timeout, so a stalled endpoint would
+		//    hang a send forever; the config must set both deadlines and make the request one throw
+		expect(toSesClientConfig({ region: 'eu-west-1' }).requestHandler).toStrictEqual(requestHandler);
 	});
 
 	test('Refuses half a credential pair instead of falling back to the SDK chain', () => {

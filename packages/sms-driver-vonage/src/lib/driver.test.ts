@@ -47,9 +47,10 @@ afterEach(() => {
 
 describe('SmsDriverVonage', () => {
 	test('Sends and answers the id, the status, the part count and the balance', async () => {
-		// 1. Vonage answers one entry per part of the message, each with the balance left after it
+		// 1. Vonage answers one entry per part of the message, each with the balance left after it, and the part count as
+		//    the string its API really sends, which the driver has to turn into a number
 		send.mockResolvedValueOnce({
-			messageCount: 2,
+			messageCount: '2',
 			messages: [
 				{ to: '14155550123', messageId: 'm-1', status: '0', remainingBalance: '9.50' },
 				{ to: '14155550123', messageId: 'm-2', status: '0', remainingBalance: '9.40' },

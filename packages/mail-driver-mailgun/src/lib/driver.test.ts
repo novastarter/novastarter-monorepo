@@ -92,12 +92,17 @@ describe('MailDriverMailgun', () => {
 	});
 
 	test('Builds the client for the US region by default and for the host given', () => {
-		// 1. No host: the US API over https
+		// 1. No host: the US API over https, and a 30 s timeout, since without one the SDK waits forever on a stall
 		new MailDriverMailgun({ apiKey: 'key', domain: 'mg.acme.test' });
 
-		expect(client).toHaveBeenLastCalledWith({ username: 'api', key: 'key', url: `https://${DEFAULT_MAILGUN_HOST}` });
+		expect(client).toHaveBeenLastCalledWith({
+			username: 'api',
+			key: 'key',
+			url: `https://${DEFAULT_MAILGUN_HOST}`,
+			timeout: 30_000,
+		});
 
-		// 2. A bare host gets https; the timeout goes along
+		// 2. A bare host gets https; the location's own timeout replaces the default
 		new MailDriverMailgun({ apiKey: 'key', domain: 'mg.acme.test', host: 'api.eu.mailgun.net', timeout: 5000 });
 
 		expect(client).toHaveBeenLastCalledWith({

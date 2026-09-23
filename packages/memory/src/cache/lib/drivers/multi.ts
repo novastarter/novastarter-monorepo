@@ -158,7 +158,12 @@ export class CacheDriverMulti implements CacheDriver {
 		this.redis = new CacheDriverRedis(config.redis);
 		this.bus = new BusDriverRedis({ redis: config.redis.redis, namespace: config.redis.namespace });
 
-		// 3. Subscribe right away, so invalidations are received before the first write; the no-op `catch` only marks a
+		// 3. Invalidations published while the subscriber connection was down are lost for good, and L1 may have no
+		//    ttl at all, so every reconnect drops the whole L1 and keeps the writes still in flight out of it: the next
+		//    reads go to L2, which holds what the missed messages announced
+		this.bus.onReconnect?.(() => this.onReconnect());
+
+		// 4. Subscribe right away, so invalidations are received before the first write; the no-op `catch` only marks a
 		//    failure as observed here, so it is reported where a write awaits it and not as an unhandled rejection
 		//    nobody can act on
 		this.subscribe().catch(() => {});
@@ -403,6 +408,20 @@ export class CacheDriverMulti implements CacheDriver {
 		} else {
 			await this.local.clear();
 		}
+	}
+
+	/**
+	 * Drop everything from L1 after the bus subscriber reconnected, since invalidations sent meanwhile were missed.
+	 *
+	 * @returns Once L1 is empty.
+	 * @internal
+	 */
+	private async onReconnect(): Promise<void> {
+		// 1. Any in-flight write may be older than a missed invalidation, so it skips L1 the way a keyless message would
+		//    make it; then every local key goes, as the missed messages could have named any of them
+		this.markWritesInvalidated();
+
+		await this.local.clear();
 	}
 
 	/**

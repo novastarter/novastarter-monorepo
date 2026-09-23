@@ -92,7 +92,7 @@ const MAX_SUBSCRIPTION_PAGES = 10;
  * Lemon Squeezy is a merchant of record that sells variants of products: the catalog's `providerIds.lemonsqueezy`
  * are variant ids. Trials are a property of the variant, a checkout has no cancel page (its own back link leads to
  * the store), the portal returns to the store, and a subscription is cancelled at the end of its paid period only —
- * the inputs that say otherwise are taken as far as the API goes.
+ * `cancelSubscription` with `immediately` is refused with an Error rather than downgraded to a period-end cancellation.
  *
  * @example
  * ```ts
@@ -392,15 +392,27 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 	}
 
 	/**
-	 * Cancel a subscription at the end of its paid period — the only cancellation Lemon Squeezy offers; an
-	 * immediate one is the same request, the subscription staying valid until `ends_at`.
+	 * Cancel a subscription at the end of its paid period — the only cancellation Lemon Squeezy offers.
+	 *
+	 * An immediate cancellation is refused rather than downgraded: resolving it as a period-end cancellation would
+	 * leave the customer with paid access the caller asked to revoke.
 	 *
 	 * @param input - Subscription (the reason is not recorded by Lemon Squeezy).
 	 * @returns The subscription after the request: `cancelAtPeriodEnd`, `cancelAt` set.
+	 * @throws Error when `immediately` is set: Lemon Squeezy cannot end a subscription before its period does.
 	 * @throws LemonSqueezyApiError when there is no such subscription, or Lemon Squeezy cannot be reached.
 	 */
 	async cancelSubscription(input: CancelSubscriptionInput): Promise<Subscription> {
-		// 1. DELETE answers the subscription as it now stands — cancelled, valid until `ends_at`
+		// 1. Refuse `immediately` before any request, as createCustomer refuses metadata it cannot store: a silent
+		//    period-end cancellation would break the contract's promise to stop access now
+		if (input.immediately) {
+			throw new Error(
+				'Lemon Squeezy cannot end a subscription immediately: it only cancels at the end of the paid period. ' +
+					'Cancel without `immediately`, or refund and expire it through the Lemon Squeezy dashboard or API',
+			);
+		}
+
+		// 2. DELETE answers the subscription as it now stands — cancelled, valid until `ends_at`
 		const { data } = await this.api.request<LsDocument<LsSubscriptionAttributes>>(
 			'DELETE',
 			`/subscriptions/${encodeURIComponent(input.subscriptionId)}`,

@@ -454,7 +454,8 @@ export class StorageDriverCloudinary implements TusDriver {
 
 		let url = `https://res.cloudinary.com/${this.cloudName}/${resourceType}/upload/${signature}`;
 
-		// 2. A version pins the URL to one revision of the asset; without it Cloudinary serves the latest
+		// 2. A version pins the URL to one revision of the asset; without it the CDN may serve a cached revision, which is
+		//    why every overwrite, rename and delete asks Cloudinary to invalidate the cached copies
 		if (version) {
 			url += `/v${version}`;
 		}
@@ -602,7 +603,8 @@ export class StorageDriverCloudinary implements TusDriver {
 		const srcFolderPath = this.getFolderPath(fullSrc);
 		const destFolderPath = this.getFolderPath(fullDest);
 
-		// 2. The resource type comes from the source: a rename cannot change the type of an asset
+		// 2. The resource type comes from the source: a rename cannot change the type of an asset. `invalidate` purges
+		//    the CDN copies of the old public id, or `read` would keep serving it from its unversioned URL
 		const resourceType = this.getResourceType(fullSrc);
 
 		const url = `https://api.cloudinary.com/v1_1/${this.cloudName}/${resourceType}/rename`;
@@ -612,6 +614,7 @@ export class StorageDriverCloudinary implements TusDriver {
 			to_public_id: joinPath(destFolderPath, destPublicId),
 			api_key: this.apiKey,
 			timestamp: this.getTimestamp(),
+			invalidate: 'true',
 		};
 
 		const signature = this.getFullSignature(parameters);
@@ -681,13 +684,15 @@ export class StorageDriverCloudinary implements TusDriver {
 		const folderPath = this.getFolderPath(fullPath);
 
 		// 1. The same parameters and upload id go with every chunk; a folder becomes the asset folder and is also used
-		//    as the public id prefix, so the id ends up as `folder/name` on Cloudinary's side
+		//    as the public id prefix, so the id ends up as `folder/name` on Cloudinary's side. `invalidate` purges the
+		//    CDN copies of an overwritten asset, since `read` fetches an unversioned URL the CDN would keep serving
 		const uploadId = this.getUploadId();
 
 		const uploadParameters = {
 			api_key: this.apiKey,
 			type: 'upload',
 			access_mode: this.accessMode,
+			invalidate: 'true',
 			public_id: this.getPublicId(fullPath),
 			...(folderPath
 				? {
@@ -776,29 +781,30 @@ export class StorageDriverCloudinary implements TusDriver {
 			throw new Error(`Can't upload file "${filepath}": the stream is empty`);
 		}
 
-		// 8. The last chunk carries the real total, which is how Cloudinary knows the upload is complete
-		if (chunks.length > 0) {
-			queue
-				.add(() =>
-					this.uploadChunk({
-						resourceType,
-						blob: new Blob([chunks]),
-						bytesOffset: uploaded,
-						bytesTotal: totalSize,
-						uploadId,
-						parameters: signParameters(),
-					}),
-				)
-				.catch((err) => {
-					error ??= err;
-				});
-		}
-
+		// 8. Every earlier chunk must have landed before the last one goes out: the chunk carrying the real total is
+		//    what makes Cloudinary assemble the asset, so sending it while others are still in flight — or after one of
+		//    them failed — would store an asset with a gap in place of the previous one
 		await queue.onIdle();
 
-		// 9. Surface the first chunk failure with the path once every request has settled
+		// 9. Surface the first failed chunk with the path, without sending the last chunk that would complete the asset
 		if (error) {
 			throw new Error(`Can't upload file "${filepath}": ${(error as Error).message}`, { cause: error });
+		}
+
+		// 10. The last chunk carries the real total and goes out on its own, outside the queue, once nothing else runs
+		if (chunks.length > 0) {
+			try {
+				await this.uploadChunk({
+					resourceType,
+					blob: new Blob([chunks]),
+					bytesOffset: uploaded,
+					bytesTotal: totalSize,
+					uploadId,
+					parameters: signParameters(),
+				});
+			} catch (err) {
+				throw new Error(`Can't upload file "${filepath}": ${(err as Error).message}`, { cause: err });
+			}
 		}
 	}
 
@@ -877,12 +883,14 @@ export class StorageDriverCloudinary implements TusDriver {
 		const url = `https://api.cloudinary.com/v1_1/${this.cloudName}/${resourceType}/destroy`;
 
 		// 1. `resource_type` is sent as a parameter as well as in the URL; it is on the signing denylist, so the
-		//    signature stays valid either way
+		//    signature stays valid either way. `invalidate` purges the CDN copies, or `read` would keep returning the
+		//    deleted bytes from its unversioned URL
 		const parameters = {
 			timestamp: this.getTimestamp(),
 			api_key: this.apiKey,
 			resource_type: resourceType,
 			public_id: normalizePath(joinPath(folderPath, publicId), { removeLeading: true }),
+			invalidate: 'true',
 		};
 
 		const signature = this.getFullSignature(parameters);
@@ -1150,6 +1158,7 @@ export class StorageDriverCloudinary implements TusDriver {
 				api_key: this.apiKey,
 				type: 'upload',
 				access_mode: this.accessMode,
+				invalidate: 'true',
 				public_id: this.getPublicId(fullPath),
 				...(folderPath
 					? {

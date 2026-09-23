@@ -1077,6 +1077,7 @@ describe('#move', () => {
 			to_public_id: joinPathActual(sample.path.destFolder, sample.publicId.dest),
 			api_key: sample.config.apiKey,
 			timestamp: sample.timestamp,
+			invalidate: 'true',
 		});
 	});
 
@@ -1089,6 +1090,7 @@ describe('#move', () => {
 			to_public_id: joinPathActual(sample.path.destFolder, sample.publicId.dest),
 			api_key: sample.config.apiKey,
 			timestamp: sample.timestamp,
+			invalidate: 'true',
 			signature: sample.fullSignature,
 		});
 	});
@@ -1217,6 +1219,7 @@ describe('#write', () => {
 			api_key: sample.config.apiKey,
 			type: 'upload',
 			access_mode: sample.config.accessMode,
+			invalidate: 'true',
 			public_id: sample.publicId.input,
 			asset_folder: sample.path.inputFolder,
 			use_asset_folder_as_public_id_prefix: 'true',
@@ -1369,6 +1372,47 @@ describe('#write', () => {
 		clearInterval(drain);
 
 		expect(driver['uploadChunk']).toHaveBeenCalledTimes(100);
+	});
+
+	test('Sends the final chunk only after every earlier chunk has settled', async () => {
+		// 1. Earlier chunks hang until released; the chunk carrying the real total makes Cloudinary assemble the asset,
+		//    so it may not start while they are still in flight
+		const chunkSize = Math.ceil(MINIMUM_CHUNK_SIZE * 1.05);
+		const release: (() => void)[] = [];
+
+		vi.mocked(driver['uploadChunk']).mockImplementation(({ bytesTotal }) =>
+			bytesTotal === -1 ? new Promise<void>((resolve) => release.push(resolve)) : Promise.resolve(),
+		);
+
+		const writing = driver.write(sample.path.input, createStream([BufferActual.alloc(2 * chunkSize + 1)]));
+
+		// 2. Let the loop queue everything it can while nothing completes
+		for (let tick = 0; tick < 20; tick++) {
+			await new Promise((resolve) => setImmediate(resolve));
+		}
+
+		expect(chunkRanges().map(([, , total]) => total)).toStrictEqual([-1, -1]);
+
+		// 3. Once the earlier chunks land, the final one goes out with the total
+		release.splice(0).forEach((resolve) => resolve());
+		await writing;
+
+		expect(chunkRanges().map(([, , total]) => total)).toStrictEqual([-1, -1, 2 * chunkSize + 1]);
+	});
+
+	test('Does not send the final chunk when an earlier chunk failed', async () => {
+		// 1. The final chunk would complete the asset with a gap where the failed chunk belongs, replacing the previous
+		//    asset under the same public id, so the write must stop before it
+		const chunkSize = Math.ceil(MINIMUM_CHUNK_SIZE * 1.05);
+		const cause = new Error(randText());
+
+		vi.mocked(driver['uploadChunk']).mockRejectedValueOnce(cause);
+
+		await expect(
+			driver.write(sample.path.input, createStream([BufferActual.alloc(chunkSize + 1)])),
+		).rejects.toThrowError(`Can't upload file "${sample.path.input}": ${cause.message}`);
+
+		expect(chunkRanges()).toStrictEqual([[0, chunkSize, -1]]);
 	});
 
 	test('Rejects an empty write instead of resolving while nothing is stored', async () => {
@@ -1549,6 +1593,7 @@ describe('#delete', () => {
 			api_key: sample.config.apiKey,
 			resource_type: sample.resourceType,
 			public_id: normalizePath(joinPathActual(sample.path.inputFolder, sample.publicId.input), { removeLeading: true }),
+			invalidate: 'true',
 		});
 	});
 
@@ -1559,6 +1604,7 @@ describe('#delete', () => {
 			api_key: sample.config.apiKey,
 			resource_type: sample.resourceType,
 			public_id: normalizePath(joinPathActual(sample.path.inputFolder, sample.publicId.input), { removeLeading: true }),
+			invalidate: 'true',
 			signature: sample.fullSignature,
 		});
 
@@ -1986,6 +2032,16 @@ describe('#writeChunk', () => {
 
 		expect(options.parameters['timestamp']).toBe(fresh);
 		expect(driver['getFullSignature']).toHaveBeenCalledWith(expect.objectContaining({ timestamp: fresh }));
+	});
+
+	test('Asks Cloudinary to invalidate the CDN copies of an overwritten asset', async () => {
+		// 1. `read` fetches an unversioned delivery URL, so without invalidation the CDN keeps serving the old bytes
+		await driver.writeChunk(sample.path.input, Readable.from([BufferActual.from('abc')]), 0, context);
+
+		const [options] = vi.mocked(driver['uploadChunk']).mock.calls[0]!;
+
+		expect(options.parameters['invalidate']).toBe('true');
+		expect(driver['getFullSignature']).toHaveBeenCalledWith(expect.objectContaining({ invalidate: 'true' }));
 	});
 
 	test('Takes the timestamp only after the chunk body has been read', async () => {

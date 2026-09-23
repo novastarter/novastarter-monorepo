@@ -1,6 +1,7 @@
 /**
  * Tests of `describe-error`: how what the Vonage SDK throws becomes the error `sendSms()` reports.
  */
+import { inspect } from 'node:util';
 import { MessageSendAllFailure, MessageSendPartialFailure } from '@vonage/sms';
 import { describe, expect, test } from 'vitest';
 import { SmsPartialDeliveryError } from '../index.js';
@@ -67,5 +68,20 @@ describe('describeError', () => {
 
 		// 2. A thrown non-error is still described rather than crashing the description
 		expect(describeError('boom')).toMatchObject({ message: 'Vonage: boom', cause: 'boom' });
+	});
+
+	test('Drops the SDK error of an error status, so the key pair in its request never becomes the cause', () => {
+		// 1. The SDK's VetchError keeps the prepared request, Basic Authorization header included, in `config`
+		const failure = Object.assign(new Error('Request failed with status code 500'), {
+			config: { headers: { Authorization: 'Basic a2V5OnNlY3JldA==' } },
+			response: { status: 500, statusText: 'Internal Server Error' },
+		});
+
+		const described = describeError(failure);
+
+		// 2. Only the status and its wording are reported, with nothing attached that could be printed with the error
+		expect(described.message).toBe('Vonage: 500: Internal Server Error');
+		expect(described.cause).toBeUndefined();
+		expect(inspect(described)).not.toContain('Basic');
 	});
 });

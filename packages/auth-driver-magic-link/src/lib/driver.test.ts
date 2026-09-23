@@ -3,7 +3,8 @@
  * in-memory map standing in for the application's token table.
  *
  * Covered: the constructor check and the default export, the input checks, a link and a code for an account, the
- * silent refusals for an unknown address, a sign-up link, a spent, expired and wrong token, and the lifetimes.
+ * silent refusals for an unknown address, a sign-up link, a send that is not awaited and a failing reporter, a spent,
+ * expired and wrong token, and the lifetimes.
  */
 import { AuthInvalidTokenError, DEFAULT_CODE_TTL, type TokenRecord, useAuth } from '@novastarter/auth';
 import { InvalidPayloadError } from '@novastarter/errors';
@@ -140,6 +141,77 @@ describe('begin', () => {
 		await driver.begin({ identifier: 'bob@example.com', format: 'code' });
 
 		expect(sent).toHaveLength(1);
+	});
+
+	test('Answers before the mail is sent, and reports a failed send without rejecting', async () => {
+		// 1. A mailer that never finishes: `begin()` must still answer, so the timing matches an unknown address
+		const pending = makeDriver({ send: () => new Promise<void>(() => {}) });
+
+		await expect(pending.begin({ identifier: 'alice@example.com' })).resolves.toStrictEqual({});
+
+		// 2. A mailer that fails, asynchronously and synchronously: the answer is the same and the error is reported
+		const onSendError = vi.fn();
+		const error = new Error('SMTP down');
+
+		await expect(
+			makeDriver({ send: async () => Promise.reject(error), onSendError }).begin({ identifier: 'alice@example.com' }),
+		).resolves.toStrictEqual({});
+
+		await expect(
+			makeDriver({
+				send: () => {
+					throw error;
+				},
+				onSendError,
+			}).begin({ identifier: 'alice@example.com' }),
+		).resolves.toStrictEqual({});
+
+		await vi.waitFor(() => expect(onSendError).toHaveBeenCalledTimes(2));
+		expect(onSendError).toHaveBeenCalledWith(error, 'alice@example.com');
+
+		// 3. Without a reporter a failure is dropped rather than left as an unhandled rejection
+		await expect(
+			makeDriver({ send: async () => Promise.reject(error) }).begin({ identifier: 'alice@example.com' }),
+		).resolves.toStrictEqual({});
+	});
+
+	test('Drops a reporter that throws or rejects instead of leaving an unhandled rejection', async () => {
+		// 1. Catch unhandled rejections for the duration of the test, since vitest would only report them after it
+		const unhandled: unknown[] = [];
+		const listener = (reason: unknown) => unhandled.push(reason);
+
+		process.on('unhandledRejection', listener);
+
+		try {
+			// 2. A reporter that throws synchronously and one that rejects, both behind a failing mailer
+			const failure = new Error('logger down');
+
+			const throwing = vi.fn(() => {
+				throw failure;
+			});
+
+			const rejecting = vi.fn(async () => Promise.reject(failure));
+
+			for (const onSendError of [throwing, rejecting]) {
+				await expect(
+					makeDriver({ send: async () => Promise.reject(new Error('SMTP down')), onSendError }).begin({
+						identifier: 'alice@example.com',
+					}),
+				).resolves.toStrictEqual({});
+			}
+
+			// 3. Both reporters ran, and after a macrotask no rejection surfaced
+			await vi.waitFor(() => {
+				expect(throwing).toHaveBeenCalledOnce();
+				expect(rejecting).toHaveBeenCalledOnce();
+			});
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			expect(unhandled).toStrictEqual([]);
+		} finally {
+			// 4. Restore the process so other tests see their own rejections
+			process.off('unhandledRejection', listener);
+		}
 	});
 });
 

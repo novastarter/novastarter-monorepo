@@ -26,6 +26,7 @@ import type {
 import { withTimeout } from '@novastarter/utils';
 import Stripe from 'stripe';
 import { fromUnix } from './from-unix.js';
+import { idOf } from './id-of.js';
 import { toEvent } from './to-event.js';
 import { toInvoice } from './to-invoice.js';
 import { toSubscription } from './to-subscription.js';
@@ -268,11 +269,16 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 * Change the price or the seat count of the subscription's item.
 	 *
 	 * Stripe changes are made on the item, so the subscription is read first for its item id; the same call carries
-	 * the new price and quantity, and Stripe prorates as told.
+	 * the new price and quantity, and Stripe prorates as told. A change that needs an immediate payment — a `proration`
+	 * of `invoice` — applies only once that payment succeeds. When it fails, Stripe keeps the old item and holds the
+	 * change in its `pending_update`, which the normalised subscription cannot show, so the call throws instead of
+	 * answering the unchanged subscription. The pending change still applies if the invoice is paid before Stripe
+	 * drops it (after 23 hours).
 	 *
 	 * @param input - Subscription, new price and/or seats, proration.
 	 * @returns The subscription after the change.
 	 * @throws Error when neither a price nor a seat count is given.
+	 * @throws Error when the change's payment failed and the change waits in Stripe's `pending_update`.
 	 * @throws Stripe's `StripeError` when the request is refused — no such subscription, an unknown price — or Stripe
 	 * cannot be reached.
 	 * @throws Error for a subscription without items.
@@ -293,7 +299,9 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 			throw new Error(`Stripe subscription "${input.subscriptionId}" has no items`);
 		}
 
-		// 3. One update carries both changes; Stripe prorates the way the caller chose, `prorate` unless told
+		// 3. One update carries both changes; Stripe prorates the way the caller chose, `prorate` unless told. A change
+		//    that needs a payment waits in `pending_update` until it is paid, so a declined card never leaves the
+		//    subscription on a price nobody paid for
 		const updated = await this.client.subscriptions.update(input.subscriptionId, {
 			items: [
 				{
@@ -303,8 +311,21 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 				},
 			],
 			proration_behavior: PRORATION[input.proration ?? 'prorate'],
+			payment_behavior: 'pending_if_incomplete',
 		});
 
+		// 4. A pending update means the payment failed and nothing changed; answering the old subscription would read
+		//    as success, so the caller is told, with the invoice that would still apply the change once paid
+		if (updated.pending_update) {
+			const invoiceId = idOf(updated.latest_invoice);
+
+			throw new Error(
+				`Stripe subscription "${input.subscriptionId}" was not changed: the payment for the change failed, ` +
+					`and the change waits in pending_update until invoice "${invoiceId ?? 'unknown'}" is paid`,
+			);
+		}
+
+		// 5. Without a pending update the change is applied, and the answer is the subscription after it
 		return toSubscription(updated);
 	}
 
@@ -398,8 +419,7 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	}
 
 	/**
-	 * Make a request of any Stripe endpoint with the client's key, API version and retries, through the SDK's
-	 * `rawRequest`.
+	 * Make a request of any Stripe endpoint with the client's key and API version, through the SDK's `rawRequest`.
 	 *
 	 * `method` is the verb and the path — `POST /v1/refunds` — or a full URL on one of {@link STRIPE_CALL_HOSTS}, which
 	 * picks the SDK's base for that host. A `{name}` in it is filled from the parameter of that name, URL-encoded, and
@@ -407,6 +427,10 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 * notation (`expand[0]=…`, `metadata[plan]=…`); those of a `POST` are the body, form-encoded under `/v1` and JSON
 	 * under `/v2`, as the SDK sends them. Stripe takes a body on `POST` only. A file is not sent: the SDK's raw request
 	 * makes no multipart body, so an upload goes through {@link client} — `client.files.create()`.
+	 *
+	 * The SDK's network retries are off for this call, so the timeout bounds the work and not only the caller's wait.
+	 * A timeout or an abort does not cancel the request on Stripe's side: a `POST` may still have been applied. To retry
+	 * one safely, pass your own `Idempotency-Key` in `options.headers` and send the same key again.
 	 *
 	 * @typeParam T - What the endpoint answers with; the caller knows it from Stripe's API reference.
 	 * @param method - The verb and the path, or a full URL on Stripe's hosts.
@@ -456,12 +480,14 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 		const fullPath = query ? `${path}${path.includes('?') ? '&' : '?'}${query}` : path;
 
 		// 4. The SDK's own timeout closes the socket; the deadline around it and the caller's signal make sure the
-		//    caller gets a TimeoutError or the abort reason, retries included — and an already aborted signal sends
-		//    nothing
+		//    caller gets a TimeoutError or the abort reason — and an already aborted signal sends nothing. The SDK's
+		//    network retries are off: one would outlive the deadline and could apply a POST after the caller was
+		//    told it failed. Neither the deadline nor the signal cancels a request Stripe already has
 		const timeout = options.timeout ?? DEFAULT_REQUEST_TIMEOUT;
 
 		const requestOptions: Stripe.RawRequestOptions = {
 			timeout,
+			maxNetworkRetries: 0,
 			...(apiBase !== undefined ? { apiBase } : {}),
 			...(options.headers !== undefined ? { additionalHeaders: options.headers } : {}),
 		};

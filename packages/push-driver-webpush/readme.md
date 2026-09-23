@@ -33,7 +33,8 @@ push.registerLocation('webpush', {
 ```
 
 Anywhere later: `sendPush(message)` routes through the location, or `usePush().location('webpush').send(message)` skips
-the routes.
+the routes. Either way the subscription is checked like in `sendPush()`: an endpoint that is not on a browser push
+service is refused with `InvalidPayloadError` before any request.
 
 Through the [Web Push protocol](https://datatracker.ietf.org/doc/html/rfc8030) with VAPID, on `web-push`: the push
 services of Chrome, Firefox, Safari and Edge. The key pair is the location's identity —

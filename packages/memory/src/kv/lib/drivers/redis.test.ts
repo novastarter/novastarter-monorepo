@@ -523,7 +523,7 @@ describe('clear', () => {
 		});
 
 		const unlinkFn = vi.fn();
-		const execFn = vi.fn();
+		const execFn = vi.fn().mockResolvedValue([]);
 
 		kv['redis'].pipeline = vi.fn().mockReturnValue({
 			unlink: unlinkFn,
@@ -550,13 +550,36 @@ describe('clear', () => {
 			async *[Symbol.asyncIterator]() {},
 		});
 
-		glob['redis'].pipeline = vi.fn().mockReturnValue({ unlink: vi.fn(), exec: vi.fn() });
+		glob['redis'].pipeline = vi.fn().mockReturnValue({ unlink: vi.fn(), exec: vi.fn().mockResolvedValue([]) });
 
 		await glob.clear();
 
 		expect(escapeGlob).toHaveBeenCalledWith('tenant[1]');
 		expect(withNamespace).toHaveBeenCalledWith('*', 'tenant\\[1\\]');
 		expect(glob['redis'].scanStream).toHaveBeenCalledWith({ match: mockNamespacedKey });
+	});
+
+	test('Throws when Redis refused an UNLINK or the pipeline was aborted', async () => {
+		// 1. `exec()` resolves with the reply error in its tuple instead of rejecting; `clear()` must surface it
+		const refused = new Error("READONLY You can't write against a read only replica.");
+
+		kv['redis'].scanStream = vi.fn().mockReturnValue({
+			async *[Symbol.asyncIterator]() {
+				yield [mockKey];
+			},
+		});
+
+		kv['redis'].pipeline = vi.fn().mockReturnValue({
+			unlink: vi.fn(),
+			exec: vi.fn().mockResolvedValue([[refused, null]]),
+		});
+
+		await expect(kv.clear()).rejects.toBe(refused);
+
+		// 2. A `null` answer means the pipeline never ran
+		kv['redis'].pipeline = vi.fn().mockReturnValue({ unlink: vi.fn(), exec: vi.fn().mockResolvedValue(null) });
+
+		await expect(kv.clear()).rejects.toThrow(`Clearing namespace "${mockNamespace}" was aborted`);
 	});
 });
 
@@ -694,6 +717,24 @@ describe('usingLock', () => {
 		) as never;
 
 		await expect(kv.usingLock(mockKey, vi.fn().mockRejectedValue(new Error('boom')))).rejects.toThrow('boom');
+	});
+
+	test("Keeps the callback error when the release in Redlock's finally fails as well", async () => {
+		// 1. Redlock releases in a `finally`; a release that throws there would replace the callback's error in flight
+		const release = new ExecutionError('The operation was unable to achieve a quorum during its retry window.', []);
+		const boom = new Error('boom');
+
+		kv['redlock'].using = vi.fn(async (_resources: unknown, _duration: unknown, routine: unknown) => {
+			// 1. Mirror Redlock: run the routine, then release in `finally`, which throws
+			try {
+				return await (routine as () => Promise<unknown>)();
+			} finally {
+				// eslint-disable-next-line no-unsafe-finally
+				throw release;
+			}
+		}) as never;
+
+		await expect(kv.usingLock(mockKey, vi.fn().mockRejectedValue(boom))).rejects.toBe(boom);
 	});
 });
 

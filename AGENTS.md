@@ -275,6 +275,20 @@ Mandatory, no exceptions.
 - Internal monorepo packages are linked as `"@novastarter/name": "workspace:*"`.
 - Native dependencies (with a postinstall build) are allowed via `allowBuilds` in `pnpm-workspace.yaml`.
 
+## Rule: never create a new package on your own
+
+Mandatory, no exceptions.
+
+- When a task seems to need a new package in `packages/`, do not create it. Not a stub, not a draft, not "to be filled in
+  later".
+- Propose the implementation instead and wait for confirmation:
+  - the package name and what it is for;
+  - why no existing package can take it (see "check existing packages first");
+  - its public API: the exported functions, classes and types;
+  - its external dependencies and the internal packages it builds on;
+  - for a subsystem, its driver / manager / factory layout and the drivers it ships with.
+- Only after the user confirms is the package created, following "build new packages from the existing template".
+
 ## Rule: build new packages from the existing template
 
 Mandatory, no exceptions.

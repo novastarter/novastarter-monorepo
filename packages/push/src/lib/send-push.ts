@@ -100,7 +100,11 @@ export const sendPush = async (message: PushMessage, options: PushSendOptions = 
 
 	const incoming = platformOf(message);
 
-	// 2. A filter handler may rewrite the message — a prefix, a redirect to a test device — or veto it; the meta names
+	// 2. The caller's target is read now, before any handler runs: a handler may rewrite the message in place and
+	//    return nothing, and the target read afterwards would then be the redirected one, not the caller's
+	const originalTarget = targetOf(message, incoming);
+
+	// 3. A filter handler may rewrite the message — a prefix, a redirect to a test device — or veto it; the meta names
 	//    the platform the message came in with
 	const prepared = await useEmitter().emitFilter<PushMessage | null>(PUSH_SEND_FILTER, message, {
 		platform: incoming,
@@ -108,14 +112,14 @@ export const sendPush = async (message: PushMessage, options: PushSendOptions = 
 
 	if (!prepared) return null;
 
-	// 3. The rewrite is checked and routed by its own target, not by the original's: a redirect to a test phone has to
+	// 4. The rewrite is checked and routed by its own target, not by the original's: a redirect to a test phone has to
 	//    go through the token location, and a handler that dropped the target or blanked the title is refused here
 	//    rather than by a driver of the wrong platform
 	assertTitle(prepared);
 
 	const platform = platformOf(prepared);
 
-	// 4. One location, resolved for the platform; a token cannot go through a web push location, so a wrong one is
+	// 5. One location, resolved for the platform; a token cannot go through a web push location, so a wrong one is
 	//    refused rather than tried
 	const location = resolveLocation(manager, options.location ?? prepared.location, platform);
 	const driver = manager.location(location);
@@ -124,7 +128,7 @@ export const sendPush = async (message: PushMessage, options: PushSendOptions = 
 		throw new Error(`Push location "${location}" does not deliver to ${platform}`);
 	}
 
-	// 5. One send, then `push.sent` with the target and the title, so a listener can log without re-deriving them
+	// 6. One send, then `push.sent` with the target and the title, so a listener can log without re-deriving them
 	const target = targetOf(prepared, platform);
 
 	try {
@@ -135,16 +139,16 @@ export const sendPush = async (message: PushMessage, options: PushSendOptions = 
 
 		return sent;
 	} catch (error) {
-		// 6. A gone target is not a failure to retry: reported as its own event, which carries the target that was
+		// 7. A gone target is not a failure to retry: reported as its own event, which carries the target that was
 		//    actually contacted
 		if (error instanceof PushTargetGoneError) {
 			logger.info(`Push target on "${location}" is gone (${error.extensions.reason}): ${target}`);
 			useEmitter().emitAction(PUSH_GONE_EVENT, { location, platform, target, reason: error.extensions.reason });
 
-			// 7. The error itself carries no target, and callers delete the subscription they passed in when they catch
+			// 8. The error itself carries no target, and callers delete the subscription they passed in when they catch
 			//    it; so it is passed on as is only when that subscription is the one that is gone. A redirect to a test
 			//    device whose token expired must not make the caller delete the real user's subscription
-			if (target === targetOf(message, incoming)) {
+			if (target === originalTarget) {
 				throw error;
 			}
 
@@ -153,7 +157,7 @@ export const sendPush = async (message: PushMessage, options: PushSendOptions = 
 			});
 		}
 
-		// 8. Anything else is the push service refusing or being unreachable; the driver's error travels as the cause.
+		// 9. Anything else is the push service refusing or being unreachable; the driver's error travels as the cause.
 		//    pino takes a non-object first argument as the message, so a driver rejecting with a string would replace
 		//    the line and drop the location; `toError` keeps both
 		logger.warn(toError(error), `Push location "${location}" failed to send to ${target}`);

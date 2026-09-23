@@ -39,8 +39,11 @@ The driver runs on `stripe-node`. Customers are `customers.create`; a checkout i
 trial as `trial_period_days`; the portal is `billingPortal.sessions.create`. The `priceId` the application's plans
 record for this driver is a price id (`price_…`). Price and seat changes go on the subscription's item (`prorate` →
 `create_prorations`, `none`, `invoice` → `always_invoice`); cancellation is `cancel_at_period_end` or, right away,
-`cancel`, the reason as `cancellation_details.comment`. The billing period is read from the item and the invoice's
-subscription from `parent.subscription_details`, where API version 2025-03-31 put them.
+`cancel`, the reason as `cancellation_details.comment`. A change that needs a payment is sent with
+`payment_behavior: 'pending_if_incomplete'`: when the payment fails, Stripe keeps the old price and holds the change in
+`pending_update`, and `updateSubscription()` throws rather than answering the unchanged subscription. The billing period
+is read from the item and the invoice's subscription from `parent.subscription_details`, where API version 2025-03-31
+put them.
 
 Webhooks are verified by `webhooks.constructEventAsync` with the endpoint's signing secret; a signed body that is not a
 Stripe event — not JSON, or JSON without an event's `id`, `type` and `data.object` — is refused with
@@ -55,10 +58,12 @@ settled, and `async_payment_failed` is dropped since nothing was announced; `cus
 
 ## Any other request
 
-`call()` reaches any Stripe endpoint with the location's key, API version and retries, through the SDK's `rawRequest`,
-and answers `{ status, headers, data }`. The parameters of a `GET` or `DELETE` go in the query in Stripe's bracket
-notation, those of a `POST` in the body (a body goes on a `POST` only). A refusal throws `ProviderCallError` with
-Stripe's status and `{ error }`, a 429 `HitRateLimitError`.
+`call()` reaches any Stripe endpoint with the location's key and API version, through the SDK's `rawRequest`, and
+answers `{ status, headers, data }`. It retries no request, a `GET` included: an SDK retry would outlive the timeout and
+could apply a `POST` the caller was told had failed. A caller that wants a retry makes it itself, and for a `POST` sends
+its own `Idempotency-Key` header, the same one on every attempt. The parameters of a `GET` or `DELETE` go in the query
+in Stripe's bracket notation, those of a `POST` in the body (a body goes on a `POST` only). A refusal throws
+`ProviderCallError` with Stripe's status and `{ error }`, a 429 `HitRateLimitError`.
 
 ```ts
 const payments = usePayments().location('default');

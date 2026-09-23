@@ -127,25 +127,35 @@ export class MailDriverSes implements MailDriver {
 	/**
 	 * Send through SES.
 	 *
+	 * The whole send, retries included, is bounded to 30 seconds.
+	 *
 	 * @param message - Rendered message.
 	 * @returns SES's message id and the envelope recipients as accepted.
-	 * @throws An error naming SES with the SDK's or nodemailer's error as the cause when SES refuses.
+	 * @throws An error naming SES with the SDK's or nodemailer's error as the cause when SES refuses, or with a
+	 * `TimeoutError` as the cause when the send outlives 30 seconds.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
 		// 1. Tags and the configuration set ride on the `ses` field nodemailer merges into the SendEmailCommand; the tags
-		//    are sanitised first, since SES refuses the whole message over one name outside its character set
+		//    are sanitised first, since SES refuses the whole message over one name outside its character set. The
+		//    whole send is bounded: the client's request deadline stops at the response headers and the SDK retries
+		//    a timed-out attempt, so a stalled body or three slow attempts would otherwise hold the send (and the
+		//    fallback to the next location) far past the deadline
 		let info: SentMessageInfo;
 
 		try {
-			info = await this.transporter.sendMail({
-				...toNodemailerMessage(message),
-				ses: {
-					EmailTags: toSesMessageTags(message),
-					...(this.configurationSet ? { ConfigurationSetName: this.configurationSet } : {}),
-				},
-			} as Parameters<Transporter['sendMail']>[0]);
+			info = await withTimeout(
+				this.transporter.sendMail({
+					...toNodemailerMessage(message),
+					ses: {
+						EmailTags: toSesMessageTags(message),
+						...(this.configurationSet ? { ConfigurationSetName: this.configurationSet } : {}),
+					},
+				} as Parameters<Transporter['sendMail']>[0]),
+				DEFAULT_REQUEST_TIMEOUT,
+			);
 		} catch (error) {
-			// 2. The transport or the SDK throws on a refusal; wrapped so the log names the provider
+			// 2. The transport or the SDK throws on a refusal, the deadline with a `TimeoutError`; wrapped so the log
+			//    names the provider
 			throw describeError(error);
 		}
 
@@ -214,13 +224,19 @@ export class MailDriverSes implements MailDriver {
 		}
 
 		// 3. The action on the location's client, abandoned at the timeout or the caller's abort: the SDK takes the
-		//    signal and stops its request
+		//    signal and stops its request. The same timeout goes to each HTTP attempt, since the client's own 30 s
+		//    request deadline would otherwise cut a longer one short and fail with the SDK's error, not the kit's
+		const timeout = options.timeout ?? DEFAULT_REQUEST_TIMEOUT;
 		let output: sesv2.ServiceOutputTypes;
 
 		try {
 			output = await withTimeout(
-				(signal) => this.client.send(new (Command as SesCommandClass)(params), { abortSignal: signal }),
-				options.timeout ?? DEFAULT_REQUEST_TIMEOUT,
+				(signal) =>
+					this.client.send(new (Command as SesCommandClass)(params), {
+						abortSignal: signal,
+						requestTimeout: timeout,
+					}),
+				timeout,
 				options.signal ? { signal: options.signal } : {},
 			);
 		} catch (error) {

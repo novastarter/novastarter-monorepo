@@ -75,4 +75,4 @@ that host — `api.mailgun.net` or `api.eu.mailgun.net`, whichever the location 
 | `domain`   | yes      | Sending domain the messages go out from (`mg.example.com`).                                                                  |
 | `host`     | —        | API host: `api.mailgun.net` (the default) for the US region, `api.eu.mailgun.net` for the EU one; a full URL is taken as is. |
 | `testMode` | —        | Accept the messages without delivering them — Mailgun's test mode (`o:testmode`).                                            |
-| `timeout`  | —        | Request timeout in milliseconds; the SDK's default unless given.                                                             |
+| `timeout`  | —        | Request timeout in milliseconds; 30 s unless given.                                                                          |

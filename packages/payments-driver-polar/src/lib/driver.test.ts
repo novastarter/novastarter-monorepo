@@ -99,10 +99,39 @@ describe('PaymentsDriverPolar', () => {
 			returnUrl: 'https://app/billing/plans',
 			seats: 3,
 			allowDiscountCodes: true,
+			allowTrial: true,
 			trialInterval: 'day',
 			trialIntervalCount: 14,
 			metadata: { organizationId: 'org_42', planId: 'pro' },
 		});
+	});
+
+	test('Switches the product trial off when no positive trial is given', async () => {
+		const { client, driver } = setup();
+
+		// 1. Only the payload matters here, so the checkout Polar returns is minimal
+		const create = vi
+			.spyOn(client.checkouts, 'create')
+			.mockResolvedValue({ id: 'chk_1', url: 'https://polar.sh/checkout/x', expiresAt: new Date() } as never);
+
+		// 2. Both a missing trial and a zero-day trial must disable the trial configured on the Polar product
+		for (const trialDays of [undefined, 0]) {
+			await driver.createCheckoutSession({
+				customerId: 'cust_1',
+				priceId: 'prod_pro',
+				successUrl: 'https://app/billing?ok',
+				cancelUrl: 'https://app/billing/plans',
+				...(trialDays !== undefined ? { trialDays } : {}),
+			});
+
+			expect(create).toHaveBeenLastCalledWith({
+				products: ['prod_pro'],
+				customerId: 'cust_1',
+				successUrl: 'https://app/billing?ok',
+				returnUrl: 'https://app/billing/plans',
+				allowTrial: false,
+			});
+		}
 	});
 
 	test('Opens the portal through a customer session', async () => {

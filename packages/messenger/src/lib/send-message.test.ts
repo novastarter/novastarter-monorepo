@@ -192,6 +192,29 @@ describe('sendMessage', () => {
 		});
 	});
 
+	test('Wraps a gone recipient a filter redirected to, so the caller keeps its own chat', async () => {
+		// 1. The filter sends to a test chat on the gone location; the caller asked for chat 42
+		emitter.emitFilter.mockResolvedValueOnce({ to: 'test-chat', text: 'Hi', location: 'gone' });
+
+		const error = await sendMessage({ to: '42', text: 'Hi', location: 'gone' }).catch((caught: unknown) => caught);
+
+		// 2. A plain error, the gone error as its cause, and the event names the chat actually contacted
+		expect(error).toBeInstanceOf(Error);
+		expect(error).not.toBeInstanceOf(MessengerTargetGoneError);
+		expect((error as Error).cause).toBeInstanceOf(MessengerTargetGoneError);
+
+		expect(emitter.emitAction).toHaveBeenCalledWith(MESSENGER_GONE_EVENT, {
+			location: 'gone',
+			to: 'test-chat',
+			reason: 'Forbidden: bot was blocked by the user',
+		});
+
+		// 3. Same chat, but a filter moved it to another location than the caller meant: wrapped as well
+		emitter.emitFilter.mockResolvedValueOnce({ to: '42', text: 'Hi', location: 'gone' });
+
+		await expect(sendMessage({ to: '42', text: 'Hi' })).rejects.not.toBeInstanceOf(MessengerTargetGoneError);
+	});
+
 	test('Wraps any other failure with the driver’s error as the cause, and announces it', async () => {
 		// 1. The job retries on the wrapper; the reason travels as the cause
 		const error = await sendMessage({ to: '42', text: 'Hi', location: 'down' }).catch((caught: unknown) => caught);

@@ -300,6 +300,27 @@ describe('invalidation over the bus', () => {
 		await callback({ type: 'clear', origin: 'other-process', key: mockKey });
 		expect(cache['local'].delete).toHaveBeenCalledWith(mockKey);
 	});
+
+	test('Drops the whole L1 and keeps in-flight writes out of it after the bus reconnected', async () => {
+		// 1. Invalidations sent while the subscriber was down are lost, so any L1 key may be stale after a reconnect
+		const reconnect = vi.mocked(cache['bus'].onReconnect!).mock.calls[0]![0];
+
+		let settle!: () => void;
+		vi.mocked(cache['redis'].set).mockReturnValueOnce(new Promise<void>((resolve) => (settle = resolve)));
+
+		const pending = cache.set(mockKey, mockValue);
+		await vi.waitFor(() => expect(cache['redis'].set).toHaveBeenCalled());
+
+		await reconnect();
+
+		expect(cache['local'].clear).toHaveBeenCalledOnce();
+
+		// 2. The write in flight during the reconnect may predate a missed invalidation, so it skips L1
+		settle();
+		await pending;
+
+		expect(cache['local'].set).not.toHaveBeenCalled();
+	});
 });
 
 describe('has', () => {

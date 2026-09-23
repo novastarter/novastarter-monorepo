@@ -69,9 +69,9 @@ It answers `{ status, headers, data }`: the HTTP status, no headers — the SDK'
 action's output without the SDK's `$metadata`. There are no URLs, so no host list: every request goes to the SES
 endpoint of the location's region (or its `endpoint`). A name that is not an SESv2 action is refused before anything is
 sent; a refusal of SES throws `ProviderCallError` with its HTTP status and `{ name, message }`, a 429 or
-`TooManyRequestsException` `HitRateLimitError`; the timeout is 30 seconds unless `{ timeout }` names another. The SDK
-signs its own requests and sends no extra header: a `headers` option — the call's or the location's — is refused with an
-error rather than dropped.
+`TooManyRequestsException` `HitRateLimitError`; the timeout is 30 seconds unless `{ timeout }` names another, and it
+applies to each HTTP attempt as well as to the whole call. The SDK signs its own requests and sends no extra header: a
+`headers` option — the call's or the location's — is refused with an error rather than dropped.
 
 ## The SDK client
 

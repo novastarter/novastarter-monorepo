@@ -56,8 +56,14 @@ export type AuthDriverMagicLinkConfig = {
 	issue: (record: TokenRecord) => Promise<void>;
 	/** Take a record out of storage atomically — `DELETE … RETURNING` — so a token works exactly once. */
 	spend: (id: string, purpose: string) => Promise<TokenRecord | null | undefined>;
-	/** Send the link or the code; building the URL and the message is the application's. */
+	/**
+	 * Send the link or the code; building the URL and the message is the application's. It runs after `begin()` has
+	 * answered — not awaited, so a real account answers as fast as an unknown address — and its errors go to
+	 * {@link AuthDriverMagicLinkConfig.onSendError}, not to the caller.
+	 */
 	send: (message: MagicLinkMessage) => Promise<void>;
+	/** Report a failed `send`, which `begin()` no longer waits for; failures are dropped unless given. */
+	onSendError?: ((error: unknown, email: string) => void) | undefined;
 	/** Send a link to an address no account has, so the person can sign up with it; `false` unless given. */
 	signUp?: boolean | undefined;
 	/** Lifetime of a link, in milliseconds; the `tokens.ttl` setting of `@novastarter/auth` unless given. */
@@ -163,7 +169,13 @@ export class AuthDriverMagicLink implements AuthDriver {
 
 		// 4. Stored before it is sent, so a quick click never finds the token missing
 		await this.config.issue(record);
-		await this.config.send({ email, token, format, userId: user?.id, expiresAt: record.expiresAt });
+
+		// 5. The mail is not awaited: a whole mail-provider round trip only for real accounts would let the response time
+		//    tell which addresses have them; the async wrappers turn a synchronous throw into a rejection too, and the
+		//    last catch drops a reporter that throws or rejects itself, so neither becomes an unhandled rejection
+		void (async () => this.config.send({ email, token, format, userId: user?.id, expiresAt: record.expiresAt }))()
+			.catch(async (error: unknown) => this.config.onSendError?.(error, email))
+			.catch(() => {});
 
 		return {};
 	}

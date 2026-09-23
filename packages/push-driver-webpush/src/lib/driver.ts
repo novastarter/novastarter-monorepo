@@ -1,5 +1,6 @@
 import { createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
 import {
+	platformOf,
 	type PushDriver,
 	type PushMessage,
 	type PushPlatform,
@@ -154,6 +155,9 @@ export class PushDriverWebPush implements PushDriver {
 	 *
 	 * @param message - The message, with its `subscription`.
 	 * @returns The push service's HTTP status as the status; there is no message id.
+	 * @throws InvalidPayloadError for a subscription `platformOf()` refuses — no `https:` endpoint, missing keys, or an
+	 * endpoint that is not on a known browser push service, so a direct caller cannot make the server post to an
+	 * internal host either.
 	 * @throws PushTargetGoneError for a `404` / `410`.
 	 * @throws Error carrying the status and body for any other refusal, or the network error.
 	 */
@@ -165,14 +169,18 @@ export class PushDriverWebPush implements PushDriver {
 			throw new Error('The webpush push driver needs a subscription; a token belongs to the fcm or apns driver');
 		}
 
-		// 2. The library's subscription shape: `expirationTime` only when known, as `exactOptionalPropertyTypes` wants
+		// 2. The endpoint is client-supplied: the same check as `sendPush()`, since `location(name).send()` skips it and
+		//    this is where the request is made
+		platformOf(message);
+
+		// 3. The library's subscription shape: `expirationTime` only when known, as `exactOptionalPropertyTypes` wants
 		const target: PushSubscription = {
 			endpoint: subscription.endpoint,
 			keys: subscription.keys,
 			...(subscription.expirationTime !== undefined ? { expirationTime: subscription.expirationTime } : {}),
 		};
 
-		// 3. The library encrypts the payload for the subscription and signs the request with the keys
+		// 4. The library encrypts the payload for the subscription and signs the request with the keys
 		try {
 			const result = await this.sendNotification(
 				target,

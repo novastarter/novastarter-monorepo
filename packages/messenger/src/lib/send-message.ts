@@ -78,8 +78,8 @@ export interface MessengerSendOptions {
  * @returns The driver's result with the location, or `null` when a `messenger.send` filter dropped the message.
  * @throws InvalidPayloadError for a message without a recipient, or without text and attachments.
  * @throws MessengerTargetGoneError when the recipient can no longer be reached — forget the chat, do not retry.
- * @throws Error when the location does not exist, or the messenger refused or could not be reached, the driver's error
- * as `cause`.
+ * @throws Error when the location does not exist, or the messenger refused or could not be reached, or the chat a
+ * `messenger.send` handler redirected to is gone; the driver's error as `cause`.
  * @example
  * ```ts
  * await sendMessage({
@@ -125,15 +125,28 @@ export const sendMessage = async (
 
 		return sent;
 	} catch (error) {
-		// 5. A gone recipient is not a failure to retry: reported as its own event and passed on as is
+		// 5. A gone recipient is not a failure to retry: reported as its own event, which carries the chat that was
+		//    actually contacted
 		if (error instanceof MessengerTargetGoneError) {
 			logger.info(`Messenger recipient on "${location}" is gone (${error.extensions.reason}): ${prepared.to}`);
 			useEmitter().emitAction(MESSENGER_GONE_EVENT, { location, to: prepared.to, reason: error.extensions.reason });
 
-			throw error;
+			// 6. The error itself names no chat, and callers forget the chat they passed in when they catch it; so it is
+			//    passed on as is only when that chat, on the location the caller meant, is the one that is gone. A
+			//    redirect to a test chat the bot was kicked from must not make the caller forget the real user's chat
+			const intended = options.location ?? message.location ?? DEFAULT_MESSENGER_LOCATION;
+
+			if (prepared.to === message.to && location === intended) {
+				throw error;
+			}
+
+			throw new Error(
+				`Messenger recipient "${prepared.to}" a messenger.send handler redirected to on "${location}" is gone`,
+				{ cause: error },
+			);
 		}
 
-		// 6. Anything else is the messenger refusing or being unreachable; the driver's error travels as the cause
+		// 7. Anything else is the messenger refusing or being unreachable; the driver's error travels as the cause
 		logger.warn(toError(error), `Messenger location "${location}" failed to send to ${prepared.to}`);
 		useEmitter().emitAction(MESSENGER_FAILED_EVENT, { location, to: prepared.to });
 

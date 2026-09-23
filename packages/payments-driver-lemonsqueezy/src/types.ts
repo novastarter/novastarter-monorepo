@@ -78,7 +78,7 @@ export interface LsSubscriptionInvoiceAttributes {
 	customer_id: number;
 	billing_reason: string;
 	currency: string;
-	status: 'pending' | 'paid' | 'void' | 'refunded';
+	status: 'pending' | 'paid' | 'void' | 'refunded' | 'partial_refund';
 	refunded: boolean;
 	refunded_at: string | null;
 	total: number;

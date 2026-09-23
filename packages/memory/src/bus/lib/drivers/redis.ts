@@ -143,6 +143,20 @@ export class BusDriverRedis implements BusDriver {
 	private outbox: Promise<void> = Promise.resolve();
 
 	/**
+	 * Callbacks registered through {@link BusDriverRedis.onReconnect}, run each time the subscriber reconnects.
+	 *
+	 * @internal
+	 */
+	private readonly reconnectCallbacks: Set<() => void | Promise<void>> = new Set();
+
+	/**
+	 * Whether the subscribing connection has been `ready` before, which tells the first connect from a reconnect.
+	 *
+	 * @internal
+	 */
+	private wasReady = false;
+
+	/**
 	 * Whether {@link BusDriverRedis.close} was called; a subscription can neither start nor complete afterwards.
 	 *
 	 * @internal
@@ -179,7 +193,29 @@ export class BusDriverRedis implements BusDriver {
 			this.inbox = this.inbox.then(() => this.messageBufferHandler(channel, message)).catch(() => {});
 		});
 
-		// 4. Apply the documented defaults: compress, but only from 1 kB up
+		// 4. ioredis resubscribes on its own after a reconnect, but whatever was published while the connection was
+		//    down never arrives: every `ready` after the first one tells the reconnect callbacks, so a subscriber can
+		//    reset state that relied on those messages. A failing callback is logged and does not stop the others
+		this.sub.on('ready', () => {
+			// 1. The first `ready` is the initial connect, nothing was missed before it
+			if (!this.wasReady) {
+				this.wasReady = true;
+
+				return;
+			}
+
+			// 2. ioredis emits `ready` before it sends the resubscribe, so a reset done right here would leave a gap in
+			//    which an invalidation is still lost and a read refills the reset state with an old value. The PING is
+			//    sent a microtask later, once ioredis has queued the `SUBSCRIBE`, and replies come back in order: when
+			//    it answers, the subscription is active on the server. A failed PING means the connection is gone
+			//    again; the callbacks still run, a reset is harmless and the next `ready` repeats it
+			void Promise.resolve()
+				.then(() => this.sub.ping())
+				.catch(() => {})
+				.then(() => this.runReconnectCallbacks());
+		});
+
+		// 5. Apply the documented defaults: compress, but only from 1 kB up
 		this.compression = config.compression ?? true;
 		this.compressionMinSize = config.compressionMinSize ?? 1000;
 		this.handlers = new Map();
@@ -334,6 +370,43 @@ export class BusDriverRedis implements BusDriver {
 			this.handlers.delete(namespaced);
 
 			await this.sub.unsubscribe(namespaced);
+		}
+	}
+
+	/**
+	 * Register a callback run every time the subscribing connection comes back after it was lost.
+	 *
+	 * Redis pub/sub keeps no messages: whatever was published while the subscriber was disconnected is lost, even
+	 * though ioredis resubscribes to every channel afterwards. The callback is where a subscriber resets state it
+	 * derived from those messages. It runs once the server answered a PING sent behind the resubscribe, so no
+	 * message published after the callback started can be missed. It is not run on the first connect.
+	 *
+	 * @param callback - Invoked after each reconnect; a throw or rejection is logged.
+	 *
+	 * @example
+	 * ```ts
+	 * bus.onReconnect(() => localCache.clear());
+	 * ```
+	 */
+	onReconnect(callback: () => void | Promise<void>): void {
+		// 1. A `Set`, so registering the same callback twice still runs it once per reconnect
+		this.reconnectCallbacks.add(callback);
+	}
+
+	/**
+	 * Run every callback registered through {@link BusDriverRedis.onReconnect}, each on its own.
+	 *
+	 * A sync throw or a rejection of one callback is logged and does not keep the others from running.
+	 */
+	private runReconnectCallbacks(): void {
+		// 1. Each callback on its own, sync throws and rejections alike, so one failure cannot skip the rest
+		for (const callback of this.reconnectCallbacks) {
+			Promise.resolve()
+				.then(callback)
+				.catch((error: unknown) => {
+					// 1. Nobody awaits the callback, so the failure goes to the log instead of an unhandled rejection
+					useLogger().warn(toError(error), 'A reconnect callback of the bus failed');
+				});
 		}
 	}
 

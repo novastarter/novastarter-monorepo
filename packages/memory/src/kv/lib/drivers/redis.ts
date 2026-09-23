@@ -519,20 +519,42 @@ export class KvDriverRedis implements KvDriver {
 		// 1. Redlock's `using` also auto-extends the lock while the callback is still running. Its release uses the
 		//    acquire retry budget, so a lock gone at release time — expired after the callback blocked the event loop
 		//    past the timeout, or removed by hand — is reported only after about `lockTimeout` of retries. The
-		//    callback marks that it ran, which is what tells a quorum failure of the acquire from one of that release
+		//    callback marks that it ran, which is what tells a quorum failure of the acquire from one of that release.
+		//    The callback's own error is caught inside the routine and kept aside: Redlock releases in a `finally`,
+		//    and a release that throws there would otherwise replace the callback's error with its own
 		let started = false;
+		let failure: { error: unknown } | undefined;
 
 		try {
-			return await this.redlock.using([withNamespace(key, this.lockNamespace)], this.lockTimeout, async () => {
+			const result = await this.redlock.using([withNamespace(key, this.lockNamespace)], this.lockTimeout, async () => {
 				// 1. Reached only once the lock was acquired, so a later quorum failure cannot be the acquire's
 				started = true;
 
-				return await callback();
+				// 2. Keep the callback's error instead of throwing it, so Redlock's release cannot overwrite it
+				try {
+					return await callback();
+				} catch (error) {
+					failure = { error };
+
+					return undefined as T;
+				}
 			});
+
+			// 2. The release went through, but the callback failed: its error is what the caller gets
+			if (failure) {
+				throw failure.error;
+			}
+
+			return result;
 		} catch (error) {
-			// 2. A quorum failure before the callback ran is the acquire giving up on a busy lock: rethrown as the error
-			//    the local store throws. Everything else — the callback's own error, a release that found the lock
-			//    gone — passes through as it is
+			// 3. The callback's error wins over a release that failed after it, since it is the root cause
+			if (failure) {
+				throw failure.error;
+			}
+
+			// 4. A quorum failure before the callback ran is the acquire giving up on a busy lock: rethrown as the error
+			//    the local store throws. A release that found the lock gone after a successful callback passes through
+			//    as it is
 			throw started ? error : this.toLockError(key, error);
 		}
 	}
@@ -559,6 +581,8 @@ export class KvDriverRedis implements KvDriver {
 
 	/**
 	 * Remove all keys in this store's namespace.
+	 *
+	 * @throws The reply error of the first `UNLINK` Redis refused; Error when the pipeline was aborted.
 	 */
 	async clear(): Promise<void> {
 		// 1. `SCAN` instead of `KEYS`, so a large keyspace does not block the Redis server. The namespace is escaped,
@@ -578,6 +602,20 @@ export class KvDriverRedis implements KvDriver {
 			}
 		}
 
-		await pipeline.exec();
+		// 3. `exec()` rejects only when the connection fails; a command Redis refused — `READONLY` on a replica, `OOM`
+		//    under `noeviction`, `NOPERM` from an ACL — comes back as an error in its result tuple. Such a failure is
+		//    thrown, or `clear()` would report success while every key is still there. A `null` answer means the
+		//    pipeline was aborted and nothing ran
+		const results = await pipeline.exec();
+
+		if (results === null) {
+			throw new Error(`Clearing namespace "${this.namespace}" was aborted`);
+		}
+
+		const failed = results.find(([error]) => error);
+
+		if (failed) {
+			throw failed[0];
+		}
 	}
 }

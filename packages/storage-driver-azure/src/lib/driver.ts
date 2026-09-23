@@ -405,12 +405,12 @@ export class StorageDriverAzure implements TusDriver {
 	 */
 	async copy(src: string, dest: string): Promise<void> {
 		const source = this.client.getBlockBlobClient(this.fullPath(src));
-		const target = this.client.getBlockBlobClient(this.fullPath(dest));
+		const target = this.client.getBlobClient(this.fullPath(dest));
 
-		// 1. The copy runs server-side and asynchronously, so the poller is awaited until the service reports it done
-		//    rather than returning while the copy is still pending
-		const poller = await target.beginCopyFromURL(source.url);
-		await poller.pollUntilDone();
+		// 1. The copy runs server-side and asynchronously and is awaited until done. The target is addressed as a plain
+		//    blob and replaced when its type differs, since a TUS upload leaves an append blob and `write()` a block
+		//    blob, and Azure refuses to copy one onto the other
+		await copyBlobReplacing(target, source.url);
 	}
 
 	/**
@@ -678,20 +678,16 @@ export class StorageDriverAzure implements TusDriver {
 		// 1. Copy over the target. The copy is not atomic: while it is pending the target may read as empty, and a
 		//    failed copy leaves it empty. A missing staging blob means the upload is unknown or already finished
 		try {
-			await copyBlob(target, staging.url);
+			// 2. A target of another blob type, a block blob from `write()`, is removed and the copy repeated. If this
+			//    second copy fails, the old target is already gone and the path stays empty; the error propagates before
+			//    step 3, so the staging blob survives and a retried finish copies it onto the now free path
+			await copyBlobReplacing(target, staging.url);
 		} catch (error) {
-			const { statusCode, code } = (error ?? {}) as { statusCode?: number; code?: string };
+			const { statusCode } = (error ?? {}) as { statusCode?: number };
 
 			if (statusCode === 404) throw new StorageFileNotFoundError({ filepath }, { cause: error });
 
-			// 2. The service refuses to copy onto a blob of another type with 409 `InvalidBlobType`; the target is a
-			//    block blob then, and it is removed so the copy can create the path afresh. If this second copy fails,
-			//    the old target is already gone and the path stays empty; the error propagates before step 3, so the
-			//    staging blob survives and a retried finish copies it onto the now free path
-			if (statusCode !== 409 || code !== 'InvalidBlobType') throw error;
-
-			await target.deleteIfExists();
-			await copyBlob(target, staging.url);
+			throw error;
 		}
 
 		// 3. The staging blob is removed only now that the target holds its bytes, so every failure above keeps it for
@@ -725,6 +721,35 @@ async function copyBlob(target: BlobClient, sourceUrl: string): Promise<void> {
 	// 1. `Copy Blob` may finish asynchronously, so the poller is awaited instead of returning while it is pending
 	const poller = await target.beginCopyFromURL(sourceUrl);
 	await poller.pollUntilDone();
+}
+
+/**
+ * Copy a blob of the same account onto a target, replacing a target of another blob type.
+ *
+ * Azure copies onto an existing blob only when it has the source's type and answers 409 `InvalidBlobType` otherwise:
+ * a TUS upload leaves an append blob while `write()` leaves a block blob. The target is then deleted and the copy
+ * repeated. This is not atomic: if the second copy fails, the old target is already gone.
+ *
+ * @param target - Blob the copy is written to.
+ * @param sourceUrl - URL of the source blob; the shared-key credential of the driver authorises it within the account.
+ * @throws The SDK error when either copy cannot start or fails, or when removing the mismatched target fails.
+ * @internal
+ */
+async function copyBlobReplacing(target: BlobClient, sourceUrl: string): Promise<void> {
+	// 1. The common case: the target is missing or of the same type, so a single copy overwrites it
+	try {
+		await copyBlob(target, sourceUrl);
+	} catch (error) {
+		// 2. Only a blob type mismatch is recoverable here; any other failure, such as a copy still pending on the
+		//    target, propagates untouched so the target is not lost
+		const { statusCode, code } = (error ?? {}) as { statusCode?: number; code?: string };
+
+		if (statusCode !== 409 || code !== 'InvalidBlobType') throw error;
+
+		// 3. Remove the mismatched target so the second copy creates the path afresh with the source's type
+		await target.deleteIfExists();
+		await copyBlob(target, sourceUrl);
+	}
 }
 
 /**
