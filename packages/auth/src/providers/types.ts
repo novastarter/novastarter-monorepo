@@ -60,3 +60,28 @@ export interface Credentials {
 	/** The password, as typed. */
 	password: string;
 }
+
+/**
+ * What the browser sends to either step of a two-step sign-in — an email to send a link to, a code, a passkey's
+ * signed answer — as the driver of the location reads it.
+ *
+ * `identifier`, when present, is what the `signIn` limiter is keyed by at the start, so one address cannot be flooded
+ * with links.
+ */
+export type ChallengeInput = Record<string, unknown> & {
+	/** Email address or whatever else the step is about; keys the rate limit of the start. */
+	identifier?: string | undefined;
+};
+
+/**
+ * What a driver answers the first step of a two-step sign-in with.
+ */
+export interface ChallengeBegun {
+	/** What the browser needs for the second step — a passkey's request options; nothing for a link sent by mail. */
+	options?: unknown;
+	/**
+	 * What the driver needs back at the second step — a passkey's challenge. It travels in an encrypted cookie, so the
+	 * browser can neither read nor change it; nothing is stored on the server.
+	 */
+	state?: Record<string, unknown> | undefined;
+}

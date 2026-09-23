@@ -29,6 +29,13 @@ export const DEFAULT_CODE_TTL: number = 10 * 60 * 1000;
 export const DEFAULT_OAUTH_STATE_TTL: number = 10 * 60 * 1000;
 
 /**
+ * How long the browser has to finish a two-step sign-in — to answer a passkey's challenge — in milliseconds.
+ *
+ * @defaultValue 5 minutes.
+ */
+export const DEFAULT_CHALLENGE_TTL: number = 5 * 60 * 1000;
+
+/**
  * How long a JWT access token is accepted, in milliseconds. It cannot be revoked, so it is kept short.
  *
  * @defaultValue 15 minutes.
@@ -117,10 +124,28 @@ export interface AuthOAuthSettings {
 }
 
 /**
+ * Two-step sign-in settings: the cookie `startChallenge()` seals the driver's state into.
+ */
+export interface AuthChallengeSettings {
+	/**
+	 * The secret the challenge cookie is encrypted with: at least {@link MIN_SECRET_LENGTH} characters of random data.
+	 *
+	 * A list rotates it: the first encrypts, every one decrypts. The cookie lives for {@link ttl}, so the old secret can
+	 * go once that has passed.
+	 */
+	secret?: string | readonly string[] | undefined;
+	/** How long the browser has to finish, in milliseconds; {@link DEFAULT_CHALLENGE_TTL} unless given. */
+	ttl?: number | undefined;
+}
+
+/**
  * Rate limiters of the guessable steps. Each is optional; without one, the step is not limited.
  */
 export interface AuthLimiters {
-	/** `signIn()`, keyed by location and identifier: slows password guessing against one account. */
+	/**
+	 * `signIn()` and `startChallenge()`, keyed by location and identifier: slows password guessing against one account,
+	 * and links or codes sent to one address.
+	 */
 	signIn?: LimiterDriver | undefined;
 	/** TOTP and recovery codes, keyed by user. */
 	mfa?: LimiterDriver | undefined;
@@ -132,7 +157,7 @@ export interface AuthLimiters {
  * Everything the functions of the package read from the application's configuration.
  *
  * Every field is optional; what is missing falls back to the defaults of this module, and the features that need a
- * secret — JWTs, TOTP, OAuth — refuse to run without it.
+ * secret — JWTs, TOTP, OAuth, challenges that keep state — refuse to run without it.
  */
 export interface AuthSettings {
 	/** Session lifetimes. */
@@ -148,6 +173,8 @@ export interface AuthSettings {
 		| undefined;
 	/** OAuth. */
 	oauth?: AuthOAuthSettings | undefined;
+	/** Two-step sign-in: links by mail, passkeys. */
+	challenge?: AuthChallengeSettings | undefined;
 	/** JWT access and refresh tokens. */
 	jwt?: AuthJwtSettings | undefined;
 	/** TOTP. */

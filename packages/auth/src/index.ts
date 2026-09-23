@@ -5,7 +5,7 @@
  * is stored — the application keeps the records these functions hand back, in its own tables, and hands them in again.
  *
  * - `providers`: the `AuthDriver` contract of the `@novastarter/auth-driver-*` packages and `signIn()`,
- *   `startOAuth()`, `finishOAuth()`, on the `AuthManager` of `useAuth()`;
+ *   `startOAuth()`, `finishOAuth()`, `startChallenge()`, `finishChallenge()`, on the `AuthManager` of `useAuth()`;
  * - `sessions`, `passwords`, `tokens` (one-time and JWT) and `mfa` (TOTP and recovery codes).
  *
  * The application registers the drivers, the locations and the settings at start-up; the package reads nothing from

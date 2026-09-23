@@ -14,7 +14,7 @@ const VERSION = 'v2';
  *
  * @internal
  */
-export type EncryptionPurpose = 'oauth-cookie' | 'totp-secret';
+export type EncryptionPurpose = 'oauth-cookie' | 'challenge-cookie' | 'totp-secret';
 
 /**
  * What {@link decrypt} hands back.

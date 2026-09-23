@@ -42,6 +42,7 @@ catalog:
   '@sendgrid/mail': 8.1.6
   '@sesamecare-oss/redlock': 1.4.0
   '@shopify/semaphore': 3.1.0
+  '@simplewebauthn/server': 14.0.2
   '@smithy/node-http-handler': 4.11.2
   '@supabase/storage-js': 2.112.3
   '@tus/utils': 0.7.1
