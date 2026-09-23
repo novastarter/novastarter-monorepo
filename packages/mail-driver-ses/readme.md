@@ -50,3 +50,24 @@ failing the whole send.
 | `sessionToken`                   | —        | Session token of temporary credentials.                                |
 | `endpoint`                       | —        | Custom endpoint, for LocalStack and the like.                          |
 | `configurationSet`               | —        | SES configuration set every message is sent with.                      |
+
+## Any other request
+
+`call()` runs any SESv2 API action on the location's client, region and credentials — the way to the account,
+identities, suppressions, templates and anything else the driver has no wrapper for. SES is an RPC-style API, so the
+method is the action's name (with or without the SDK's `Command` suffix) and the parameters are its input.
+
+```ts
+const mail = useMail().location('main');
+
+const account = await mail.call?.('GetAccount');
+
+const bounced = await mail.call?.('ListSuppressedDestinations', { Reasons: ['BOUNCE'], PageSize: 100 });
+```
+
+The answer is the action's output without the SDK's `$metadata`. There are no URLs, so no host list: every request goes
+to the SES endpoint of the location's region (or its `endpoint`). A name that is not an SESv2 action is refused before
+anything is sent; a refusal of SES throws `ProviderCallError` with its HTTP status and `{ name, message }`, a 429 or
+`TooManyRequestsException` `HitRateLimitError`; the timeout is 30 seconds unless `{ timeout }` names another. The
+`headers` option adds headers to the HTTP request before the SDK signs it; `paramsIn` does not apply, since the SDK
+serializes the input itself.

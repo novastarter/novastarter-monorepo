@@ -47,3 +47,22 @@ requires at least one.
 | `sandbox`     | —        | Deliver into the Email Sandbox (a test inbox) rather than to real recipients.                    |
 | `testInboxId` | —        | Inbox the sandbox delivers into; required with `sandbox`.                                        |
 | `bulk`        | —        | Send through Mailtrap's bulk stream (marketing infrastructure) instead of the transactional one. |
+
+## Any other request
+
+`call()` makes a request of Mailtrap's own API with the location's token — the way to sending domains, contacts,
+suppressions, sandbox inboxes and anything else the driver has no wrapper for. The method is the verb and a path from
+`https://mailtrap.io`; the parameters are the query of a `GET`, `HEAD` or `DELETE` and the JSON body otherwise.
+
+```ts
+const mail = useMail().location('main');
+
+const accounts = await mail.call?.<{ id: number; name: string }[]>('GET /api/accounts');
+
+const domains = await mail.call?.(`GET /api/accounts/${accounts?.[0]?.id}/sending_domains`);
+```
+
+A full URL may point at `mailtrap.io`, `send.api.mailtrap.io`, `bulk.api.mailtrap.io` or `sandbox.api.mailtrap.io`; any
+other host is refused before the request, so the token never leaves Mailtrap. An error status throws `ProviderCallError`
+with Mailtrap's status and answer, a 429 `HitRateLimitError`; the timeout is 30 seconds unless `{ timeout }` names
+another.

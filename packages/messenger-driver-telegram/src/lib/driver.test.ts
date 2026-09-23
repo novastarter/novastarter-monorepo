@@ -175,6 +175,24 @@ describe('call', () => {
 
 		expect(request().init.signal?.aborted).toBe(true);
 	});
+
+	test('Takes a timeout, extra headers and a signal per call', async () => {
+		answer({ ok: true, result: true });
+
+		// 1. The caller's headers go on top of the JSON type
+		await new MessengerDriverTelegram({ token: 'T' }).call('getMe', {}, { headers: { 'x-trace': '1' } });
+
+		expect(request().init.headers).toStrictEqual({ 'content-type': 'application/json', 'x-trace': '1' });
+
+		// 2. An aborted signal stops the call before it is sent
+		const controller = new AbortController();
+
+		controller.abort(new Error('stop'));
+
+		await expect(
+			new MessengerDriverTelegram({ token: 'T' }).call('getMe', {}, { signal: controller.signal }),
+		).rejects.toThrow('stop');
+	});
 });
 
 describe('verify', () => {

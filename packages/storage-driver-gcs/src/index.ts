@@ -4,5 +4,5 @@
  */
 import { StorageDriverGcs } from './lib/driver.js';
 
-export { StorageDriverGcs, type StorageDriverGcsConfig } from './lib/driver.js';
+export { DEFAULT_GCS_CALL_TIMEOUT, StorageDriverGcs, type StorageDriverGcsConfig } from './lib/driver.js';
 export default StorageDriverGcs;

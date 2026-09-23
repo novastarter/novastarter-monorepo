@@ -106,6 +106,23 @@ try {
 A driver refuses a missing or invalid option at construction with a plain `Error` naming it:
 `The s3 storage driver needs a "bucket"`.
 
+## Any other request
+
+A driver may implement `call(method, params, options)`: a request of its provider's own API with the location's
+credentials, timeout and errors, for whatever the contract does not cover. `method` is the verb and path of a REST API
+(`POST /v1/refunds`), a full URL on one of the provider's own hosts, or the command name of an RPC-style SDK; the
+parameters are the query of a `GET`/`HEAD`/`DELETE` and the body otherwise; `options` takes a `timeout`, a `signal`,
+extra `headers` and `paramsIn` — `'body'` for an API that reads a `DELETE` body. A `content-type` among the headers
+picks the body's form: a form, multipart, or the `body` parameter as it is for XML or plain text. The answer is the
+provider's JSON, or its text. An error status throws `ProviderCallError` of `@novastarter/errors`, with the provider's
+status and answer in `extensions`; a 429 throws `HitRateLimitError`. Each driver's readme names its endpoints and hosts.
+
+```ts
+await useStorage().location('uploads').call?.('GetBucketVersioning');
+```
+
+`local` has no API and no `call()`.
+
 ## Writing a driver
 
 A driver is a class taking its options in the constructor and implementing `StorageDriver` — or `TusDriver` for

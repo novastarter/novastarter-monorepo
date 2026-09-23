@@ -34,6 +34,26 @@ storage.registerLocation('uploads', {
 Anywhere later: `useStorage().location('uploads').write(path, stream, type)` and the rest of the `StorageDriver`
 contract.
 
+## Any other request
+
+`call()` reaches any endpoint of the GCS JSON API with an access token of the client's Application Default Credentials —
+IAM policies, bucket metadata, lifecycle rules, notifications. The method is the verb and the path under `/storage/v1`;
+`{bucket}` in it stands for the location's bucket. The parameters of a `GET`, `HEAD` or `DELETE` go in the query, the
+rest as the JSON body; `paramsIn` in the options changes that.
+
+```ts
+const uploads = useStorage().location('uploads');
+
+const policy = await uploads.call?.('GET /b/{bucket}/iam', { optionsRequestedPolicyVersion: 3 });
+
+await uploads.call?.('PATCH /b/{bucket}', { versioning: { enabled: true } });
+```
+
+A full URL may point at `storage.googleapis.com` or the host of the configured `apiEndpoint`; any other host is refused
+before a request is made. Object names in a path are not placed under `root`. A refusal throws `ProviderCallError` with
+GCS's status and its `{ error: { code, message } }` body, a 429 `HitRateLimitError`; a failed call is not retried. The
+timeout — 30 seconds by default — covers fetching the token as well as the request.
+
 ## Options
 
 | Option          | Required | Description                                                                         |

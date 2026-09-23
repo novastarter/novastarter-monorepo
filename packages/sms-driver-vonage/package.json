@@ -25,6 +25,7 @@
 		"test:coverage": "vitest run --coverage"
 	},
 	"dependencies": {
+		"@novastarter/errors": "workspace:*",
 		"@novastarter/sms": "workspace:*",
 		"@novastarter/utils": "workspace:*",
 		"@vonage/sms": "catalog:"

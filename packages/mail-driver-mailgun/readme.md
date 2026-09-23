@@ -41,6 +41,24 @@ referenced from the html as `cid:<content id>`, the rest to `attachment`. A refu
 named and the SDK's `APIError` as the cause, so `sendMail()` falls back. `verify()` reads the domain and requires it to
 be `active`.
 
+## Any other request
+
+`call()` makes a request of the [Mailgun API](https://documentation.mailgun.com/docs/mailgun/api-reference/) with the
+location's key, on the location's host; `{domain}` in the path is the location's domain. A `GET`'s parameters go in the
+query, the rest as a form (multipart when a `Blob` or `File` is among them), a list repeating its key. A refusal throws
+`ProviderCallError` (`HitRateLimitError` on a 429); the timeout is the location's `timeout`, 30 s unless set.
+
+```ts
+const mail = useMail().location('main');
+
+const events = await mail.call?.('GET /v3/{domain}/events', { event: 'failed', limit: 50 });
+
+await mail.call?.('POST /v3/{domain}/unsubscribes', { address: 'ada@example.com', tag: '*' });
+```
+
+A path is joined to the location's host (`https://api.mailgun.net` unless `host` is set); a full URL may only point at
+that host — `api.mailgun.net` or `api.eu.mailgun.net`, whichever the location uses.
+
 ## Options
 
 | Option     | Required | Description                                                                                                                  |

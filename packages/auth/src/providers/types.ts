@@ -1,3 +1,5 @@
+import type { CallOptions } from '@novastarter/utils';
+
 /**
  * Who a sign-in driver says the person is, in the same shape for every provider.
  *
@@ -19,6 +21,47 @@ export interface AuthIdentity {
 	avatarUrl?: string | undefined;
 	/** The provider's own profile, for fields this shape does not carry. */
 	raw?: unknown;
+}
+
+/**
+ * The tokens an OAuth provider issued with a sign-in, for an application that goes on to act on the person's behalf.
+ *
+ * They are secrets: whoever holds them acts as the person at the provider. The package never keeps nor logs them —
+ * storing them, encrypted with a key of the application's own, is the application's responsibility.
+ */
+export interface OAuthTokens {
+	/** The access token, sent as `Authorization: Bearer` to the provider's API. */
+	accessToken: string;
+	/** The token that buys a new access token once this one expires, when the provider issues one. */
+	refreshToken?: string | undefined;
+	/** When the access token expires, epoch milliseconds; `undefined` for one that does not. */
+	expiresAt?: number | undefined;
+	/** The scopes the person actually granted, which may be fewer than asked for. */
+	scope?: string[] | undefined;
+	/** The token type the provider names, `bearer` as a rule. */
+	tokenType?: string | undefined;
+}
+
+/**
+ * What an OAuth driver's `callback()` answers: the identity, and the tokens the provider issued with it.
+ *
+ * `finishOAuth()` takes the tokens off before the identity reaches the `auth.sign-in` filter, the `auth.signed-in`
+ * event or a log, and hands them back beside it.
+ */
+export type OAuthCallbackResult = AuthIdentity & {
+	/** The tokens of the sign-in, when the driver hands them on. */
+	tokens?: OAuthTokens | undefined;
+};
+
+/**
+ * Per-call options of a sign-in driver's `call()`: those of every driver, and the person to act for.
+ */
+export interface AuthCallOptions extends CallOptions {
+	/**
+	 * An access token of the person — from {@link OAuthTokens} — to make the request on their behalf; without it the
+	 * request goes with the app's own credentials, where the provider allows that.
+	 */
+	accessToken?: string | undefined;
 }
 
 /**

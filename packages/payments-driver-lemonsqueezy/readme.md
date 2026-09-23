@@ -52,6 +52,27 @@ time. `order_created` → `checkout.completed`; `subscription_created` → `subs
 `subscription.deleted`; `subscription_payment_success` / `_recovered` → `invoice.paid`; `subscription_payment_failed` →
 `invoice.failed`. Everything else is verified and dropped.
 
+## Any other request
+
+`call()` reaches any endpoint of the Lemon Squeezy API with the location's key, timeout and JSON:API media types. Paths
+are written from the API's root, the version included (`/v1/…`), as the API reference writes them. The parameters of a
+`GET` or `DELETE` go in the query — JSON:API's brackets in the key — the others as the JSON:API document of the body
+(`options.paramsIn` moves them). A refusal throws `ProviderCallError` with the status and `{ errors }`, a 429
+`HitRateLimitError`.
+
+```ts
+const payments = usePayments().location('default');
+
+await payments.call?.('GET /v1/discounts', { 'filter[store_id]': 12345, 'page[size]': 50 });
+
+await payments.call?.('POST /v1/orders/123/refund', {
+	data: { type: 'orders', id: '123', attributes: { amount: 500 } },
+});
+```
+
+A full URL may point at `api.lemonsqueezy.com` (or the host of `apiUrl`); any other host is refused before a request is
+made.
+
 ## Options
 
 | Option          | Required | Description                                                                                                                    |

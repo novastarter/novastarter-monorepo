@@ -1,4 +1,4 @@
-import { InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
+import { InvalidCredentialsError, InvalidPayloadError, toProviderCallError } from '@novastarter/errors';
 import type {
 	CancelSubscriptionInput,
 	CheckoutSession,
@@ -15,6 +15,8 @@ import type {
 	UpdateSubscriptionInput,
 	WebhookHeaders,
 } from '@novastarter/payments';
+import { type CallOptions, parseCallMethod } from '@novastarter/utils';
+import { httpCall, resolveCallUrl } from '@novastarter/utils/node';
 import { Polar } from '@polar-sh/sdk';
 import type { SubscriptionProrationBehavior } from '@polar-sh/sdk/models/components/subscriptionprorationbehavior.js';
 import { SDKValidationError } from '@polar-sh/sdk/models/errors/sdkvalidationerror.js';
@@ -71,6 +73,31 @@ export const PRORATION: Record<NonNullable<UpdateSubscriptionInput['proration']>
 };
 
 /**
+ * The root of Polar's API for each server, which {@link PaymentsDriverPolar.call} joins its paths to.
+ *
+ * @defaultValue `production` → `https://api.polar.sh`, `sandbox` → `https://sandbox-api.polar.sh`
+ */
+export const POLAR_API_URLS: Readonly<Record<'production' | 'sandbox', string>> = {
+	production: 'https://api.polar.sh',
+	sandbox: 'https://sandbox-api.polar.sh',
+};
+
+/**
+ * The hosts a full URL given to {@link PaymentsDriverPolar.call} may point at.
+ *
+ * @defaultValue `api.polar.sh`, `sandbox-api.polar.sh`
+ * @internal
+ */
+export const POLAR_CALL_HOSTS: readonly string[] = ['api.polar.sh', 'sandbox-api.polar.sh'];
+
+/**
+ * How long a {@link PaymentsDriverPolar.call} may take unless its options name another deadline, in milliseconds.
+ *
+ * @defaultValue 30 seconds.
+ */
+export const DEFAULT_POLAR_CALL_TIMEOUT = 30_000;
+
+/**
  * Driver for [Polar](https://polar.sh): hosted checkout, the customer portal, subscriptions and orders over
  * `@polar-sh/sdk`, webhooks verified with the endpoint's secret.
  *
@@ -112,6 +139,20 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	private readonly webhookSecret: string;
 
 	/**
+	 * The access token, sent as the bearer token of a {@link call}; the SDK keeps its own copy private.
+	 *
+	 * @internal
+	 */
+	private readonly accessToken: string;
+
+	/**
+	 * The root of the API a {@link call} goes to, by the configured server.
+	 *
+	 * @internal
+	 */
+	private readonly apiUrl: string;
+
+	/**
 	 * Create a driver from its location options.
 	 *
 	 * @param config - Access token, webhook secret, environment.
@@ -137,6 +178,10 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 			});
 
 		this.webhookSecret = config.webhookSecret;
+
+		// 3. `call()` makes its own request with the same token against the same server, the SDK having no raw one
+		this.accessToken = config.accessToken;
+		this.apiUrl = POLAR_API_URLS[config.server ?? 'production'];
 	}
 
 	/**
@@ -371,6 +416,61 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 
 			throw error;
 		}
+	}
+
+	/**
+	 * Make a request of any Polar endpoint with the location's access token, for what the SDK or the contract does not
+	 * cover.
+	 *
+	 * `method` is the verb and the path from the API's root — `GET /v1/benefits/` — or a full URL on one of
+	 * {@link POLAR_CALL_HOSTS}. The parameters of a `GET` or `DELETE` go in the query, a list as its key repeated, the
+	 * others as a JSON body — `options.paramsIn` moves them.
+	 *
+	 * @typeParam T - What the endpoint answers with; the caller knows it from Polar's API reference.
+	 * @param method - The verb and the path, or a full URL on Polar's hosts.
+	 * @param params - The query of a `GET` or `DELETE`, the JSON body otherwise.
+	 * @param options - A timeout over {@link DEFAULT_POLAR_CALL_TIMEOUT}, an abort signal, extra headers, where the
+	 * parameters go.
+	 * @returns Polar's answer, parsed; `undefined` for an empty one.
+	 * @throws ProviderCallError when Polar answers with an error status — its status and `{ error, detail }` in
+	 * `extensions`.
+	 * @throws HitRateLimitError when Polar answers 429.
+	 * @throws TimeoutError when the request outlives its timeout.
+	 * @throws Error when the method is malformed, or its URL is not on Polar's hosts.
+	 * @example
+	 * ```ts
+	 * await polar.call('GET /v1/benefits/', { limit: 20 });
+	 * await polar.call('POST /v1/refunds/', { order_id: 'ord_123', reason: 'customer_request', amount: 500 });
+	 * ```
+	 */
+	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, options: CallOptions = {}): Promise<T> {
+		// 1. The URL under the server's root; a full URL only on Polar's hosts, so the token never travels anywhere else
+		const { verb, target } = parseCallMethod(method);
+		const url = resolveCallUrl(this.apiUrl, target, POLAR_CALL_HOSTS);
+
+		// 2. The token as Polar's bearer token, the caller's headers over it; JSON both ways
+		const response = await httpCall({
+			url,
+			verb,
+			params,
+			paramsIn: options.paramsIn,
+			headers: { authorization: `Bearer ${this.accessToken}`, ...options.headers },
+			timeout: options.timeout ?? DEFAULT_POLAR_CALL_TIMEOUT,
+			signal: options.signal,
+		});
+
+		// 3. An error status is Polar refusing: its answer goes on to the caller
+		if (response.status >= 400) {
+			throw toProviderCallError({
+				provider: 'polar',
+				method,
+				status: response.status,
+				body: response.body,
+				headers: response.headers,
+			});
+		}
+
+		return response.body as T;
 	}
 
 	/**

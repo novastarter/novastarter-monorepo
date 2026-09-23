@@ -1,10 +1,14 @@
 import type { Readable } from 'node:stream';
 import {
+	AccountSASPermissions,
 	type BlobGetPropertiesResponse,
 	BlobServiceClient,
 	ContainerClient,
+	generateAccountSASQueryParameters,
+	SASProtocol,
 	StorageSharedKeyCredential,
 } from '@azure/storage-blob';
+import { toProviderCallError } from '@novastarter/errors';
 import {
 	type ChunkedUploadContext,
 	type ReadOptions,
@@ -14,7 +18,8 @@ import {
 	toRelativePath,
 	type TusDriver,
 } from '@novastarter/storage';
-import { confinePath, joinPath } from '@novastarter/utils';
+import { type CallOptions, confinePath, joinPath, parseCallMethod, withTimeout } from '@novastarter/utils';
+import { resolveCallUrl, toQueryString } from '@novastarter/utils/node';
 
 /**
  * Largest chunk an append blob accepts per `Append Block` request.
@@ -26,6 +31,23 @@ import { confinePath, joinPath } from '@novastarter/utils';
  * @see https://learn.microsoft.com/en-us/rest/api/storageservices/append-block#remarks
  */
 const MAXIMUM_CHUNK_SIZE = 104_857_600;
+
+/**
+ * How long a {@link StorageDriverAzure.call} may take when the caller names no timeout, in milliseconds.
+ *
+ * @defaultValue 30 000 ms.
+ */
+export const DEFAULT_AZURE_CALL_TIMEOUT = 30_000;
+
+/**
+ * How long the account SAS a {@link StorageDriverAzure.call} signs its request with stays valid, in milliseconds.
+ *
+ * Long enough for a request that runs to its timeout, short enough that a SAS which leaks is useless soon after.
+ *
+ * @defaultValue 5 minutes.
+ * @internal
+ */
+const CALL_SAS_LIFETIME = 5 * 60_000;
 
 /**
  * Options accepted by {@link StorageDriverAzure}.
@@ -111,6 +133,20 @@ export class StorageDriverAzure implements TusDriver {
 	private signedCredentials: StorageSharedKeyCredential;
 
 	/**
+	 * Blob service endpoint a {@link StorageDriverAzure.call} path is joined to: the configured one or the account's own.
+	 *
+	 * @internal
+	 */
+	private readonly endpoint: string;
+
+	/**
+	 * Name of the container, put in place of `{container}` in a {@link StorageDriverAzure.call} path.
+	 *
+	 * @internal
+	 */
+	private readonly containerName: string;
+
+	/**
 	 * Normalised root prefix without a leading slash; an empty string when none was configured.
 	 *
 	 * @internal
@@ -146,10 +182,10 @@ export class StorageDriverAzure implements TusDriver {
 
 		// 3. A custom endpoint wins over the derived one, so emulators and non-public clouds are never routed to
 		//    `blob.core.windows.net`
-		const client = new BlobServiceClient(
-			config.endpoint ?? `https://${config.accountName}.blob.core.windows.net`,
-			this.signedCredentials,
-		);
+		this.endpoint = config.endpoint ?? `https://${config.accountName}.blob.core.windows.net`;
+		this.containerName = config.containerName;
+
+		const client = new BlobServiceClient(this.endpoint, this.signedCredentials);
 
 		this.containerClient = client.getContainerClient(config.containerName);
 
@@ -452,6 +488,131 @@ export class StorageDriverAzure implements TusDriver {
 	}
 
 	/**
+	 * Make any request of the Blob service REST API with the location's account, endpoint and a timeout — the way to
+	 * what the storage contract does not cover: service properties, container metadata, leases, tags, access tiers.
+	 *
+	 * `method` is the verb and the path from the blob endpoint — `{container}` in it stands for the location's
+	 * container — or a full URL on that endpoint's host. The request is authorised with an account SAS signed for it
+	 * alone and valid for a few minutes, since the SDK keeps its signing pipeline to itself; operations an account SAS
+	 * cannot authorise are refused by Azure. Every parameter goes into the query — the Blob service takes its
+	 * parameters there and in headers — except `body`: a string (XML) or a `Blob` sent as the request body. Blob names
+	 * in a path are not placed under the location's root.
+	 *
+	 * @typeParam T - What the service answers with, most often XML text; the caller knows it from Azure's documentation.
+	 * @param method - The verb and path: `GET /?restype=service&comp=properties`, `PUT /{container}?restype=container`.
+	 * @param params - The query, and the request body under `body`.
+	 * @param options - A timeout over {@link DEFAULT_AZURE_CALL_TIMEOUT}, an abort signal, extra headers — the
+	 * `x-ms-meta-*` and `x-ms-blob-type` headers many operations read.
+	 * @returns The answer: parsed JSON, else its text — XML for most operations; `undefined` for an empty one.
+	 * @throws ProviderCallError when Azure answers with an error status or a redirect — not followed, since the SAS
+	 * rides in the URL — its status and XML answer in `extensions`.
+	 * @throws HitRateLimitError when Azure answers 429.
+	 * @throws TimeoutError when the request outlives its timeout.
+	 * @throws Error when the method is malformed, its URL is not on the endpoint's host, or Azure cannot be reached.
+	 * @example
+	 * ```ts
+	 * const xml = await azure.call<string>('GET /', { restype: 'service', comp: 'properties' });
+	 *
+	 * await azure.call('PUT /{container}', { restype: 'container', comp: 'metadata' }, {
+	 * 	headers: { 'x-ms-meta-owner': 'media' },
+	 * });
+	 * ```
+	 */
+	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, options: CallOptions = {}): Promise<T> {
+		// 1. The verb and the URL; a full URL off the endpoint's host is refused here, before a SAS is signed for it
+		const { verb, target } = parseCallMethod(method);
+		const url = resolveCallUrl(this.endpoint, target.replaceAll('{container}', encodeURIComponent(this.containerName)));
+		const { body, ...query } = params;
+
+		for (const [key, value] of new URLSearchParams(toQueryString(query)).entries()) {
+			url.searchParams.append(key, value);
+		}
+
+		// 2. A SAS for this request only: every blob permission, since the operation is the caller's choice, and a
+		//    lifetime of minutes. The start lies a minute back, so a service clock slightly behind still accepts it
+		const now = Date.now();
+
+		const sas = generateAccountSASQueryParameters(
+			{
+				startsOn: new Date(now - 60_000),
+				expiresOn: new Date(now + CALL_SAS_LIFETIME),
+				permissions: AccountSASPermissions.parse('rwdxylacuptfi'),
+				services: 'b',
+				resourceTypes: 'sco',
+				...(url.protocol === 'https:' ? { protocol: SASProtocol.Https } : {}),
+			},
+			this.signedCredentials,
+		);
+
+		const signed = new URL(url);
+
+		for (const [key, value] of new URLSearchParams(sas.toString()).entries()) {
+			signed.searchParams.append(key, value);
+		}
+
+		// 3. The API version the SAS was signed for, the body's type unless the caller names one, the caller's headers on
+		//    top; header names folded to lower case so the caller's replace the driver's instead of doubling them
+		const headers: Record<string, string> = { 'x-ms-version': sas.version };
+
+		if (typeof body === 'string') headers['content-type'] = 'application/xml';
+		if (body instanceof Blob) headers['content-type'] = body.type || 'application/octet-stream';
+
+		for (const [name, value] of Object.entries(options.headers ?? {})) {
+			headers[name.toLowerCase()] = value;
+		}
+
+		// 4. The request and the reading of its answer under one deadline — a slow body is still the deadline's — and
+		//    the caller's signal aborts both. Only a string or a Blob is a body
+		const payload = typeof body === 'string' || body instanceof Blob ? body : undefined;
+
+		const { response, answer } = await withTimeout(
+			async (signal) => {
+				// 1. Redirects are not followed: the SAS rides in the URL, and `fetch` would carry it to wherever the
+				//    `Location` points. A failure to reach Azure is reported without its cause, whose details may quote
+				//    the signed URL; an abort passes on its own reason
+				let sent: Response;
+
+				try {
+					sent = await fetch(signed.href, {
+						method: verb,
+						headers,
+						signal,
+						redirect: 'manual',
+						...(payload === undefined ? {} : { body: payload }),
+					});
+				} catch (error) {
+					if (signal.aborted) throw signal.reason;
+
+					const code = (error as { cause?: { code?: unknown } } | null)?.cause?.code;
+					const suffix = typeof code === 'string' ? ` (${code})` : '';
+
+					// eslint-disable-next-line preserve-caught-error -- the cause may quote the signed URL
+					throw new Error(`The azure call "${method}" could not reach the service${suffix}`);
+				}
+
+				// 2. JSON when it parses, the text otherwise — XML for most operations; an empty answer is nothing
+				return { response: sent, answer: await parseAnswer(sent) };
+			},
+			options.timeout ?? DEFAULT_AZURE_CALL_TIMEOUT,
+			options.signal ? { signal: options.signal } : {},
+		);
+
+		// 5. An error status — or a redirect, which is not followed — becomes the kit's error; the signature is struck
+		//    from the answer, should Azure quote it, so no error or log line ever carries a working SAS
+		if (response.status >= 300) {
+			throw toProviderCallError({
+				provider: 'azure',
+				method,
+				status: response.status,
+				body: typeof answer === 'string' ? redact(answer, sas.signature) : answer,
+				headers: response.headers,
+			});
+		}
+
+		return answer as T;
+	}
+
+	/**
 	 * Complete a resumable upload.
 	 *
 	 * The append blob already holds every chunk under the final name, so there is nothing to assemble.
@@ -472,3 +633,39 @@ export class StorageDriverAzure implements TusDriver {
 		await this.delete(filepath);
 	}
 }
+
+/**
+ * Read a response's body: JSON when it parses, the text otherwise.
+ *
+ * @param response - The response.
+ * @returns The parsed body, the text, or `undefined` for an empty one.
+ * @internal
+ */
+const parseAnswer = async (response: Response): Promise<unknown> => {
+	// 1. An empty body — a 201 of a created container, any HEAD — is nothing rather than an empty string
+	const text = await response.text();
+
+	if (text.length === 0) return undefined;
+
+	// 2. The Blob service answers XML, which is returned as it came; the odd JSON answer is parsed
+	try {
+		return JSON.parse(text) as unknown;
+	} catch {
+		return text;
+	}
+};
+
+/**
+ * Strike a SAS signature from a text, in its plain and its URL-encoded form.
+ *
+ * @param text - The text, an error answer of Azure.
+ * @param signature - The signature.
+ * @returns The text without the signature.
+ * @internal
+ */
+const redact = (text: string, signature: string): string => {
+	// 1. Both forms, since Azure may quote the URL it was sent as well as the decoded value
+	if (!signature) return text;
+
+	return text.replaceAll(signature, '[redacted]').replaceAll(encodeURIComponent(signature), '[redacted]');
+};

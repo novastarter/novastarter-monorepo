@@ -2,10 +2,13 @@
  * Tests of the SES driver class with the AWS SDK and nodemailer mocked; the tag mapper has its own suite in
  * `to-ses-message-tags.test.ts`.
  */
+import { SESv2ServiceException } from '@aws-sdk/client-sesv2';
+import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
+import { TimeoutError } from '@novastarter/utils';
 import nodemailer from 'nodemailer';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import defaultExport from '../index.js';
-import { MailDriverSes } from './driver.js';
+import { DEFAULT_SES_CALL_TIMEOUT, MailDriverSes } from './driver.js';
 
 /**
  * Spy standing in for the transport's `sendMail()`, shared by every instance so a test can script nodemailer's answer.
@@ -21,33 +24,121 @@ const sendMail = vi.fn();
  */
 const destroy = vi.fn();
 
+/**
+ * Spy standing in for `SESv2Client.send()`, the call `call()` makes, shared by every instance.
+ *
+ * @internal
+ */
+const send = vi.fn();
+
 vi.mock('nodemailer', () => ({ default: { createTransport: vi.fn(() => ({ sendMail })) } }));
 
-vi.mock('@aws-sdk/client-sesv2', () => ({
+vi.mock('@aws-sdk/client-sesv2', () => {
 	/**
-	 * Stand-in for the SDK's `SESv2Client`: only the surface the driver touches, with the options kept for inspection.
+	 * Stand-in for the SDK's base command class, the one `call()` checks an export against.
 	 */
-	SESv2Client: class {
+	class $Command {
 		/**
-		 * Keep the client options instead of opening a connection, so a test can check what the driver built.
+		 * Keep the action's input, so a test can check what the driver passed.
 		 *
-		 * @param config - What the driver passed to the SDK.
+		 * @param input - The action's input.
 		 */
-		constructor(public config: unknown) {}
+		constructor(public input: unknown) {}
 
 		/**
-		 * Record the shutdown on the shared spy.
+		 * Stand-in for the command's middleware stack: the middlewares added to it, kept with their options.
 		 */
-		destroy(): void {
-			destroy();
-		}
-	},
+		middlewareStack = {
+			added: [] as [unknown, unknown][],
+
+			/**
+			 * Keep a middleware and its options, so a test can run it.
+			 *
+			 * @param middleware - The middleware.
+			 * @param options - Its step and name.
+			 */
+			add(middleware: unknown, options: unknown): void {
+				// 1. Kept in order; nothing runs until a test runs it
+				this.added.push([middleware, options]);
+			},
+		};
+	}
 
 	/**
-	 * Stand-in for the SDK's `SendEmailCommand`; the driver only hands the class to nodemailer, never calls it.
+	 * Stand-in for the SDK's exception base class, with the HTTP status in `$metadata`.
 	 */
-	SendEmailCommand: class {},
-}));
+	class SESv2ServiceException extends Error {
+		/**
+		 * The response metadata the SDK attaches to a refusal.
+		 *
+		 * @internal
+		 */
+		$metadata: { httpStatusCode?: number };
+
+		/**
+		 * Build a refusal with its name, message and status.
+		 *
+		 * @param options - The exception's name, message and metadata.
+		 */
+		constructor(options: { name: string; message: string; $metadata: { httpStatusCode?: number } }) {
+			// 1. Named like the SDK's exceptions, so the driver reads the name the same way
+			super(options.message);
+			this.name = options.name;
+			this.$metadata = options.$metadata;
+		}
+	}
+
+	return {
+		$Command,
+		SESv2ServiceException,
+
+		/**
+		 * Stand-in for the SDK's `GetAccountCommand`: a real subclass of the base command.
+		 */
+		GetAccountCommand: class extends $Command {},
+
+		/**
+		 * Stand-in for a non-command export that happens to be a class, which `call()` must refuse to run.
+		 */
+		SomethingCommand: class {},
+
+		/**
+		 * Stand-in for the SDK's `SESv2Client`: only the surface the driver touches, with the options kept for inspection.
+		 */
+		SESv2Client: class {
+			/**
+			 * Keep the client options instead of opening a connection, so a test can check what the driver built.
+			 *
+			 * @param config - What the driver passed to the SDK.
+			 */
+			constructor(public config: unknown) {}
+
+			/**
+			 * Record the shutdown on the shared spy.
+			 */
+			destroy(): void {
+				destroy();
+			}
+
+			/**
+			 * Route the request to the shared spy.
+			 *
+			 * @param command - The command the driver built.
+			 * @param options - The SDK's per-request options, the abort signal among them.
+			 * @returns What the spy answers.
+			 */
+			send(command: unknown, options: unknown): Promise<unknown> {
+				// 1. Nothing is sent; the spy scripts SES's answer
+				return send(command, options);
+			}
+		},
+
+		/**
+		 * Stand-in for the SDK's `SendEmailCommand`; the driver only hands the class to nodemailer, never calls it.
+		 */
+		SendEmailCommand: class {},
+	};
+});
 
 afterEach(() => {
 	vi.clearAllMocks();
@@ -156,5 +247,160 @@ describe('MailDriverSes', () => {
 			message: 'SES: Message rejected: Email address is not verified.',
 			cause: refusal,
 		});
+	});
+});
+
+describe('call', () => {
+	test('Runs an action by name, with or without the suffix, and answers its output without $metadata', async () => {
+		send.mockResolvedValue({
+			$metadata: { httpStatusCode: 200 },
+			SendingEnabled: true,
+			ProductionAccessEnabled: false,
+		});
+
+		const driver = new MailDriverSes({ region: 'eu-west-1' });
+
+		// 1. The command class of the action, built on the input, sent on the location's client with a signal
+		await expect(driver.call('GetAccount', { Foo: 1 })).resolves.toStrictEqual({
+			SendingEnabled: true,
+			ProductionAccessEnabled: false,
+		});
+
+		const [command, options] = send.mock.calls[0] as [{ input: unknown; constructor: { name: string } }, unknown];
+
+		expect(command.input).toStrictEqual({ Foo: 1 });
+		expect(command.constructor.name).toBe('GetAccountCommand');
+		expect(options).toStrictEqual({ abortSignal: expect.any(AbortSignal) });
+
+		// 2. The SDK's own class name works as well; no input means an empty one
+		await driver.call('GetAccountCommand');
+
+		expect((send.mock.calls[1]?.[0] as { input: unknown }).input).toStrictEqual({});
+	});
+
+	test('Refuses an unknown name or a non-command export before anything is sent', async () => {
+		const driver = new MailDriverSes();
+
+		// 1. A typo, a class of the SDK that is not a command, and a malformed name are all refused
+		await expect(driver.call('GetAcount')).rejects.toThrow('is not an SESv2 action');
+		await expect(driver.call('Something')).rejects.toThrow('is not an SESv2 action');
+		await expect(driver.call('GET /v2/email/account')).rejects.toThrow('is not an SESv2 action');
+
+		expect(send).not.toHaveBeenCalled();
+	});
+
+	test('Turns a refusal into ProviderCallError without the credentials in the message', async () => {
+		const refusal = new SESv2ServiceException({
+			name: 'NotFoundException',
+			message: 'Email identity not found',
+			$metadata: { httpStatusCode: 404 },
+			$fault: 'client',
+		});
+
+		send.mockRejectedValueOnce(refusal);
+
+		// 1. The status from the metadata, the name and message as the body, the SDK's exception as the cause
+		const error = (await new MailDriverSes({ accessKeyId: 'AKIA-ID', secretAccessKey: 'SECRET' })
+			.call('GetAccount')
+			.catch((caught: unknown) => caught)) as InstanceType<typeof ProviderCallError>;
+
+		expect(error).toBeInstanceOf(ProviderCallError);
+
+		expect(error.extensions).toStrictEqual({
+			provider: 'ses',
+			method: 'GetAccount',
+			status: 404,
+			body: { name: 'NotFoundException', message: 'Email identity not found' },
+		});
+
+		expect(error.cause).toBe(refusal);
+		expect(error.message).toBe('ses refused GetAccount: 404 Email identity not found');
+
+		// 2. The key pair never reaches the message
+		expect(error.message).not.toContain('SECRET');
+		expect(error.message).not.toContain('AKIA-ID');
+	});
+
+	test('Turns throttling into HitRateLimitError, by status or by name', async () => {
+		const driver = new MailDriverSes();
+
+		// 1. A 429 status
+		send.mockRejectedValueOnce(
+			new SESv2ServiceException({
+				name: 'LimitExceededException',
+				message: 'slow down',
+				$metadata: { httpStatusCode: 429 },
+				$fault: 'client',
+			}),
+		);
+
+		await expect(driver.call('GetAccount')).rejects.toBeInstanceOf(HitRateLimitError);
+
+		// 2. SES's throttling exception, whatever its status
+		send.mockRejectedValueOnce(
+			new SESv2ServiceException({
+				name: 'TooManyRequestsException',
+				message: 'Too many requests',
+				$metadata: { httpStatusCode: 400 },
+				$fault: 'client',
+			}),
+		);
+
+		await expect(driver.call('GetAccount')).rejects.toBeInstanceOf(HitRateLimitError);
+	});
+
+	test('Gives up at the timeout and aborts the request; other errors pass through', async () => {
+		// 1. A request that only ends when its signal aborts
+		send.mockImplementationOnce(
+			(_command: unknown, { abortSignal }: { abortSignal: AbortSignal }) =>
+				new Promise((_resolve, reject) => abortSignal.addEventListener('abort', () => reject(abortSignal.reason))),
+		);
+
+		const driver = new MailDriverSes();
+
+		await expect(driver.call('GetAccount', {}, { timeout: 10 })).rejects.toBeInstanceOf(TimeoutError);
+		expect((send.mock.calls[0]?.[1] as { abortSignal: AbortSignal }).abortSignal.aborted).toBe(true);
+		expect(DEFAULT_SES_CALL_TIMEOUT).toBe(30_000);
+
+		// 2. A network failure is not SES refusing: it is thrown as it came
+		const failure = new Error('getaddrinfo ENOTFOUND');
+
+		send.mockRejectedValueOnce(failure);
+
+		await expect(driver.call('GetAccount')).rejects.toBe(failure);
+	});
+
+	test('Adds the caller headers to the HTTP request in the build step, and adds nothing without them', async () => {
+		send.mockResolvedValue({ $metadata: {} });
+
+		const driver = new MailDriverSes();
+
+		// 1. One middleware in the build step, before the SDK signs the request
+		await driver.call('GetAccount', {}, { headers: { 'x-amzn-trace-id': 'Root=1' } });
+
+		type Middleware = (next: (args: unknown) => Promise<unknown>) => (args: unknown) => Promise<unknown>;
+
+		const [command] = send.mock.calls[0] as [{ middlewareStack: { added: [Middleware, unknown][] } }];
+		const [[middleware, options]] = command.middlewareStack.added as [[Middleware, unknown]];
+
+		expect(options).toStrictEqual({ step: 'build', name: 'novastarterCallHeaders' });
+
+		// 2. Run on a request, it puts the headers over the SDK's and hands the request on
+		const next = vi.fn(async (args: unknown) => args);
+		const args = { input: {}, request: { headers: { host: 'email.eu-west-1.amazonaws.com' } } };
+
+		await middleware(next)(args);
+
+		expect(next).toHaveBeenCalledWith({
+			input: {},
+			request: { headers: { host: 'email.eu-west-1.amazonaws.com', 'x-amzn-trace-id': 'Root=1' } },
+		});
+
+		// 3. Without headers the stack is left alone
+		await driver.call('GetAccount');
+
+		const [plain] = send.mock.calls[1] as [{ middlewareStack: { added: unknown[] } }];
+
+		expect(plain.middlewareStack.added).toStrictEqual([]);
 	});
 });

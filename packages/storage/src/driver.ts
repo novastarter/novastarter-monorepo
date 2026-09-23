@@ -1,4 +1,5 @@
 import type { Readable } from 'node:stream';
+import type { CallOptions } from '@novastarter/utils';
 import type { ChunkedUploadContext, ReadOptions, Stat } from './types.js';
 
 /**
@@ -87,6 +88,35 @@ export declare class StorageDriver {
 	 * @returns Object paths relative to the driver root, produced lazily.
 	 */
 	list(prefix?: string): AsyncIterable<string>;
+
+	/**
+	 * Make a request of the storage service's own API with the location's credentials, timeout and errors — the way to
+	 * whatever the contract does not cover, an endpoint the driver has no wrapper for yet included.
+	 *
+	 * The signature is the same for every driver; what `method` means is the provider's, so code calling it is written
+	 * for one provider: the verb and path of a REST API — S3's command name `PutBucketLifecycleConfiguration`, GCS's
+	 * `GET /b/{bucket}/iam`, Cloudinary's `GET /resources/image` — a full URL on one of the provider's own hosts, or
+	 * the command name of an RPC-style SDK. The parameters are the query of a `GET`, `HEAD` or `DELETE` and the body
+	 * otherwise; a `Blob` or `File` among them is uploaded, where the API takes files.
+	 *
+	 * Optional: `local` has no API and leaves it out.
+	 *
+	 * @typeParam T - What the request answers with; the caller knows it from the provider's documentation.
+	 * @param method - The verb and path, a full URL on the provider's hosts, or a command name.
+	 * @param params - Its query or body.
+	 * @param options - A timeout, an abort signal, extra headers, and `paramsIn` — `body` for an API that reads a
+	 * `DELETE` body.
+	 * @returns The provider's answer: parsed JSON, else text; `undefined` for an empty one.
+	 * @throws ProviderCallError when the provider answers with an error status — its status and answer in `extensions`.
+	 * @throws HitRateLimitError when the provider asks to slow down.
+	 * @throws TimeoutError when the request outlives its timeout.
+	 * @throws Error when the method is malformed or its URL is not on the provider's hosts.
+	 * @example
+	 * ```ts
+	 * await useStorage().location('uploads').call?.('GetBucketVersioning');
+	 * ```
+	 */
+	call?<T = unknown>(method: string, params?: Record<string, unknown>, options?: CallOptions): Promise<T>;
 
 	/**
 	 * Release what the driver holds — an SDK's HTTP agents, open sockets — so the process can exit.

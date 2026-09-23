@@ -1,5 +1,5 @@
 import type { MessengerDriver, MessengerFormat, MessengerMessage, MessengerResult } from '@novastarter/messenger';
-import { withTimeout } from '@novastarter/utils';
+import { type CallOptions, withTimeout } from '@novastarter/utils';
 import { type TelegramErrorAnswer, toTelegramError } from './to-telegram-error.js';
 import { toTelegramRequest } from './to-telegram-request.js';
 
@@ -67,8 +67,7 @@ interface TelegramAnswer<T> {
  * });
  *
  * // a method without a wrapper
- * const telegram = useMessenger().location('telegram') as MessengerDriverTelegram;
- * await telegram.call('setMessageReaction', {
+ * await useMessenger().location('telegram').call?.('setMessageReaction', {
  * 	chat_id: chatId,
  * 	message_id: 7,
  * 	reaction: [{ type: 'emoji', emoji: '👍' }],
@@ -148,6 +147,7 @@ export class MessengerDriverTelegram implements MessengerDriver {
 	 * @typeParam T - What the method's `result` is; the caller knows it from Telegram's documentation.
 	 * @param method - The method: `sendPhoto`, `setMessageReaction`.
 	 * @param params - Its parameters; `undefined` ones are left out.
+	 * @param options - A timeout over the location's, an abort signal, extra headers.
 	 * @returns The `result` of Telegram's answer.
 	 * @throws MessengerTargetGoneError when the bot was blocked or the chat is gone.
 	 * @throws HitRateLimitError when Telegram asks to slow down.
@@ -158,22 +158,26 @@ export class MessengerDriverTelegram implements MessengerDriver {
 	 * await telegram.call('sendPhoto', { chat_id: chatId, photo: new File([png], 'chart.png'), caption: 'Today' });
 	 * ```
 	 */
-	async call<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, options: CallOptions = {}): Promise<T> {
 		// 1. JSON unless a file is among the parameters: the Bot API takes files only in a form
 		const defined = Object.entries(params).filter(([, value]) => value !== undefined);
 		const multipart = defined.some(([, value]) => value instanceof Blob);
 		const body = multipart ? toFormData(defined) : JSON.stringify(Object.fromEntries(defined));
 
-		// 2. The call, abandoned at the timeout; the token is in the URL, so the URL never goes into an error
+		// 2. The call, abandoned at the timeout or the caller's abort; the token is in the URL, so the URL never goes into
+		//    an error. A multipart body sets its own content type, with the boundary
+		const headers = { ...(multipart ? {} : { 'content-type': 'application/json' }), ...options.headers };
+
 		const response = await withTimeout(
 			(signal) =>
 				fetch(`${this.config.apiUrl}/bot${this.config.token}/${method}`, {
 					method: 'POST',
 					body,
 					signal,
-					...(multipart ? {} : { headers: { 'content-type': 'application/json' } }),
+					...(Object.keys(headers).length > 0 ? { headers } : {}),
 				}),
-			this.config.timeout,
+			options.timeout ?? this.config.timeout,
+			options.signal ? { signal: options.signal } : {},
 		);
 
 		// 3. Telegram answers JSON even on a refusal; anything else is a proxy or an outage in between

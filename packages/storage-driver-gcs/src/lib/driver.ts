@@ -10,6 +10,7 @@ import type {
 } from '@google-cloud/storage';
 import { Storage } from '@google-cloud/storage';
 import { DEFAULT_CHUNK_SIZE } from '@novastarter/constants';
+import { toProviderCallError } from '@novastarter/errors';
 import {
 	type ChunkedUploadContext,
 	type ReadOptions,
@@ -19,7 +20,8 @@ import {
 	toRelativePath,
 	type TusDriver,
 } from '@novastarter/storage';
-import { confinePath, joinPath } from '@novastarter/utils';
+import { type CallOptions, confinePath, joinPath, parseCallMethod, withTimeout } from '@novastarter/utils';
+import { httpCall, resolveCallUrl } from '@novastarter/utils/node';
 
 /**
  * Smallest chunk size GCS accepts for a resumable upload: 256 KiB, `262_144` bytes.
@@ -28,6 +30,29 @@ import { confinePath, joinPath } from '@novastarter/utils';
  * the first PATCH.
  */
 const MINIMUM_CHUNK_SIZE = 262_144;
+
+/**
+ * How long a {@link StorageDriverGcs.call} may take when the caller names no timeout, in milliseconds.
+ *
+ * @defaultValue 30 000 ms.
+ */
+export const DEFAULT_GCS_CALL_TIMEOUT = 30_000;
+
+/**
+ * The root of the GCS JSON API a `call()` path is joined to, when the location names no `apiEndpoint`.
+ *
+ * @defaultValue `https://storage.googleapis.com`
+ * @internal
+ */
+const GCS_API_ENDPOINT = 'https://storage.googleapis.com';
+
+/**
+ * The hosts a full URL given to {@link StorageDriverGcs.call} may point at, besides the configured `apiEndpoint`'s:
+ * the application's credentials go only there.
+ *
+ * @internal
+ */
+const GCS_CALL_HOSTS = ['storage.googleapis.com'];
 
 /**
  * Options accepted by {@link StorageDriverGcs}.
@@ -114,6 +139,21 @@ export class StorageDriverGcs implements TusDriver {
 	private bucket: Bucket;
 
 	/**
+	 * Name of the bucket, put in place of `{bucket}` in a {@link StorageDriverGcs.call} path.
+	 *
+	 * @internal
+	 */
+	private readonly bucketName: string;
+
+	/**
+	 * Root of the JSON API a {@link StorageDriverGcs.call} path is joined to: the `apiEndpoint`, or GCS's own, with
+	 * `/storage/v1` after it.
+	 *
+	 * @internal
+	 */
+	private readonly apiRoot: string;
+
+	/**
 	 * Chunk size handed to resumable uploads, taken from `tus.chunkSize` or {@link DEFAULT_CHUNK_SIZE}.
 	 *
 	 * @internal
@@ -160,13 +200,21 @@ export class StorageDriverGcs implements TusDriver {
 		//    first request
 		const storage = new Storage(storageOptions);
 		this.bucket = storage.bucket(bucket);
+		this.bucketName = bucket;
 
-		// 5. The chunk size handed to resumable uploads: the configured value when one was given, the package default
+		// 5. The JSON API root for `call()`: the endpoint the client talks to, with `https` assumed like the SDK does
+		//    for an endpoint without a scheme, so a raw request goes where the driver's own ones go
+		const endpoint = apiEndpoint ?? GCS_API_ENDPOINT;
+		const withScheme = /^https?:\/\//i.test(endpoint) ? endpoint : `https://${endpoint}`;
+
+		this.apiRoot = `${withScheme.replace(/\/+$/, '')}/storage/v1`;
+
+		// 6. The chunk size handed to resumable uploads: the configured value when one was given, the package default
 		//    otherwise. `??` rather than `||`, so a configured `0` or `NaN` stays what it is and is caught by the
 		//    validation below instead of being masked by the default
 		this.preferredChunkSize = tus?.chunkSize ?? DEFAULT_CHUNK_SIZE;
 
-		// 6. GCS requires resumable chunks to be multiples of 256 KiB; restricting to powers of two keeps every chunk
+		// 7. GCS requires resumable chunks to be multiples of 256 KiB; restricting to powers of two keeps every chunk
 		//    aligned and rejects a misconfiguration here rather than on the first PATCH. The check runs on the
 		//    configured value itself whenever one was given — `0` fails it for being below the minimum and `NaN` for
 		//    not being a power of two — and it runs regardless of the `enabled` flag, because `writeChunk` hands the
@@ -176,7 +224,7 @@ export class StorageDriverGcs implements TusDriver {
 			throw new Error('The gcs storage driver got a "tus.chunkSize" that is not a power of two of at least 256 KiB');
 		}
 
-		// 7. An explicit `false` marks a location that does not serve resumable uploads; the chunked-upload methods
+		// 8. An explicit `false` marks a location that does not serve resumable uploads; the chunked-upload methods
 		//    read the flag and refuse rather than acting as if uploads were possible. An absent flag keeps the
 		//    behaviour of every version before the option was honoured
 		this.tusEnabled = tus?.enabled ?? true;
@@ -525,6 +573,117 @@ export class StorageDriverGcs implements TusDriver {
 		await pipelinePromise(content, stream);
 
 		return bytesUploaded;
+	}
+
+	/**
+	 * Make any request of the GCS JSON API with the location's credentials, bucket and a timeout — the way to what the
+	 * storage contract does not cover: IAM policies, bucket metadata, lifecycle rules, notifications.
+	 *
+	 * `method` is the verb and the path under `/storage/v1` — `{bucket}` in it stands for the location's bucket — or
+	 * a full URL on `storage.googleapis.com` or the configured `apiEndpoint`. The request carries an OAuth access token
+	 * of the client's Application Default Credentials, the ones the driver's own requests use. The parameters are the
+	 * query of a `GET`, `HEAD` or `DELETE` and the JSON body otherwise, unless `options.paramsIn` says; object names in
+	 * a path are not placed under the location's root. The request is made once: a failed call is not retried.
+	 *
+	 * @typeParam T - What the API answers with; the caller knows it from the GCS documentation.
+	 * @param method - The verb and path: `GET /b/{bucket}/iam`, `PATCH /b/{bucket}`.
+	 * @param params - The query or the JSON body.
+	 * @param options - A timeout over {@link DEFAULT_GCS_CALL_TIMEOUT} covering the token and the request, an abort
+	 * signal, extra headers, where the parameters go.
+	 * @returns The parsed JSON answer, else its text; `undefined` for an empty one.
+	 * @throws ProviderCallError when GCS answers with an error status — its status and `{ error: { code, message } }`
+	 * in `extensions`.
+	 * @throws HitRateLimitError when GCS answers 429.
+	 * @throws TimeoutError when the token and the request outlive the timeout.
+	 * @throws Error when the method is malformed, its URL is not on a GCS host, or no access token can be had.
+	 * @example
+	 * ```ts
+	 * const policy = await gcs.call<{ bindings: { role: string; members: string[] }[] }>('GET /b/{bucket}/iam');
+	 *
+	 * await gcs.call('PATCH /b/{bucket}', { versioning: { enabled: true } });
+	 * ```
+	 */
+	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, options: CallOptions = {}): Promise<T> {
+		// 1. The verb and the URL; a full URL off the GCS hosts is refused here, before a token is even fetched
+		const { verb, target } = parseCallMethod(method);
+
+		const url = resolveCallUrl(this.apiRoot, target.replaceAll('{bucket}', encodeURIComponent(this.bucketName)), [
+			...GCS_CALL_HOSTS,
+		]);
+
+		// 2. The token and the request under one deadline and the caller's signal: a slow metadata server counts
+		//    against the timeout too. The request goes through `httpCall` rather than the SDK's client, whose errors
+		//    carry the request's `Authorization` header, which ignores a per-request timeout and which retries a POST
+		const timeout = options.timeout ?? DEFAULT_GCS_CALL_TIMEOUT;
+
+		const response = await withTimeout(
+			async (signal) => {
+				// 1. The token of the client's credentials; the call stops here when the deadline passed meanwhile
+				const token = await this.getCallToken();
+
+				signal.throwIfAborted();
+
+				// 2. The request under the same signal; its own deadline is the outer one, which fires first
+				return httpCall({
+					url,
+					verb,
+					params,
+					paramsIn: options.paramsIn,
+					headers: { authorization: `Bearer ${token}`, ...options.headers },
+					timeout,
+					signal,
+				});
+			},
+			timeout,
+			options.signal ? { signal: options.signal } : {},
+		);
+
+		// 3. An error status becomes the kit's error, a 429 the rate-limit one; GCS's `{ error: { code, message } }`
+		//    body names the reason, and nothing of the request goes into it
+		if (response.status >= 400) {
+			throw toProviderCallError({
+				provider: 'gcs',
+				method,
+				status: response.status,
+				body: response.body,
+				headers: response.headers,
+			});
+		}
+
+		return response.body as T;
+	}
+
+	/**
+	 * Get an OAuth access token of the client's credentials for {@link StorageDriverGcs.call}.
+	 *
+	 * The credentials library's errors carry the token request — a signed assertion, a refresh token — so one is never
+	 * passed on: a plain error with its code takes its place.
+	 *
+	 * @returns The access token.
+	 * @throws Error when no token can be had.
+	 * @internal
+	 */
+	private async getCallToken(): Promise<string> {
+		// 1. The auth client of the bucket's `Storage`, so the call authenticates exactly as the driver's own requests
+		let token: string | null | undefined;
+
+		try {
+			token = await this.bucket.storage.authClient.getAccessToken();
+		} catch (error) {
+			// 1. Only the error's code — `ENOTFOUND`, `401` — is kept; its message and fields may hold the credentials
+			const code = (error as { code?: unknown } | null)?.code;
+			const safeCode = typeof code === 'string' || typeof code === 'number' ? ` (${String(code)})` : '';
+
+			// eslint-disable-next-line preserve-caught-error -- the cause carries the token request
+			throw new Error(`The gcs storage driver could not get an access token${safeCode}`);
+		}
+
+		// 2. Credentials that yield no token cannot authenticate the call; better said here than as a GCS 401
+		if (!token) {
+			throw new Error('The gcs storage driver could not get an access token');
+		}
+
+		return token;
 	}
 
 	/**

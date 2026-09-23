@@ -4,5 +4,5 @@
  */
 import { MailDriverSendgrid } from './lib/driver.js';
 
-export { MailDriverSendgrid, type MailDriverSendgridConfig } from './lib/driver.js';
+export { DEFAULT_SENDGRID_CALL_TIMEOUT, MailDriverSendgrid, type MailDriverSendgridConfig } from './lib/driver.js';
 export default MailDriverSendgrid;

@@ -4,5 +4,9 @@
  */
 import { StorageDriverCloudinary } from './lib/driver.js';
 
-export { StorageDriverCloudinary, type StorageDriverCloudinaryConfig } from './lib/driver.js';
+export {
+	DEFAULT_CLOUDINARY_CALL_TIMEOUT,
+	StorageDriverCloudinary,
+	type StorageDriverCloudinaryConfig,
+} from './lib/driver.js';
 export default StorageDriverCloudinary;

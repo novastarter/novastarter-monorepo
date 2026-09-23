@@ -18,10 +18,11 @@ import {
 	randGitShortSha as randUnique,
 } from '@ngneat/falso';
 import { DEFAULT_CHUNK_SIZE } from '@novastarter/constants';
+import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { StorageFileNotFoundError } from '@novastarter/storage';
 import { StorageClient } from '@supabase/storage-js';
 import * as tus from 'tus-js-client';
-import { fetch, Response } from 'undici';
+import { fetch, FormData, Response } from 'undici';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { StorageDriverSupabaseConfig } from './driver.js';
 import { StorageDriverSupabase } from './driver.js';
@@ -1227,6 +1228,132 @@ describe('#list', () => {
 		expect(error).toBeInstanceOf(Error);
 		expect((error as Error).message).toBe(`Error listing prefix "${sample.path.input}"`);
 		expect((error as Error).cause).toBeUndefined();
+	});
+});
+
+describe('#call', () => {
+	/**
+	 * The URL and init of the one request made.
+	 *
+	 * @returns What `fetch` was called with.
+	 */
+	const request = (): [string, { method: string; headers: Record<string, string>; body?: unknown }] =>
+		vi.mocked(fetch).mock.calls[0] as never;
+
+	beforeEach(() => {
+		// 1. The mocked `undici` fetch answers with a real response, so `httpCall` reads it as it would Supabase's
+		vi.mocked(fetch).mockResolvedValue(new globalThis.Response('[{"id":"media"}]', { status: 200 }) as never);
+	});
+
+	test('Requests a path under the Storage API with the service-role key and the query of a GET', async () => {
+		// 1. The key goes as bearer token and `apikey`, the way `read()` sends it; the parameters into the query
+		const result = await driver.call('GET /object/info/{bucket}/a.png', { download: true });
+
+		const [url, init] = request();
+
+		expect(url).toBe(
+			`https://${sample.config.projectId}.supabase.co/storage/v1/object/info/${sample.config.bucket}/a.png?download=true`,
+		);
+
+		expect(init.method).toBe('GET');
+
+		expect(init.headers).toMatchObject({
+			authorization: `Bearer ${sample.config.serviceRole}`,
+			apikey: sample.config.serviceRole,
+		});
+
+		expect(result).toEqual([{ id: 'media' }]);
+	});
+
+	test('Sends the parameters of a POST as JSON to a custom endpoint, with the headers of the caller', async () => {
+		// 1. A self-hosted endpoint is the root; the caller's headers go over the driver's
+		driver = new StorageDriverSupabase({
+			serviceRole: sample.config.serviceRole,
+			bucket: sample.config.bucket,
+			endpoint: 'https://storage.example.com/storage/v1',
+		});
+
+		await driver.call('POST /object/sign/{bucket}/a.png', { expiresIn: 60 }, { headers: { 'X-Upsert': 'true' } });
+
+		const [url, init] = request();
+
+		expect(url).toBe(`https://storage.example.com/storage/v1/object/sign/${sample.config.bucket}/a.png`);
+		expect(init.body).toBe('{"expiresIn":60}');
+		expect(init.headers).toMatchObject({ 'content-type': 'application/json', 'x-upsert': 'true' });
+	});
+
+	test('Hands a file among the parameters to undici as its own FormData', async () => {
+		// 1. The global `FormData` httpCall builds is copied into `undici`'s, stubbed so its fields can be asserted
+		const form = { append: vi.fn() };
+		vi.mocked(FormData).mockReturnValue(form as unknown as FormData);
+
+		await driver.call('POST /object/{bucket}/a.txt', { file: new File(['x'], 'a.txt') });
+
+		expect(request()[1].body).toBe(form);
+		expect(form.append).toHaveBeenCalledWith('file', expect.any(File));
+	});
+
+	test('Hands undici redirect: manual, so a redirect is never followed with the credentials', async () => {
+		// 1. `httpCall` follows redirects itself and drops the credentials off the origin; undici must not do it first
+		await driver.call('GET /bucket');
+
+		expect(request()[1]).toMatchObject({ redirect: 'manual' });
+	});
+
+	test('Puts the parameters where paramsIn says', async () => {
+		// 1. A POST whose API reads a query: the parameters go into the URL, and no body is sent
+		await driver.call('POST /bucket', { a: 1 }, { paramsIn: 'query' });
+
+		const [url, init] = request();
+
+		expect(url).toContain('?a=1');
+		expect(init.body).toBeUndefined();
+	});
+
+	test('Refuses a full URL on a foreign host before any request', async () => {
+		// 1. The service-role key would go wherever the URL points
+		await expect(driver.call('GET https://evil.example/bucket')).rejects.toThrow('not on a host of this provider');
+
+		expect(fetch).not.toHaveBeenCalled();
+	});
+
+	test('Turns an error status into a ProviderCallError without the service-role key', async () => {
+		// 1. Supabase's `{ statusCode, error, message }` reaches the message; the key never does
+		vi.mocked(fetch).mockResolvedValue(
+			new globalThis.Response('{"statusCode":"404","error":"Bucket not found","message":"Bucket not found"}', {
+				status: 404,
+			}) as never,
+		);
+
+		const error = await driver.call('GET /bucket/nope').catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ProviderCallError);
+
+		expect((error as InstanceType<typeof ProviderCallError>).extensions).toMatchObject({
+			provider: 'supabase',
+			method: 'GET /bucket/nope',
+			status: 404,
+		});
+
+		expect((error as Error).message).toContain('Bucket not found');
+		expect((error as Error).message).not.toContain(sample.config.serviceRole);
+	});
+
+	test('Turns a 429 into a HitRateLimitError', async () => {
+		// 1. Supabase asking to slow down becomes the kit's rate-limit error
+		vi.mocked(fetch).mockResolvedValue(new globalThis.Response('', { status: 429 }) as never);
+
+		await expect(driver.call('GET /bucket')).rejects.toBeInstanceOf(HitRateLimitError);
+	});
+
+	test('Gives up at the timeout of the caller', async () => {
+		// 1. A request that never answers ends at the deadline
+		vi.mocked(fetch).mockImplementation(
+			(_url, init) =>
+				new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))),
+		);
+
+		await expect(driver.call('GET /bucket', {}, { timeout: 5 })).rejects.toMatchObject({ name: 'TimeoutError', ms: 5 });
 	});
 });
 

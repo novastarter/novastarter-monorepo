@@ -47,3 +47,20 @@ export const DEFAULT_SCOPES: readonly string[] = ['openid', 'email', 'profile'];
  * @defaultValue 10 seconds.
  */
 export const DEFAULT_TIMEOUT = 10_000;
+
+/**
+ * The root of Google's APIs, which the path of a `call()` method is joined to.
+ *
+ * @defaultValue `https://www.googleapis.com`
+ */
+export const API_URL = 'https://www.googleapis.com';
+
+/**
+ * The hosts a full URL in a `call()` method may point at: any subdomain of `googleapis.com`, where Google's APIs live
+ * (`gmail.googleapis.com`, `people.googleapis.com`, `oauth2.googleapis.com`). Any other host is refused before the
+ * request, so a person's token never leaves Google.
+ *
+ * @defaultValue `*.googleapis.com`
+ * @internal
+ */
+export const CALL_HOSTS: readonly string[] = ['*.googleapis.com'];

@@ -51,6 +51,31 @@ A token FCM reports as `registration-token-not-registered` or `invalid-registrat
 original as `cause`. `verify()` fetches an OAuth access token with the service account, what every send does first.
 `close()` deletes the Firebase app, whose agents would otherwise keep the process alive.
 
+## Any other request
+
+`call(method, params, options)` reaches the rest of FCM with an OAuth access token of the service account, the
+location's `timeout` (30 s unless given) and the kit's errors. A path goes under `https://fcm.googleapis.com`, where
+`{projectId}` stands for the service account's project; the parameters are the query of a `GET`, `HEAD` or `DELETE` and
+a JSON body otherwise (`options.paramsIn` moves them). The timeout and the signal bound the token's fetch too.
+
+```ts
+const fcm = usePush().location('fcm');
+
+await fcm.call?.('POST /v1/projects/{projectId}/messages:send', {
+	message: { topic: 'news', notification: { title: 'Breaking' } },
+});
+
+await fcm.call?.(
+	'POST https://iid.googleapis.com/iid/v1:batchAdd',
+	{ to: '/topics/news', registration_tokens: [token] },
+	{ headers: { access_token_auth: 'true' } },
+);
+```
+
+A full URL may point at `fcm.googleapis.com` and `iid.googleapis.com` only; any other host is refused before a token is
+fetched. An error status throws `ProviderCallError` with Google's `{ error: { code, message, status } }` in
+`extensions.body`, a `429` throws `HitRateLimitError`, and the timeout `TimeoutError`.
+
 ## Options
 
 | Option           | Required | Description                                                                                       |

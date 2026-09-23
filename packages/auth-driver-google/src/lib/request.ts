@@ -1,5 +1,6 @@
 import { AuthProviderFailedError } from '@novastarter/auth';
 import { toErrorMessage, tryParseJSON, withTimeout } from '@novastarter/utils';
+import type { HttpCallFetch } from '@novastarter/utils/node';
 import { PROVIDER } from './constants.js';
 
 /**
@@ -79,3 +80,39 @@ export const request = async (context: RequestContext, url: string, init: Reques
 		);
 	}
 };
+
+/**
+ * Adapt the driver's {@link AuthFetch} to the fetch `httpCall()` of `@novastarter/utils/node` sends a `call()` with.
+ *
+ * `httpCall()` follows redirects itself and asks the fetch for `redirect: 'manual'`, so credentials never follow a
+ * redirect to another host; it may also send a multipart body. {@link AuthFetch} names neither, so that a narrowly
+ * typed custom fetch still fits it — the request is passed on whole anyway, and a custom fetch must honour `redirect`
+ * the way the platform's does. A fake that answers without headers gets empty ones, which `httpCall()` reads for a
+ * redirect's `Location` and a 429's `Retry-After`.
+ *
+ * @param fetcher - The driver's fetch: the platform's, or one a test hands in.
+ * @returns The fetch for `httpCall()`.
+ * @example
+ * ```ts
+ * await httpCall({ url, verb: 'GET', timeout: 10_000, fetch: toHttpCallFetch(context.fetch) });
+ * ```
+ */
+export const toHttpCallFetch =
+	(fetcher: AuthFetch): HttpCallFetch =>
+	async (url, init) => {
+		// 1. The request whole — `redirect: 'manual'` and a `FormData` body included — though the type hides them
+		const response = await fetcher(url, init as unknown as Parameters<AuthFetch>[1]);
+
+		// 2. The platform's answer is a `Response` already; a fake's is completed with what `httpCall()` reads of it
+		if (response instanceof Response) return response;
+
+		const { headers } = response as { headers?: unknown };
+
+		return {
+			status: response.status,
+			ok: response.ok,
+			headers: headers instanceof Headers ? headers : new Headers(),
+			body: null,
+			text: () => response.text(),
+		} as unknown as Response;
+	};

@@ -59,6 +59,29 @@ Webhooks are verified by the SDK's `webhooks.isSignatureValid` / `unmarshal` wit
 `transaction.payment_failed` → `invoice.failed`. There is no `checkout.completed`: the subscription a checkout creates
 arrives with the custom data. Everything else is verified and dropped.
 
+## Any other request
+
+`call()` reaches any endpoint of Paddle's API with the location's key as the bearer token. The parameters of a `GET` or
+`DELETE` go in the query — a list as one comma-separated value — the others as a JSON body (`options.paramsIn` moves
+them). A refusal throws `ProviderCallError` with Paddle's status and `{ error }`, a 429 `HitRateLimitError`.
+
+```ts
+const payments = usePayments().location('default');
+
+await payments.call?.('GET /discounts', { status: 'active,archived', per_page: 50 });
+
+await payments.call?.('POST /adjustments', {
+	action: 'refund',
+	transaction_id: 'txn_123',
+	reason: 'Charged twice',
+	type: 'full',
+});
+```
+
+Paths go to the environment's API (`api.paddle.com`, `sandbox-api.paddle.com`) or to `apiUrl`. A full URL may point at
+`api.paddle.com` or `sandbox-api.paddle.com`; any other host is refused before a request is made. The default timeout is
+30 seconds.
+
 ## Options
 
 | Option          | Required | Description                                                                                                             |

@@ -62,6 +62,11 @@ the consent URL and, on the callback, exchanges the code at Google's token endpo
 token. The token is verified against Google's published keys — fetched on first use, cached, and refetched when Google
 rotates them — for its signature, issuer, audience (the client id), expiry and nonce, so no profile request follows.
 
+The driver keeps nothing of the exchange: the access token comes back from `finishOAuth()` as `tokens` — `accessToken`,
+`expiresAt`, `scope` (the scopes the person granted) and `tokenType`, plus `refreshToken` when the consent asked for
+offline access. They are secrets; storing them, encrypted with a key of the application's own, is the application's
+responsibility.
+
 The identity carries Google's `sub` as the `subject`, the `email` with `emailVerified` from `email_verified`, the `name`
 and the `picture` as `avatarUrl`; the claims themselves are `raw`. A scope left out leaves its fields out. `openid` is
 always asked for, since without it Google issues no ID token.
@@ -71,6 +76,33 @@ A refused code (`invalid_grant`), a token that fails a check, or a request that 
 
 `verify()` reads Google's key set: it proves Google is reachable, but not the client secret, which only a code exchange
 can check.
+
+## Any other request
+
+`call()` reaches any of Google's APIs: the verb and the path from `https://www.googleapis.com`, or a full URL on a
+`googleapis.com` host. With `accessToken` it acts as that person, within the scopes they granted — ask for them with
+`scopes` on the location or `startOAuth()`; the parameters are the query of a `GET`, `HEAD` or `DELETE` and the JSON
+body otherwise:
+
+```ts
+const google = useAuth().location('google');
+
+// Scope https://www.googleapis.com/auth/calendar.readonly
+const calendars = await google.call?.('GET /calendar/v3/users/me/calendarList', { maxResults: 50 }, { accessToken });
+
+// Scope https://www.googleapis.com/auth/contacts.readonly
+const me = await google.call?.(
+	'GET https://people.googleapis.com/v1/people/me',
+	{ personFields: 'names,emailAddresses' },
+	{ accessToken },
+);
+```
+
+Without `accessToken` no `Authorization` header is sent — for an endpoint that needs none, or one that takes an API key
+as the `key` parameter. `options.headers` go on top, `options.timeout` replaces the location's. A full URL may only
+point at `*.googleapis.com`; any other host is refused before the request. An error status throws `ProviderCallError`
+with Google's status and answer in `extensions`, a 429 `HitRateLimitError`, a timeout `TimeoutError`; no token or secret
+goes into an error message.
 
 ## Options
 

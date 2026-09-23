@@ -98,6 +98,26 @@ cookie encrypted with `oauth.secret` (AES-256-GCM, key derived with HKDF): nothi
 browser can neither read nor change it. `finishOAuth()` opens it, checks the deadline, the location and the state, and
 lets the driver exchange the code.
 
+When the driver hands on the provider's tokens (GitHub and Google do), `finishOAuth()` returns them as `tokens` —
+`accessToken`, and `refreshToken`, `expiresAt` (epoch ms), `scope`, `tokenType` when the provider issues them. They are
+taken off the identity before the `auth.sign-in` filter, so no handler, event listener or log sees them. They are
+secrets: whoever holds them acts as the person at the provider. Storing them is the application's responsibility —
+encrypted, with a key of its own, or not at all.
+
+With a token kept, the driver's `call()` reaches the provider's API on the person's behalf; without one, with the app's
+own credentials where the provider allows that:
+
+```ts
+const { identity, tokens } = await finishOAuth('github', { state, code, cookie });
+
+const repos = await useAuth()
+	.location('github')
+	.call?.('GET /user/repos', { per_page: 100 }, { accessToken: tokens!.accessToken });
+```
+
+A refusal throws `ProviderCallError` (502, the provider's status and answer in `extensions`), a 429 `HitRateLimitError`,
+a timeout `TimeoutError`; a full URL off the provider's own hosts is refused before any request.
+
 With a two-step challenge — a link or a code by mail (`@novastarter/auth-driver-magic-link`), a passkey
 (`@novastarter/auth-driver-passkey`) — two requests as well:
 
@@ -247,7 +267,13 @@ A sign-in driver implements `authorize()` + `callback()` (OAuth), `authenticate(
 (a two-step challenge) of `AuthDriver`, and adds itself to the driver map:
 
 ```ts
-import type { AuthDriver, AuthIdentity, AuthorizeParams, CallbackParams } from '@novastarter/auth';
+import type {
+	AuthCallOptions,
+	AuthDriver,
+	AuthorizeParams,
+	CallbackParams,
+	OAuthCallbackResult,
+} from '@novastarter/auth';
 
 declare module '@novastarter/auth' {
 	interface AuthDrivers {
@@ -258,6 +284,13 @@ declare module '@novastarter/auth' {
 export class AuthDriverGitlab implements AuthDriver {
 	constructor(config: AuthDriverGitlabConfig) {}
 	async authorize(params: AuthorizeParams): Promise<URL> {}
-	async callback(params: CallbackParams): Promise<AuthIdentity> {}
+	async callback(params: CallbackParams): Promise<OAuthCallbackResult> {}
+	async call<T>(method: string, params?: Record<string, unknown>, options?: AuthCallOptions): Promise<T> {}
 }
 ```
+
+`callback()` may return the provider's tokens under `tokens` beside the identity; `finishOAuth()` takes them off and
+hands them to the application. `call()` is optional: a raw request to the provider's API (`'GET /user/repos'`, or a full
+URL on the provider's own hosts only), with `options.accessToken` as a Bearer token for that person, else with the app's
+own credentials. It throws `toProviderCallError()` of `@novastarter/errors` on an error status and never puts a token or
+a secret into an error message.

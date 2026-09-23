@@ -2,7 +2,14 @@
  * Tests of `storage-driver-azure/lib/driver`.
  */
 import { PassThrough, Readable } from 'node:stream';
-import { BlobServiceClient, type ContainerClient, StorageSharedKeyCredential } from '@azure/storage-blob';
+import {
+	AccountSASPermissions,
+	BlobServiceClient,
+	type ContainerClient,
+	generateAccountSASQueryParameters,
+	type SASQueryParameters,
+	StorageSharedKeyCredential,
+} from '@azure/storage-blob';
 import {
 	randAlphaNumeric,
 	randGitBranch as randContainer,
@@ -17,13 +24,17 @@ import {
 	randUrl,
 	randWord,
 } from '@ngneat/falso';
+import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { StorageFileNotFoundError } from '@novastarter/storage';
-import { confinePath, joinPath } from '@novastarter/utils';
+import { confinePath, joinPath, parseCallMethod, withTimeout } from '@novastarter/utils';
 import { afterEach, beforeEach, describe, expect, type Mock, test, vi } from 'vitest';
 import { StorageDriverAzure, type StorageDriverAzureConfig } from './driver.js';
 
 vi.mock('@novastarter/utils');
 vi.mock('@azure/storage-blob');
+
+const { parseCallMethod: parseCallMethodActual, withTimeout: withTimeoutActual } =
+	await vi.importActual<typeof import('@novastarter/utils')>('@novastarter/utils');
 
 /**
  * Random fixture regenerated before every test, so no test can depend on values another one left behind.
@@ -811,6 +822,198 @@ describe('#writeChunk', () => {
 		expect(pulls).toBeLessThan(10);
 
 		expect(mockAppendBlock).not.toHaveBeenCalled();
+	});
+});
+
+describe('#call', () => {
+	/**
+	 * The SAS signature the mocked SDK signs with; it must never reach an error.
+	 */
+	const signature = 'c2VjcmV0+c2ln/bmF0dXJl=';
+
+	let fetchMock: Mock;
+
+	beforeEach(() => {
+		// 1. The real method parser and deadline, a SAS of known content, and a `fetch` that records the request
+		vi.mocked(parseCallMethod).mockImplementation(parseCallMethodActual);
+		vi.mocked(withTimeout).mockImplementation(withTimeoutActual);
+
+		vi.mocked(generateAccountSASQueryParameters).mockReturnValue({
+			version: '2026-06-06',
+			signature,
+			toString: () => `sv=2026-06-06&sig=${encodeURIComponent(signature)}`,
+		} as unknown as SASQueryParameters);
+
+		fetchMock = vi.fn().mockResolvedValue(new Response('<xml/>', { status: 200 }));
+		vi.stubGlobal('fetch', fetchMock);
+
+		driver = new StorageDriverAzure({
+			containerName: 'media',
+			accountKey: sample.config.accountKey,
+			accountName: 'acct',
+		});
+	});
+
+	afterEach(() => {
+		// 1. The global `fetch` is the real one again for the other tests
+		vi.unstubAllGlobals();
+	});
+
+	test('Requests the account endpoint with the parameters and the SAS in the query', async () => {
+		// 1. `{container}` becomes the container; the SAS rides in the query, the API version in a header
+		const result = await driver.call('GET /{container}?restype=container', { comp: 'metadata' });
+
+		const [href, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+		const url = new URL(href);
+
+		expect(url.origin + url.pathname).toBe('https://acct.blob.core.windows.net/media');
+		expect(url.searchParams.get('restype')).toBe('container');
+		expect(url.searchParams.get('comp')).toBe('metadata');
+		expect(url.searchParams.get('sig')).toBe(signature);
+		expect(init).toMatchObject({ method: 'GET', headers: { 'x-ms-version': '2026-06-06' } });
+		expect(init.body).toBeUndefined();
+		expect(result).toBe('<xml/>');
+	});
+
+	test('Signs a short-lived blob SAS with the account credential', async () => {
+		// 1. Blob service only, every resource type, a lifetime of minutes
+		await driver.call('GET /', { restype: 'service', comp: 'properties' });
+
+		expect(AccountSASPermissions.parse).toHaveBeenCalledWith('rwdxylacuptfi');
+
+		expect(generateAccountSASQueryParameters).toHaveBeenCalledWith(
+			expect.objectContaining({ services: 'b', resourceTypes: 'sco', protocol: 'https' }),
+			driver['signedCredentials'],
+		);
+
+		const [values] = vi.mocked(generateAccountSASQueryParameters).mock.calls[0]!;
+
+		expect(values.expiresOn.getTime() - Date.now()).toBeLessThanOrEqual(5 * 60_000);
+	});
+
+	test('Sends an XML body and the headers of the caller on a PUT', async () => {
+		// 1. `body` is the request body, every other parameter stays in the query; the caller's headers go on top
+		fetchMock.mockResolvedValue(new Response(null, { status: 202 }));
+
+		const result = await driver.call(
+			'PUT /',
+			{ restype: 'service', comp: 'properties', body: '<StorageServiceProperties/>' },
+			{ headers: { 'X-Ms-Client-Request-Id': 'abc' } },
+		);
+
+		const [href, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+		expect(new URL(href).searchParams.get('body')).toBeNull();
+
+		expect(init).toMatchObject({
+			method: 'PUT',
+			body: '<StorageServiceProperties/>',
+			headers: { 'content-type': 'application/xml', 'x-ms-client-request-id': 'abc' },
+		});
+
+		expect(result).toBeUndefined();
+	});
+
+	test('Refuses a full URL on a foreign host before anything is signed or sent', async () => {
+		// 1. A SAS for the account must not travel to another party
+		await expect(driver.call('GET https://evil.example/')).rejects.toThrow('not on a host of this provider');
+
+		expect(generateAccountSASQueryParameters).not.toHaveBeenCalled();
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	test('Turns an error status into a ProviderCallError without the SAS or the account key', async () => {
+		// 1. Azure quoting the signature in its answer must not put it into the error
+		fetchMock.mockResolvedValue(
+			new Response(`<Error><Code>AuthenticationFailed</Code><Message>sig=${signature}</Message></Error>`, {
+				status: 403,
+			}),
+		);
+
+		const error = await driver.call('GET /').catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ProviderCallError);
+
+		expect((error as InstanceType<typeof ProviderCallError>).extensions).toMatchObject({
+			provider: 'azure',
+			status: 403,
+		});
+
+		const everything = JSON.stringify((error as InstanceType<typeof ProviderCallError>).extensions) + String(error);
+
+		expect(everything).toContain('AuthenticationFailed');
+		expect(everything).not.toContain(signature);
+		expect(everything).not.toContain(encodeURIComponent(signature));
+		expect(everything).not.toContain(sample.config.accountKey);
+	});
+
+	test('Turns a 429 into a HitRateLimitError', async () => {
+		// 1. Azure asking to slow down becomes the kit's rate-limit error
+		fetchMock.mockResolvedValue(new Response('', { status: 429, headers: { 'retry-after': '3' } }));
+
+		await expect(driver.call('GET /')).rejects.toBeInstanceOf(HitRateLimitError);
+	});
+
+	test('Gives up at the timeout of the caller', async () => {
+		// 1. A request that never answers; the error is matched by shape, since `@novastarter/utils` is mocked here
+		fetchMock.mockImplementation(
+			(_url: string, init: RequestInit) =>
+				new Promise((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(init.signal?.reason))),
+		);
+
+		await expect(driver.call('GET /', {}, { timeout: 5 })).rejects.toMatchObject({ name: 'TimeoutError', ms: 5 });
+	});
+
+	test('Does not follow a redirect, and reports it as a ProviderCallError without the SAS', async () => {
+		// 1. The SAS rides in the URL, so following a `Location` would hand it to wherever it points
+		fetchMock.mockResolvedValue(
+			new Response(`moved to https://evil.example/?sig=${signature}`, {
+				status: 302,
+				headers: { location: 'https://evil.example/' },
+			}),
+		);
+
+		const error = await driver.call('GET /').catch((thrown: unknown) => thrown);
+
+		expect((fetchMock.mock.calls[0] as [string, RequestInit])[1].redirect).toBe('manual');
+		expect(fetchMock).toHaveBeenCalledOnce();
+		expect(error).toBeInstanceOf(ProviderCallError);
+		expect((error as InstanceType<typeof ProviderCallError>).extensions).toMatchObject({ status: 302 });
+		expect(JSON.stringify(error) + String(error)).not.toContain(signature);
+		expect(JSON.stringify(error)).not.toContain(encodeURIComponent(signature));
+	});
+
+	test('Reports a failure to reach Azure without its cause, which may quote the signed URL', async () => {
+		// 1. A network error naming the URL, SAS included, is replaced by one that names only its code
+		fetchMock.mockRejectedValue(
+			new TypeError(`fetch failed for ?sig=${encodeURIComponent(signature)}`, {
+				cause: Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' }),
+			}),
+		);
+
+		const error = await driver.call('GET /').catch((thrown: unknown) => thrown);
+
+		expect((error as Error).message).toBe('The azure call "GET /" could not reach the service (ENOTFOUND)');
+		expect((error as Error).cause).toBeUndefined();
+		expect(JSON.stringify(error) + String(error)).not.toContain(encodeURIComponent(signature));
+	});
+
+	test('Counts the reading of a slow answer against the timeout', async () => {
+		// 1. Headers in time, a body that never ends: the deadline still ends the call
+		fetchMock.mockImplementation(
+			async (_url: string, init: RequestInit) =>
+				new Response(
+					new ReadableStream({
+						start(controller) {
+							// 1. The body errors with the abort reason, as a real one does when its request is aborted
+							init.signal?.addEventListener('abort', () => controller.error(init.signal?.reason));
+						},
+					}),
+					{ status: 200 },
+				),
+		);
+
+		await expect(driver.call('GET /', {}, { timeout: 5 })).rejects.toMatchObject({ name: 'TimeoutError', ms: 5 });
 	});
 });
 

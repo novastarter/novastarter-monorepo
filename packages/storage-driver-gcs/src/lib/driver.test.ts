@@ -16,9 +16,10 @@ import {
 	randUrl,
 } from '@ngneat/falso';
 import { DEFAULT_CHUNK_SIZE } from '@novastarter/constants';
+import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import type { ChunkedUploadContext } from '@novastarter/storage';
 import { StorageFileNotFoundError } from '@novastarter/storage';
-import { confinePath, joinPath } from '@novastarter/utils';
+import { confinePath, joinPath, parseCallMethod, withTimeout } from '@novastarter/utils';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { StorageDriverGcsConfig } from './driver.js';
@@ -27,6 +28,9 @@ import { StorageDriverGcs } from './driver.js';
 vi.mock('@novastarter/utils');
 vi.mock('@google-cloud/storage');
 vi.mock('node:stream/promises');
+
+const { parseCallMethod: parseCallMethodActual, withTimeout: withTimeoutActual } =
+	await vi.importActual<typeof import('@novastarter/utils')>('@novastarter/utils');
 
 /**
  * Random fixture regenerated before every test, so no test can depend on values another one left behind.
@@ -840,6 +844,226 @@ describe('#writeChunk', () => {
 		);
 
 		expect(mockFile.createWriteStream).not.toHaveBeenCalled();
+	});
+});
+
+describe('#call', () => {
+	/**
+	 * The OAuth token the mocked credentials hand out; no error or log line may ever show it.
+	 *
+	 * @defaultValue a fixed fake token
+	 */
+	const TOKEN = 'ya29.secret-access-token';
+
+	let getAccessToken: Mock;
+	let fetchMock: Mock;
+
+	/**
+	 * The URL and init of the one request made.
+	 *
+	 * @returns What `fetch` was called with.
+	 */
+	const request = (): [
+		string,
+		{ method: string; headers: Record<string, string>; body?: unknown; redirect?: string },
+	] => fetchMock.mock.calls[0] as never;
+
+	/**
+	 * Swap the driver's bucket for one whose `Storage` hands out {@link TOKEN}, the way the SDK's does.
+	 *
+	 * @param target - The driver to fit.
+	 */
+	const withAuth = (target: StorageDriverGcs): void => {
+		// 1. Only the auth client is read by `call()`; the rest of the bucket stays out of the picture
+		target['bucket'] = { storage: { authClient: { getAccessToken } } } as unknown as Bucket;
+	};
+
+	beforeEach(() => {
+		// 1. The real method parser and deadline, credentials that hand out a known token, and a global `fetch` whose
+		//    requests are observable
+		vi.mocked(parseCallMethod).mockImplementation(parseCallMethodActual);
+		vi.mocked(withTimeout).mockImplementation(withTimeoutActual);
+
+		getAccessToken = vi.fn().mockResolvedValue(TOKEN);
+		fetchMock = vi.fn().mockImplementation(async () => new Response('{"bindings":[]}', { status: 200 }));
+		vi.stubGlobal('fetch', fetchMock);
+
+		driver = new StorageDriverGcs({ bucket: 'media bucket' });
+		withAuth(driver);
+	});
+
+	afterEach(() => {
+		// 1. The real `fetch` back for the suites that follow
+		vi.unstubAllGlobals();
+	});
+
+	test('Requests a path under the API root with the bucket filled in, the token and the query of a GET', async () => {
+		// 1. `{bucket}` becomes the encoded bucket name; the parameters go into the URL, no body is sent
+		const result = await driver.call('GET /b/{bucket}/iam', { optionsRequestedPolicyVersion: 3 });
+
+		const [url, init] = request();
+
+		expect(url).toBe('https://storage.googleapis.com/storage/v1/b/media%20bucket/iam?optionsRequestedPolicyVersion=3');
+		expect(init.method).toBe('GET');
+		expect(init.headers['authorization']).toBe(`Bearer ${TOKEN}`);
+		expect(init.body).toBeUndefined();
+		expect(init.redirect).toBe('manual');
+		expect(result).toEqual({ bindings: [] });
+	});
+
+	test('Sends the parameters of a PATCH as the JSON body, with the headers of the caller', async () => {
+		// 1. The body goes as JSON; the caller's headers go over the driver's
+		await driver.call('PATCH /b/{bucket}', { versioning: { enabled: true } }, { headers: { 'X-Goog-A': 'b' } });
+
+		const [url, init] = request();
+
+		expect(url).toBe('https://storage.googleapis.com/storage/v1/b/media%20bucket');
+		expect(init.method).toBe('PATCH');
+		expect(init.body).toBe('{"versioning":{"enabled":true}}');
+		expect(init.headers).toMatchObject({ 'content-type': 'application/json', 'x-goog-a': 'b' });
+	});
+
+	test('Puts the parameters where paramsIn says', async () => {
+		// 1. A POST whose parameters the API reads from the query
+		await driver.call('POST /b/{bucket}/o/a/rewriteTo/b/c/o/d', { maxBytes: 1 }, { paramsIn: 'query' });
+
+		const [url, init] = request();
+
+		expect(url).toContain('?maxBytes=1');
+		expect(init.body).toBeUndefined();
+	});
+
+	test('Uses the configured apiEndpoint as the root', async () => {
+		// 1. An emulator's endpoint without a scheme gets `https`, as the SDK gives it
+		driver = new StorageDriverGcs({ bucket: 'b', apiEndpoint: 'gcs.internal:4443/' });
+		withAuth(driver);
+
+		await driver.call('GET /b');
+
+		expect(request()[0]).toBe('https://gcs.internal:4443/storage/v1/b');
+	});
+
+	test('Answers an empty body with undefined', async () => {
+		// 1. A 204 of a delete has no body
+		fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+
+		await expect(driver.call('DELETE /b/{bucket}/o/a.txt')).resolves.toBeUndefined();
+	});
+
+	test('Allows a full URL on storage.googleapis.com', async () => {
+		// 1. The upload endpoint is on the same host, outside `/storage/v1`
+		await driver.call('POST https://storage.googleapis.com/upload/storage/v1/b/b/o', { name: 'a' });
+
+		expect(request()[0]).toBe('https://storage.googleapis.com/upload/storage/v1/b/b/o');
+	});
+
+	test('Refuses a full URL on a foreign host before a token is fetched', async () => {
+		// 1. The token would go wherever the URL points
+		await expect(driver.call('GET https://evil.example/steal')).rejects.toThrow('not on a host of this provider');
+
+		expect(getAccessToken).not.toHaveBeenCalled();
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	test('Turns an error status into a ProviderCallError with its status and body, without the token', async () => {
+		// 1. A 403 keeps GCS's code and message for the caller; the token appears nowhere in the error
+		const body = { error: { code: 403, message: 'The caller does not have permission' } };
+
+		fetchMock.mockResolvedValue(new Response(JSON.stringify(body), { status: 403 }));
+
+		const error = await driver.call('GET /b/{bucket}/iam').catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ProviderCallError);
+
+		expect((error as InstanceType<typeof ProviderCallError>).extensions).toEqual({
+			provider: 'gcs',
+			method: 'GET /b/{bucket}/iam',
+			status: 403,
+			body,
+		});
+
+		expect((error as Error).message).toContain('The caller does not have permission');
+		expect((error as Error).message).not.toContain(TOKEN);
+		expect(JSON.stringify(error)).not.toContain(TOKEN);
+		expect((error as Error).cause).toBeUndefined();
+	});
+
+	test.each([429, 503])('Makes a single request on a %s, with no retry', async (status) => {
+		// 1. Unlike the SDK's client, a failed call is not repeated behind the caller's back — a POST could run twice
+		fetchMock.mockResolvedValue(new Response('{"error":{"code":1,"message":"slow down"}}', { status }));
+
+		await expect(driver.call('POST /b/{bucket}/o/a/compose', {})).rejects.toBeInstanceOf(
+			status === 429 ? HitRateLimitError : ProviderCallError,
+		);
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	test('Turns a 429 into a HitRateLimitError', async () => {
+		// 1. GCS asking to slow down becomes the kit's rate-limit error
+		fetchMock.mockResolvedValue(new Response('', { status: 429, headers: { 'retry-after': '7' } }));
+
+		await expect(driver.call('GET /b')).rejects.toBeInstanceOf(HitRateLimitError);
+	});
+
+	test('Replaces a failure of the credentials with an error that carries none of them', async () => {
+		// 1. The credentials library's error holds the token request; only its code survives, and no cause is kept
+		const failure = Object.assign(new Error(`invalid_grant for ${TOKEN}`), {
+			code: '400',
+			config: { headers: { authorization: `Bearer ${TOKEN}` } },
+		});
+
+		getAccessToken.mockRejectedValue(failure);
+
+		const error = await driver.call('GET /b').catch((thrown: unknown) => thrown);
+
+		expect((error as Error).message).toBe('The gcs storage driver could not get an access token (400)');
+		expect((error as Error).cause).toBeUndefined();
+		expect(JSON.stringify(error)).not.toContain(TOKEN);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	test('Refuses credentials that yield no token', async () => {
+		// 1. A request without a token would only earn a 401
+		getAccessToken.mockResolvedValue(null);
+
+		await expect(driver.call('GET /b')).rejects.toThrow('could not get an access token');
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	test('Counts the token fetch against the timeout, and sends nothing after it', async () => {
+		// 1. A metadata server that never answers ends at the deadline; the late token is never used
+		let release: (token: string) => void = () => {};
+
+		getAccessToken.mockReturnValue(new Promise<string>((resolve) => (release = resolve)));
+
+		await expect(driver.call('GET /b', {}, { timeout: 5 })).rejects.toMatchObject({ name: 'TimeoutError', ms: 5 });
+
+		release(TOKEN);
+		await new Promise((resolve) => setImmediate(resolve));
+
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	test('Stops before the token fetch when the signal is already aborted', async () => {
+		// 1. Nothing is started for a caller who already gave up
+		const controller = new AbortController();
+		controller.abort(new Error('gone'));
+
+		await expect(driver.call('GET /b', {}, { signal: controller.signal })).rejects.toThrow('gone');
+
+		expect(getAccessToken).not.toHaveBeenCalled();
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	test('Gives up at the timeout of the caller while the request hangs', async () => {
+		// 1. A request that never answers is aborted at the deadline; the error is matched by shape across copies
+		fetchMock.mockImplementation(
+			(_url: string, { signal }: { signal: AbortSignal }) =>
+				new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason))),
+		);
+
+		await expect(driver.call('GET /b', {}, { timeout: 5 })).rejects.toMatchObject({ name: 'TimeoutError', ms: 5 });
 	});
 });
 

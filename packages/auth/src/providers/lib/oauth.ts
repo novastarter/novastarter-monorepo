@@ -5,7 +5,7 @@ import { authSettings } from '../../lib/settings-access.js';
 import { DEFAULT_OAUTH_STATE_TTL } from '../../lib/settings.js';
 import { useAuth } from '../../lib/use-auth.js';
 import { decrypt, encrypt, randomToken, safeEqual } from '../../utils/index.js';
-import type { AuthIdentity } from '../types.js';
+import type { AuthIdentity, OAuthCallbackResult, OAuthTokens } from '../types.js';
 import { completeSignIn, failSignIn } from './events.js';
 
 /**
@@ -55,6 +55,11 @@ export interface FinishedOAuth {
 	identity: AuthIdentity;
 	/** What {@link startOAuth} was given to keep. */
 	data?: Record<string, unknown> | undefined;
+	/**
+	 * The tokens the provider issued, when the driver hands them on — to call the provider's API on the person's
+	 * behalf later. They are secrets: store them encrypted, with a key of the application's own, or not at all.
+	 */
+	tokens?: OAuthTokens | undefined;
 }
 
 /**
@@ -139,11 +144,12 @@ export const startOAuth = async (location: string, options: StartOAuthOptions): 
  * The application deletes the cookie whatever the outcome — a callback is good for one attempt, and the provider
  * accepts a code only once anyway. The identity passes the `auth.sign-in` filter and `auth.signed-in` is emitted; a
  * failure emits `auth.sign-in-failed`. What to do with the identity — find or link the account, start a session — is
- * the caller's.
+ * the caller's. The provider's tokens, when the driver hands them on, are taken off the identity before the filter, so
+ * no handler, event listener or log sees them, and come back beside it; keeping them is the caller's too.
  *
  * @param location - The location the callback belongs to; must be the one the cookie was made for.
  * @param params - `state` and `code` from the callback, and the cookie.
- * @returns The identity and the data kept since the start.
+ * @returns The identity, the data kept since the start, and the provider's tokens when the driver hands them on.
  * @throws AuthInvalidTokenError when the cookie is missing, tampered with, expired, made for another location, or its
  * state is not the callback's.
  * @throws AuthProviderFailedError when the provider refused the code or its answer did not check out.
@@ -183,10 +189,10 @@ export const finishOAuth = async (location: string, params: FinishOAuthParams): 
 	}
 
 	// 3. The driver exchanges the code with the verifier and checks what comes back
-	let identity: AuthIdentity;
+	let result: OAuthCallbackResult;
 
 	try {
-		identity = await driver.callback({
+		result = await driver.callback({
 			code: params.code,
 			codeVerifier: sealed.codeVerifier,
 			nonce: sealed.nonce,
@@ -196,7 +202,15 @@ export const finishOAuth = async (location: string, params: FinishOAuthParams): 
 		throw failSignIn(location, error);
 	}
 
-	return { identity: await completeSignIn(location, identity), ...(sealed.data ? { data: sealed.data } : {}) };
+	// 4. The tokens come off before the filter and the event: they are secrets, and a handler or a listener that logs
+	//    its payload must not be handed them
+	const { tokens, ...identity } = result;
+
+	return {
+		identity: await completeSignIn(location, identity),
+		...(sealed.data ? { data: sealed.data } : {}),
+		...(tokens ? { tokens } : {}),
+	};
 };
 
 /**

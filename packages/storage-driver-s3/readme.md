@@ -47,6 +47,32 @@ storage.registerLocation('backups', {
 Anywhere later: `useStorage().location('uploads').write(path, stream, type)` and the rest of the `StorageDriver`
 contract.
 
+## Any other request
+
+`call()` runs any S3 command on the location's client, credentials and bucket — the way to versioning, lifecycle rules,
+bucket policies, CORS, tagging and anything else the driver has no wrapper for. S3 is an RPC-style SDK, so the method is
+the command's name (with or without the SDK's `Command` suffix) and the parameters are its input; `Bucket` is the
+location's unless given.
+
+```ts
+const uploads = useStorage().location('uploads');
+
+const { Status } = await uploads.call!<{ Status?: string }>('GetBucketVersioning');
+
+await uploads.call!('PutBucketLifecycleConfiguration', {
+	LifecycleConfiguration: {
+		Rules: [{ ID: 'expire-tmp', Status: 'Enabled', Filter: { Prefix: 'tmp/' }, Expiration: { Days: 7 } }],
+	},
+});
+```
+
+The answer is the command's output without the SDK's `$metadata`. There are no URLs, so no host list: every request goes
+to the location's S3 endpoint. Keys in the parameters are sent as given, not under `root`. A name that is not a command
+of `@aws-sdk/client-s3` is refused before anything is sent; a refusal of S3 throws `ProviderCallError` with its HTTP
+status and `{ name, message }`, a 429 or a throttling code — S3's 503 `SlowDown` — `HitRateLimitError`; the timeout is
+30 seconds unless `{ timeout }` names another. The `headers` option adds headers to the request before the SDK signs it;
+`paramsIn` does not apply.
+
 ## Options
 
 | Option                                                     | Required | Description                                                                                                                               |

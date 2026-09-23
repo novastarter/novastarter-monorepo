@@ -43,4 +43,22 @@ describe('MessengerDriverConsole', () => {
 			'Messenger to 42: 3 attachment(s)',
 		);
 	});
+
+	test('Logs a call with its method and parameters, files by name, and answers nothing', async () => {
+		const logger = { info: vi.fn() };
+
+		// 1. The same call a messenger's driver takes, written to the log
+		await expect(
+			new MessengerDriverConsole({ logger: logger as any }).call('sendPhoto', {
+				chat_id: '42',
+				photo: new File(['png'], 'chart.png'),
+				thumbnail: new Blob(['x']),
+			}),
+		).resolves.toBeUndefined();
+
+		expect(logger.info).toHaveBeenCalledWith(
+			{ method: 'sendPhoto', params: { chat_id: '42', photo: 'chart.png', thumbnail: 'blob' } },
+			'Messenger call sendPhoto',
+		);
+	});
 });

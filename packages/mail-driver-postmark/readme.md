@@ -39,6 +39,24 @@ remaining tags go to `Metadata`, the tags comma-joined and spread over `tags`, `
 80-character limit (a longer tag is cut to it; tags past the nine fields left are dropped). `marketing` mail goes to
 `broadcastStream` when there is one. `verify()` reads the server the token belongs to.
 
+## Any other request
+
+`call()` makes a request of the [Postmark API](https://postmarkapp.com/developer/api/overview) with the location's
+server token — a `GET`'s parameters go in the query, the rest as JSON. A refusal throws `ProviderCallError` with
+Postmark's `ErrorCode` and `Message` in `extensions.body` (`HitRateLimitError` on a 429); the timeout is the location's
+`timeout`, 30 s unless set.
+
+```ts
+const mail = useMail().location('main');
+
+const bounces = await mail.call?.('GET /bounces', { count: 50, offset: 0, type: 'HardBounce' });
+
+await mail.call?.('PUT /bounces/692560173/activate');
+```
+
+A path is joined to `https://api.postmarkapp.com`; a full URL may only point at `api.postmarkapp.com`. The server token
+is sent, so endpoints of the account API, which need an account token, are refused by Postmark.
+
 ## Options
 
 | Option            | Required | Description                                                                                 |

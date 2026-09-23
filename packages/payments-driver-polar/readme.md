@@ -57,6 +57,23 @@ not know yet is verified and dropped; an event of a known type whose payload the
 that is not JSON, is refused with `InvalidPayloadError` (400) rather than dropped, so a change on Polar's side is
 reported instead of silently losing every delivery of that type.
 
+## Any other request
+
+`call()` reaches any endpoint of Polar's API with the location's access token as the bearer token. The parameters of a
+`GET` or `DELETE` go in the query — a list as its key repeated — the others as a JSON body (`options.paramsIn` moves
+them). A refusal throws `ProviderCallError` with Polar's status and answer, a 429 `HitRateLimitError`.
+
+```ts
+const payments = usePayments().location('default');
+
+await payments.call?.('GET /v1/benefits/', { limit: 20 });
+
+await payments.call?.('POST /v1/refunds/', { order_id: 'ord_123', reason: 'customer_request', amount: 500 });
+```
+
+Paths go to the server's API (`api.polar.sh`, `sandbox-api.polar.sh`). A full URL may point at `api.polar.sh` or
+`sandbox-api.polar.sh`; any other host is refused before a request is made. The default timeout is 30 seconds.
+
 ## Options
 
 | Option          | Required | Description                                                                    |

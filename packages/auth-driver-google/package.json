@@ -26,6 +26,7 @@
 	},
 	"dependencies": {
 		"@novastarter/auth": "workspace:*",
+		"@novastarter/errors": "workspace:*",
 		"@novastarter/utils": "workspace:*",
 		"jose": "catalog:"
 	},

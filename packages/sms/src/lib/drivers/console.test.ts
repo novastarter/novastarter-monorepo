@@ -35,4 +35,22 @@ describe('SmsDriverConsole', () => {
 
 		expect(logger.info).toHaveBeenCalledWith({ to: '+14155550123', text: 'Hi' }, 'SMS: +14155550123');
 	});
+
+	test('Logs a call with its method and parameters, files by name, and answers nothing', async () => {
+		const logger = { info: vi.fn() };
+
+		// 1. The same call a provider's driver takes, written to the log; the options are not logged
+		await expect(
+			new SmsDriverConsole({ logger: logger as any }).call(
+				'POST /v1/files',
+				{ purpose: 'import', file: new File(['x'], 'data.csv'), raw: new Blob(['y']) },
+				{ headers: { authorization: 'secret' } },
+			),
+		).resolves.toBeUndefined();
+
+		expect(logger.info).toHaveBeenCalledWith(
+			{ method: 'POST /v1/files', params: { purpose: 'import', file: 'data.csv', raw: 'blob' } },
+			'Sms call POST /v1/files',
+		);
+	});
 });

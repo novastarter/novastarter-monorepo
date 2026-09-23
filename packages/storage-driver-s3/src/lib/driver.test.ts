@@ -11,11 +11,14 @@ import {
 	CreateMultipartUploadCommand,
 	DeleteObjectCommand,
 	DeleteObjectsCommand,
+	GetBucketVersioningCommand,
 	GetObjectCommand,
 	HeadObjectCommand,
 	ListObjectsV2Command,
 	ListPartsCommand,
+	PutBucketVersioningCommand,
 	S3Client,
+	S3ServiceException,
 	ServerSideEncryption,
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
@@ -34,8 +37,9 @@ import {
 	randGitShortSha as randUnique,
 	randWord,
 } from '@ngneat/falso';
+import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { StorageFileNotFoundError } from '@novastarter/storage';
-import { confinePath, joinPath, retry } from '@novastarter/utils';
+import { confinePath, joinPath, retry, withTimeout } from '@novastarter/utils';
 import { isReadableStream } from '@novastarter/utils/node';
 import { Semaphore } from '@shopify/semaphore';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
@@ -50,7 +54,8 @@ vi.mock('@novastarter/utils');
 vi.mock('@aws-sdk/client-s3');
 vi.mock('@aws-sdk/lib-storage');
 
-const { retry: retryActual } = await vi.importActual<typeof import('@novastarter/utils')>('@novastarter/utils');
+const { retry: retryActual, withTimeout: withTimeoutActual } =
+	await vi.importActual<typeof import('@novastarter/utils')>('@novastarter/utils');
 
 /**
  * Random fixture regenerated before every test, so no test can depend on values another one left behind.
@@ -945,6 +950,183 @@ describe('#delete', () => {
 		await driver.delete(sample.path.input);
 
 		expect(driver['client'].send).toHaveBeenCalledWith(mockDeleteObjectCommand);
+	});
+});
+
+describe('#call', () => {
+	/**
+	 * An error as the SDK throws it for an answer of S3: the auto-mocked exception class, its fields set by hand.
+	 *
+	 * @param status - The HTTP status S3 answered with.
+	 * @param name - The error code S3 named.
+	 * @returns The error.
+	 */
+	const serviceError = (status: number, name: string): S3ServiceException => {
+		// 1. Built through the mocked class so `instanceof` in the driver holds; the constructor sets nothing itself
+		const error = new S3ServiceException({ name, $fault: 'client', $metadata: {} });
+
+		Object.assign(error, { name, message: `${name} happened`, $metadata: { httpStatusCode: status } });
+
+		return error;
+	};
+
+	beforeEach(() => {
+		// 1. The real deadline, so the timeout tests see a real `TimeoutError` and an aborted signal
+		vi.mocked(withTimeout).mockImplementation(withTimeoutActual);
+	});
+
+	test('Sends the named command with the location bucket and returns its output without $metadata', async () => {
+		// 1. The command instance handed to `send` is the one built from the caller's input and the default bucket
+		const command = {} as GetBucketVersioningCommand;
+		vi.mocked(GetBucketVersioningCommand).mockReturnValue(command);
+
+		vi.mocked(driver['client'].send).mockResolvedValue({
+			Status: 'Enabled',
+			$metadata: { httpStatusCode: 200 },
+		} as never);
+
+		const result = await driver.call('GetBucketVersioning', { ExpectedBucketOwner: '123' });
+
+		expect(GetBucketVersioningCommand).toHaveBeenCalledWith({
+			Bucket: sample.config.bucket,
+			ExpectedBucketOwner: '123',
+		});
+
+		expect(driver['client'].send).toHaveBeenCalledWith(command, { abortSignal: expect.any(AbortSignal) });
+		expect(result).toEqual({ Status: 'Enabled' });
+	});
+
+	test('Accepts the Command suffix and a bucket of the caller', async () => {
+		// 1. `PutBucketVersioningCommand` names the same class as `PutBucketVersioning`; a given bucket wins
+		vi.mocked(driver['client'].send).mockResolvedValue({ $metadata: {} } as never);
+
+		const result = await driver.call('PutBucketVersioningCommand', { Bucket: 'other' });
+
+		expect(PutBucketVersioningCommand).toHaveBeenCalledWith({ Bucket: 'other' });
+		expect(result).toEqual({});
+	});
+
+	test.each(['NoSuchThing', 'getBucketVersioning', 'S3Client', 'GetBucketVersioning; x', ''])(
+		'Refuses %j before anything is sent',
+		async (method) => {
+			// 1. Only commands the SDK exports run; the client is never reached
+			await expect(driver.call(method)).rejects.toThrow('is not a command of @aws-sdk/client-s3');
+
+			expect(driver['client'].send).not.toHaveBeenCalled();
+		},
+	);
+
+	test('Turns an answer of S3 into a ProviderCallError with its status and body', async () => {
+		// 1. A 404 of S3 keeps its status and error code for the caller; no credential is in the message
+		vi.mocked(driver['client'].send).mockRejectedValue(serviceError(404, 'NoSuchBucket') as never);
+
+		const error = await driver.call('GetBucketVersioning').catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ProviderCallError);
+
+		expect((error as InstanceType<typeof ProviderCallError>).extensions).toEqual({
+			provider: 's3',
+			method: 'GetBucketVersioning',
+			status: 404,
+			body: { name: 'NoSuchBucket', message: 'NoSuchBucket happened' },
+		});
+
+		expect((error as Error).message).not.toContain(sample.config.key);
+		expect((error as Error).message).not.toContain(sample.config.secret);
+	});
+
+	test('Turns a 429 into a HitRateLimitError', async () => {
+		// 1. S3 asking to slow down becomes the kit's rate-limit error
+		vi.mocked(driver['client'].send).mockRejectedValue(serviceError(429, 'TooManyRequests') as never);
+
+		await expect(driver.call('GetBucketVersioning')).rejects.toBeInstanceOf(HitRateLimitError);
+	});
+
+	test.each([
+		[503, 'SlowDown'],
+		[400, 'ThrottlingException'],
+		[503, 'RequestLimitExceeded'],
+		[400, 'TooManyRequestsException'],
+	])('Turns a %s %s into a HitRateLimitError', async (status, name) => {
+		// 1. S3 throttles with a 503 `SlowDown`, other AWS services with their own codes; each is the kit's 429
+		vi.mocked(driver['client'].send).mockRejectedValue(serviceError(status, name) as never);
+
+		const error = await driver.call('GetBucketVersioning').catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(HitRateLimitError);
+	});
+
+	test('Keeps another 503 a ProviderCallError, without the SDK error as its cause', async () => {
+		// 1. Only the throttling codes become a 429; the SDK's error, with its raw response, is not carried along
+		vi.mocked(driver['client'].send).mockRejectedValue(serviceError(503, 'ServiceUnavailable') as never);
+
+		const error = await driver.call('GetBucketVersioning').catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ProviderCallError);
+		expect((error as InstanceType<typeof ProviderCallError>).extensions).toMatchObject({ status: 503 });
+		expect((error as Error).cause).toBeUndefined();
+	});
+
+	test('Adds the headers of the caller to the request at the build step, before signing', async () => {
+		// 1. The command is a stub whose middleware stack records what the driver adds
+		const add = vi.fn();
+		const command = { middlewareStack: { add } } as unknown as GetBucketVersioningCommand;
+
+		vi.mocked(GetBucketVersioningCommand).mockReturnValue(command);
+		vi.mocked(driver['client'].send).mockResolvedValue({ $metadata: {} } as never);
+
+		await driver.call('GetBucketVersioning', {}, { headers: { 'x-amz-request-payer': 'requester' } });
+
+		expect(add).toHaveBeenCalledWith(expect.any(Function), { step: 'build', name: 'novastarterCallHeaders' });
+
+		// 2. Run the middleware over a request as the SDK builds it: the caller's header joins, the rest stays
+		const next = vi.fn().mockResolvedValue({ output: {} });
+		const request = { headers: { host: 's3.amazonaws.com' } };
+
+		await add.mock.calls[0]![0](next)({ input: {}, request });
+
+		expect(request.headers).toEqual({ host: 's3.amazonaws.com', 'x-amz-request-payer': 'requester' });
+		expect(next).toHaveBeenCalledWith({ input: {}, request });
+	});
+
+	test('Adds no middleware without headers of the caller', async () => {
+		// 1. The command goes as the SDK built it
+		const add = vi.fn();
+		const command = { middlewareStack: { add } } as unknown as GetBucketVersioningCommand;
+
+		vi.mocked(GetBucketVersioningCommand).mockReturnValue(command);
+		vi.mocked(driver['client'].send).mockResolvedValue({ $metadata: {} } as never);
+
+		await driver.call('GetBucketVersioning');
+
+		expect(add).not.toHaveBeenCalled();
+	});
+
+	test('Passes a failure that is not an answer of S3 on as it is', async () => {
+		// 1. A network failure has no status to report
+		const failure = new Error('socket hang up');
+		vi.mocked(driver['client'].send).mockRejectedValue(failure as never);
+
+		await expect(driver.call('GetBucketVersioning')).rejects.toBe(failure);
+	});
+
+	test('Gives up at the timeout of the caller and aborts the request', async () => {
+		// 1. A command that never answers; the signal handed to the SDK is aborted at the deadline. The error is matched
+		//    by shape, since `@novastarter/utils` — and the `TimeoutError` class it exports — is mocked in this file
+		let abortSignal: AbortSignal | undefined;
+
+		vi.mocked(driver['client'].send).mockImplementation(((_command: unknown, options: { abortSignal: AbortSignal }) => {
+			abortSignal = options.abortSignal;
+
+			return new Promise(() => {});
+		}) as never);
+
+		await expect(driver.call('GetBucketVersioning', {}, { timeout: 5 })).rejects.toMatchObject({
+			name: 'TimeoutError',
+			ms: 5,
+		});
+
+		expect(abortSignal?.aborted).toBe(true);
 	});
 });
 

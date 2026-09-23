@@ -39,6 +39,22 @@ the driver, since Resend only fetches URLs — inline when they carry a content 
 the driver turns it into a throw naming the provider with that value as the `cause`, so `sendMail()` falls back and the
 caller can still read Resend's status code.
 
+## Any other request
+
+`call()` makes a request of the [Resend API](https://resend.com/docs/api-reference/introduction) with the location's key
+— the parameters of a `GET`, `HEAD` or `DELETE` go in the query, the rest as JSON, unless `paramsIn` says otherwise. A
+refusal throws `ProviderCallError` (`HitRateLimitError` on a 429); the default timeout is 30 s.
+
+```ts
+const mail = useMail().location('main');
+
+const domains = await mail.call?.('GET /domains');
+
+const domain = await mail.call?.('GET /domains/d91cd9bd-1176-453e-8fc1-35364d380206');
+```
+
+A path is joined to `https://api.resend.com`; a full URL may only point at `api.resend.com`.
+
 ## Options
 
 | Option   | Required | Description                                 |

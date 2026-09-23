@@ -50,6 +50,30 @@ the whole answer stays reachable.
 
 `verify()` reads the account balance over `rest.nexmo.com`: nothing is created, and no second SDK is needed for it.
 
+## Any other request
+
+`call(method, params, options)` reaches the rest of Vonage's APIs through the SDK's client, with the location's key pair
+as a Basic `Authorization` header, its timeout and the kit's errors. A path goes under `https://rest.nexmo.com`; the
+parameters are the query of a `GET`, `HEAD` or `DELETE` and a JSON body otherwise (`options.paramsIn` moves them, a
+`content-type: application/x-www-form-urlencoded` header sends a form instead; any other content type is refused).
+
+```ts
+const vonage = useSms().location('main');
+
+const balance = await vonage.call?.('GET /account/get-balance');
+
+const pricing = await vonage.call?.('GET /account/get-pricing/outbound/sms', { country: 'GB' });
+```
+
+A file — a `Blob` or `File` among the parameters, or in a list — goes as a multipart body, for an endpoint that takes
+one; the SDK's client sends no multipart, so that request is made directly, with the same key pair, host check, timeout
+and errors. Vonage's messaging APIs take media by URL, so most calls need no upload at all.
+
+A full URL may point at `rest.nexmo.com`, `api.nexmo.com`, `api.vonage.com`, `api-eu.vonage.com`, `api-us.vonage.com`
+and `api-ap.vonage.com` only; any other host is refused before the key pair is sent. An error status throws
+`ProviderCallError` with Vonage's answer in `extensions.body`, a `429` throws `HitRateLimitError`, and the timeout
+`TimeoutError`.
+
 ## Options
 
 | Option      | Required | Description                                                                               |

@@ -1,4 +1,4 @@
-import { InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
+import { InvalidCredentialsError, InvalidPayloadError, toProviderCallError } from '@novastarter/errors';
 import type {
 	CancelSubscriptionInput,
 	CheckoutSession,
@@ -15,7 +15,8 @@ import type {
 	UpdateSubscriptionInput,
 	WebhookHeaders,
 } from '@novastarter/payments';
-import { toErrorMessage } from '@novastarter/utils';
+import { type CallOptions, parseCallMethod, toErrorMessage } from '@novastarter/utils';
+import { httpCall, resolveCallUrl } from '@novastarter/utils/node';
 import { Environment, Paddle, type ProrationBillingMode } from '@paddle/paddle-node-sdk';
 import { toEvent } from './to-event.js';
 import { toInvoice } from './to-invoice.js';
@@ -78,6 +79,31 @@ export const PRORATION: Record<NonNullable<UpdateSubscriptionInput['proration']>
 };
 
 /**
+ * The root of Paddle's API for each environment, which {@link PaymentsDriverPaddle.call} joins its paths to.
+ *
+ * @defaultValue `production` → `https://api.paddle.com`, `sandbox` → `https://sandbox-api.paddle.com`
+ */
+export const PADDLE_API_URLS: Readonly<Record<'production' | 'sandbox', string>> = {
+	production: 'https://api.paddle.com',
+	sandbox: 'https://sandbox-api.paddle.com',
+};
+
+/**
+ * The hosts a full URL given to {@link PaymentsDriverPaddle.call} may point at, besides the configured API's own.
+ *
+ * @defaultValue `api.paddle.com`, `sandbox-api.paddle.com`
+ * @internal
+ */
+export const PADDLE_CALL_HOSTS: readonly string[] = ['api.paddle.com', 'sandbox-api.paddle.com'];
+
+/**
+ * How long a {@link PaymentsDriverPaddle.call} may take unless its options name another deadline, in milliseconds.
+ *
+ * @defaultValue 30 seconds.
+ */
+export const DEFAULT_PADDLE_CALL_TIMEOUT = 30_000;
+
+/**
  * Driver for [Paddle Billing](https://www.paddle.com) (API v2): transactions as the checkout and the invoices, the
  * customer portal, subscriptions over `@paddle/paddle-node-sdk`, webhooks verified with the destination's secret.
  *
@@ -133,6 +159,20 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	private readonly checkoutUrl: string | undefined;
 
 	/**
+	 * The API key, sent as the bearer token of a {@link call}; the SDK keeps its own copy private.
+	 *
+	 * @internal
+	 */
+	private readonly apiKey: string;
+
+	/**
+	 * The root of the API a {@link call} goes to: the environment's, or the configured stand-in.
+	 *
+	 * @internal
+	 */
+	private readonly apiUrl: string;
+
+	/**
 	 * Create a driver from its location options.
 	 *
 	 * @param config - API key, webhook secret, environment, checkout page.
@@ -160,6 +200,10 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 
 		this.webhookSecret = config.webhookSecret;
 		this.checkoutUrl = config.checkoutUrl;
+
+		// 3. The SDK has no raw request, so `call()` makes its own with the same key against the same API
+		this.apiKey = config.apiKey;
+		this.apiUrl = config.apiUrl ?? PADDLE_API_URLS[config.environment === 'sandbox' ? 'sandbox' : 'production'];
 	}
 
 	/**
@@ -373,6 +417,66 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 
 		// 7. The mapping decides which Paddle events the kit acts on
 		return toEvent(event);
+	}
+
+	/**
+	 * Make a request of any Paddle endpoint with the location's API key, for what the SDK or the contract does not
+	 * cover.
+	 *
+	 * `method` is the verb and the path from the API's root — `GET /discounts` — or a full URL on one of
+	 * {@link PADDLE_CALL_HOSTS}. The parameters of a `GET` or `DELETE` go in the query (Paddle reads a list as one
+	 * comma-separated value: `status: 'active,paused'`), the others as a JSON body — `options.paramsIn` moves them.
+	 *
+	 * @typeParam T - What the endpoint answers with — Paddle's `{ data, meta }`; the caller knows it from Paddle's API
+	 * reference.
+	 * @param method - The verb and the path, or a full URL on Paddle's hosts.
+	 * @param params - The query of a `GET` or `DELETE`, the JSON body otherwise.
+	 * @param options - A timeout over {@link DEFAULT_PADDLE_CALL_TIMEOUT}, an abort signal, extra headers, where the
+	 * parameters go.
+	 * @returns Paddle's answer, parsed; `undefined` for an empty one.
+	 * @throws ProviderCallError when Paddle answers with an error status — its status and `{ error }` in `extensions`.
+	 * @throws HitRateLimitError when Paddle answers 429.
+	 * @throws TimeoutError when the request outlives its timeout.
+	 * @throws Error when the method is malformed, or its URL is not on Paddle's hosts.
+	 * @example
+	 * ```ts
+	 * await paddle.call('GET /discounts', { status: 'active', per_page: 50 });
+	 * await paddle.call('POST /adjustments', {
+	 * 	action: 'refund',
+	 * 	transaction_id: 'txn_123',
+	 * 	reason: 'Charged twice',
+	 * 	type: 'full',
+	 * });
+	 * ```
+	 */
+	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, options: CallOptions = {}): Promise<T> {
+		// 1. The URL under the API's root; a full URL only on Paddle's hosts, so the key never travels anywhere else
+		const { verb, target } = parseCallMethod(method);
+		const url = resolveCallUrl(this.apiUrl, target, PADDLE_CALL_HOSTS);
+
+		// 2. The key as Paddle's bearer token, the caller's headers over it; JSON both ways
+		const response = await httpCall({
+			url,
+			verb,
+			params,
+			paramsIn: options.paramsIn,
+			headers: { authorization: `Bearer ${this.apiKey}`, ...options.headers },
+			timeout: options.timeout ?? DEFAULT_PADDLE_CALL_TIMEOUT,
+			signal: options.signal,
+		});
+
+		// 3. An error status is Paddle refusing: its `{ error: { code, detail } }` goes on to the caller
+		if (response.status >= 400) {
+			throw toProviderCallError({
+				provider: 'paddle',
+				method,
+				status: response.status,
+				body: response.body,
+				headers: response.headers,
+			});
+		}
+
+		return response.body as T;
 	}
 
 	/**
