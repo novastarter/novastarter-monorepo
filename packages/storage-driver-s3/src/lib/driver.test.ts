@@ -1316,8 +1316,9 @@ describe('#deleteChunkedUpload', () => {
 		vi.mocked(driver['client'].send).mockResolvedValue({} as unknown as void);
 	});
 
-	test('Aborts the upload, then removes the object under the key', async () => {
-		// 1. A live upload: the abort answers, so no lookup is needed before the delete that catches a completed file
+	test('Aborts a live upload and keeps the object it was meant to replace', async () => {
+		// 1. A live upload: the abort answers, so the upload never wrote the key and the object there is an older file
+		//    that a cancelled replacement must not destroy
 		await driver.deleteChunkedUpload(sample.path.input, context);
 
 		expect(AbortMultipartUploadCommand).toHaveBeenCalledWith({
@@ -1327,11 +1328,7 @@ describe('#deleteChunkedUpload', () => {
 		});
 
 		expect(driver.exists).not.toHaveBeenCalled();
-
-		expect(DeleteObjectsCommand).toHaveBeenCalledWith({
-			Bucket: sample.config.bucket,
-			Delete: { Objects: [{ Key: sample.path.inputFull }] },
-		});
+		expect(DeleteObjectsCommand).not.toHaveBeenCalled();
 	});
 
 	test('Still removes the object when the upload was completed before', async () => {
@@ -1504,6 +1501,27 @@ describe('#finishChunkedUpload', () => {
 		expect(CompleteMultipartUploadCommand).not.toHaveBeenCalled();
 	});
 
+	test('Leaves out parts past the size that a failed chunk left behind', async () => {
+		// 1. Parts 1 and 2 hold the whole upload; part 3 is a leftover of a chunk that failed half-way and was resent
+		//    in fewer parts, so it is not completed and S3 discards it instead of the listing never adding up
+		vi.mocked(driver['client'].send).mockResolvedValue(listing(2 * partSize, partSize, partSize) as unknown as void);
+
+		await driver.finishChunkedUpload(sample.path.input, context);
+
+		expect(ListPartsCommand).toHaveBeenCalledTimes(1);
+
+		expect(CompleteMultipartUploadCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				MultipartUpload: {
+					Parts: [
+						{ ETag: 'etag-1', PartNumber: 1 },
+						{ ETag: 'etag-2', PartNumber: 2 },
+					],
+				},
+			}),
+		);
+	});
+
 	test('Throws a failing listing at once, without retrying it', async () => {
 		// 1. A rejected `ListParts` is a real error, not a listing that lags: it goes out as it is after one call
 		const failure = new Error('connection reset');
@@ -1585,6 +1603,45 @@ describe('#writeChunk', () => {
 
 		expect(driver['retrieveParts']).toHaveBeenCalledWith(sample.path.inputFull, uploadId);
 		expect(driver['uploadParts']).toHaveBeenCalledWith(sample.path.inputFull, uploadId, 100, sample.stream, 3, 10);
+	});
+
+	test('Numbers the parts from the offset, over parts a failed chunk left past it', async () => {
+		// 1. Parts 3 and 4 reached S3 before a sibling part failed, so the chunk threw and the offset stayed at 10. The
+		//    resent chunk goes into part 3 again, overwriting the leftovers instead of storing the same bytes twice
+		vi.mocked(driver['retrieveParts']).mockResolvedValue([
+			{ PartNumber: 1, Size: 5 },
+			{ PartNumber: 2, Size: 5 },
+			{ PartNumber: 3, Size: 5 },
+			{ PartNumber: 4, Size: 5 },
+		]);
+
+		await expect(driver.writeChunk(sample.path.input, sample.stream, 10, context)).resolves.toBe(17);
+
+		expect(driver['uploadParts']).toHaveBeenCalledWith(sample.path.inputFull, uploadId, 100, sample.stream, 3, 10);
+	});
+
+	test('Numbers the parts from the offset when a failed chunk left a gap', async () => {
+		// 1. Part 3 failed while part 4 landed: the gap means part 4 holds bytes out of order, so the resent chunk
+		//    starts again at part 3 and overwrites part 4 as it goes
+		vi.mocked(driver['retrieveParts']).mockResolvedValue([
+			{ PartNumber: 1, Size: 5 },
+			{ PartNumber: 2, Size: 5 },
+			{ PartNumber: 4, Size: 5 },
+		]);
+
+		await driver.writeChunk(sample.path.input, sample.stream, 10, context);
+
+		expect(driver['uploadParts']).toHaveBeenCalledWith(sample.path.inputFull, uploadId, 100, sample.stream, 3, 10);
+	});
+
+	test('Follows the highest part when the listing does not reach the offset', async () => {
+		// 1. A listing that lags behind the offset cannot say where the offset falls, so the number follows the last
+		//    listed part as before
+		vi.mocked(driver['retrieveParts']).mockResolvedValue([{ PartNumber: 1, Size: 5 }]);
+
+		await driver.writeChunk(sample.path.input, sample.stream, 10, context);
+
+		expect(driver['uploadParts']).toHaveBeenCalledWith(sample.path.inputFull, uploadId, 100, sample.stream, 2, 10);
 	});
 
 	test('Lets a failure of the part upload through unchanged', async () => {

@@ -1,7 +1,7 @@
 /**
  * Tests of `env/lib/cast`.
  */
-import { toArray, toBoolean, toNumber, tryParseJSON } from '@novastarter/utils';
+import { toArray, toNumber, tryParseJSON } from '@novastarter/utils';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { getCastFlag } from '../utils/has-cast-prefix.js';
 import { cast } from './cast.js';
@@ -67,11 +67,21 @@ describe('Casting', () => {
 		expect(cast('value')).toBe(123);
 	});
 
-	test('Uses toBoolean for boolean types', () => {
+	test('Reads the accepted spellings for boolean types', () => {
 		vi.mocked(getCastFlag).mockReturnValue('boolean');
 
-		vi.mocked(toBoolean).mockReturnValue(false);
-		expect(cast('value')).toBe(false);
+		expect(cast('boolean:true')).toBe(true);
+		expect(cast('boolean:1')).toBe(true);
+		expect(cast('boolean:false')).toBe(false);
+		expect(cast('boolean:0')).toBe(false);
+	});
+
+	test('Refuses a boolean payload it cannot read, naming the value', () => {
+		// 1. Read as `false`, a typo would switch a feature off with nothing logged
+		vi.mocked(getCastFlag).mockReturnValue('boolean');
+		expect(() => cast('boolean:TRUE')).toThrow('Cannot cast "boolean:TRUE" to a boolean');
+		expect(() => cast('boolean:yes')).toThrow('Cannot cast "boolean:yes" to a boolean');
+		expect(() => cast('boolean:')).toThrow('Cannot cast "boolean:" to a boolean');
 	});
 
 	test('Uses RegExp for regex types', () => {

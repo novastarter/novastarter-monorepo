@@ -1316,6 +1316,61 @@ describe('#write', () => {
 		).rejects.toThrowError(`Can't upload file "${sample.path.input}": ${first.message}`);
 	});
 
+	test('Signs every chunk under the timestamp of its own request', async () => {
+		// 1. Cloudinary refuses a signature older than an hour, so a write that runs longer than that must not reuse
+		//    one timestamp taken up front; each chunk asks for its own
+		const chunkSize = Math.ceil(MINIMUM_CHUNK_SIZE * 1.05);
+
+		vi.mocked(driver['getTimestamp']).mockReturnValueOnce('1').mockReturnValueOnce('2');
+
+		await driver.write(sample.path.input, createStream([BufferActual.alloc(chunkSize + 1)]));
+
+		expect(
+			vi.mocked(driver['uploadChunk']).mock.calls.map(([options]) => options.parameters['timestamp']),
+		).toStrictEqual(['1', '2']);
+
+		expect(driver['getFullSignature']).toHaveBeenCalledWith(expect.objectContaining({ timestamp: '1' }));
+		expect(driver['getFullSignature']).toHaveBeenCalledWith(expect.objectContaining({ timestamp: '2' }));
+	});
+
+	test('Pauses reading the source while the upload queue is full', async () => {
+		// 1. Every upload hangs until released, so only backpressure can stop the loop from reading the whole source
+		//    into queued chunk copies
+		const chunkSize = Math.ceil(MINIMUM_CHUNK_SIZE * 1.05);
+		const release: (() => void)[] = [];
+
+		vi.mocked(driver['uploadChunk']).mockImplementation(() => new Promise<void>((resolve) => release.push(resolve)));
+
+		let pulls = 0;
+
+		const source = Readable.from(
+			(async function* () {
+				for (let index = 0; index < 100; index++) {
+					pulls += 1;
+					yield BufferActual.alloc(chunkSize);
+				}
+			})(),
+		);
+
+		const writing = driver.write(sample.path.input, source);
+
+		// 2. Let the loop run as far as it can while nothing completes: ten in flight plus ten waiting, far below the
+		//    hundred chunks the source could deliver
+		for (let tick = 0; tick < 50; tick++) {
+			await new Promise((resolve) => setImmediate(resolve));
+		}
+
+		expect(pulls).toBeLessThan(30);
+
+		// 3. Releasing the uploads as they start lets the write run to the end with every chunk sent
+		const drain = setInterval(() => release.splice(0).forEach((resolve) => resolve()), 1);
+
+		await writing;
+		clearInterval(drain);
+
+		expect(driver['uploadChunk']).toHaveBeenCalledTimes(100);
+	});
+
 	test('Rejects an empty write instead of resolving while nothing is stored', async () => {
 		// 1. Cloudinary accepts no zero-length chunk, so an empty stream stores nothing; resolving would leave any
 		//    previous asset under the same public id untouched while reading as success, which is why the write refuses
@@ -1860,14 +1915,15 @@ describe('#tusExtensions', () => {
 });
 
 describe('#createChunkedUpload', () => {
-	test('Records the signing timestamp and the upload id in the context metadata', async () => {
-		// 1. The context is what the TUS server hands back on every later call, so both values must survive in it
+	test('Records only the upload id in the context metadata', async () => {
+		// 1. The context is what the TUS server hands back on every later call, so the id must survive in it; no
+		//    timestamp is saved, since a signature under it would go stale an hour into the upload
 		const context = { size: randNumber(), metadata: {} };
 
 		const result = await driver.createChunkedUpload(sample.path.input, context);
 
 		expect(result).toBe(context);
-		expect(result.metadata).toStrictEqual({ timestamp: sample.timestamp, uploadId: sample.uploadId });
+		expect(result.metadata).toStrictEqual({ uploadId: sample.uploadId });
 	});
 
 	test('Creates the metadata map when the client sent none', async () => {
@@ -1877,7 +1933,17 @@ describe('#createChunkedUpload', () => {
 
 		const result = await driver.createChunkedUpload(sample.path.input, context);
 
-		expect(result.metadata).toStrictEqual({ timestamp: sample.timestamp, uploadId: sample.uploadId });
+		expect(result.metadata).toStrictEqual({ uploadId: sample.uploadId });
+	});
+
+	test('Drops a completion flag sent by the client', async () => {
+		// 1. The flag tells a termination to delete the asset; taken from `Upload-Metadata`, it would let a DELETE on an
+		//    unfinished upload destroy the asset the upload was meant to replace
+		const context = { size: randNumber(), metadata: { uploadCompleted: 'true' } };
+
+		const result = await driver.createChunkedUpload(sample.path.input, context);
+
+		expect(result.metadata).toStrictEqual({ uploadId: sample.uploadId });
 	});
 });
 
@@ -1892,19 +1958,78 @@ describe('#writeChunk', () => {
 		useActualBuffers();
 
 		// 3. A context as `createChunkedUpload` leaves it, for a 6-byte upload
-		context = { size: 6, metadata: { timestamp: sample.timestamp, uploadId: sample.uploadId } };
+		context = { size: 6, metadata: { uploadId: sample.uploadId } };
 	});
 
-	test('Sends the chunk under the upload id and timestamp the upload started with', async () => {
-		// 1. A later chunk must join the same Cloudinary upload and verify against the same signature, so neither
-		//    value may be regenerated per chunk
+	test('Sends the chunk under the upload id the upload started with', async () => {
+		// 1. A later chunk must join the same Cloudinary upload, so the id may not be regenerated per chunk
 		await driver.writeChunk(sample.path.input, Readable.from([BufferActual.from('abc')]), 0, context);
 
 		const [options] = vi.mocked(driver['uploadChunk']).mock.calls[0]!;
 
 		expect(options.uploadId).toBe(sample.uploadId);
-		expect(options.parameters['timestamp']).toBe(sample.timestamp);
 		expect(driver['getUploadId']).not.toHaveBeenCalled();
+	});
+
+	test('Signs every chunk under a fresh timestamp, not one saved when the upload started', async () => {
+		// 1. Cloudinary refuses a signature older than an hour, so a paused upload resumed later must not reuse the
+		//    creation timestamp; a stale one left in the context by an older upload is ignored for signing too
+		const stale = String(Number(sample.timestamp) - 7200);
+		const fresh = String(Number(sample.timestamp) + 1);
+
+		context.metadata['timestamp'] = stale;
+		vi.mocked(driver['getTimestamp']).mockReturnValue(fresh);
+
+		await driver.writeChunk(sample.path.input, Readable.from([BufferActual.from('abc')]), 0, context);
+
+		const [options] = vi.mocked(driver['uploadChunk']).mock.calls[0]!;
+
+		expect(options.parameters['timestamp']).toBe(fresh);
+		expect(driver['getFullSignature']).toHaveBeenCalledWith(expect.objectContaining({ timestamp: fresh }));
+	});
+
+	test('Takes the timestamp only after the chunk body has been read', async () => {
+		// 1. One large PATCH over a slow link can stream in for more than an hour; a timestamp taken before the body
+		//    is read would already be stale when the chunk goes out
+		let drained = false;
+
+		const body = Readable.from(
+			(async function* () {
+				yield BufferActual.from('abc');
+				drained = true;
+			})(),
+		);
+
+		vi.mocked(driver['getTimestamp']).mockImplementation(() => (drained ? 'after-body' : 'before-body'));
+
+		await driver.writeChunk(sample.path.input, body, 0, context);
+
+		const [options] = vi.mocked(driver['uploadChunk']).mock.calls[0]!;
+
+		expect(options.parameters['timestamp']).toBe('after-body');
+	});
+
+	test('Records the upload as completed once the final chunk is accepted', async () => {
+		// 1. Cloudinary stores the asset on the chunk carrying the real total, so only that chunk sets the flag a
+		//    later termination reads; an earlier one leaves it unset
+		await driver.writeChunk(sample.path.input, Readable.from([BufferActual.from('abc')]), 0, context);
+
+		expect(context.metadata['uploadCompleted']).toBeUndefined();
+
+		await driver.writeChunk(sample.path.input, Readable.from([BufferActual.from('def')]), 3, context);
+
+		expect(context.metadata['uploadCompleted']).toBe('true');
+	});
+
+	test('Leaves the upload unfinished when the final chunk is refused', async () => {
+		// 1. A refused final chunk stored nothing, so the flag stays unset and a termination keeps the previous asset
+		vi.mocked(driver['uploadChunk']).mockRejectedValue(new Error('Refused'));
+
+		await expect(
+			driver.writeChunk(sample.path.input, Readable.from([BufferActual.from('abcdef')]), 0, context),
+		).rejects.toThrow('Refused');
+
+		expect(context.metadata['uploadCompleted']).toBeUndefined();
 	});
 
 	test('Derives the resource type from the full path, the way write and delete do', async () => {
@@ -1920,11 +2045,13 @@ describe('#writeChunk', () => {
 	test('Falls back to the timestamp as upload id for an upload started without one', async () => {
 		// 1. Chunks of an upload created before the id was recorded went out under the timestamp; switching ids
 		//    halfway would strand them
-		delete context.metadata['uploadId'];
+		const legacy = String(Number(sample.timestamp) - 7200);
+
+		context.metadata = { timestamp: legacy };
 
 		await driver.writeChunk(sample.path.input, Readable.from([BufferActual.from('abc')]), 0, context);
 
-		expect(vi.mocked(driver['uploadChunk']).mock.calls[0]![0].uploadId).toBe(sample.timestamp);
+		expect(vi.mocked(driver['uploadChunk']).mock.calls[0]![0].uploadId).toBe(legacy);
 	});
 
 	test('Copes with a context that carries no metadata map', async () => {
@@ -2043,5 +2170,31 @@ describe('#writeChunk', () => {
 		await expect(driver.writeChunk(sample.path.input, Readable.from([]), 3, context)).resolves.toBe(3);
 
 		expect(vi.mocked(driver['uploadChunk'])).not.toHaveBeenCalled();
+	});
+});
+
+describe('#deleteChunkedUpload', () => {
+	test('Leaves the asset under the public id in place for an unfinished upload', async () => {
+		// 1. Until the final chunk arrives the public id still holds the previous asset, so cancelling an overwrite
+		//    must not destroy it; Cloudinary discards the unfinished chunks on its own
+		driver.delete = vi.fn();
+
+		await driver.deleteChunkedUpload(sample.path.input, { size: 6, metadata: { uploadId: sample.uploadId } });
+
+		expect(driver.delete).not.toHaveBeenCalled();
+		expect(fetch).not.toHaveBeenCalled();
+	});
+
+	test('Deletes the asset of an upload whose final chunk was accepted', async () => {
+		// 1. A finished upload stored its asset under the public id, so a termination afterwards removes it rather than
+		//    leaving the file behind, the way the other drivers do
+		driver.delete = vi.fn();
+
+		await driver.deleteChunkedUpload(sample.path.input, {
+			size: 6,
+			metadata: { uploadId: sample.uploadId, uploadCompleted: 'true' },
+		});
+
+		expect(driver.delete).toHaveBeenCalledExactlyOnceWith(sample.path.input);
 	});
 });

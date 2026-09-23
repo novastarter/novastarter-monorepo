@@ -58,9 +58,13 @@ export const messageConstructor = (extensions: FailedValidationErrorExtensions):
 				message += ` Value has to be greater than or equal to "${extensions.valid}".`;
 				break;
 			case 'in':
-				message += ` Value has to be one of ${toArray(extensions.valid)
-					.map((val) => `"${val}"`)
-					.join(', ')}.`;
+				// An empty list comes from a malformed rule that no value can satisfy; "one of ." would read as a typo
+				message +=
+					toArray(extensions.valid).length === 0
+						? ' No value is allowed.'
+						: ` Value has to be one of ${toArray(extensions.valid)
+								.map((val) => `"${val}"`)
+								.join(', ')}.`;
 
 				break;
 		}

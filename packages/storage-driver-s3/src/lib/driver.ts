@@ -817,9 +817,11 @@ export class StorageDriverS3 implements TusDriver {
 	}
 
 	/**
-	 * Abort a resumable upload and remove whatever sits under its key.
+	 * Abort a resumable upload, or remove the object it produced when it was completed before.
 	 *
-	 * An upload that was completed or aborted before no longer exists for S3, while the object assembled from it does,
+	 * An upload that is still open never touched the key: S3 only writes the object when the multipart upload is
+	 * completed, so whatever sits under the key then is the file the upload was meant to replace, and it is kept. An
+	 * upload that was completed or aborted before no longer exists for S3, while the object assembled from it does,
 	 * so a termination after completion still removes the file.
 	 *
 	 * @param filepath - Final object path relative to the root.
@@ -831,8 +833,6 @@ export class StorageDriverS3 implements TusDriver {
 	async deleteChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<void> {
 		const key = this.fullPath(filepath);
 		const uploadId = context.metadata?.['upload-id'];
-
-		let aborted = false;
 
 		// 1. Abort the multipart upload first: S3 keeps (and bills for) uploaded parts until the upload is completed
 		//    or aborted. Skipped when no upload id was ever recorded
@@ -846,9 +846,11 @@ export class StorageDriverS3 implements TusDriver {
 					}),
 				);
 
-				aborted = true;
+				// 2. The upload was still open, so it never wrote the key: an object there predates the upload and
+				//    deleting it would destroy the file a cancelled replacement was meant to overwrite
+				return;
 			} catch (error) {
-				// 2. The S3 "missing" family of errors means the upload was completed or aborted before, which leaves
+				// 3. The S3 "missing" family of errors means the upload was completed or aborted before, which leaves
 				//    only the object to remove; anything else is a real failure. The SDK names the error in `name` —
 				//    `NoSuchUpload`, `NoSuchKey`, or `NotFound` for a bodiless 404 — and reports the status in
 				//    `$metadata`; it never sets a lowercase `code`
@@ -860,14 +862,13 @@ export class StorageDriverS3 implements TusDriver {
 			}
 		}
 
-		// 3. With no upload to abort, the object under the key is all that can be left; when that is missing too,
+		// 4. With no upload to abort, the object under the key is all that can be left; when that is missing too,
 		//    the TUS server answers 404. The delete cannot tell, since S3 reports a missing key as deleted
-		if (!aborted && !(await this.exists(filepath))) {
+		if (!(await this.exists(filepath))) {
 			throw ERRORS.FILE_NOT_FOUND;
 		}
 
-		// 4. Remove the object under the key as well, so a termination after a completed upload does not leave the
-		//    file behind
+		// 5. Remove the object under the key, so a termination after a completed upload does not leave the file behind
 		await this.client.send(
 			new DeleteObjectsCommand({
 				Bucket: this.config.bucket,
@@ -884,6 +885,9 @@ export class StorageDriverS3 implements TusDriver {
 	 * A zero-length upload produces no parts, and S3 refuses `CompleteMultipartUpload` with an empty `Parts` list
 	 * (400 MalformedXML), so its multipart upload is aborted and the empty object is written with a plain
 	 * `PutObjectCommand` instead.
+	 *
+	 * Only the unbroken run of parts from part 1 that adds up to the size is completed; parts past it, left by a chunk
+	 * that failed half-way and was never resent that far, are discarded by S3.
 	 *
 	 * @param filepath - Final object path relative to the root.
 	 * @param context - Context carrying the multipart `upload-id` and the total `size`.
@@ -970,15 +974,16 @@ export class StorageDriverS3 implements TusDriver {
 			parts = await retry(
 				async () => {
 					// 1. Parts are checked by their bytes, not their count: a client whose requests do not line up with
-					//    the part size leaves parts of uneven sizes, so only the byte total says whether every part is in
-					const listed = await this.retrieveParts(key, uploadId);
-					const listedBytes = listed.reduce((total, part) => total + (part.Size ?? 0), 0);
+					//    the part size leaves parts of uneven sizes, so only the byte total says whether every part is in.
+					//    Only the unbroken run from part 1 counts: parts past it are leftovers of a chunk that failed
+					//    half-way, and completing without them makes S3 discard them
+					const stored = this.storedPrefix(await this.retrieveParts(key, uploadId), size);
 
-					if (listedBytes !== size) {
-						throw new PartsMismatchError(listedBytes, size);
+					if (stored.bytes !== size) {
+						throw new PartsMismatchError(stored.bytes, size);
 					}
 
-					return listed;
+					return stored.parts;
 				},
 				{
 					retries: 3,
@@ -1005,6 +1010,10 @@ export class StorageDriverS3 implements TusDriver {
 
 	/**
 	 * Upload one TUS chunk as one or more multipart parts.
+	 *
+	 * When a part upload fails the chunk throws and the offset stays where it was, even if other parts of the chunk
+	 * reached S3. The parts are numbered from `offset`, so the resent chunk overwrites those parts instead of adding the
+	 * same bytes again, and {@link StorageDriverS3.finishChunkedUpload} leaves out any that were never overwritten.
 	 *
 	 * @param filepath - Final object path relative to the root.
 	 * @param content - Chunk data as sent by the client.
@@ -1041,10 +1050,17 @@ export class StorageDriverS3 implements TusDriver {
 
 		const size = context.size;
 
-		// 2. Part numbers must be unique and increasing within an upload; ask S3 which parts exist instead of keeping
-		//    a counter, so a resumed upload continues from the right number
+		// 2. Part numbers must be increasing within an upload; ask S3 which parts exist instead of keeping a counter,
+		//    so a resumed upload continues from the right number. The number follows the parts that hold exactly the
+		//    bytes before `offset`: a chunk that failed half-way may have left parts past that point, and uploading
+		//    under their numbers overwrites them instead of storing the resent bytes a second time. Only when the
+		//    listing does not reach `offset` (a lagging listing) does the number follow the highest listed part
 		const parts = await this.retrieveParts(key, uploadId);
-		const partNumber: number = parts.length > 0 ? parts[parts.length - 1]!.PartNumber! : 0;
+		const stored = this.storedPrefix(parts, offset);
+
+		const highestPartNumber: number = parts.length > 0 ? parts[parts.length - 1]!.PartNumber! : 0;
+		const partNumber: number = stored.bytes === offset ? stored.parts.length : highestPartNumber;
+
 		const nextPartNumber = partNumber + 1;
 		const requestedOffset = offset;
 
@@ -1287,12 +1303,43 @@ export class StorageDriverS3 implements TusDriver {
 		}
 
 		// 3. Sort once at the outermost call: `CompleteMultipartUpload` requires ascending part numbers, and
-		//    `writeChunk` reads the highest number from the last element
+		//    `storedPrefix` and `writeChunk` walk the parts in that order
 		if (!partNumberMarker) {
 			parts.sort((a, b) => a.PartNumber! - b.PartNumber!);
 		}
 
 		return parts;
+	}
+
+	/**
+	 * Take the unbroken run of parts from part 1 that holds the first `limit` bytes of the upload.
+	 *
+	 * Parts are walked in ascending order while their numbers follow on from each other and their bytes stay below
+	 * `limit`. A failed chunk can leave parts past the point the upload offset reached; stopping at `limit` keeps them
+	 * out, so they are overwritten by the resent bytes or left out of the completed object.
+	 *
+	 * @param parts - Parts in ascending order, as returned by {@link StorageDriverS3.retrieveParts}.
+	 * @param limit - Number of leading upload bytes the run should cover.
+	 * @returns The parts of the run and the bytes they hold; `bytes` differs from `limit` when the listed parts do not
+	 * add up to exactly `limit` bytes.
+	 * @internal
+	 */
+	private storedPrefix(parts: Part[], limit: number): { parts: Part[]; bytes: number } {
+		const run: Part[] = [];
+		let bytes = 0;
+
+		// 1. Stop at the first gap in the numbering: bytes after a missing part are not in upload order, so they cannot
+		//    count towards the offset
+		for (const part of parts) {
+			if (bytes >= limit || part.PartNumber !== run.length + 1) {
+				break;
+			}
+
+			run.push(part);
+			bytes += part.Size ?? 0;
+		}
+
+		return { parts: run, bytes };
 	}
 
 	/**

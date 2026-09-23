@@ -64,6 +64,9 @@ export interface PushSendOptions {
  * 3. Picks the location: the option, else the message's own, else the route of the platform, else the location named
  *    after the platform. There is no fallback chain — a subscription is bound to one key pair, a token to one project.
  * 4. Sends, and emits `push.sent` with the result, `push.gone` when the target is dead, or `push.failed` and throws.
+ *    A `PushTargetGoneError` is passed on only when the dead target is the one the caller sent to; when a handler
+ *    redirected the message to another target, it travels as the `cause` of a plain `Error` instead, so a caller
+ *    deleting its own subscription on that error does not delete one that was never contacted.
  *
  * @param message - Message to send; `location` is optional.
  * @param options - Per-call overrides.
@@ -71,9 +74,10 @@ export interface PushSendOptions {
  * dropped the message.
  * @throws InvalidPayloadError for a message without a title, without a target, or with an unusable subscription — as
  * it came in, or as a `push.send` handler rewrote it.
- * @throws PushTargetGoneError when the target no longer exists — delete it, do not retry.
+ * @throws PushTargetGoneError when the caller's own target no longer exists — delete it, do not retry.
  * @throws Error when no location delivers to the target's platform, when the chosen location does not, or when the
- * push service refused or could not be reached, the driver's error as `cause`.
+ * push service refused or could not be reached, the driver's error as `cause`; also when a `push.send` handler
+ * redirected the message to another target and that one is gone, the `PushTargetGoneError` as `cause`.
  *
  * @example
  * ```ts
@@ -121,7 +125,7 @@ export const sendPush = async (message: PushMessage, options: PushSendOptions = 
 	}
 
 	// 5. One send, then `push.sent` with the target and the title, so a listener can log without re-deriving them
-	const target = platform === 'webpush' ? prepared.subscription?.endpoint : prepared.token;
+	const target = targetOf(prepared, platform);
 
 	try {
 		const result = await driver.send(prepared);
@@ -131,15 +135,25 @@ export const sendPush = async (message: PushMessage, options: PushSendOptions = 
 
 		return sent;
 	} catch (error) {
-		// 6. A gone target is not a failure to retry: reported as its own event and passed on as is
+		// 6. A gone target is not a failure to retry: reported as its own event, which carries the target that was
+		//    actually contacted
 		if (error instanceof PushTargetGoneError) {
 			logger.info(`Push target on "${location}" is gone (${error.extensions.reason}): ${target}`);
 			useEmitter().emitAction(PUSH_GONE_EVENT, { location, platform, target, reason: error.extensions.reason });
 
-			throw error;
+			// 7. The error itself carries no target, and callers delete the subscription they passed in when they catch
+			//    it; so it is passed on as is only when that subscription is the one that is gone. A redirect to a test
+			//    device whose token expired must not make the caller delete the real user's subscription
+			if (target === targetOf(message, incoming)) {
+				throw error;
+			}
+
+			throw new Error(`Push target "${target}" a push.send handler redirected to on "${location}" is gone`, {
+				cause: error,
+			});
 		}
 
-		// 7. Anything else is the push service refusing or being unreachable; the driver's error travels as the cause.
+		// 8. Anything else is the push service refusing or being unreachable; the driver's error travels as the cause.
 		//    pino takes a non-object first argument as the message, so a driver rejecting with a string would replace
 		//    the line and drop the location; `toError` keeps both
 		logger.warn(toError(error), `Push location "${location}" failed to send to ${target}`);
@@ -148,6 +162,18 @@ export const sendPush = async (message: PushMessage, options: PushSendOptions = 
 		throw new Error(`Push location "${location}" failed to send`, { cause: error });
 	}
 };
+
+/**
+ * The target of a message: the subscription's endpoint for web push, the token otherwise.
+ *
+ * @param message - The message, already checked by {@link platformOf}.
+ * @param platform - The platform {@link platformOf} answered for it.
+ * @returns The endpoint or the token.
+ * @internal
+ */
+const targetOf = (message: PushMessage, platform: PushPlatform): string | undefined =>
+	// 1. `platformOf()` guarantees the one target the platform implies is present
+	platform === 'webpush' ? message.subscription?.endpoint : message.token;
 
 /**
  * Refuse a message whose title is missing or blank.

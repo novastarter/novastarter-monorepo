@@ -570,6 +570,9 @@ export class StorageDriverSupabase implements TusDriver {
 	 *    filename }` and returns all files and directories in parentdir that match the search query. Filenames are
 	 *    yielded and directories are recursively listed.
 	 *
+	 * The API's search is case-insensitive and treats `_` and `%` as wildcards, so every returned name is checked to
+	 * start with the searched fragment exactly (case-sensitive) and dropped otherwise.
+	 *
 	 * @param prefix - Full object-name prefix, root included.
 	 * @returns Object paths relative to the root.
 	 * @throws Error wrapping the storage error when a page of the listing fails, naming the full prefix queried.
@@ -606,14 +609,19 @@ export class StorageDriverSupabase implements TusDriver {
 			offset += itemCount;
 
 			for (const item of data) {
-				// 4. The API only returns the entry name, so the full path is rebuilt from the queried folder
+				// 4. Supabase's `search` is a case-insensitive `ILIKE` with `_` and `%` unescaped, so it also returns
+				//    `Report.pdf` for `report` and `axb` for `a_b`; only names that start with the fragment exactly
+				//    belong to the prefix, and a caller deleting or syncing by prefix must not see the rest
+				if (search !== '' && !item.name.startsWith(search)) continue;
+
+				// 5. The API only returns the entry name, so the full path is rebuilt from the queried folder
 				const filePath = normalizePath(join(prefixDirectory, item.name));
 
 				if (item.id !== null) {
-					// 5. A file: strip the root (and its trailing slash) so callers get paths in the form they pass in
+					// 6. A file: strip the root (and its trailing slash) so callers get paths in the form they pass in
 					yield toRelativePath(this.config.root, filePath);
 				} else {
-					// 6. A folder has no id; descend with a trailing slash so the recursive call lists its contents
+					// 7. A folder has no id; descend with a trailing slash so the recursive call lists its contents
 					yield* this.listGenerator(`${filePath}/`);
 				}
 			}

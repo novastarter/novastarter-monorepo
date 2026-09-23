@@ -51,6 +51,32 @@ export const toSendgridAddress = (address: MailAddress): { email: string; name?:
 };
 
 /**
+ * Addresses mapped the way SendGrid takes them, minus every one already used elsewhere in the message.
+ *
+ * SendGrid refuses the whole send with a 400 when one address repeats across `to`, `cc` and `bcc` of a
+ * personalization, while SMTP delivers such a message fine. Addresses compare case-insensitively on the bare address,
+ * the display name ignored, and the first occurrence wins.
+ *
+ * @param addresses - Ours, in order.
+ * @param seen - Lower-cased addresses already taken by an earlier list; the ones kept here are added to it.
+ * @returns SendGrid's, without repeats.
+ * @internal
+ */
+const toUniqueSendgridAddresses = (addresses: MailAddress[], seen: Set<string>): { email: string; name?: string }[] =>
+	// 1. Keep an address only the first time it shows up, remembering it so a later list drops it too
+	addresses.map(toSendgridAddress).filter((address) => {
+		const key = address.email.toLowerCase();
+
+		if (seen.has(key)) {
+			return false;
+		}
+
+		seen.add(key);
+
+		return true;
+	});
+
+/**
  * An attachment the way SendGrid takes it: base64 content, inline when it has a content id.
  *
  * @param attachment - Ours.
@@ -77,7 +103,8 @@ export const toSendgridAttachment = async (
  * Translate a message into SendGrid's `send()` payload.
  *
  * The category and the tags become SendGrid categories, cut and capped at SendGrid's limits by
- * {@link toSendgridCategories}.
+ * {@link toSendgridCategories}. An address repeated across `to`, `cc` and `bcc` is sent once, in the first list it
+ * appears in, since SendGrid refuses the whole message otherwise.
  *
  * @param message - Ours, with `from` set (`sendMail()` fills it in).
  * @param sandbox - Turn SendGrid's sandbox mode on.
@@ -90,22 +117,28 @@ export const toSendgridMail = async (message: MailMessage, sandbox = false): Pro
 		throw new Error('SendGrid needs a "from" address');
 	}
 
-	// 2. Optional fields are only set when present, so the request carries no `undefined` keys
+	// 2. SendGrid refuses a repeated recipient, so `to`, then `cc`, then `bcc` keep only addresses not seen before
+	const seen = new Set<string>();
+	const to = toUniqueSendgridAddresses(toMailAddressList(message.to), seen);
+	const cc = toUniqueSendgridAddresses(message.cc ?? [], seen);
+	const bcc = toUniqueSendgridAddresses(message.bcc ?? [], seen);
+
+	// 3. Optional fields are only set when present, so the request carries no `undefined` keys or empty lists
 	const mail = {
-		to: toMailAddressList(message.to).map(toSendgridAddress),
+		to,
 		from: toSendgridAddress(message.from),
 		subject: message.subject,
 		categories: toSendgridCategories(message),
 		...(message.html !== undefined ? { html: message.html } : {}),
 		...(message.text !== undefined ? { text: message.text } : {}),
-		...(message.cc ? { cc: message.cc.map(toSendgridAddress) } : {}),
-		...(message.bcc ? { bcc: message.bcc.map(toSendgridAddress) } : {}),
+		...(cc.length > 0 ? { cc } : {}),
+		...(bcc.length > 0 ? { bcc } : {}),
 		...(message.replyTo ? { replyTo: toSendgridAddress(message.replyTo) } : {}),
 		...(message.headers ? { headers: message.headers } : {}),
 		...(sandbox ? { mailSettings: { sandboxMode: { enable: true } } } : {}),
 	} as MailDataRequired;
 
-	// 3. Attachments are read in parallel: every one is encoded in full before the request is built
+	// 4. Attachments are read in parallel: every one is encoded in full before the request is built
 	if (message.attachments) {
 		mail.attachments = await Promise.all(message.attachments.map(toSendgridAttachment));
 	}

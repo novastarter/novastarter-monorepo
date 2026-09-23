@@ -40,11 +40,12 @@ which Mailjet's statistics group by. A message Mailjet answers with `Status: 'er
 
 ## Options
 
-| Option      | Required | Description                                           |
-| ----------- | -------- | ----------------------------------------------------- |
-| `apiKey`    | yes      | Public API key.                                       |
-| `apiSecret` | yes      | Private API key.                                      |
-| `sandbox`   | —        | Validate without delivering — Mailjet's sandbox mode. |
+| Option      | Required | Description                                                                 |
+| ----------- | -------- | --------------------------------------------------------------------------- |
+| `apiKey`    | yes      | Public API key.                                                             |
+| `apiSecret` | yes      | Private API key.                                                            |
+| `sandbox`   | —        | Validate without delivering — Mailjet's sandbox mode.                       |
+| `timeout`   | —        | Request timeout in milliseconds, for sends and `call()`; 30 s unless given. |
 
 ## Any other request
 
@@ -69,4 +70,5 @@ const { status, data } = await mail.call!('GET /v3/REST/contact/{id}', { id: 'ad
 
 A full URL may point at `api.mailjet.com` or, for the US region, `api.us.mailjet.com` only; any other host is refused
 before the request, so the key pair never leaves Mailjet. An error status throws `ProviderCallError` with Mailjet's
-status and answer, a 429 `HitRateLimitError`; the timeout is 30 seconds unless `{ timeout }` names another.
+status and answer, a 429 `HitRateLimitError`; the timeout is the location's `timeout`, 30 s unless set, unless the
+call's `{ timeout }` names another.

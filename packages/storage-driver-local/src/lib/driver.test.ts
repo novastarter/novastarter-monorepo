@@ -769,7 +769,7 @@ describe('#createChunkedUpload', () => {
 		driver['ensureDir'] = vi.fn();
 	});
 
-	test('Creates the empty target file under the resolved path', async () => {
+	test('Creates an empty staging sibling and leaves the target untouched', async () => {
 		const mockDirname = randDirectoryPath();
 		vi.mocked(dirname).mockReturnValueOnce(mockDirname);
 
@@ -777,13 +777,46 @@ describe('#createChunkedUpload', () => {
 
 		const result = await driver.createChunkedUpload(sample.path.input, context);
 
+		// 1. The staging id is stored in the returned context, and the empty file is created under the staging name
+		//    only: truncating the target here used to wipe a file already stored under the path for the whole upload,
+		//    and for good when the upload was abandoned
+		const stagingId = result.metadata?.['local-staging-id'];
+
+		expect(stagingId).toMatch(/^[0-9a-f]{12}$/);
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
-		expect(dirname).toHaveBeenCalledWith(sample.path.inputFull);
+		expect(dirname).toHaveBeenCalledWith(`${sample.path.inputFull}.${stagingId}.tmp`);
 		expect(driver['ensureDir']).toHaveBeenCalledWith(mockDirname);
-		expect(writeFile).toHaveBeenCalledWith(sample.path.inputFull, '');
+		expect(writeFile).toHaveBeenCalledOnce();
+		expect(writeFile).toHaveBeenCalledWith(`${sample.path.inputFull}.${stagingId}.tmp`, '');
+		expect(writeFile).not.toHaveBeenCalledWith(sample.path.inputFull, expect.anything());
 		expect(result).toBe(context);
 	});
+
+	test('Creates the metadata map when the context has none', async () => {
+		// 1. A POST without `Upload-Metadata` arrives with no map; the staging id still needs a place to go
+		const result = await driver.createChunkedUpload(sample.path.input, { size: 3, metadata: undefined });
+
+		expect(result.metadata?.['local-staging-id']).toMatch(/^[0-9a-f]{12}$/);
+	});
+
+	test('Uses a different staging file for every upload', async () => {
+		// 1. Two uploads of the same path must not write into one staging file
+		const first = await driver.createChunkedUpload(sample.path.input, { size: 3, metadata: {} });
+		const second = await driver.createChunkedUpload(sample.path.input, { size: 3, metadata: {} });
+
+		expect(first.metadata?.['local-staging-id']).not.toBe(second.metadata?.['local-staging-id']);
+	});
 });
+
+/**
+ * Context of an upload created by the driver, carrying a fixed staging id.
+ */
+const stagedContext = () => ({ size: 11, metadata: { 'local-staging-id': 'a1b2c3d4e5f6' } });
+
+/**
+ * Absolute staging path the driver derives from {@link stagedContext} for `sample.path.input`.
+ */
+const stagingPath = () => `${sample.path.inputFull}.a1b2c3d4e5f6.tmp`;
 
 describe('#writeChunk', () => {
 	let mockTarget: PassThrough;
@@ -809,12 +842,12 @@ describe('#writeChunk', () => {
 			sample.path.input,
 			Readable.from([Buffer.from('abc'), Buffer.from('def')]),
 			5,
-			{ size: 11, metadata: {} },
+			stagedContext(),
 		);
 
-		// 1. The file is opened for writing without truncating and the stream starts at the offset, so the chunk
-		//    lands at its place while the bytes before it stay intact
-		expect(open).toHaveBeenCalledWith(sample.path.inputFull, 'r+');
+		// 1. The staging file, never the target, is opened for writing without truncating and the stream starts at
+		//    the offset, so the chunk lands at its place while the bytes before it stay intact
+		expect(open).toHaveBeenCalledWith(stagingPath(), 'r+');
 		expect(mockCreateWriteStream).toHaveBeenCalledWith({ start: 5 });
 
 		// 2. The returned offset is the given one plus every byte that flowed through, and the bytes arrive as sent
@@ -829,7 +862,7 @@ describe('#writeChunk', () => {
 
 		const source = new PassThrough();
 
-		const result = driver.writeChunk(sample.path.input, source, 7, { size: 11, metadata: {} });
+		const result = driver.writeChunk(sample.path.input, source, 7, stagedContext());
 
 		source.write('abc');
 		source.destroy(new Error('source died'));
@@ -849,7 +882,7 @@ describe('#writeChunk', () => {
 			vi.mocked(open).mockRejectedValue(cause);
 
 			const failure: unknown = await driver
-				.writeChunk(sample.path.input, Readable.from([Buffer.from('abc')]), 0, { size: 3, metadata: {} })
+				.writeChunk(sample.path.input, Readable.from([Buffer.from('abc')]), 0, stagedContext())
 				.catch((error: unknown) => error);
 
 			expect(failure).toBeInstanceOf(StorageFileNotFoundError);
@@ -866,28 +899,62 @@ describe('#writeChunk', () => {
 		vi.mocked(open).mockRejectedValue(failure);
 
 		await expect(
-			driver.writeChunk(sample.path.input, Readable.from([Buffer.from('abc')]), 0, { size: 3, metadata: {} }),
+			driver.writeChunk(sample.path.input, Readable.from([Buffer.from('abc')]), 0, stagedContext()),
 		).rejects.toBe(failure);
 	});
+
+	test.each([[undefined], ['../../etc/passwd'], ['A1B2C3D4E5F6']])(
+		'Refuses a context without a valid staging id (%s) as an unknown upload',
+		async (stagingId) => {
+			// 1. Only the exact shape `createChunkedUpload` generates is accepted, so a lost or crafted id can never
+			//    point the write at the target or outside its directory
+			const context = { size: 3, metadata: stagingId === undefined ? {} : { 'local-staging-id': stagingId } };
+
+			await expect(
+				driver.writeChunk(sample.path.input, Readable.from([Buffer.from('abc')]), 0, context),
+			).rejects.toBeInstanceOf(StorageFileNotFoundError);
+
+			expect(open).not.toHaveBeenCalled();
+		},
+	);
 });
 
 describe('#finishChunkedUpload', () => {
-	test('Resolves without touching the file', async () => {
-		// 1. Every chunk was written in place at its offset, so the file is already complete once the last chunk lands
-		await expect(
-			driver.finishChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} }),
-		).resolves.toBeUndefined();
+	test('Renames the staging file over the target', async () => {
+		// 1. The target only changes here, in one step, so readers never see a partial upload
+		await expect(driver.finishChunkedUpload(sample.path.input, stagedContext())).resolves.toBeUndefined();
 
-		expect(writeFile).not.toHaveBeenCalled();
+		expect(rename).toHaveBeenCalledWith(stagingPath(), sample.path.inputFull);
+	});
+
+	test('Maps a missing staging file to the kit error, keeping the cause', async () => {
+		// 1. A staging file that is gone means the upload is unknown or already finished
+		const cause = Object.assign(new Error('no such file or directory'), { code: 'ENOENT' });
+		vi.mocked(rename).mockRejectedValueOnce(cause);
+
+		const failure: unknown = await driver
+			.finishChunkedUpload(sample.path.input, stagedContext())
+			.catch((error: unknown) => error);
+
+		expect(failure).toBeInstanceOf(StorageFileNotFoundError);
+		expect((failure as { cause?: unknown }).cause).toBe(cause);
+	});
+
+	test('Rethrows any other rename error unchanged', async () => {
+		const failure = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+		vi.mocked(rename).mockRejectedValueOnce(failure);
+
+		await expect(driver.finishChunkedUpload(sample.path.input, stagedContext())).rejects.toBe(failure);
 	});
 });
 
 describe('#deleteChunkedUpload', () => {
-	test('Removes the partially written file', async () => {
-		// 1. Chunks are written straight into the final file, so removing that file discards the whole upload
-		await driver.deleteChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} });
+	test('Removes only the staging file, leaving the target in place', async () => {
+		// 1. An abandoned, terminated or expired upload used to unlink the target, destroying whatever was stored
+		//    under the path before the upload started
+		await driver.deleteChunkedUpload(sample.path.input, stagedContext());
 
-		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
-		expect(unlink).toHaveBeenCalledWith(sample.path.inputFull);
+		expect(unlink).toHaveBeenCalledOnce();
+		expect(unlink).toHaveBeenCalledWith(stagingPath());
 	});
 });

@@ -45,6 +45,28 @@ const CLOUDINARY_CALL_HOSTS = ['api.cloudinary.com', 'api-eu.cloudinary.com', 'a
 const CLOUDINARY_RATE_LIMITED = 420;
 
 /**
+ * How many chunk uploads of one `write` may wait in the queue before reading the source pauses.
+ *
+ * Each waiting chunk holds its own copy of about 5.5 MB, so the waiting line plus the ten requests in flight bound a
+ * write to roughly 110 MB of buffered data however large the asset is.
+ *
+ * @defaultValue 10
+ * @internal
+ */
+const WRITE_QUEUE_WAITING_LIMIT = 10;
+
+/**
+ * Context metadata key set once Cloudinary accepted the chunk that carried the real total and stored the asset.
+ *
+ * {@link StorageDriverCloudinary.deleteChunkedUpload} reads it to tell a finished upload, whose asset it removes, from
+ * an unfinished one, whose public id still holds the asset the upload was meant to replace.
+ *
+ * @defaultValue 'uploadCompleted'
+ * @internal
+ */
+const UPLOAD_COMPLETED_KEY = 'uploadCompleted';
+
+/**
  * Read Cloudinary's 420 — the Admin API's hourly budget spent — as the rate limit it is, reset at the time Cloudinary
  * names in `X-FeatureRateLimit-Reset`.
  *
@@ -635,7 +657,10 @@ export class StorageDriverCloudinary implements TusDriver {
 	 * Upload a stream as an asset, replacing any existing content under the same public id.
 	 *
 	 * The stream is cut into chunks of about 5.5 MB and each chunk is sent as its own upload request, up to ten in
-	 * flight at once. Cloudinary joins the chunks by an upload id unique to this call and the `Content-Range` headers.
+	 * flight at once. Reading the stream pauses while {@link WRITE_QUEUE_WAITING_LIMIT} more chunks wait for a slot, so
+	 * memory stays bounded however large the asset is. Cloudinary joins the chunks by an upload id unique to this call
+	 * and the `Content-Range` headers; each chunk is signed under its own timestamp, so a write that runs longer than
+	 * the hour Cloudinary accepts a signature for is not refused as stale.
 	 *
 	 * Cloudinary derives the content type of an asset from its file extension and offers no upload parameter to
 	 * override it, so a caller's content type cannot be forwarded: the parameter is accepted to satisfy the shared
@@ -655,12 +680,11 @@ export class StorageDriverCloudinary implements TusDriver {
 		const resourceType = this.getResourceType(fullPath);
 		const folderPath = this.getFolderPath(fullPath);
 
-		// 1. The same parameters, signature and upload id go with every chunk; a folder becomes the asset folder and
-		//    is also used as the public id prefix, so the id ends up as `folder/name` on Cloudinary's side
+		// 1. The same parameters and upload id go with every chunk; a folder becomes the asset folder and is also used
+		//    as the public id prefix, so the id ends up as `folder/name` on Cloudinary's side
 		const uploadId = this.getUploadId();
 
 		const uploadParameters = {
-			timestamp: this.getTimestamp(),
 			api_key: this.apiKey,
 			type: 'upload',
 			access_mode: this.accessMode,
@@ -673,7 +697,21 @@ export class StorageDriverCloudinary implements TusDriver {
 				: {}),
 		};
 
-		const signature = this.getFullSignature(uploadParameters);
+		/**
+		 * Sign the upload parameters under a timestamp taken when the chunk request actually starts.
+		 *
+		 * Cloudinary refuses a signed request whose timestamp is more than an hour old, so a write that runs longer
+		 * than that would see its later chunks rejected as stale if the timestamp were fixed once up front. The chunks
+		 * are joined by the upload id, not by the timestamp, so each one is free to carry its own.
+		 *
+		 * @returns The parameters with a fresh timestamp and the signature over them.
+		 */
+		const signParameters = (): Record<string, string> => {
+			// 1. Stamp and sign at request time, so a chunk that waited in the queue is still within the hour
+			const parameters = { timestamp: this.getTimestamp(), ...uploadParameters };
+
+			return { signature: this.getFullSignature(parameters), ...parameters };
+		};
 
 		let totalSize = 0;
 		let uploaded = 0;
@@ -701,6 +739,13 @@ export class StorageDriverCloudinary implements TusDriver {
 			//    the last request must carry the total, which is unknown while the stream is still flowing — `-1`
 			//    tells Cloudinary more is coming. `Blob` copies the bytes, so the view can be dropped right away
 			while (chunks.length > chunkSize) {
+				// 6. Backpressure: PQueue caps the requests in flight but not the ones waiting, and every waiting task
+				//    holds its own chunk copy; reading pauses while the waiting line is full, so a source faster than
+				//    the uploads (a local file, the CDN stream in `copy`) cannot pile the whole asset up in memory
+				if (queue.size >= WRITE_QUEUE_WAITING_LIMIT) {
+					await queue.onSizeLessThan(WRITE_QUEUE_WAITING_LIMIT);
+				}
+
 				const blob = new Blob([chunks.subarray(0, chunkSize)]);
 				const bytesOffset = uploaded;
 
@@ -715,10 +760,7 @@ export class StorageDriverCloudinary implements TusDriver {
 							bytesOffset,
 							bytesTotal: -1,
 							uploadId,
-							parameters: {
-								signature,
-								...uploadParameters,
-							},
+							parameters: signParameters(),
 						}),
 					)
 					.catch((err) => {
@@ -727,14 +769,14 @@ export class StorageDriverCloudinary implements TusDriver {
 			}
 		}
 
-		// 6. A stream without a single byte stores nothing, and Cloudinary accepts no zero-length chunk that could mark
+		// 7. A stream without a single byte stores nothing, and Cloudinary accepts no zero-length chunk that could mark
 		//    the upload complete; resolving would leave any previous asset under the same public id untouched while
 		//    reading as success, so the empty write is refused like a failed one
 		if (totalSize === 0) {
 			throw new Error(`Can't upload file "${filepath}": the stream is empty`);
 		}
 
-		// 7. The last chunk carries the real total, which is how Cloudinary knows the upload is complete
+		// 8. The last chunk carries the real total, which is how Cloudinary knows the upload is complete
 		if (chunks.length > 0) {
 			queue
 				.add(() =>
@@ -744,10 +786,7 @@ export class StorageDriverCloudinary implements TusDriver {
 						bytesOffset: uploaded,
 						bytesTotal: totalSize,
 						uploadId,
-						parameters: {
-							signature,
-							...uploadParameters,
-						},
+						parameters: signParameters(),
 					}),
 				)
 				.catch((err) => {
@@ -757,7 +796,7 @@ export class StorageDriverCloudinary implements TusDriver {
 
 		await queue.onIdle();
 
-		// 8. Surface the first chunk failure with the path once every request has settled
+		// 9. Surface the first chunk failure with the path once every request has settled
 		if (error) {
 			throw new Error(`Can't upload file "${filepath}": ${(error as Error).message}`, { cause: error });
 		}
@@ -1015,18 +1054,21 @@ export class StorageDriverCloudinary implements TusDriver {
 	 *
 	 * @param _filepath - Final asset path relative to the root; unused.
 	 * @param context - Client-supplied size and metadata; the metadata map is created when the client sent none.
-	 * @returns The context with the signing timestamp and the upload id recorded in its metadata.
+	 * @returns The context with the upload id recorded in its metadata.
 	 */
 	async createChunkedUpload(_filepath: string, context: ChunkedUploadContext): Promise<ChunkedUploadContext> {
 		// 1. A POST without `Upload-Metadata` arrives with no map at all; it is created here, before anything is
 		//    recorded, so storing the upload state below cannot fail with a TypeError
 		const metadata = (context.metadata ??= {});
 
-		// 2. Every chunk of one upload must carry the same timestamp, since it is part of the signature, and the same
-		//    upload id, since Cloudinary joins the chunks by it; the context is what the TUS server hands back on
-		//    every following call, so both are recorded there
-		metadata['timestamp'] = this.getTimestamp();
+		// 2. Every chunk of one upload must carry the same upload id, since Cloudinary joins the chunks by it; the
+		//    context is what the TUS server hands back on every following call, so the id is recorded there. No
+		//    timestamp is kept: Cloudinary refuses a signature older than an hour, so each chunk signs with its own
 		metadata['uploadId'] = this.getUploadId();
+
+		// 3. The completion flag is the driver's own; one sent by the client in `Upload-Metadata` is dropped, or a
+		//    DELETE on an upload that never finished would destroy the asset it was meant to replace
+		delete metadata[UPLOAD_COMPLETED_KEY];
 
 		return context;
 	}
@@ -1034,10 +1076,16 @@ export class StorageDriverCloudinary implements TusDriver {
 	/**
 	 * Forward one TUS chunk to the upload API.
 	 *
+	 * Each chunk is signed under a timestamp taken once its body has been read, because Cloudinary refuses a signature
+	 * older than an hour and both a paused upload resumed much later and one large PATCH over a slow link can outlast
+	 * that; the chunks are joined by the upload id, not by the timestamp. Once the chunk carrying the real total is
+	 * accepted, the context metadata records that the asset is stored, for
+	 * {@link StorageDriverCloudinary.deleteChunkedUpload}.
+	 *
 	 * @param filepath - Final asset path relative to the root.
 	 * @param content - Chunk data as sent by the client.
 	 * @param offset - Byte offset within the whole upload where this chunk starts.
-	 * @param context - Context carrying the total `size` and the `timestamp` and `uploadId` recorded by
+	 * @param context - Context carrying the total `size` and the `uploadId` recorded by
 	 * {@link StorageDriverCloudinary.createChunkedUpload}.
 	 * @returns The new upload offset: `offset` plus the bytes of this chunk.
 	 * @throws Error when the chunk exceeds the size configured as `tus.chunkSize`.
@@ -1058,31 +1106,15 @@ export class StorageDriverCloudinary implements TusDriver {
 		//    the driver's
 		const metadata = (context.metadata ??= {});
 
-		// 2. Same parameters as a plain write, except the timestamp comes from the context so every chunk carries
-		//    the signature the upload started with
-		const uploadParameters = {
-			timestamp: metadata['timestamp'] as string,
-			api_key: this.apiKey,
-			type: 'upload',
-			access_mode: this.accessMode,
-			public_id: this.getPublicId(fullPath),
-			...(folderPath
-				? {
-						asset_folder: folderPath,
-						use_asset_folder_as_public_id_prefix: 'true',
-					}
-				: {}),
-		};
-
-		// 3. The upload id also comes from the context, so every chunk lands in the same Cloudinary upload; an upload
-		//    started before the id was recorded keeps the timestamp its earlier chunks went out under
-		const uploadId = metadata['uploadId'] ?? uploadParameters.timestamp;
+		// 2. The upload id comes from the context, so every chunk lands in the same Cloudinary upload; an upload
+		//    started before the id was recorded used its creation timestamp as the id, so that saved value stays it
+		const uploadId = metadata['uploadId'] ?? (metadata['timestamp'] as string);
 
 		let bytesUploaded = offset || 0;
 		let currentChunkSize = 0;
 		let chunks = Buffer.alloc(0);
 
-		// 4. Buffer the chunk as it streams in, counting bytes on the way: the upload API needs the exact size for
+		// 3. Buffer the chunk as it streams in, counting bytes on the way: the upload API needs the exact size for
 		//    `Content-Range` before the request starts, and the bound check below runs per chunk so a client that
 		//    ignores the advertised chunk size is refused while still streaming instead of after the whole of it has
 		//    been buffered into one unbounded `Buffer`
@@ -1092,7 +1124,7 @@ export class StorageDriverCloudinary implements TusDriver {
 			currentChunkSize += chunk.length;
 			chunks = Buffer.concat([chunks, chunk], currentChunkSize);
 
-			// 5. The TUS server agreed to send at most the configured size per request; an oversized chunk is refused
+			// 4. The TUS server agreed to send at most the configured size per request; an oversized chunk is refused
 			//    while it is still arriving, since Cloudinary would assemble an asset from bytes the upload never
 			//    agreed to carry
 			if (this.maximumChunkSize !== undefined && currentChunkSize > this.maximumChunkSize) {
@@ -1104,21 +1136,45 @@ export class StorageDriverCloudinary implements TusDriver {
 
 		bytesUploaded += currentChunkSize;
 
-		// 6. Only the chunk that reaches the declared size carries the real total; earlier ones send `-1`, which
+		// 5. Only the chunk that reaches the declared size carries the real total; earlier ones send `-1`, which
 		//    tells Cloudinary more is coming. An empty chunk sends no request at all, since Cloudinary rejects a
 		//    zero-length chunk and the offset is unchanged either way
 		if (currentChunkSize > 0) {
+			const bytesTotal = context.size && bytesUploaded === context.size ? context.size : -1;
+
+			// 6. Same parameters as a plain write, signed under a timestamp taken only now that the body is read: one
+			//    taken earlier would make a chunk that streamed in for more than an hour, or any chunk of an upload
+			//    resumed more than an hour after it started, fail as a stale request
+			const uploadParameters = {
+				timestamp: this.getTimestamp(),
+				api_key: this.apiKey,
+				type: 'upload',
+				access_mode: this.accessMode,
+				public_id: this.getPublicId(fullPath),
+				...(folderPath
+					? {
+							asset_folder: folderPath,
+							use_asset_folder_as_public_id_prefix: 'true',
+						}
+					: {}),
+			};
+
 			await this.uploadChunk({
 				resourceType,
 				blob: new Blob([chunks]),
 				bytesOffset: offset || 0,
-				bytesTotal: context.size && bytesUploaded === context.size ? context.size : -1,
+				bytesTotal,
 				uploadId,
 				parameters: {
 					signature: this.getFullSignature(uploadParameters),
 					...uploadParameters,
 				},
 			});
+
+			// 7. The final chunk was accepted, so Cloudinary now holds the uploaded asset under the public id; the flag
+			//    lets a later termination remove it instead of leaving it behind. It is only set after the request
+			//    succeeded, so a refused final chunk still reads as unfinished
+			if (bytesTotal !== -1) metadata[UPLOAD_COMPLETED_KEY] = 'true';
 		}
 
 		return bytesUploaded;
@@ -1135,13 +1191,24 @@ export class StorageDriverCloudinary implements TusDriver {
 	async finishChunkedUpload(_filepath: string, _context: ChunkedUploadContext): Promise<void> {}
 
 	/**
-	 * Abort a resumable upload by removing whatever sits under its public id.
+	 * Abort a resumable upload, or remove the asset it produced when it was completed before.
+	 *
+	 * An unfinished upload sends nothing: Cloudinary discards incomplete chunked uploads on its own and offers no handle
+	 * to abort one, and until the final chunk arrives the public id still holds the asset that was there before the
+	 * upload, which a cancelled overwrite must not destroy. An upload whose final chunk was accepted, as recorded in the
+	 * context metadata by {@link StorageDriverCloudinary.writeChunk}, left its asset under the public id, so a
+	 * termination then deletes it. The flag only reaches this call when the TUS server saves the context after each
+	 * chunk; without it, the asset of a finished upload is kept rather than risking the previous one.
 	 *
 	 * @param filepath - Final asset path relative to the root.
-	 * @param _context - Upload context; unused, since Cloudinary discards incomplete chunked uploads on its own.
+	 * @param context - Context carrying the completion flag set by {@link StorageDriverCloudinary.writeChunk}.
+	 * @throws Error carrying Cloudinary's message when the delete of a finished upload's asset fails.
 	 */
-	async deleteChunkedUpload(filepath: string, _context: ChunkedUploadContext): Promise<void> {
-		// 1. Only the asset under the final id is removed; partial chunks have no handle the driver could abort
+	async deleteChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<void> {
+		// 1. Only a finished upload wrote the public id; an unfinished one leaves the previous asset there untouched
+		if (context.metadata?.[UPLOAD_COMPLETED_KEY] !== 'true') return;
+
+		// 2. The asset under the public id is the one this upload stored, so a termination removes it
 		await this.delete(filepath);
 	}
 }

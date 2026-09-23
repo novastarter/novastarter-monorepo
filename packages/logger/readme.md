@@ -77,7 +77,7 @@ const logger = createLogger({
 
 | Option       | Default | Description                                                                      |
 | ------------ | ------- | -------------------------------------------------------------------------------- |
-| `level`      | `info`  | Lowest level written: `fatal`, `error`, `warn`, `info`, `debug`, `trace`.        |
+| `level`      | `info`  | Lowest level written: `fatal` … `trace`, or a name from `pino.customLevels`.     |
 | `style`      | `raw`   | `pretty` for humans, `raw` for JSON lines.                                       |
 | `levels`     | —       | `{ warn: 'WARNING' }` — adds a `severity` field for collectors that expect one.  |
 | `pino`       | —       | Merged into the pino options, e.g. `{ name: 'api' }`; `redact` adds to the list. |

@@ -170,21 +170,21 @@ export class MailDriverMailtrap implements MailDriver {
 	/**
 	 * Check the token without sending: it has to see at least one account.
 	 *
-	 * @throws An error naming Mailtrap with the SDK's error as the cause when Mailtrap refuses the token; an error
-	 * when it has no account.
+	 * The accounts are listed through the same request as {@link MailDriverMailtrap.call}, not the SDK: the SDK's
+	 * `general` API refuses to start without an account id, which the driver has no option for.
+	 *
+	 * @throws ProviderCallError when Mailtrap refuses the token — its status and answer in `extensions`.
+	 * @throws HitRateLimitError when Mailtrap answers 429.
+	 * @throws TimeoutError when the request outlives its timeout.
+	 * @throws Error when the token has no account.
 	 */
 	async verify(): Promise<void> {
-		// 1. Listing the accounts is the cheapest call that needs the token: a bad one is refused here, without a send
-		let accounts: Awaited<ReturnType<MailtrapClient['general']['accounts']['getAllAccounts']>>;
+		// 1. Listing the accounts is the cheapest call that needs the token: a bad one is refused here, without a send;
+		//    `request()` already names Mailtrap in its errors, so they go up unchanged
+		const { data: accounts } = await request<unknown[]>(this.api, 'GET /api/accounts');
 
-		try {
-			accounts = await this.client.general.accounts.getAllAccounts();
-		} catch (error) {
-			throw describeError(error);
-		}
-
-		// 2. A token of no account can send nothing
-		if (accounts.length === 0) {
+		// 2. A token of no account can send nothing; a non-array answer is treated the same, since no account is visible
+		if (!Array.isArray(accounts) || accounts.length === 0) {
 			throw new Error('Mailtrap token has access to no account');
 		}
 	}

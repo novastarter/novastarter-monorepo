@@ -3,9 +3,9 @@
  */
 import type { FieldFilter } from '@novastarter/types';
 import type { AnySchema } from 'joi';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, test } from 'vitest';
 import type { JoiOptions, StringSchema } from './generate-joi.js';
-import { generateJoi, Joi } from './generate-joi.js';
+import { generateJoi, Joi, never } from './generate-joi.js';
 
 /**
  * Assert that a filter builds the expected schema.
@@ -55,6 +55,48 @@ describe(`generateJoi`, () => {
 		expect(() => {
 			generateJoi(mockFieldFilter);
 		}).toThrowError(mockError);
+	});
+
+	test.each([
+		['a string', { status: 'published' }],
+		['a number', { age: 18 }],
+		['a boolean', { active: true }],
+		['an array', { role: ['admin'] }],
+		['an empty object', { age: {} }],
+		['a string in a nested filter', { author: { name: 'Ada' } }],
+	])(`throws when the rule is %s instead of an operator object`, (_label, filter) => {
+		// 1. A bare string used to be walked as a nested filter of its characters and overflow the stack, and the
+		//    other shapes left the field unconstrained; every one of them must fail as a plain, catchable Error
+		expect(() => generateJoi(filter as unknown as FieldFilter)).toThrowError(
+			/^\[generateJoi\] Filter doesn't contain filter rule\./,
+		);
+	});
+
+	it(`throws when a filter holds more than one field key`, () => {
+		// 1. Only one field is turned into a rule, so the second one would be skipped silently
+		expect(() => generateJoi({ age: { _gte: 18 }, name: { _eq: 'a' } })).toThrowError(
+			/^\[generateJoi\] Filter contains more than one field key/,
+		);
+	});
+
+	it(`throws when a field holds more than one operator`, () => {
+		// 1. A range written as `{ _gte, _lte }` would otherwise enforce only its lower bound
+		expect(() => generateJoi({ age: { _gte: 18, _lte: 65 } })).toThrowError(
+			/^\[generateJoi\] Filter contains more than one operator for field "age"/,
+		);
+	});
+
+	test.each([true, false, null, 'x', 0, {}, []])(`the never-validating schema rejects %j`, (value) => {
+		// 1. The fallback of malformed rules used to be `equal(true)`, which let the boolean `true` through; it must
+		//    fail every present value with `any.only` and an empty allow list
+		const { error } = generateJoi({ field: { _in: [] } }).validate({ field: value });
+
+		expect(error?.details.map((detail) => [detail.type, detail.context?.['valids']])).toStrictEqual([['any.only', []]]);
+	});
+
+	it(`the never-validating schema still skips a missing field`, () => {
+		// 1. Like every other rule, presence is only enforced with `requireAll`
+		expect(generateJoi({ field: { _in: [] } }).validate({}).error).toBeUndefined();
 	});
 
 	it(`returns an recursively goes through nested filters`, () => {
@@ -209,7 +251,7 @@ describe(`generateJoi`, () => {
 
 	it(`returns the correct schema for a _starts_with with null value`, () => {
 		// 1. A non-string compare value can match nothing, so the rule fails for any real value
-		expectSchema({ field: { _starts_with: null } }, Joi.any().equal(true));
+		expectSchema({ field: { _starts_with: null } }, never());
 	});
 
 	it(`returns the correct schema for a _nstarts_with with match`, () => {
@@ -219,7 +261,7 @@ describe(`generateJoi`, () => {
 
 	it(`returns the correct schema for a _nstarts_with with null value`, () => {
 		// 1. A non-string compare value can match nothing, so the rule fails for any real value
-		expectSchema({ field: { _nstarts_with: null } }, Joi.any().equal(true));
+		expectSchema({ field: { _nstarts_with: null } }, never());
 	});
 
 	it(`returns the correct schema for a _istarts_with match`, () => {
@@ -229,7 +271,7 @@ describe(`generateJoi`, () => {
 
 	it(`returns the correct schema for a _istarts_with with null value`, () => {
 		// 1. A non-string compare value can match nothing, so the rule fails for any real value
-		expectSchema({ field: { _istarts_with: null } }, Joi.any().equal(true));
+		expectSchema({ field: { _istarts_with: null } }, never());
 	});
 
 	it(`returns the correct schema for a _nistarts_with match`, () => {
@@ -239,7 +281,7 @@ describe(`generateJoi`, () => {
 
 	it(`returns the correct schema for a _nistarts_with with null value`, () => {
 		// 1. A non-string compare value can match nothing, so the rule fails for any real value
-		expectSchema({ field: { _nistarts_with: null } }, Joi.any().equal(true));
+		expectSchema({ field: { _nistarts_with: null } }, never());
 	});
 
 	it(`returns the correct schema for an ends_with match`, () => {
@@ -249,7 +291,7 @@ describe(`generateJoi`, () => {
 
 	it(`returns the correct schema for an ends_with with null value`, () => {
 		// 1. A non-string compare value can match nothing, so the rule fails for any real value
-		expectSchema({ field: { _ends_with: null } }, Joi.any().equal(true));
+		expectSchema({ field: { _ends_with: null } }, never());
 	});
 
 	it(`returns the correct schema for a doesnt _nends_with match`, () => {
@@ -259,7 +301,7 @@ describe(`generateJoi`, () => {
 
 	it(`returns the correct schema for a doesnt _nends_with with null value`, () => {
 		// 1. A non-string compare value can match nothing, so the rule fails for any real value
-		expectSchema({ field: { _nends_with: null } }, Joi.any().equal(true));
+		expectSchema({ field: { _nends_with: null } }, never());
 	});
 
 	it(`returns the correct schema for an iends_with match`, () => {
@@ -269,7 +311,7 @@ describe(`generateJoi`, () => {
 
 	it(`returns the correct schema for an iends_with with null value`, () => {
 		// 1. A non-string compare value can match nothing, so the rule fails for any real value
-		expectSchema({ field: { _iends_with: null } }, Joi.any().equal(true));
+		expectSchema({ field: { _iends_with: null } }, never());
 	});
 
 	it(`returns the correct schema for a doesnt _niends_with match`, () => {
@@ -279,7 +321,7 @@ describe(`generateJoi`, () => {
 
 	it(`returns the correct schema for a doesnt _niends_with with null value`, () => {
 		// 1. A non-string compare value can match nothing, so the rule fails for any real value
-		expectSchema({ field: { _niends_with: null } }, Joi.any().equal(true));
+		expectSchema({ field: { _niends_with: null } }, never());
 	});
 
 	it(`returns the correct schema for an _in match`, () => {
@@ -316,7 +358,7 @@ describe(`generateJoi`, () => {
 	it(`fails every value for an _in match with an empty list`, () => {
 		// 1. Nothing is a member of an empty list: the field fails for any value, through the never-validating schema
 		//    the malformed compare values get — `describe()` alone pinned a passing schema before
-		expectSchema({ field: { _in: [] } }, Joi.any().equal(true));
+		expectSchema({ field: { _in: [] } }, never());
 
 		// 2. Behaviourally: whatever the payload holds, the field fails
 		const { error } = generateJoi({ field: { _in: [] } }).validate({ field: 'anything' });
@@ -336,7 +378,7 @@ describe(`generateJoi`, () => {
 		// 1. A number cannot hold a list of allowed values: spreading it would throw a `TypeError`, so the rule
 		//    degrades to the never-validating schema the malformed compare values get — the documented string spread
 		//    above keeps working
-		expectSchema({ field: { _in: 5 } }, Joi.any().equal(true));
+		expectSchema({ field: { _in: 5 } }, never());
 
 		// 2. Behaviourally: whatever the payload holds, the field fails — the schema still builds and validates
 		const { error } = generateJoi({ field: { _in: 5 } } as unknown as FieldFilter).validate({ field: 'anything' });
@@ -420,7 +462,7 @@ describe(`generateJoi`, () => {
 		(operator) => {
 			// 1. An unparseable string bound can never be reached by a real value: the rule degrades to the
 			//    never-validating schema, instead of Joi throwing an assert at schema-build time
-			expectSchema({ field: { [operator]: 'garbage' } }, Joi.any().equal(true));
+			expectSchema({ field: { [operator]: 'garbage' } }, never());
 
 			// 2. Behaviourally: the schema builds and whatever the payload holds, the field fails
 			const { error } = generateJoi({ field: { [operator]: 'garbage' } } as FieldFilter).validate({
@@ -494,12 +536,12 @@ describe(`generateJoi`, () => {
 	it(`returns the correct schema for an _between with a non-array value`, () => {
 		// 1. Bounds that are not an array cannot hold a range, so the rule fails for any real value instead of
 		//    throwing on `every`
-		expectSchema({ field: { _between: '1,3' } }, Joi.any().equal(true));
+		expectSchema({ field: { _between: '1,3' } }, never());
 	});
 
 	it(`returns the correct schema for an _nbetween with a non-array value`, () => {
 		// 1. The negated form fails the same way on malformed bounds
-		expectSchema({ field: { _nbetween: '1,3' } }, Joi.any().equal(true));
+		expectSchema({ field: { _nbetween: '1,3' } }, never());
 	});
 
 	it(`_nbetween accepts values outside the range and rejects values inside`, () => {
@@ -515,7 +557,7 @@ describe(`generateJoi`, () => {
 	it.each(['_between', '_nbetween'])(`fails every value for %s with fewer than two bounds`, (operator) => {
 		// 1. One bound leaves the other `undefined`, and Joi rejects `min` / `max` of `undefined` with an assert at
 		//    schema-build time: the rule degrades to the never-validating schema instead
-		expectSchema({ field: { [operator]: [5] } }, Joi.any().equal(true));
+		expectSchema({ field: { [operator]: [5] } }, never());
 
 		// 2. Behaviourally: the schema builds and whatever the payload holds, the field fails
 		const { error } = generateJoi({ field: { [operator]: [5] } } as FieldFilter).validate({ field: 'anything' });
@@ -527,10 +569,7 @@ describe(`generateJoi`, () => {
 		// 1. Bounds above `Number.MAX_SAFE_INTEGER` are neither safe numbers nor dates: the pair degrades to the
 		//    never-validating schema, instead of the date branch rejecting the raw numbers with an assert at
 		//    schema-build time
-		expectSchema(
-			{ field: { [operator]: [Number.MAX_SAFE_INTEGER + 1, Number.MAX_SAFE_INTEGER + 2] } },
-			Joi.any().equal(true),
-		);
+		expectSchema({ field: { [operator]: [Number.MAX_SAFE_INTEGER + 1, Number.MAX_SAFE_INTEGER + 2] } }, never());
 
 		// 2. Behaviourally: whatever the payload holds, the field fails
 		const { error } = generateJoi({
@@ -557,13 +596,13 @@ describe(`generateJoi`, () => {
 
 	it(`returns the correct schema for an _regex match with null value`, () => {
 		// 1. A missing pattern can match nothing, so the rule fails for any real value
-		expectSchema({ field: { _regex: null } }, Joi.any().equal(true));
+		expectSchema({ field: { _regex: null } }, never());
 	});
 
 	it(`fails any value for an _regex match with an invalid pattern`, () => {
 		// 1. `[` does not compile: instead of a `SyntaxError` out of schema building, the rule degrades to the
 		//    never-validating schema the malformed compare values get
-		expectSchema({ field: { _regex: '[' } }, Joi.any().equal(true));
+		expectSchema({ field: { _regex: '[' } }, never());
 
 		// 2. Behaviourally: whatever the payload holds, the field fails — the schema still builds and validates
 		const { error } = generateJoi({ field: { _regex: '[' } }).validate({ field: 'anything' });

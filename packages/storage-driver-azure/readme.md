@@ -91,3 +91,14 @@ await client.getBlockBlobClient('media/a.jpg').setAccessTier('Cool');
 | `endpoint`      | —        | Custom endpoint, for Azurite or a private endpoint.                            |
 | `tus.enabled`   | —        | Whether resumable uploads are switched on; only then is `chunkSize` validated. |
 | `tus.chunkSize` | —        | Bytes appended per TUS PATCH request, up to the block limit.                   |
+
+## Resumable uploads
+
+A TUS upload is staged in a separate append blob, `<name>.<id>.tmp`, which `list()` leaves out. The target is not
+touched while chunks are uploaded, and a terminated or expired upload removes only the staging blob. Finishing copies
+the staging blob over the target server-side, so the finished blob is an append blob of at most 50,000 chunks. A block
+blob already at the path, such as one `write()` stored, cannot be copied onto and is deleted just before the copy.
+
+The copy is not atomic: while the finish runs, the target can read as an empty blob. A failed finish may leave the
+target empty, or missing when it was deleted for the copy, so its old content is not guaranteed to survive. The staging
+blob is removed only after a successful copy, so the finish can be retried with the same upload.

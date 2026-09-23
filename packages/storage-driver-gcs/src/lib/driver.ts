@@ -8,7 +8,7 @@ import type {
 	GetFilesOptions,
 	StorageOptions,
 } from '@google-cloud/storage';
-import { Storage } from '@google-cloud/storage';
+import { CRC32C, Storage } from '@google-cloud/storage';
 import { DEFAULT_CHUNK_SIZE } from '@novastarter/constants';
 import { type CallOptions, type CallResponse, type HttpApi, request } from '@novastarter/http';
 import {
@@ -29,6 +29,27 @@ import { confinePath, joinPath } from '@novastarter/utils';
  * the first PATCH.
  */
 const MINIMUM_CHUNK_SIZE = 262_144;
+
+/**
+ * Status a resumable-upload session answers with while the object is not finished yet; its `Range` header names the
+ * bytes the session kept.
+ *
+ * @internal
+ */
+const RESUMABLE_INCOMPLETE_STATUS = 308;
+
+/**
+ * The part of an upload request's answer that the SDK's write stream re-emits as `response` and
+ * {@link StorageDriverGcs.writeChunk} reads: the status and the lower-cased headers.
+ *
+ * @internal
+ */
+type SessionResponse = {
+	/** HTTP status of the request. */
+	status: number;
+	/** Response headers with lower-cased names, as the SDK's HTTP client hands them over. */
+	headers?: Record<string, string | undefined> | undefined;
+};
 
 /**
  * The root of the GCS JSON API a `call()` path is joined to, when the location names no `apiEndpoint`.
@@ -513,12 +534,19 @@ export class StorageDriverGcs implements TusDriver {
 	/**
 	 * Append a chunk to the resumable-upload session.
 	 *
+	 * GCS keeps a request that does not finish the object only up to a 256 KiB boundary, so a chunk whose length is not
+	 * a multiple of 256 KiB may be stored in part. The returned offset is the one the session reports, and the CRC32C
+	 * kept in `hash` covers exactly those bytes; the client resends the rest from there.
+	 *
 	 * @param filepath - Final object path relative to the root.
 	 * @param content - Chunk data.
 	 * @param offset - Byte offset the chunk starts at.
 	 * @param context - Upload context carrying the session `uri` and the CRC32C `hash` of the bytes uploaded so far.
-	 * @returns The upload offset after this chunk, i.e. `offset` plus the bytes consumed from `content`.
+	 * @returns The upload offset after this chunk as GCS reports it: `offset` plus the bytes the session kept, which may
+	 * be fewer than the bytes consumed from `content`.
 	 * @throws Error naming `tus.enabled` when the location has resumable uploads disabled.
+	 * @throws Error when the session reports an offset that is neither the chunk's start, its end nor a 256 KiB boundary
+	 * inside it, since no checksum for it can be kept.
 	 * @throws Error when the context carries no session `uri`, meaning no upload was created by
 	 * {@link StorageDriverGcs.createChunkedUpload}.
 	 */
@@ -564,24 +592,77 @@ export class StorageDriverGcs implements TusDriver {
 			},
 		});
 
-		// 5. The SDK emits the CRC32C of everything uploaded so far; keeping it in the context is what makes the next
-		//    chunk resumable with an intact checksum
-		stream.on('crc32c', (hash: string) => {
-			// 1. Written to the map the context carries, so the value survives into the next `writeChunk` call
-			metadata['hash'] = hash;
+		// 5. The session answers every request with the bytes it actually kept (`Range` on a 308), and the SDK ends a
+		//    partial upload without comparing that to what it sent: GCS keeps a non-final request only up to a 256 KiB
+		//    boundary, so an unaligned chunk leaves the session behind the bytes read. The last answer is kept to take
+		//    the new offset from the server instead of from the stream
+		let lastResponse: SessionResponse | undefined;
+
+		stream.on('response', (response: SessionResponse) => {
+			// 1. Every request of the upload answers; only the last one describes the session after this chunk
+			lastResponse = response;
 		});
 
-		// 6. Count the bytes as they pass, since the SDK does not report how much of the stream it consumed
-		let bytesUploaded = offset || 0;
+		// 6. The CRC32C that seeds the next chunk has to cover exactly the bytes the session holds, while the SDK's own
+		//    `crc32c` event covers every byte read. A running checksum is kept here, seeded like the SDK's, with a
+		//    snapshot at the start and at every 256 KiB boundary — the only places a session stops short at — so the
+		//    hash at the server's offset is at hand without buffering the chunk
+		const start = offset || 0;
+		const running = typeof metadata['hash'] === 'string' ? CRC32C.from(metadata['hash']) : new CRC32C();
+		const hashes = new Map<number, string>([[start, running.toString()]]);
+		let position = start;
 
 		content.on('data', (chunk: Buffer) => {
-			// 1. Every chunk that flows through the pipeline is counted, whether or not the SDK has sent it yet
-			bytesUploaded += chunk.length;
+			let rest = chunk;
+
+			// 1. Split the chunk at absolute 256 KiB boundaries, snapshotting the checksum on each one it reaches
+			while (rest.length > 0) {
+				const boundary = (Math.floor(position / MINIMUM_CHUNK_SIZE) + 1) * MINIMUM_CHUNK_SIZE;
+				const piece = rest.subarray(0, boundary - position);
+
+				running.update(piece);
+				position += piece.length;
+				rest = rest.subarray(piece.length);
+
+				if (position === boundary) {
+					hashes.set(position, running.toString());
+				}
+			}
 		});
 
 		await pipelinePromise(content, stream);
 
-		return bytesUploaded;
+		// 7. The end of the chunk is a valid place too: the session holds it all when the last request finalised the
+		//    object or was accepted in full
+		hashes.set(position, running.toString());
+
+		// 8. A 308 names the last byte kept (`bytes=0-N`), and no `Range` at all means nothing is kept; any other answer
+		//    finalised the object with every byte sent
+		let persisted = position;
+
+		if (lastResponse?.status === RESUMABLE_INCOMPLETE_STATUS) {
+			const range = lastResponse.headers?.['range'];
+
+			persisted = typeof range === 'string' ? Number(range.split('-')[1]) + 1 : 0;
+		}
+
+		// 9. Store the checksum of exactly the kept bytes, so the next chunk resumes from a hash GCS agrees with; an
+		//    offset no snapshot matches cannot be checksummed, and failing here beats a final integrity check that
+		//    rejects the finished object
+		const hash = hashes.get(persisted);
+
+		if (hash === undefined) {
+			throw new Error(
+				`Cannot write a chunk of "${filepath}": the upload session holds ${persisted} bytes, which is not a point the driver can checksum`,
+			);
+		}
+
+		if (persisted !== start) {
+			metadata['hash'] = hash;
+		}
+
+		// 10. The server's offset, not the bytes read: the TUS client resends whatever the session did not keep
+		return persisted;
 	}
 
 	/**

@@ -125,11 +125,13 @@ export const joiValidationErrorItemToErrorExtensions = (
 
 	// 2. `.only` covers eq, in, null and empty: one allowed value, or a list of them. The list is counted with numeric
 	//    twins merged, so `_eq: 18` (built as `[18, '18']`) reads as `eq` with the caller's value, not as `in`; the
-	//    reported values pass through `comparable`, so a boolean compares as `'true'` / `'false'` like on the zod side
+	//    reported values pass through `comparable`, so a boolean compares as `'true'` / `'false'` like on the zod side.
+	//    An empty list is the rule a malformed filter degrades to (`_in: []` and friends): no value is allowed, which
+	//    reads as `in` with nothing to pick from rather than as an `eq` against `undefined`
 	if (joiType.endsWith('only')) {
 		const valids: unknown[] = validationErrorItem.context?.['valids'] ?? [];
 
-		if (distinctCount(valids) > 1) {
+		if (valids.length === 0 || distinctCount(valids) > 1) {
 			extensions.type = 'in';
 			extensions.valid = valids.map(comparable);
 		} else {

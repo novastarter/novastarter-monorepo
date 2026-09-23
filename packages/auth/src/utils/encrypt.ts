@@ -10,6 +10,17 @@ import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:cr
 const VERSION = 'v2';
 
 /**
+ * Length in bytes of the GCM authentication tag {@link encrypt} writes and {@link decrypt} requires.
+ *
+ * GCM also accepts shorter tags, down to 4 bytes, and each byte dropped makes a forgery 256 times cheaper. The payload
+ * often comes from a cookie the client controls, so the length is pinned instead of taken from the payload.
+ *
+ * @defaultValue 16 bytes, the full 128-bit tag.
+ * @internal
+ */
+const AUTH_TAG_LENGTH = 16;
+
+/**
  * What an encrypted value is for; each purpose gets a key of its own from the same secret.
  *
  * @internal
@@ -81,7 +92,8 @@ export const encrypt = (plaintext: string, secret: string, purpose: EncryptionPu
  * @param secrets - The secrets, current first.
  * @param purpose - What the value is for, as given to {@link encrypt}.
  * @returns The plaintext and the position of the secret that opened it.
- * @throws Error when the payload is not in the format, was tampered with, or none of the secrets opens it.
+ * @throws Error when the payload is not in the format (a tag other than 16 bytes included), was tampered with, or none
+ * of the secrets opens it.
  * @internal
  */
 export const decrypt = (payload: string, secrets: readonly string[], purpose: EncryptionPurpose): DecryptedValue => {
@@ -92,11 +104,20 @@ export const decrypt = (payload: string, secrets: readonly string[], purpose: En
 		throw new Error('The encrypted value is not in a known format');
 	}
 
-	// 2. GCM verifies the tag in `final()`: another key throws there, so each secret is tried in turn until one opens it
-	for (const [keyIndex, secret] of secrets.entries()) {
-		const decipher = createDecipheriv('aes-256-gcm', deriveKey(secret, purpose), Buffer.from(iv, 'base64url'));
+	// 2. Only the full tag is accepted: GCM would verify a truncated one, and a 4-byte tag is forged in 2^32 guesses
+	const authTag = Buffer.from(tag, 'base64url');
 
-		decipher.setAuthTag(Buffer.from(tag, 'base64url'));
+	if (authTag.length !== AUTH_TAG_LENGTH) {
+		throw new Error('The encrypted value is not in a known format');
+	}
+
+	// 3. GCM verifies the tag in `final()`: another key throws there, so each secret is tried in turn until one opens it
+	for (const [keyIndex, secret] of secrets.entries()) {
+		const decipher = createDecipheriv('aes-256-gcm', deriveKey(secret, purpose), Buffer.from(iv, 'base64url'), {
+			authTagLength: AUTH_TAG_LENGTH,
+		});
+
+		decipher.setAuthTag(authTag);
 
 		try {
 			const plaintext = Buffer.concat([decipher.update(Buffer.from(ciphertext, 'base64url')), decipher.final()]);
@@ -107,6 +128,6 @@ export const decrypt = (payload: string, secrets: readonly string[], purpose: En
 		}
 	}
 
-	// 3. No secret opened it: tampered with, or encrypted under a secret no longer configured
+	// 4. No secret opened it: tampered with, or encrypted under a secret no longer configured
 	throw new Error('The encrypted value does not open with any of the configured secrets');
 };

@@ -299,6 +299,34 @@ describe('sendPush', () => {
 		expect(logger.warn).not.toHaveBeenCalled();
 	});
 
+	test('Does not pass a gone target on as is when a filter redirected the message', async () => {
+		register({ webpush: 'ok-web', fcm: 'gone' });
+
+		// 1. A redirect to a test phone whose token expired: the caller's own subscription was never contacted, so the
+		//    error it deletes subscriptions on must not reach it; the gone error travels as the cause instead
+		emitter.emitFilter.mockResolvedValueOnce({ token: 'dev-phone', title: 'Hi' });
+
+		const error = await sendPush(message).catch((caught: unknown) => caught);
+
+		expect(error).not.toBeInstanceOf(PushTargetGoneError);
+		expect(error).toBeInstanceOf(Error);
+		expect((error as Error).cause).toBeInstanceOf(PushTargetGoneError);
+
+		// 2. push.gone still names the token that is actually gone, for a listener that cleans up test devices
+		expect(emitter.emitAction).toHaveBeenCalledWith(PUSH_GONE_EVENT, {
+			location: 'fcm',
+			platform: 'fcm',
+			target: 'dev-phone',
+			reason: '410 from https://push.example',
+		});
+
+		// 3. A rewrite that keeps the target (a title prefix) still passes the error on as is
+		emitter.emitFilter.mockResolvedValueOnce({ ...message, title: '[test] Paid' });
+		usePush().registerRoutes({ webpush: 'fcm' });
+
+		await expect(sendPush(message)).rejects.toBeInstanceOf(PushTargetGoneError);
+	});
+
 	test('Wraps any other failure, after push.failed', async () => {
 		register({ webpush: 'down' });
 

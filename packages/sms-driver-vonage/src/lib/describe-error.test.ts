@@ -17,6 +17,20 @@ describe('describeError', () => {
 		expect(describeError(refusal)).toMatchObject({ message: 'Vonage: 4: Bad Credentials', cause: refusal });
 	});
 
+	test('Reports a message refused whole as a refusal even when the SDK calls it partial', () => {
+		// 1. Vonage sends `message-count` as a string, so the SDK's strict count check fails and it throws
+		//    MessageSendPartialFailure for a message no part of which went out; that is a refusal the chain may fall back on
+		const refusal = new MessageSendPartialFailure({
+			messageCount: '1',
+			messages: [{ status: '4', errorText: 'Bad Credentials' }],
+		} as never);
+
+		const described = describeError(refusal);
+
+		expect(described).not.toBeInstanceOf(SmsPartialDeliveryError);
+		expect(described).toMatchObject({ message: 'Vonage: 4: Bad Credentials', cause: refusal });
+	});
+
 	test('Turns a partial failure into the non-retryable SmsPartialDeliveryError', () => {
 		// 1. A long message may be refused in part only; the delivered parts already went out, so the failure is the
 		//    non-retryable SmsPartialDeliveryError — not a refusal a fallback would re-send

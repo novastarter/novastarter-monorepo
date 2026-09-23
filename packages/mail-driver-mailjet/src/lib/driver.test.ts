@@ -57,6 +57,13 @@ const request = vi.fn();
  */
 const post = vi.fn(() => ({ request }));
 
+/**
+ * Spy receiving the options every SDK client is built with, so a test can assert what the driver passed.
+ *
+ * @internal
+ */
+const construct = vi.fn();
+
 vi.mock('node-mailjet', () => ({
 	/**
 	 * Stand-in for the SDK's `Client`: records the constructor options and routes `post()` to the shared spy.
@@ -74,7 +81,10 @@ vi.mock('node-mailjet', () => ({
 		 *
 		 * @param options - The key pair the driver passes to the SDK.
 		 */
-		constructor(public options: unknown) {}
+		constructor(public options: unknown) {
+			// 1. Reported to the shared spy, since the driver keeps its client private
+			construct(options);
+		}
 	},
 }));
 
@@ -132,6 +142,18 @@ describe('MailDriverMailjet', () => {
 		expect(() => new MailDriverMailjet({ apiKey: 'k', apiSecret: '' })).toThrow(/"apiSecret"/);
 		expect(defaultExport).toBe(MailDriverMailjet);
 	});
+
+	test('Builds the client with a timeout, 30 s unless the location sets one', () => {
+		// 1. Without one the SDK would wait forever on a stalled connection, so the default is always passed
+		new MailDriverMailjet({ apiKey: 'k', apiSecret: 's' });
+
+		expect(construct).toHaveBeenLastCalledWith({ apiKey: 'k', apiSecret: 's', options: { timeout: 30_000 } });
+
+		// 2. The location's own timeout replaces it
+		new MailDriverMailjet({ apiKey: 'k', apiSecret: 's', timeout: 5_000 });
+
+		expect(construct).toHaveBeenLastCalledWith({ apiKey: 'k', apiSecret: 's', options: { timeout: 5_000 } });
+	});
 });
 
 describe('call', () => {
@@ -178,6 +200,18 @@ describe('call', () => {
 		);
 
 		await expect(driver.call('GET /v3/REST/sender', {}, { timeout: 10 })).rejects.toBeInstanceOf(TimeoutError);
+	});
+
+	test("Takes the location's timeout when the call names none", async () => {
+		fetchMock.mockImplementationOnce(
+			(_url: string, init: RequestInit) =>
+				new Promise((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(init.signal?.reason))),
+		);
+
+		// 1. A stalled request fails after the location's timeout rather than the 30 s default
+		const driver = new MailDriverMailjet({ apiKey: 'k', apiSecret: 's', timeout: 10 });
+
+		await expect(driver.call('GET /v3/REST/sender')).rejects.toBeInstanceOf(TimeoutError);
 	});
 
 	test('Turns an error status into ProviderCallError without the key pair in the message', async () => {

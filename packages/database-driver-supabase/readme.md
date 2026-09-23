@@ -46,12 +46,12 @@ The `url` is the connection string the project's dashboard shows under Connect, 
 - the session pooler, port `5432` on the pooler host — one server connection per client, everything works;
 - the direct host, `db.<ref>.supabase.co:5432` — IPv6 unless the project has the IPv4 add-on.
 
-Leave TLS parameters out of the URL (`sslmode`, `sslcert`, `sslkey`, `sslrootcert`, `sslnegotiation`): node-postgres
-lets the URL override the `ssl` option, and recent versions warn on `sslmode=require`. TLS is on by default and verifies
-the server against the system's root certificates; when the server's certificate does not chain to a public root,
-download the project's root certificate (`prod-ca-2021.crt`, under the database settings) and pass its PEM as `ca` — a
-`DATABASE_SSL_CA_FILE` secret through `@novastarter/env`. A blank or whitespace-only `ca` counts as absent. The local
-Supabase CLI stack speaks plain TCP: `ssl: false`.
+Leave TLS parameters out of the URL (`ssl`, `sslmode`, `sslcert`, `sslkey`, `sslrootcert`, `sslnegotiation`):
+node-postgres lets the URL override the `ssl` option, and recent versions warn on `sslmode=require`. TLS is on by
+default and verifies the server against the system's root certificates; when the server's certificate does not chain to
+a public root, download the project's root certificate (`prod-ca-2021.crt`, under the database settings) and pass its
+PEM as `ca` — a `DATABASE_SSL_CA_FILE` secret through `@novastarter/env`. A blank or whitespace-only `ca` counts as
+absent. The local Supabase CLI stack speaks plain TCP: `ssl: false`.
 
 ## Options
 

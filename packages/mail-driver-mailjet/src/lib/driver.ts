@@ -1,4 +1,4 @@
-import { type CallOptions, type CallResponse, type HttpApi, request } from '@novastarter/http';
+import { type CallOptions, type CallResponse, DEFAULT_REQUEST_TIMEOUT, type HttpApi, request } from '@novastarter/http';
 import type { MailDriver, MailMessage, MailResult } from '@novastarter/mail';
 import { Client, type LibraryResponse, type SendEmailV3_1 } from 'node-mailjet';
 import { describeError } from './describe-error.js';
@@ -29,6 +29,11 @@ export type MailDriverMailjetConfig = {
 	apiSecret: string;
 	/** Validate without delivering — Mailjet's sandbox mode. */
 	sandbox?: boolean | undefined;
+	/**
+	 * Request timeout in milliseconds, for sends and for `call()`; 30 s unless given. The SDK waits forever without
+	 * one, so a stalled connection would never let `sendMail()` fall back.
+	 */
+	timeout?: number | undefined;
 };
 
 /**
@@ -88,7 +93,7 @@ export class MailDriverMailjet implements MailDriver {
 	/**
 	 * Create a driver on a client of its own for the given key pair.
 	 *
-	 * @param config - API key pair and sandbox switch.
+	 * @param config - API key pair, sandbox switch and timeout.
 	 * @throws Error without both keys.
 	 */
 	constructor(config: MailDriverMailjetConfig) {
@@ -97,10 +102,14 @@ export class MailDriverMailjet implements MailDriver {
 			throw new Error('The mailjet mail driver needs "apiKey" and "apiSecret"');
 		}
 
-		this.client = new Client({ apiKey: config.apiKey, apiSecret: config.apiSecret });
+		// 2. The SDK sets no timeout of its own (axios' `0`, wait forever), so one is always passed: a stalled
+		//    connection then fails the send and `sendMail()` can fall back to the next location
+		const timeout = config.timeout ?? DEFAULT_REQUEST_TIMEOUT;
+
+		this.client = new Client({ apiKey: config.apiKey, apiSecret: config.apiSecret, options: { timeout } });
 		this.sandbox = Boolean(config.sandbox);
 
-		// 2. The key pair also goes to the API of `call()`, the one request that goes around the SDK
+		// 3. The key pair and the timeout also go to the API of `call()`, the one request that goes around the SDK
 		const basic = Buffer.from(`${config.apiKey}:${config.apiSecret}`).toString('base64');
 
 		this.api = {
@@ -108,6 +117,7 @@ export class MailDriverMailjet implements MailDriver {
 			baseUrl: MAILJET_API_URL,
 			hosts: MAILJET_CALL_HOSTS,
 			headers: { authorization: `Basic ${basic}` },
+			timeout,
 		};
 	}
 
@@ -173,7 +183,7 @@ export class MailDriverMailjet implements MailDriver {
 	 * @param method - The verb and the path, or a full URL on Mailjet's API host.
 	 * @param params - The query or the body. A `{name}` in the path takes the parameter of that name, URL-encoded,
 	 * which is then not sent again.
-	 * @param options - A timeout (30 s unless given), an abort signal, extra headers.
+	 * @param options - A timeout over the location's (30 s unless it set one), an abort signal, extra headers.
 	 * @returns The status, the lower-cased headers and Mailjet's answer: parsed JSON, else text; `undefined` when
 	 * empty.
 	 * @throws ProviderCallError when Mailjet answers with an error status — its status and answer in `extensions`.

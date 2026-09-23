@@ -37,9 +37,9 @@ routes.
 
 Messages API through the official `mailgun.js` SDK (Node's own `FormData`): the category and the tags become Mailgun
 tags (`o:tag`), the reply-to and the custom headers `h:` fields; attachments with a content id go to `inline` and are
-referenced from the html as `cid:<content id>`, the rest to `attachment`. A refusal of the API throws with the provider
-named and the SDK's `APIError` as the cause, so `sendMail()` falls back. `verify()` reads the domain and requires it to
-be `active`.
+referenced from the html as `cid:<content id>`, the rest to `attachment`, each part carrying the attachment's
+`contentType`. A refusal of the API throws with the provider named and the SDK's `APIError` as the cause, so
+`sendMail()` falls back. `verify()` reads the domain and requires it to be `active`.
 
 ## Any other request
 

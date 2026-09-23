@@ -49,6 +49,21 @@ validatePayload({ author: { name: { _eq: 'Ada' } } }, { author: { name: 'Bob' } 
 
 `_or` reports the errors of its members only when none of them passes.
 
+Each level of a filter holds exactly one key, and each field exactly one operator. Several fields, or a range written as
+two operators, go into an `_and`:
+
+```ts
+validatePayload({ _and: [{ age: { _gte: 18 } }, { age: { _lte: 65 } }] }, { age: 100 });
+// => [FailedValidationError { extensions: { field: 'age', path: [], type: 'lte', valid: 65 } }]
+```
+
+A filter that breaks this shape throws a plain `Error` instead of skipping a rule: two keys on one level, two operators
+on one field, or a bare value where an operator object belongs (`{ status: 'published' }` is not shorthand for `_eq`).
+
+A rule whose compare value can describe no value at all (`_in: []`, a non-string `_contains`, an unparseable range
+bound, a `_regex` that does not compile) fails every value the payload sends for that field, reported as
+`{ type: 'in', valid: [] }`.
+
 ### Operators
 
 `_eq`, `_neq`, `_lt`, `_lte`, `_gt`, `_gte`, `_in`, `_nin`, `_null`, `_nnull`, `_empty`, `_nempty`, `_between`,

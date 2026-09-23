@@ -40,6 +40,10 @@ contract.
   stream as `node:fs` reported it.
 - `write()` streams into a temporary sibling (`<path>.<random>.tmp`) and renames it over the target once the whole
   stream went through, so a source that fails mid-way leaves the previous content in place and no partial file behind.
+- Resumable (TUS) uploads write their chunks into a staging sibling (`<path>.<random>.tmp`, its id kept in the upload
+  context) and rename it over the target when the upload finishes. A file already stored under the path stays readable
+  during the upload and is kept when the upload is abandoned, terminated or expired; termination removes only the
+  staging file.
 - `list()` yields nothing for a prefix whose directory does not exist, the root included before the first write; a
   directory that cannot be read for another reason, a permission error say, rejects with the `node:fs` error.
 - `stat()` throws `StorageFileNotFoundError` for a missing file; `exists()` answers `false` for a path that cannot exist

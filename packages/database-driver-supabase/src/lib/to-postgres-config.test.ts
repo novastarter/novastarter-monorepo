@@ -76,7 +76,15 @@ describe('toPostgresConfig', () => {
 		// 1. node-postgres lets the URL override the `ssl` option, so an sslmode there would silently defeat the TLS
 		//    set here — refused up front, in the words of this driver
 		expect(() => toPostgresConfig({ url: `${sample.url}?sslmode=disable` })).toThrowErrorMatchingInlineSnapshot(
-			`[Error: The supabase database driver needs a "url" without TLS parameters ("sslmode", "sslcert", "sslkey", "sslrootcert", "sslnegotiation"): set TLS with "ssl" and "ca" instead]`,
+			`[Error: The supabase database driver needs a "url" without TLS parameters ("ssl", "sslmode", "sslcert", "sslkey", "sslrootcert", "sslnegotiation"): set TLS with "ssl" and "ca" instead]`,
+		);
+	});
+
+	test.each(['ssl=0', 'ssl=1', 'ssl=true'] as const)('Throws when the url carries %s', (param) => {
+		// 1. pg turns `ssl=0` into `ssl: false` and `ssl=1`/`ssl=true` into `ssl: true` over the `ssl` option, so the
+		//    first would connect in plain text and the others would drop the `ca` — refused like sslmode
+		expect(() => toPostgresConfig({ url: `${sample.url}?${param}`, ca: sample.ca })).toThrow(
+			'The supabase database driver needs a "url" without TLS parameters',
 		);
 	});
 

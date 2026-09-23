@@ -67,6 +67,22 @@ describe('encrypt / decrypt', () => {
 		expect(() => decrypt([version, flip(iv, 0), tag, ciphertext].join('.'), [SECRET], 'totp-secret')).toThrow();
 	});
 
+	test('Refuses a truncated tag, even one GCM would verify', () => {
+		const [version, iv, tag, ciphertext] = encrypt('secret value', SECRET, 'oauth-cookie').split('.') as [
+			string,
+			string,
+			string,
+			string,
+		];
+
+		// 1. The first 4 bytes of a real tag are a valid 32-bit GCM tag, so only the length check stops this payload
+		const shortTag = Buffer.from(tag, 'base64url').subarray(0, 4).toString('base64url');
+
+		expect(() => decrypt([version, iv, shortTag, ciphertext].join('.'), [SECRET], 'oauth-cookie')).toThrow(
+			'The encrypted value is not in a known format',
+		);
+	});
+
 	test('Refuses another key', () => {
 		// 1. The tag does not verify under another key
 		expect(() => decrypt(encrypt('secret value', SECRET, 'totp-secret'), [OLD_SECRET], 'totp-secret')).toThrow(

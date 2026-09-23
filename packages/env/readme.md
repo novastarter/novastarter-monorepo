@@ -58,9 +58,10 @@ if (env.REDIS) useRedis().registerLocation('default', env.REDIS);
 | `<NAME>_FILE` | —       | Path to read `<NAME>` from, for the names passed in `fileVariables`, e.g. `DB_PASSWORD_FILE`. |
 
 A value may carry a cast prefix: `string:`, `number:`, `boolean:`, `array:`, `json:`, `regex:`. `array:` takes a comma
-separated list whose items may carry prefixes of their own: `array:string:a,number:1` gives `['a', 1]`. A payload the
-prefix cannot read — `number:80O0`, `regex:(` — is refused at start-up with an error naming the value, rather than
-turned into a missing variable a schema default would cover.
+separated list whose items may carry prefixes of their own: `array:string:a,number:1` gives `['a', 1]`. `boolean:` takes
+only `true`, `1`, `false` and `0`. A payload the prefix cannot read — `number:80O0`, `boolean:yes`, `regex:(` — is
+refused at start-up with an error naming the value, rather than turned into a missing variable a schema default would
+cover or a silent `false`.
 
 A variable of `fileVariables` set both as `<NAME>` and `<NAME>_FILE` is refused at start-up as well: the sources
 enumerate in no documented order, so letting one win would pick the secret by chance. A `<NAME>_FILE` whose file cannot

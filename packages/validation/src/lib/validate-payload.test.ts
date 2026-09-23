@@ -214,6 +214,40 @@ describe('validatePayload', () => {
 		expect(validatePayload({ v: { _nin: null } } as Filter, { v: 'anything' })).toStrictEqual([]);
 	});
 
+	it('fails `true` against a malformed rule instead of letting it through', () => {
+		// 1. The never-validating fallback used to be `equal(true)`, so a JSON `true` passed a rule meant to reject
+		//    everything; every malformed shape must now report the field
+		const filters = [
+			{ role: { _in: [] } },
+			{ role: { _contains: 5 } },
+			{ role: { _regex: '(' } },
+			{ role: { _gt: 'garbage' } },
+			{ role: { _between: [1] } },
+		] as Filter[];
+
+		for (const filter of filters) {
+			const errors = validatePayload(filter, { role: true });
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0]!.extensions).toStrictEqual({ field: 'role', path: [], type: 'in', valid: [] });
+		}
+	});
+
+	test.each([
+		['a bare string rule', { status: 'published' }],
+		['a bare number rule', { age: 18 }],
+		['two operators on one field', { age: { _gte: 18, _lte: 65 } }],
+		['two fields on one level', { age: { _gte: 18 }, name: { _eq: 'a' } }],
+		['a field next to a logical group', { _and: [{ age: { _gte: 18 } }], name: { _eq: 'a' } }],
+		['a bare rule inside a logical group', { _and: [{ status: 'published' }] }],
+	])('throws a plain Error for %s instead of skipping or overflowing', (_label, filter) => {
+		// 1. Each of these used to either recurse until the stack overflowed or drop a rule and pass the payload; a
+		//    malformed filter is a caller bug, so it fails loudly
+		expect(() => validatePayload(filter as unknown as Filter, { status: 'x', age: 100, name: 'b' })).toThrowError(
+			/^\[(generateJoi|validatePayload)\] /,
+		);
+	});
+
 	describe('empty string against the substring operators', () => {
 		test.each([
 			['_contains', 'contains'],

@@ -19,6 +19,9 @@ export interface PushTargetGoneErrorExtensions {
  * Not a failure to retry — the stored subscription is dead and the caller removes it. Status 410, since that is
  * what it is.
  *
+ * `sendPush()` passes it on only when the dead target is the one the caller sent to; when a `push.send` handler
+ * redirected the message elsewhere, it arrives as the `cause` of a plain `Error`, so the pattern below is safe.
+ *
  * @example
  * ```ts
  * try {
