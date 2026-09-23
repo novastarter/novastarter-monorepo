@@ -1,7 +1,7 @@
 import { withTimeout } from '@novastarter/utils';
 import { type CallOptions, type CallResponse, parseCallMethod } from './call.js';
 import { type HttpCallFetch, type HttpCallResponse, resolveCallUrl } from './http-call.js';
-import { DEFAULT_REQUEST_TIMEOUT, http } from './http.js';
+import { DEFAULT_REQUEST_TIMEOUT, http, type HttpHooks } from './http.js';
 
 /**
  * A provider's API as a driver describes it once — its root, its hosts, its credentials — for {@link request}.
@@ -33,6 +33,8 @@ export interface HttpApi {
 	 * 420 of Cloudinary. Answers an error to throw, or `undefined` to leave the response to the generic mapping.
 	 */
 	refuse?: ((response: HttpCallResponse, method: string) => Error | undefined) | undefined;
+	/** Called around every call's request — logs, metrics, traces — told nothing of the credentials or the query. */
+	hooks?: HttpHooks | undefined;
 }
 
 /**
@@ -114,6 +116,7 @@ export const request = async <T = unknown>(
 				provider: api.provider,
 				label: method,
 				refuse: api.refuse,
+				hooks: api.hooks,
 			});
 		},
 		timeout,
