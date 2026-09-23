@@ -98,6 +98,26 @@ cookie encrypted with `oauth.secret` (AES-256-GCM, key derived with HKDF): nothi
 browser can neither read nor change it. `finishOAuth()` opens it, checks the deadline, the location and the state, and
 lets the driver exchange the code.
 
+With a two-step challenge — a link or a code by mail (`@novastarter/auth-driver-magic-link`), a passkey
+(`@novastarter/auth-driver-passkey`) — two requests as well:
+
+```ts
+import { finishChallenge, startChallenge } from '@novastarter/auth';
+
+// POST /auth/passkey/options
+const { options, cookie, expiresAt } = await startChallenge('passkey');
+if (cookie) jar.set('challenge', cookie, { httpOnly: true, secure: true, sameSite: 'lax', expires: expiresAt });
+
+// POST /auth/passkey
+const identity = await finishChallenge('passkey', { input: { response }, cookie: jar.get('challenge')?.value });
+jar.delete('challenge');
+```
+
+`startChallenge()` lets the driver begin — send the mail, make the passkey's challenge — and seals whatever state it
+keeps into a cookie encrypted with `challenge.secret`; a driver that keeps none (a link, which may be opened in another
+browser) hands out no cookie. An input with an `identifier` costs a point of the `signIn` limiter, so one address cannot
+be flooded with mail. `finishChallenge()` opens the cookie when there is one and lets the driver check the answer.
+
 Every sign-in passes the `auth.sign-in` filter — a handler returning `null` refuses it with `InvalidCredentialsError` —
 then emits `auth.signed-in` with the identity under `payload`; a failure emits `auth.sign-in-failed` with a `reason`.
 
@@ -198,6 +218,8 @@ success; `isTotpCode(code)` tells which of the two a typed code is.
 | `tokens.ttl` / `tokens.codeTtl`                      | 1 hour / 10 min  | One-time link and code lifetime.                       |
 | `oauth.secret`                                       | —                | Required for OAuth: encrypts the OAuth cookie.¹        |
 | `oauth.stateTtl`                                     | 10 minutes       | How long the browser has to come back.                 |
+| `challenge.secret`                                   | —                | Required for passkeys: encrypts the challenge cookie.¹ |
+| `challenge.ttl`                                      | 5 minutes        | How long the browser has to finish a challenge.        |
 | `jwt.secret` or `jwt.privateKey` + `publicKey`       | —                | Required for JWTs. `jwt.algorithm` picks the key type. |
 | `jwt.issuer` / `jwt.audience`                        | —                | Set on issue, checked on verify.                       |
 | `jwt.accessTtl` / `jwt.refreshTtl`                   | 15 min / 30 days | Token lifetimes.                                       |
@@ -206,22 +228,23 @@ success; `isTotpCode(code)` tells which of the two a typed code is.
 | `limiters.signIn` / `limiters.mfa` / `limiters.code` | none             | `LimiterDriver`s of `@novastarter/memory`.             |
 
 ¹ A list rotates the secret: the first encrypts, every one decrypts. Put the new secret first and keep the old one
-behind it — for `oauth.secret` until `stateTtl` has passed, for `mfa.encryptionKey` until every stored secret went
-through `reencryptTotpSecret(encryptedSecret)`, which returns it under the new key, or `null` when it already is. Each
-setting derives a key of its own with HKDF, so one secret shared by both never gives the same key twice.
+behind it — for `oauth.secret` until `stateTtl` has passed, for `challenge.secret` until `challenge.ttl` has, for
+`mfa.encryptionKey` until every stored secret went through `reencryptTotpSecret(encryptedSecret)`, which returns it
+under the new key, or `null` when it already is. Each setting derives a key of its own with HKDF, so one secret shared
+by both never gives the same key twice.
 
 ## Errors
 
-- `AuthInvalidTokenError` (401): a token, JWT, refresh token or OAuth cookie that cannot be used — the reason is not
-  told apart.
+- `AuthInvalidTokenError` (401): a token, JWT, refresh token, OAuth or challenge cookie that cannot be used — the reason
+  is not told apart.
 - `AuthProviderFailedError` (502): a provider refused the code or answered with something unusable.
 - `InvalidCredentialsError` (401, `@novastarter/errors`): wrong password or code, or a filter refused the sign-in.
 - `HitRateLimitError` (429, `@novastarter/errors`): a limiter ran out.
 
 ## Writing a driver
 
-A sign-in driver implements `authorize()` + `callback()` (OAuth) or `authenticate()` (a form) of `AuthDriver`, and adds
-itself to the driver map:
+A sign-in driver implements `authorize()` + `callback()` (OAuth), `authenticate()` (a form) or `begin()` + `complete()`
+(a two-step challenge) of `AuthDriver`, and adds itself to the driver map:
 
 ```ts
 import type { AuthDriver, AuthIdentity, AuthorizeParams, CallbackParams } from '@novastarter/auth';
