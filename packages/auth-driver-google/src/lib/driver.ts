@@ -1,17 +1,20 @@
 import {
+	type AuthCallOptions,
 	type AuthDriver,
-	type AuthIdentity,
 	type AuthorizeParams,
 	AuthProviderFailedError,
 	type CallbackParams,
+	type OAuthCallbackResult,
 } from '@novastarter/auth';
-import { MAX_TIMER_DELAY } from '@novastarter/utils';
+import { toProviderCallError } from '@novastarter/errors';
+import { MAX_TIMER_DELAY, parseCallMethod } from '@novastarter/utils';
+import { httpCall, resolveCallUrl } from '@novastarter/utils/node';
 import { createRemoteJWKSet, type JWTVerifyGetKey } from 'jose';
 import { buildAuthorizeUrl } from './build-authorize-url.js';
-import { DEFAULT_SCOPES, DEFAULT_TIMEOUT, JWKS_URL, PROVIDER } from './constants.js';
+import { API_URL, CALL_HOSTS, DEFAULT_SCOPES, DEFAULT_TIMEOUT, JWKS_URL, PROVIDER } from './constants.js';
 import { describeRefusal } from './describe-refusal.js';
 import { exchangeCode } from './exchange-code.js';
-import { type AuthFetch, request, type RequestContext } from './request.js';
+import { type AuthFetch, request, type RequestContext, toHttpCallFetch } from './request.js';
 import { toIdentity } from './to-identity.js';
 import { verifyIdToken } from './verify-id-token.js';
 
@@ -29,6 +32,10 @@ export type AuthDriverGoogleConfig = {
 	timeout?: number | undefined;
 	/**
 	 * A fetch to send with instead of the platform's — tests hand in a fake.
+	 *
+	 * `call()` passes it `redirect: 'manual'` and may pass a `FormData` body, though the type names neither: a custom
+	 * fetch must forward the whole request to the real one, `redirect` included, or credentials could follow a
+	 * redirect to another host.
 	 *
 	 * @internal
 	 */
@@ -57,7 +64,8 @@ declare module '@novastarter/auth' {
  *
  * The person is read from the ID token of the code exchange, verified against Google's published keys, so no profile
  * request follows. State, PKCE and the nonce are made by `startOAuth()`; the driver builds the consent URL and checks
- * what comes back.
+ * what comes back. The access token of the exchange is handed on to `finishOAuth()`, and any of Google's APIs is
+ * reachable with it through {@link AuthDriverGoogle.call}.
  *
  * @example
  * ```ts
@@ -172,12 +180,13 @@ export class AuthDriverGoogle implements AuthDriver {
 	 *
 	 * @param params - Code, PKCE verifier, nonce and redirect URI, as `finishOAuth()` passes them.
 	 * @returns The identity: Google's `sub` as the subject, the address, whether Google verified it, the name and
-	 * the picture.
+	 * the picture; and under `tokens` the access token with its expiry and granted scopes, and the refresh token when
+	 * the consent asked for offline access.
 	 * @throws AuthProviderFailedError when Google refuses the code, or the ID token fails a check.
 	 */
-	async callback(params: CallbackParams): Promise<AuthIdentity> {
-		// 1. The code, bound to this sign-in by the PKCE verifier, buys the ID token
-		const idToken = await exchangeCode(this.context, {
+	async callback(params: CallbackParams): Promise<OAuthCallbackResult> {
+		// 1. The code, bound to this sign-in by the PKCE verifier, buys the ID token and the access token
+		const { idToken, tokens } = await exchangeCode(this.context, {
 			code: params.code,
 			codeVerifier: params.codeVerifier,
 			redirectUri: params.redirectUri,
@@ -188,7 +197,75 @@ export class AuthDriverGoogle implements AuthDriver {
 		// 2. The token is only trusted once its signature, audience and nonce check out
 		const claims = await verifyIdToken(idToken, { jwks: this.jwks, audience: this.clientId, nonce: params.nonce });
 
-		return toIdentity(claims);
+		// 3. The tokens go back with the identity; `finishOAuth()` takes them off before anything else sees it, and
+		//    keeping them is the application's call
+		return { ...toIdentity(claims), ...(tokens ? { tokens } : {}) };
+	}
+
+	/**
+	 * Make a request of one of Google's APIs, on behalf of a person or without credentials.
+	 *
+	 * With `options.accessToken` the request carries it as a Bearer token and acts as that person — within the scopes
+	 * they granted. Without it no `Authorization` goes out: for the endpoints that need none, or take an API key the
+	 * caller passes as the `key` parameter. The caller's headers go on top. The parameters are the query of a `GET`,
+	 * `HEAD` or `DELETE` and the JSON body otherwise.
+	 *
+	 * @typeParam T - What the endpoint answers with; the caller knows it from Google's documentation.
+	 * @param method - The verb and the path from `https://www.googleapis.com`, or a full URL on a `googleapis.com`
+	 * host — `https://people.googleapis.com/v1/people/me`.
+	 * @param params - Its query or body.
+	 * @param options - The person's access token, a timeout (the location's unless given), an abort signal, extra
+	 * headers, where the parameters go (`paramsIn`).
+	 * @returns Google's answer: parsed JSON, else text; `undefined` for an empty one — a `204`.
+	 * @throws ProviderCallError when Google answers with an error status — its status and answer in `extensions`.
+	 * @throws HitRateLimitError when Google answers 429.
+	 * @throws TimeoutError when the request outlives its timeout.
+	 * @throws Error when the method is malformed or its URL is not on a `googleapis.com` host.
+	 * @example
+	 * ```ts
+	 * const calendars = await useAuth()
+	 * 	.location('google')
+	 * 	.call?.('GET /calendar/v3/users/me/calendarList', { maxResults: 50 }, { accessToken: tokens.accessToken });
+	 * ```
+	 */
+	async call<T = unknown>(
+		method: string,
+		params: Record<string, unknown> = {},
+		options: AuthCallOptions = {},
+	): Promise<T> {
+		// 1. The method taken apart and its URL checked against Google's hosts before the token goes near it
+		const { verb, target } = parseCallMethod(method);
+		const url = resolveCallUrl(API_URL, target, CALL_HOSTS);
+
+		// 2. The request under the caller's deadline or the location's, with the person's token when there is one; the
+		//    driver's fetch is the one tests replace, and it answers what `httpCall` reads of a response
+		const response = await httpCall({
+			url,
+			verb,
+			params,
+			paramsIn: options.paramsIn,
+			headers: {
+				...(options.accessToken ? { Authorization: `Bearer ${options.accessToken}` } : {}),
+				...options.headers,
+			},
+			timeout: options.timeout ?? this.context.timeout,
+			signal: options.signal,
+			fetch: toHttpCallFetch(this.context.fetch),
+		});
+
+		// 3. A status outside 2xx becomes the kit's error; its message names the method and Google's reason, never the
+		//    token, which stays in the request
+		if (response.status < 200 || response.status >= 300) {
+			throw toProviderCallError({
+				provider: PROVIDER,
+				method,
+				status: response.status,
+				body: response.body,
+				headers: response.headers,
+			});
+		}
+
+		return response.body as T;
 	}
 
 	/**

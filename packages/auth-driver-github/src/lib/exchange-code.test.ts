@@ -33,7 +33,11 @@ describe('exchangeCode', () => {
 	test('Posts the code, the verifier and the credentials, asking for JSON, and answers the access token', async () => {
 		const fetch = answer(200, { access_token: 'gho_1', token_type: 'bearer', scope: 'read:user,user:email' });
 
-		expect(await exchangeCode({ fetch, timeout: 1_000 }, params)).toBe('gho_1');
+		expect(await exchangeCode({ fetch, timeout: 1_000 }, params)).toStrictEqual({
+			accessToken: 'gho_1',
+			scope: ['read:user', 'user:email'],
+			tokenType: 'bearer',
+		});
 
 		// 1. Without `Accept: application/json` GitHub answers form-encoded
 		const [url, init] = fetch.mock.calls[0]!;
@@ -42,13 +46,38 @@ describe('exchangeCode', () => {
 		expect(init.method).toBe('POST');
 		expect(init.headers['Accept']).toBe('application/json');
 
-		expect(Object.fromEntries(new URLSearchParams(init.body))).toStrictEqual({
+		expect(Object.fromEntries(new URLSearchParams(init.body as string))).toStrictEqual({
 			client_id: 'client-1',
 			client_secret: 'secret-1',
 			code: 'code-1',
 			redirect_uri: 'https://acme.test/callback',
 			code_verifier: 'verifier-1',
 		});
+	});
+
+	test('Answers the refresh token and the expiry of an expiring user token', async () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(1_000_000);
+
+		// 1. A GitHub App with expiring tokens adds both; an empty scope is no scopes
+		const fetch = answer(200, {
+			access_token: 'ghu_1',
+			refresh_token: 'ghr_1',
+			expires_in: 28_800,
+			refresh_token_expires_in: 15_897_600,
+			scope: '',
+			token_type: 'bearer',
+		});
+
+		expect(await exchangeCode({ fetch, timeout: 1_000 }, params)).toStrictEqual({
+			accessToken: 'ghu_1',
+			refreshToken: 'ghr_1',
+			expiresAt: 1_000_000 + 28_800_000,
+			scope: [],
+			tokenType: 'bearer',
+		});
+
+		vi.useRealTimers();
 	});
 
 	test('Throws a provider failure for a refusal answered with 200', async () => {

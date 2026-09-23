@@ -47,6 +47,46 @@ already knows it cannot deliver; such an answer carries an `errorCode` and is th
 
 `verify()` reads the account balance: the cheapest authenticated request there is, and nothing is billed.
 
+## Any other request
+
+`call(method, params, options)` reaches the rest of Twilio's APIs through the SDK's client, with the location's
+credentials, timeout and errors. A path goes under `https://api.twilio.com`, where `{AccountSid}` stands for the
+location's account; the parameters are the query of a `GET`, `HEAD` or `DELETE` and a form body otherwise
+(`options.paramsIn` moves them, a `content-type: application/json` header sends JSON instead; any other content type is
+refused).
+
+```ts
+const twilio = useSms().location('main');
+
+const message = await twilio.call?.('GET /2010-04-01/Accounts/{AccountSid}/Messages/SM123.json');
+
+const lookup = await twilio.call?.('GET https://lookups.twilio.com/v2/PhoneNumbers/+15558675310', {
+	Fields: 'line_type_intelligence',
+});
+```
+
+A file — a `Blob` or `File` among the parameters, or in a list — is uploaded as a multipart body, a Serverless asset
+version for one. The SDK's client sends no multipart body, so that request is made directly, with the same credentials,
+host check, timeout and errors.
+
+```ts
+const twilio = useSms().location('main');
+const png = await readFile('logo.png');
+
+const versions = 'https://serverless-upload.twilio.com/v1/Services/ZS123/Assets/ZH123/Versions';
+const version = await twilio.call!(`POST ${versions}`, {
+	Path: '/logo.png',
+	Visibility: 'public',
+	Content: new File([png], 'logo.png', { type: 'image/png' }),
+});
+```
+
+A full URL may point at `*.twilio.com` only — `api`, `lookups`, `verify`, `messaging` and the other product hosts; any
+other host is refused before the credentials are sent. An error status throws `ProviderCallError` with Twilio's
+`{ code, message, more_info }` in `extensions.body`, a `429` throws `HitRateLimitError`, and the timeout `TimeoutError`.
+A network failure throws a plain `Error` naming its code — never the SDK's error, whose request config carries the
+credentials.
+
 ## Options
 
 | Option                | Required | Description                                                                         |

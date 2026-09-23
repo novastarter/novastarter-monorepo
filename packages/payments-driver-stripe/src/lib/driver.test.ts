@@ -3,7 +3,13 @@
  * and read from fixtures shaped like Stripe's current events. The mappings have their own tests beside their modules
  * (`to-event.test.ts`, `to-invoice.test.ts`, `to-subscription.test.ts`).
  */
-import { InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
+import {
+	HitRateLimitError,
+	InvalidCredentialsError,
+	InvalidPayloadError,
+	ProviderCallError,
+} from '@novastarter/errors';
+import { TimeoutError } from '@novastarter/utils';
 import Stripe from 'stripe';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { fixture } from '../fixtures/index.js';
@@ -48,6 +54,7 @@ const deliver = (driver: PaymentsDriverStripe, body: Stripe.Event | string, secr
 
 afterEach(() => {
 	vi.restoreAllMocks();
+	vi.unstubAllGlobals();
 });
 
 describe('PaymentsDriverStripe', () => {
@@ -291,5 +298,310 @@ describe('PaymentsDriverStripe', () => {
 		await driver.verify();
 
 		expect(list).toHaveBeenCalledWith({ limit: 1 });
+	});
+});
+
+describe('call', () => {
+	/**
+	 * A refusal as the SDK raises it: Stripe's `error` with the status and headers the SDK copies onto it.
+	 *
+	 * @param statusCode - The HTTP status.
+	 * @param headers - The response headers.
+	 * @returns The SDK's exception.
+	 */
+	const refusal = (statusCode: number, headers: Record<string, string> = {}) =>
+		new Stripe.errors.StripeInvalidRequestError({
+			type: 'invalid_request_error',
+			code: 'resource_missing',
+			message: 'No such payment_intent: pi_404',
+			statusCode,
+			headers,
+			requestId: 'req_1',
+		});
+
+	test('Posts the body through rawRequest and answers what Stripe answered', async () => {
+		// 1. A POST carries its parameters as the body; the path and verb go to the SDK as given
+		const { client, driver } = setup();
+		const raw = vi.spyOn(client, 'rawRequest').mockResolvedValue({ id: 're_1', object: 'refund' });
+
+		await expect(driver.call('POST /v1/refunds', { payment_intent: 'pi_1', amount: 500 })).resolves.toStrictEqual({
+			id: 're_1',
+			object: 'refund',
+		});
+
+		expect(raw).toHaveBeenCalledWith(
+			'POST',
+			'/v1/refunds',
+			{ payment_intent: 'pi_1', amount: 500 },
+			{ timeout: 30_000 },
+		);
+	});
+
+	test("Puts a GET's parameters in the path in Stripe's bracket notation, and passes timeout and headers", async () => {
+		// 1. A list by index and an object by key, as Stripe reads them; no body on a GET
+		const { client, driver } = setup();
+		const raw = vi.spyOn(client, 'rawRequest').mockResolvedValue({ data: [] });
+
+		await driver.call(
+			'get /v1/invoices',
+			{ customer: 'cus_1', expand: ['data.customer'], created: { gte: 10 }, limit: undefined },
+			{ timeout: 5_000, headers: { 'Stripe-Account': 'acct_1' } },
+		);
+
+		expect(raw).toHaveBeenCalledWith(
+			'GET',
+			'/v1/invoices?customer=cus_1&expand[0]=data.customer&created[gte]=10',
+			undefined,
+			{ timeout: 5_000, additionalHeaders: { 'Stripe-Account': 'acct_1' } },
+		);
+	});
+
+	test("Sends a full URL on Stripe's files host to the SDK's files base", async () => {
+		// 1. The host picks the base; the request still goes through the client and its key
+		const { client, driver } = setup();
+		const raw = vi.spyOn(client, 'rawRequest').mockResolvedValue({ data: [] });
+
+		await driver.call('GET https://files.stripe.com/v1/files?limit=3');
+
+		expect(raw).toHaveBeenCalledWith('GET', '/v1/files?limit=3', undefined, { timeout: 30_000, apiBase: 'files' });
+	});
+
+	test('Refuses a URL on another host, or plain http, before any request', async () => {
+		// 1. The key would travel with the request, so nothing is sent at all
+		const { client, driver } = setup();
+		const raw = vi.spyOn(client, 'rawRequest');
+
+		await expect(driver.call('GET https://evil.example/v1/customers')).rejects.toThrow('evil.example');
+		await expect(driver.call('GET http://api.stripe.com/v1/customers')).rejects.toThrow('not on a host');
+		await expect(driver.call('customers')).rejects.toThrow('is not');
+		expect(raw).not.toHaveBeenCalled();
+	});
+
+	test('Refuses parameters a PATCH cannot carry, and a file in a query', async () => {
+		// 1. Stripe takes a body on POST only, and a file has no place in a query; nothing is sent either way
+		const { client, driver } = setup();
+		const fetch = vi.fn();
+		const raw = vi.spyOn(client, 'rawRequest');
+
+		vi.stubGlobal('fetch', fetch);
+
+		await expect(driver.call('PATCH /v1/customers/cus_1', { name: 'Ada' })).rejects.toThrow('POST only');
+		await expect(driver.call('GET /v1/files', { file: new Blob(['x']) })).rejects.toThrow('POST body only');
+
+		await expect(driver.call('POST /v1/files', { file: new Blob(['x']) }, { paramsIn: 'query' })).rejects.toThrow(
+			'POST body only',
+		);
+
+		expect(fetch).not.toHaveBeenCalled();
+		expect(raw).not.toHaveBeenCalled();
+	});
+
+	test("Uploads a file as multipart to Stripe's files host with the key and the client's API version", async () => {
+		// 1. The upload bypasses the SDK's raw request, which has no multipart; `fetch` answers Stripe's file object
+		const { client, driver } = setup();
+		const raw = vi.spyOn(client, 'rawRequest');
+
+		const fetch = vi.fn(
+			async (_url: string, _init: RequestInit) =>
+				new Response(JSON.stringify({ id: 'file_1', object: 'file' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				}),
+		);
+
+		vi.stubGlobal('fetch', fetch);
+
+		const file = new File(['%PDF-1'], 'receipt.pdf', { type: 'application/pdf' });
+
+		const result = await driver.call(
+			'POST https://files.stripe.com/v1/files',
+			{ purpose: 'dispute_evidence', file, skip: undefined },
+			{ headers: { 'Stripe-Account': 'acct_1' } },
+		);
+
+		expect(result).toStrictEqual({ id: 'file_1', object: 'file' });
+		expect(raw).not.toHaveBeenCalled();
+
+		// 2. The URL as given, Bearer auth, the pinned version, the caller's header, and a multipart body with the file
+		const [url, init] = fetch.mock.calls[0]!;
+		const headers = init.headers as Record<string, string>;
+
+		expect(url).toBe('https://files.stripe.com/v1/files');
+		expect(init.method).toBe('POST');
+		expect(init.redirect).toBe('manual');
+		expect(headers['authorization']).toBe('Bearer sk_test_x');
+		expect(headers['stripe-version']).toBe(Stripe.API_VERSION);
+		expect(headers['stripe-account']).toBe('acct_1');
+		expect(headers).not.toHaveProperty('content-type');
+
+		const body = init.body as FormData;
+
+		expect(body).toBeInstanceOf(FormData);
+		expect(body.get('purpose')).toBe('dispute_evidence');
+		expect(body.has('skip')).toBe(false);
+		expect((body.get('file') as File).name).toBe('receipt.pdf');
+		await expect((body.get('file') as File).text()).resolves.toBe('%PDF-1');
+	});
+
+	test('Uploads a file given in a list to the client host for a path', async () => {
+		// 1. A path goes to the client's own host; a list of files repeats its field
+		const { driver } = setup();
+		const fetch = vi.fn(async (_url: string, _init: RequestInit) => new Response(null, { status: 204 }));
+
+		vi.stubGlobal('fetch', fetch);
+
+		const files = [new Blob(['a']), new Blob(['b'])];
+
+		await expect(driver.call('POST /v1/files', { files })).resolves.toBeUndefined();
+
+		const [url, init] = fetch.mock.calls[0]!;
+
+		expect(url).toBe('https://api.stripe.com/v1/files');
+		expect((init.body as FormData).getAll('files')).toHaveLength(2);
+	});
+
+	test('Refuses an upload to a foreign host before any request', async () => {
+		// 1. The key would travel with the file, so nothing is sent at all
+		const { driver } = setup();
+		const fetch = vi.fn();
+
+		vi.stubGlobal('fetch', fetch);
+
+		await expect(driver.call('POST https://evil.example/v1/files', { file: new Blob(['x']) })).rejects.toThrow(
+			'not on a host',
+		);
+
+		expect(fetch).not.toHaveBeenCalled();
+	});
+
+	test('Turns a refused upload into ProviderCallError and a 429 into HitRateLimitError, no key in them', async () => {
+		// 1. A driver with a recognisable key, whose upload Stripe refuses
+		const secretKey = 'sk_test_SECRET_KEY_123';
+		const driver = new PaymentsDriverStripe({ secretKey, webhookSecret: 'whsec', client: new Stripe(secretKey) });
+		const refused = { error: { type: 'invalid_request_error', message: 'Invalid purpose' } };
+
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => new Response(JSON.stringify(refused), { status: 400 })),
+		);
+
+		const error = (await driver
+			.call('POST https://files.stripe.com/v1/files', { purpose: 'x', file: new Blob(['x']) })
+			.catch((caught: unknown) => caught)) as InstanceType<typeof ProviderCallError>;
+
+		// 2. Stripe's status and `{ error }`; neither the message, the error nor its cause names the key
+		expect(error).toBeInstanceOf(ProviderCallError);
+		expect(error.extensions).toMatchObject({ provider: 'stripe', status: 400, body: refused });
+		expect(error.message).not.toContain('SECRET_KEY');
+		expect(JSON.stringify(error)).not.toContain('SECRET_KEY');
+		expect(JSON.stringify(error.cause ?? null)).not.toContain('SECRET_KEY');
+
+		// 3. Too many requests is a rate limit the caller may wait out
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => new Response('{}', { status: 429, headers: { 'retry-after': '2' } })),
+		);
+
+		await expect(
+			driver.call('POST https://files.stripe.com/v1/files', { file: new Blob(['x']) }),
+		).rejects.toBeInstanceOf(HitRateLimitError);
+	});
+
+	test('Gives up an upload with TimeoutError at the timeout', async () => {
+		// 1. A `fetch` that never answers is cut at the call's timeout
+		const { driver } = setup();
+
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(() => new Promise(() => {})),
+		);
+
+		await expect(
+			driver.call('POST https://files.stripe.com/v1/files', { file: new Blob(['x']) }, { timeout: 10 }),
+		).rejects.toBeInstanceOf(TimeoutError);
+	});
+
+	test('Puts the parameters of a POST in the query when asked, and refuses a body on another verb', async () => {
+		// 1. `paramsIn: 'query'` moves a POST's parameters into the path, with no body
+		const { client, driver } = setup();
+		const raw = vi.spyOn(client, 'rawRequest').mockResolvedValue({});
+
+		await driver.call('POST /v1/invoices/in_1/pay', { expand: ['customer'] }, { paramsIn: 'query' });
+
+		expect(raw).toHaveBeenCalledWith('POST', '/v1/invoices/in_1/pay?expand[0]=customer', undefined, {
+			timeout: 30_000,
+		});
+
+		// 2. The raw request sends a body on POST only, so a body asked of a DELETE is refused before anything is sent
+		raw.mockClear();
+
+		const deletion = driver.call('DELETE /v1/customers/cus_1/discount', { a: 1 }, { paramsIn: 'body' });
+
+		await expect(deletion).rejects.toThrow('POST only');
+
+		expect(raw).not.toHaveBeenCalled();
+	});
+
+	test('Sends nothing when the signal is already aborted', async () => {
+		// 1. An aborted signal fails the call with its reason before the SDK is reached
+		const { client, driver } = setup();
+		const raw = vi.spyOn(client, 'rawRequest');
+
+		await expect(
+			driver.call('GET /v1/customers', {}, { signal: AbortSignal.abort(new Error('stop')) }),
+		).rejects.toThrow('stop');
+
+		expect(raw).not.toHaveBeenCalled();
+	});
+
+	test('Turns a refusal into ProviderCallError with the status and Stripe error, and never names the key', async () => {
+		// 1. A driver with a recognisable key, whose request Stripe refuses with 404
+		const client = new Stripe('sk_test_SECRET_KEY_123');
+		const driver = new PaymentsDriverStripe({ secretKey: 'sk_test_SECRET_KEY_123', webhookSecret: 'whsec', client });
+
+		vi.spyOn(client, 'rawRequest').mockRejectedValue(refusal(404));
+
+		const error = (await driver
+			.call('GET /v1/payment_intents/pi_404')
+			.catch((caught: unknown) => caught)) as InstanceType<typeof ProviderCallError>;
+
+		// 2. Stripe's status and its `error` object, the SDK's additions left out, the SDK's exception as the cause
+		expect(error).toBeInstanceOf(ProviderCallError);
+
+		expect(error.extensions).toMatchObject({
+			provider: 'stripe',
+			method: 'GET /v1/payment_intents/pi_404',
+			status: 404,
+			body: { error: { type: 'invalid_request_error', code: 'resource_missing' } },
+		});
+
+		expect(error.extensions.body).not.toHaveProperty('error.headers');
+		expect(error.message).toContain('No such payment_intent');
+		expect(error.cause).toBeInstanceOf(Stripe.errors.StripeError);
+		expect(error.message).not.toContain('SECRET_KEY');
+		expect(JSON.stringify(error.extensions)).not.toContain('SECRET_KEY');
+	});
+
+	test('Turns a 429 into HitRateLimitError reset at Retry-After', async () => {
+		// 1. Stripe names the wait in the header
+		const { client, driver } = setup();
+
+		vi.spyOn(client, 'rawRequest').mockRejectedValue(refusal(429, { 'retry-after': '2' }));
+
+		const error = (await driver.call('GET /v1/customers').catch((caught: unknown) => caught)) as InstanceType<
+			typeof HitRateLimitError
+		>;
+
+		expect(error).toBeInstanceOf(HitRateLimitError);
+		expect(error.extensions.reset.getTime()).toBeGreaterThan(Date.now() + 1_000);
+	});
+
+	test('Gives up with TimeoutError at the timeout', async () => {
+		// 1. A request that never settles
+		const { client, driver } = setup();
+
+		vi.spyOn(client, 'rawRequest').mockReturnValue(new Promise(() => {}));
+
+		await expect(driver.call('GET /v1/customers', {}, { timeout: 10 })).rejects.toBeInstanceOf(TimeoutError);
 	});
 });

@@ -1,8 +1,10 @@
 /**
- * Tests of the SendGrid driver class with the SDK mocked; the message mapper has its own tests in
- * `to-sendgrid-mail.test.ts`.
+ * Tests of the SendGrid driver class with the SDK and the global `fetch` mocked; the message mapper has its own tests
+ * in `to-sendgrid-mail.test.ts`.
  */
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
+import { TimeoutError } from '@novastarter/utils';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import defaultExport from '../index.js';
 import { MailDriverSendgrid } from './driver.js';
 
@@ -43,7 +45,36 @@ vi.mock('@sendgrid/mail', () => ({
 	},
 }));
 
+/**
+ * The stubbed `fetch` the raw calls go through.
+ *
+ * @internal
+ */
+const fetchMock = vi.fn();
+
+/**
+ * The URL and the init of the last `fetch` call.
+ *
+ * @returns The URL and the init, headers as the record `httpCall()` builds.
+ * @internal
+ */
+const sent = (): { url: string; init: RequestInit & { headers: Record<string, string>; signal: AbortSignal } } => {
+	// 1. Read back from the stub, as `fetch(url, init)` was called
+	const [url, init] = fetchMock.mock.lastCall as [
+		string,
+		RequestInit & { headers: Record<string, string>; signal: AbortSignal },
+	];
+
+	return { url, init };
+};
+
+beforeEach(() => {
+	vi.stubGlobal('fetch', fetchMock);
+});
+
 afterEach(() => {
+	vi.unstubAllGlobals();
+	fetchMock.mockReset();
 	vi.clearAllMocks();
 });
 
@@ -91,5 +122,128 @@ describe('MailDriverSendgrid', () => {
 
 		// 2. The refusal happened before the API, so the client never sent anything
 		expect(send).not.toHaveBeenCalled();
+	});
+});
+
+describe('MailDriverSendgrid.call', () => {
+	test('Sends a GET with the key and the query in the URL, and a POST with the params as the body', async () => {
+		// 1. A GET's parameters go into the URL, a list repeating its key; the key is a bearer token; the answer is
+		//    the parsed body
+		fetchMock.mockResolvedValueOnce(new Response('[{"email":"ada@example.com"}]', { status: 200 }));
+
+		const driver = new MailDriverSendgrid({ apiKey: 'SG.SECRET' });
+
+		const bounces = await driver.call('GET /v3/suppression/bounces', { limit: 100, email: ['a@b', 'c@d'] });
+
+		expect(bounces).toStrictEqual([{ email: 'ada@example.com' }]);
+
+		expect(sent().url).toBe('https://api.sendgrid.com/v3/suppression/bounces?limit=100&email=a%40b&email=c%40d');
+		expect(sent().init.method).toBe('GET');
+		expect(sent().init.body).toBeUndefined();
+		expect(sent().init.headers['authorization']).toBe('Bearer SG.SECRET');
+
+		// 2. A POST carries them as the JSON body, with the caller's headers on top; an empty answer is `undefined`
+		fetchMock.mockResolvedValueOnce(new Response(null, { status: 201 }));
+
+		const body = { recipient_emails: ['ada@example.com'] };
+
+		expect(
+			await driver.call('POST /v3/asm/suppressions/global', body, { headers: { 'On-Behalf-Of': 'sub' } }),
+		).toBeUndefined();
+
+		expect(sent().url).toBe('https://api.sendgrid.com/v3/asm/suppressions/global');
+		expect(sent().init.method).toBe('POST');
+		expect(sent().init.body).toBe(JSON.stringify(body));
+		expect(sent().init.headers['on-behalf-of']).toBe('sub');
+		expect(sent().init.headers['content-type']).toBe('application/json');
+	});
+
+	test('Sends a DELETE’s parameters as the body when `paramsIn` says so', async () => {
+		// 1. The bulk bounce removal reads a JSON body on a DELETE
+		fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+		const driver = new MailDriverSendgrid({ apiKey: 'SG.SECRET' });
+
+		await driver.call('DELETE /v3/suppression/bounces', { emails: ['a@b.c'] }, { paramsIn: 'body' });
+
+		expect(sent().url).toBe('https://api.sendgrid.com/v3/suppression/bounces');
+		expect(sent().init.method).toBe('DELETE');
+		expect(sent().init.body).toBe('{"emails":["a@b.c"]}');
+	});
+
+	test('Turns an error status into ProviderCallError without the key, and a 429 into HitRateLimitError', async () => {
+		// 1. The provider's status and answer in the extensions; the key nowhere in the error
+		const body = { errors: [{ field: null, message: 'authorization required' }] };
+
+		fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(body), { status: 401 }));
+
+		const driver = new MailDriverSendgrid({ apiKey: 'SG.SECRET' });
+		const error = await driver.call('GET /v3/user/profile').catch((caught: unknown) => caught);
+
+		expect(error).toBeInstanceOf(ProviderCallError);
+
+		expect(error).toMatchObject({
+			extensions: { provider: 'sendgrid', method: 'GET /v3/user/profile', status: 401, body },
+		});
+
+		expect((error as Error).message).toBe('sendgrid refused GET /v3/user/profile: 401 authorization required');
+		expect((error as Error).message).not.toContain('SECRET');
+		expect(JSON.stringify(error)).not.toContain('SECRET');
+		expect(String((error as Error).cause)).not.toContain('SECRET');
+
+		// 2. Too many requests is the rate-limit error
+		const limited = JSON.stringify({ errors: [{ message: 'too many requests' }] });
+
+		fetchMock.mockResolvedValueOnce(new Response(limited, { status: 429, headers: { 'retry-after': '1' } }));
+
+		await expect(driver.call('GET /v3/user/profile')).rejects.toBeInstanceOf(HitRateLimitError);
+	});
+
+	test('Refuses a full URL on another host before any request, and accepts one on api.sendgrid.com', async () => {
+		// 1. The key must not travel to someone else's host
+		const driver = new MailDriverSendgrid({ apiKey: 'SG.SECRET' });
+
+		await expect(driver.call('GET https://evil.example/v3/user/profile')).rejects.toThrow(
+			/not on a host of this provider/,
+		);
+
+		expect(fetchMock).not.toHaveBeenCalled();
+
+		// 2. SendGrid's own host is fine
+		fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+		await driver.call('DELETE https://api.sendgrid.com/v3/suppression/bounces/ada@example.com');
+
+		expect(sent().url).toBe('https://api.sendgrid.com/v3/suppression/bounces/ada@example.com');
+		expect(sent().init.method).toBe('DELETE');
+	});
+
+	test('Aborts the request itself at the call’s timeout', async () => {
+		// 1. A request that never answers until aborted; the fetch's own signal must fire, not only the wait end
+		fetchMock.mockImplementationOnce(
+			(_url: string, init: { signal: AbortSignal }) =>
+				new Promise((_resolve, reject) => {
+					init.signal.addEventListener('abort', () => reject(init.signal.reason));
+				}),
+		);
+
+		const driver = new MailDriverSendgrid({ apiKey: 'SG.SECRET' });
+
+		await expect(driver.call('GET /v3/user/profile', {}, { timeout: 10 })).rejects.toBeInstanceOf(TimeoutError);
+		expect(sent().init.signal.aborted).toBe(true);
+	});
+
+	test('Sends nothing when the signal is already aborted', async () => {
+		// 1. A DELETE the caller gave up on before calling must never reach SendGrid
+		const driver = new MailDriverSendgrid({ apiKey: 'SG.SECRET' });
+		const controller = new AbortController();
+
+		controller.abort(new Error('shutdown'));
+
+		await expect(
+			driver.call('DELETE /v3/suppression/bounces', { emails: ['a@b.c'] }, { signal: controller.signal }),
+		).rejects.toThrow('shutdown');
+
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 });

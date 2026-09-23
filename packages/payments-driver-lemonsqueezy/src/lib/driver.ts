@@ -17,6 +17,7 @@ import type {
 	UpdateSubscriptionInput,
 	WebhookHeaders,
 } from '@novastarter/payments';
+import type { CallOptions } from '@novastarter/utils';
 import type {
 	LsCheckoutAttributes,
 	LsCustomerAttributes,
@@ -527,6 +528,37 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 
 		// 4. The mapping reads the variant's interval on demand — only the subscription events need it
 		return toEvent(payload, (variantId) => this.intervalOf(variantId));
+	}
+
+	/**
+	 * Make a request of any Lemon Squeezy endpoint with the location's key, timeout and fetch, for what the contract
+	 * does not cover.
+	 *
+	 * `method` is the verb and the path from the API's root — `GET /v1/discounts` — or a full URL on
+	 * `api.lemonsqueezy.com`. The parameters of a `GET` or `DELETE` go in the query, JSON:API's brackets in the key
+	 * (`'filter[store_id]': 1`), the others as the JSON:API document of the body — `options.paramsIn` moves them.
+	 *
+	 * @typeParam T - What the endpoint answers with; the caller knows it from Lemon Squeezy's API reference.
+	 * @param method - The verb and the path, or a full URL on Lemon Squeezy's host.
+	 * @param params - The query of a `GET` or `DELETE`, the body otherwise.
+	 * @param options - A timeout over the location's, an abort signal, extra headers, where the parameters go.
+	 * @returns The answer, parsed; `undefined` for an empty one.
+	 * @throws ProviderCallError when Lemon Squeezy answers with an error status — its status and `{ errors }` in
+	 * `extensions`.
+	 * @throws HitRateLimitError when Lemon Squeezy answers 429.
+	 * @throws TimeoutError when the request outlives its timeout.
+	 * @throws Error when the method is malformed, or its URL is not on Lemon Squeezy's host.
+	 * @example
+	 * ```ts
+	 * await lemonsqueezy.call('GET /v1/discounts', { 'filter[store_id]': 1 });
+	 * await lemonsqueezy.call('POST /v1/orders/123/refund', {
+	 * 	data: { type: 'orders', id: '123', attributes: { amount: 500 } },
+	 * });
+	 * ```
+	 */
+	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, options: CallOptions = {}): Promise<T> {
+		// 1. The client holds the key, the timeout and the fetch; the request is its to make
+		return this.api.call<T>(method, params, options);
 	}
 
 	/**

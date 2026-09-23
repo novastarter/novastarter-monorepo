@@ -60,10 +60,12 @@ const fakeFetch = (responses: { status?: number; body?: unknown }[]) => {
 		const next = responses.shift() ?? { status: 200, body: {} };
 		const status = next.status ?? 200;
 
-		// 3. `ok` follows the status the way the platform's response does; no body reads as empty text, like a 204
+		// 3. `ok` follows the status the way the platform's response does; no body reads as empty text, like a 204;
+		//    no headers — `call()` reads them for a redirect's `Location`
 		return {
 			status,
 			ok: status >= 200 && status < 300,
+			headers: new Headers(),
 			text: async () => (next.body === undefined ? '' : JSON.stringify(next.body)),
 		};
 	};
@@ -576,5 +578,20 @@ describe('PaymentsDriverLemonSqueezy', () => {
 		// 1. The cheapest read there is, the same for every store
 		await driver.verify();
 		expect(calls[0]).toMatchObject({ method: 'GET', url: 'https://api.lemonsqueezy.com/v1/users/me' });
+	});
+
+	test('Makes any other request through call(), from the API root with the key', async () => {
+		const { driver, calls } = setup([{ body: { data: [{ id: '1' }] } }]);
+
+		// 1. The driver hands the request to its client, which the client's own tests cover in full
+		await expect(driver.call('GET /v1/discounts', { 'filter[store_id]': 12345 })).resolves.toStrictEqual({
+			data: [{ id: '1' }],
+		});
+
+		expect(calls[0]).toMatchObject({
+			method: 'GET',
+			url: 'https://api.lemonsqueezy.com/v1/discounts?filter%5Bstore_id%5D=12345',
+			headers: { authorization: 'Bearer lemon-key' },
+		});
 	});
 });

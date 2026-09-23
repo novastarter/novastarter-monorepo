@@ -3,9 +3,15 @@
  * (Standard Webhooks) and read from fixtures that pass the SDK's own schemas. The mappings the driver hands its
  * answers through have their own test files next to them.
  */
-import { InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
+import {
+	HitRateLimitError,
+	InvalidCredentialsError,
+	InvalidPayloadError,
+	ProviderCallError,
+} from '@novastarter/errors';
+import { TimeoutError } from '@novastarter/utils';
 import { Polar } from '@polar-sh/sdk';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { fixtureText, parsed, sign, WEBHOOK_SECRET } from '../fixtures/index.js';
 import { PaymentsDriverPolar } from './driver.js';
 import { toInvoice } from './to-invoice.js';
@@ -250,5 +256,156 @@ describe('PaymentsDriverPolar', () => {
 		await driver.verify();
 
 		expect(list).toHaveBeenCalledWith({ limit: 1 });
+	});
+});
+
+describe('call', () => {
+	/**
+	 * The stubbed `fetch` a call goes through.
+	 */
+	const fetchMock = vi.fn();
+
+	beforeEach(() => {
+		vi.stubGlobal('fetch', fetchMock);
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		fetchMock.mockReset();
+	});
+
+	/**
+	 * Make `fetch` answer once.
+	 *
+	 * @param body - The JSON body; none for an empty answer.
+	 * @param status - The HTTP status.
+	 * @param headers - The response headers.
+	 */
+	const answer = (body: unknown, status = 200, headers: Record<string, string> = {}): void => {
+		// 1. A real `Response`, so the body is read the way Polar's is
+		fetchMock.mockResolvedValueOnce(
+			new Response(body === undefined ? null : JSON.stringify(body), { status, headers }),
+		);
+	};
+
+	/**
+	 * The URL and the init of the first request.
+	 *
+	 * @returns The URL and the init.
+	 */
+	const request = (): { url: string; init: RequestInit & { headers: Record<string, string> } } => {
+		// 1. Read back from the stub, as `fetch(url, init)` was called
+		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
+
+		return { url, init };
+	};
+
+	/**
+	 * A driver with a recognisable token, on the given server.
+	 *
+	 * @param server - The server; production unless given.
+	 * @returns The driver.
+	 */
+	const polar = (server?: 'sandbox') =>
+		new PaymentsDriverPolar({
+			accessToken: 'polar_oat_SECRET',
+			webhookSecret: WEBHOOK_SECRET,
+			...(server !== undefined ? { server } : {}),
+		});
+
+	test('Sends a GET with its query and the bearer token to the server’s API, and answers the body', async () => {
+		answer({ items: [], pagination: { total_count: 0, max_page: 1 } });
+
+		// 1. The sandbox API, a list as its key repeated
+		await expect(
+			polar('sandbox').call('GET /v1/benefits/', { limit: 20, type: ['custom', 'discord'] }),
+		).resolves.toStrictEqual({ items: [], pagination: { total_count: 0, max_page: 1 } });
+
+		expect(request().url).toBe('https://sandbox-api.polar.sh/v1/benefits/?limit=20&type=custom&type=discord');
+		expect(request().init.headers['authorization']).toBe('Bearer polar_oat_SECRET');
+		expect(request().init.body).toBeUndefined();
+	});
+
+	test('Posts a JSON body to production, with the caller’s headers and timeout', async () => {
+		answer({ id: 'ref_1' }, 201);
+
+		// 1. The body as JSON, the caller's header added to the driver's
+		await polar().call(
+			'POST /v1/refunds/',
+			{ order_id: 'ord_1', reason: 'customer_request', amount: 500 },
+			{ headers: { 'X-Request-Id': 'r1' }, timeout: 5_000 },
+		);
+
+		expect(request().url).toBe('https://api.polar.sh/v1/refunds/');
+		expect(request().init.method).toBe('POST');
+
+		expect(JSON.parse(request().init.body as string)).toStrictEqual({
+			order_id: 'ord_1',
+			reason: 'customer_request',
+			amount: 500,
+		});
+
+		expect(request().init.headers['x-request-id']).toBe('r1');
+	});
+
+	test('Puts the parameters of a POST in the query when asked', async () => {
+		answer({});
+
+		// 1. `paramsIn: 'query'` overrides the verb's body
+		await polar().call('POST /v1/orders/ord_1/invoice', { locale: 'en' }, { paramsIn: 'query' });
+
+		expect(request().url).toBe('https://api.polar.sh/v1/orders/ord_1/invoice?locale=en');
+		expect(request().init.body).toBeUndefined();
+	});
+
+	test('Reaches a full URL on the other Polar host, and refuses one on another host before any request', async () => {
+		answer(undefined, 204);
+
+		// 1. The sandbox host from a production driver answers nothing; a foreign host is never asked
+		await expect(polar().call('DELETE https://sandbox-api.polar.sh/v1/benefits/b_1')).resolves.toBeUndefined();
+		await expect(polar().call('GET https://evil.example/v1/benefits/')).rejects.toThrow('evil.example');
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(request().url).toBe('https://sandbox-api.polar.sh/v1/benefits/b_1');
+	});
+
+	test('Turns an error status into ProviderCallError with Polar’s answer, and never names the token', async () => {
+		const body = { error: 'ResourceNotFound', detail: 'Not found' };
+
+		answer(body, 404);
+
+		// 1. The status and the answer in the extensions; the token neither in the message nor in them
+		const error = (await polar()
+			.call('GET /v1/orders/ord_404')
+			.catch((caught: unknown) => caught)) as InstanceType<typeof ProviderCallError>;
+
+		expect(error).toBeInstanceOf(ProviderCallError);
+		expect(error.extensions).toStrictEqual({ provider: 'polar', method: 'GET /v1/orders/ord_404', status: 404, body });
+		expect(error.message).toContain('Not found');
+		expect(error.message).not.toContain('SECRET');
+		expect(JSON.stringify(error.extensions)).not.toContain('SECRET');
+	});
+
+	test('Turns a 429 into HitRateLimitError', async () => {
+		answer({ error: 'TooManyRequests' }, 429, { 'retry-after': '3' });
+
+		// 1. Reset at the Retry-After Polar names
+		const error = (await polar()
+			.call('GET /v1/products/')
+			.catch((caught: unknown) => caught)) as InstanceType<typeof HitRateLimitError>;
+
+		expect(error).toBeInstanceOf(HitRateLimitError);
+		expect(error.extensions.reset.getTime()).toBeGreaterThan(Date.now() + 2_000);
+	});
+
+	test('Gives up with TimeoutError and aborts the request', async () => {
+		// 1. A request that only ends when its signal aborts
+		fetchMock.mockImplementationOnce(
+			(_url: string, init: RequestInit) =>
+				new Promise((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(init.signal?.reason))),
+		);
+
+		await expect(polar().call('GET /v1/products/', {}, { timeout: 10 })).rejects.toBeInstanceOf(TimeoutError);
+		expect(request().init.signal?.aborted).toBe(true);
 	});
 });

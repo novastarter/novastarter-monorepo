@@ -1,3 +1,4 @@
+import type { CallOptions } from '@novastarter/utils';
 import type { MessengerMessage, MessengerResult } from './types.js';
 
 /**
@@ -39,6 +40,7 @@ export declare class MessengerDriver {
 	 * @typeParam T - What the request answers with; the caller knows it from the messenger's documentation.
 	 * @param method - The method, or the verb and path, in the messenger's terms.
 	 * @param params - Its parameters or body.
+	 * @param options - A timeout, an abort signal, extra headers.
 	 * @returns The messenger's answer to the request.
 	 * @throws MessengerTargetGoneError when the recipient can no longer be reached.
 	 * @throws Error when the messenger refused the request or could not be reached.
@@ -47,7 +49,7 @@ export declare class MessengerDriver {
 	 * await useMessenger().location('telegram').call?.('sendPhoto', { chat_id: chatId, photo: file });
 	 * ```
 	 */
-	call?<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>;
+	call?<T = unknown>(method: string, params?: Record<string, unknown>, options?: CallOptions): Promise<T>;
 
 	/**
 	 * Check the driver can be used — the token, connectivity — without sending anything.

@@ -9,6 +9,8 @@ export enum ErrorCode {
 	InvalidCredentials = 'INVALID_CREDENTIALS',
 	/** A payload failed a check; see `InvalidPayloadError`. */
 	InvalidPayload = 'INVALID_PAYLOAD',
+	/** A provider refused a driver's `call()`; see `ProviderCallError`. */
+	ProviderCallFailed = 'PROVIDER_CALL_FAILED',
 	/** A rate limit was hit; see `HitRateLimitError`. */
 	RequestsExceeded = 'REQUESTS_EXCEEDED',
 }

@@ -45,3 +45,21 @@ which Mailjet's statistics group by. A message Mailjet answers with `Status: 'er
 | `apiKey`    | yes      | Public API key.                                       |
 | `apiSecret` | yes      | Private API key.                                      |
 | `sandbox`   | —        | Validate without delivering — Mailjet's sandbox mode. |
+
+## Any other request
+
+`call()` makes a request of Mailjet's own API with the location's key pair — the way to contacts, lists, statistics and
+anything else the driver has no wrapper for. The method is the verb and a path from `https://api.mailjet.com`, the API
+version included; the parameters are the query of a `GET`, `HEAD` or `DELETE` and the JSON body otherwise.
+
+```ts
+const mail = useMail().location('main');
+
+const contacts = await mail.call?.('GET /v3/REST/contact', { Limit: 10 });
+
+await mail.call?.('POST /v3/REST/contactslist', { Name: 'Newsletter' });
+```
+
+A full URL may point at `api.mailjet.com` only; any other host is refused before the request, so the key pair never
+leaves Mailjet. An error status throws `ProviderCallError` with Mailjet's status and answer, a 429 `HitRateLimitError`;
+the timeout is 30 seconds unless `{ timeout }` names another.

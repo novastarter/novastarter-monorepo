@@ -59,7 +59,10 @@ jar.delete('oauth');
 
 State and the PKCE verifier are made by `startOAuth()` and travel in its encrypted cookie; GitHub is plain OAuth and
 issues no ID token, so the nonce is not used. On the callback the driver exchanges the code for an access token, then
-reads `GET /user` and `GET /user/emails` with it. The token is not kept.
+reads `GET /user` and `GET /user/emails` with it. The driver keeps nothing: the token comes back from `finishOAuth()` as
+`tokens` — `accessToken`, `scope` (the scopes the person granted) and `tokenType`, plus `refreshToken` and `expiresAt`
+for a GitHub App with expiring user tokens. It is a secret; storing it, encrypted with a key of the application's own,
+is the application's responsibility.
 
 The identity carries the numeric account id as the `subject` — a login can be renamed and then taken by someone else —
 the `name`, or the login when the person set none, and `avatar_url` as `avatarUrl`; the profile itself is `raw`. The
@@ -71,6 +74,33 @@ request, an outage of the address list, or a request that fails or times out thr
 the reason, with the original as its `cause`.
 
 The driver has no `verify()`: GitHub offers no request that checks a client secret without a code.
+
+## Any other request
+
+`call()` reaches any endpoint of GitHub's REST API: the verb and the path from `https://api.github.com`. With
+`accessToken` it acts as that person, within the scopes they granted; the parameters are the query of a `GET`, `HEAD` or
+`DELETE` and the JSON body otherwise:
+
+```ts
+const github = useAuth().location('github');
+
+const repos = await github.call?.('GET /user/repos', { per_page: 100, sort: 'updated' }, { accessToken });
+```
+
+Without `accessToken` the request is authenticated as the OAuth app, with Basic `clientId:clientSecret` — what the
+`/applications/{client_id}/…` endpoints take; `{client_id}` in the path is replaced with the app's client id:
+
+```ts
+// Check a stored token is still valid, and read the scopes and the user it belongs to
+const check = await github.call?.('POST /applications/{client_id}/token', { access_token: accessToken });
+```
+
+Every request carries `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28` and a `User-Agent`;
+`options.headers` go on top, `options.timeout` replaces the location's. A full URL may only point at `api.github.com` or
+`uploads.github.com`; any other host is refused before the request. An error status throws `ProviderCallError` with
+GitHub's status and answer in `extensions`, a timeout `TimeoutError`; no token or secret goes into an error message. A
+rate limit throws `HitRateLimitError` — a 429, or a 403 with the limit spent (`x-ratelimit-remaining: 0`, reset at
+`x-ratelimit-reset`) or a `Retry-After` — its `reset` at the time GitHub names.
 
 ## Options
 

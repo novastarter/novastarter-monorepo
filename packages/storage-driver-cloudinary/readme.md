@@ -35,6 +35,29 @@ storage.registerLocation('media', {
 
 Anywhere later: `useStorage().location('media').write(path, stream, type)` and the rest of the `StorageDriver` contract.
 
+## Any other request
+
+`call()` reaches any endpoint of Cloudinary's Admin API with the location's key and secret as basic auth — usage, tags,
+metadata fields, upload presets, transformations. The method is the verb and the path under
+`https://api.cloudinary.com/v1_1/<cloudName>`. The parameters of a `GET`, `HEAD` or `DELETE` go in the query, the rest
+as the JSON body; `paramsIn` in the options changes that.
+
+```ts
+const media = useStorage().location('media');
+
+const usage = await media.call!('GET /usage');
+
+const { resources } = await media.call!<{ resources: { public_id: string }[] }>('GET /resources/image/upload', {
+	max_results: 100,
+	prefix: 'avatars/',
+});
+```
+
+A full URL may point only at `api.cloudinary.com`; any other host is refused before a request is made. Public ids are
+not placed under `root`. A refusal throws `ProviderCallError` with Cloudinary's status and `{ error: { message } }`; a
+429, or the 420 the Admin API answers once the hourly budget is spent, throws `HitRateLimitError`. The default timeout
+is 30 seconds.
+
 ## Options
 
 | Option          | Required | Description                                                                |

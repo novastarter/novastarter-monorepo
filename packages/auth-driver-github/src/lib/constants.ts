@@ -61,3 +61,19 @@ export const DEFAULT_SCOPES: readonly string[] = ['read:user', 'user:email'];
  * @defaultValue 10 seconds.
  */
 export const DEFAULT_TIMEOUT = 10_000;
+
+/**
+ * The root of GitHub's REST API, which the path of a `call()` method is joined to.
+ *
+ * @defaultValue `https://api.github.com`
+ */
+export const API_URL = 'https://api.github.com';
+
+/**
+ * The hosts a full URL in a `call()` method may point at: the REST API and the host release assets are uploaded to.
+ * Any other host is refused before the request, so a token or the client secret never leaves GitHub.
+ *
+ * @defaultValue `api.github.com`, `uploads.github.com`
+ * @internal
+ */
+export const CALL_HOSTS: readonly string[] = ['api.github.com', 'uploads.github.com'];

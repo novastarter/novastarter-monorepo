@@ -65,8 +65,9 @@ checked here, the messenger refuses what it cannot take and its reason travels a
 ## Any other request
 
 `send()` covers what messengers share. The rest of a messenger's API — a reaction, an edit, a method the driver has no
-wrapper for yet — is `call(method, params)`, optional on every driver, with the location's credentials, timeout and
-errors. The signature is the same for all; what `method` means is the messenger's:
+wrapper for yet — is `call(method, params, options)`, optional on every driver, with the location's credentials, timeout
+and errors; `options` takes a `timeout`, a `signal` and extra `headers`. The signature is the same for all; what
+`method` means is the messenger's:
 
 ```ts
 const messenger = useMessenger();

@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import { toProviderCallError } from '@novastarter/errors';
 import type { PushDriver, PushMessage, PushPlatform, PushResult } from '@novastarter/push';
-import { toErrorMessage, withTimeout } from '@novastarter/utils';
+import { type CallOptions, parseCallMethod, toErrorMessage, withTimeout } from '@novastarter/utils';
+import { httpCall, resolveCallUrl } from '@novastarter/utils/node';
 import { type App, cert, type Credential, deleteApp, initializeApp } from 'firebase-admin/app';
 import { getMessaging, type Messaging } from 'firebase-admin/messaging';
+import { DEFAULT_FCM_CALL_TIMEOUT, FCM_API_URL, FCM_CALL_HOSTS } from './constants.js';
 import { describeError } from './describe-error.js';
 import { readServiceAccount, type ServiceAccountJson } from './read-service-account.js';
 import { toFcmMessage } from './to-fcm-message.js';
@@ -106,6 +109,13 @@ export class PushDriverFcm implements PushDriver {
 	private readonly app: App;
 
 	/**
+	 * The Firebase project id of the service account — what `{projectId}` in a {@link call} path stands for.
+	 *
+	 * @internal
+	 */
+	private readonly projectId: string;
+
+	/**
 	 * Create a driver on a service account, with a Firebase app of its own.
 	 *
 	 * @param config - Service account and defaults.
@@ -123,6 +133,7 @@ export class PushDriverFcm implements PushDriver {
 		}
 
 		this.config = config;
+		this.projectId = account.projectId;
 
 		// 2. `cert()` validates the fields and parses the key, so a broken secret fails at startup
 		this.credential = cert({
@@ -193,6 +204,80 @@ export class PushDriverFcm implements PushDriver {
 		} catch (error) {
 			throw new Error(`FCM credentials are invalid: ${toErrorMessage(error)}`, { cause: error });
 		}
+	}
+
+	/**
+	 * Make a request of an FCM API with the service account's access token, the location's timeout and the kit's errors.
+	 *
+	 * The way to what `send()` does not cover — a topic subscription, a message with fields the kit does not map. The
+	 * `method` is a verb and a path from `https://fcm.googleapis.com`, where `{projectId}` stands for the service
+	 * account's project, or a full URL on one of {@link FCM_CALL_HOSTS}. The parameters are the query of a `GET`,
+	 * `HEAD` or `DELETE` and the JSON body otherwise — `options.paramsIn` moves them. The timeout and the signal bound
+	 * the access token's fetch too.
+	 *
+	 * @typeParam T - What the request answers with; the caller knows it from FCM's documentation.
+	 * @param method - The verb and the path or full URL: `POST /v1/projects/{projectId}/messages:send`.
+	 * @param params - Its query or body; `undefined` ones are left out.
+	 * @param options - A timeout over the location's, an abort signal, extra headers, where the parameters go.
+	 * @returns FCM's answer: parsed JSON, else text; `undefined` for an empty one.
+	 * @throws ProviderCallError when FCM answers with an error status — its status and answer in `extensions`.
+	 * @throws HitRateLimitError when FCM answers `429`.
+	 * @throws TimeoutError when the token and the request outlive the timeout.
+	 * @throws Error when the method is malformed, its URL is not on an FCM host, or the access token cannot be had.
+	 * @example
+	 * ```ts
+	 * const push = usePush().location('fcm');
+	 * const sent = await push.call!<{ name: string }>('POST /v1/projects/{projectId}/messages:send', {
+	 * 	message: { topic: 'news', data: { id: '42' } },
+	 * });
+	 * ```
+	 */
+	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, options: CallOptions = {}): Promise<T> {
+		// 1. The method checked and resolved before a token is fetched: a URL on a foreign host is refused without the
+		//    credentials ever being used. `{projectId}` is filled in so a caller needs not repeat the location's project
+		const { verb, target } = parseCallMethod(method);
+		const url = resolveCallUrl(FCM_API_URL, target.replaceAll('{projectId}', this.projectId), FCM_CALL_HOSTS);
+
+		// 2. The token and the request under one deadline — the caller's timeout, the location's, or the default — and
+		//    the caller's signal: a token fetch that hangs is the call's to cut, and an already aborted signal fetches
+		//    nothing. A fresh token per request costs nothing most of the time, since the credential caches it until it
+		//    nears expiry; a refusal is reported without the SDK's error, which may carry the request it made
+		const timeout = options.timeout ?? this.config.timeout ?? DEFAULT_FCM_CALL_TIMEOUT;
+
+		const response = await withTimeout(
+			async (signal) => {
+				const { access_token: token } = await this.credential.getAccessToken().catch((error: unknown) => {
+					throw new Error(`FCM: the access token could not be had: ${toErrorMessage(error)}`);
+				});
+
+				// 3. The request on the same signal; the caller's headers go on top
+				return httpCall({
+					url,
+					verb,
+					params,
+					paramsIn: options.paramsIn,
+					headers: { authorization: `Bearer ${token}`, ...options.headers },
+					timeout,
+					signal,
+				});
+			},
+			timeout,
+			options.signal ? { signal: options.signal } : {},
+		);
+
+		// 4. A non-2xx answer becomes the kit's error; Google words it as `{ error: { message, status } }`, which the
+		//    error's reason reads. Neither the token nor the headers sent go into it
+		if (response.status < 200 || response.status >= 300) {
+			throw toProviderCallError({
+				provider: 'fcm',
+				method,
+				status: response.status,
+				body: response.body,
+				headers: response.headers,
+			});
+		}
+
+		return response.body as T;
 	}
 
 	/**

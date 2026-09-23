@@ -27,6 +27,7 @@
 	"dependencies": {
 		"@aws-sdk/client-s3": "catalog:",
 		"@aws-sdk/lib-storage": "catalog:",
+		"@novastarter/errors": "workspace:*",
 		"@novastarter/logger": "workspace:*",
 		"@novastarter/storage": "workspace:*",
 		"@novastarter/utils": "workspace:*",

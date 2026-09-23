@@ -4,5 +4,5 @@
  */
 import { MailDriverPostmark } from './lib/driver.js';
 
-export { MailDriverPostmark, type MailDriverPostmarkConfig } from './lib/driver.js';
+export { DEFAULT_POSTMARK_CALL_TIMEOUT, MailDriverPostmark, type MailDriverPostmarkConfig } from './lib/driver.js';
 export default MailDriverPostmark;

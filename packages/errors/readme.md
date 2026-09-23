@@ -55,5 +55,21 @@ throw new HitRateLimitError({
 ErrorCode.InvalidPayload; // 'INVALID_PAYLOAD' — the codes, for matching
 ```
 
+A driver's `call()` turns a provider's error answer into the kit's with `toProviderCallError()`: a 429 becomes a
+`HitRateLimitError` reset at `Retry-After`, anything else a `ProviderCallError` (`PROVIDER_CALL_FAILED`, 502) with the
+provider's own status and answer in `extensions`, and its reason — read out of the usual shapes by
+`providerErrorReason()` — in the message:
+
+```ts
+import { ProviderCallError, toProviderCallError } from '@novastarter/errors';
+
+throw toProviderCallError({ provider: 'stripe', method: 'POST /v1/refunds', status: 404, body, headers });
+// message: 'stripe refused POST /v1/refunds: 404 No such payment_intent', extensions.status: 404
+
+if (error instanceof ProviderCallError && error.extensions.status === 404) {
+	// …
+}
+```
+
 `createError(code, message, status)`: `message` is a string or a function of the extensions; `status` defaults to 500.
 The constructor takes the extensions and the standard `ErrorOptions`, so a `cause` travels along.

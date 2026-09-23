@@ -617,6 +617,9 @@ importers:
       '@novastarter/auth':
         specifier: workspace:*
         version: link:../auth
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/utils':
         specifier: workspace:*
         version: link:../utils
@@ -645,6 +648,9 @@ importers:
       '@novastarter/auth':
         specifier: workspace:*
         version: link:../auth
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/utils':
         specifier: workspace:*
         version: link:../utils
@@ -1317,6 +1323,9 @@ importers:
 
   packages/mail-driver-mailgun:
     dependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/mail':
         specifier: workspace:*
         version: link:../mail
@@ -1348,6 +1357,9 @@ importers:
 
   packages/mail-driver-mailjet:
     dependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/mail':
         specifier: workspace:*
         version: link:../mail
@@ -1379,6 +1391,9 @@ importers:
 
   packages/mail-driver-mailtrap:
     dependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/mail':
         specifier: workspace:*
         version: link:../mail
@@ -1410,6 +1425,9 @@ importers:
 
   packages/mail-driver-postmark:
     dependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/mail':
         specifier: workspace:*
         version: link:../mail
@@ -1441,6 +1459,9 @@ importers:
 
   packages/mail-driver-resend:
     dependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/mail':
         specifier: workspace:*
         version: link:../mail
@@ -1472,6 +1493,9 @@ importers:
 
   packages/mail-driver-sendgrid:
     dependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/mail':
         specifier: workspace:*
         version: link:../mail
@@ -1506,6 +1530,9 @@ importers:
       '@aws-sdk/client-sesv2':
         specifier: 'catalog:'
         version: 3.1129.0
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/mail':
         specifier: workspace:*
         version: link:../mail
@@ -1734,6 +1761,9 @@ importers:
       '@novastarter/payments':
         specifier: workspace:*
         version: link:../payments
+      '@novastarter/utils':
+        specifier: workspace:*
+        version: link:../utils
     devDependencies:
       '@novastarter/tsconfig':
         specifier: workspace:*
@@ -1796,6 +1826,9 @@ importers:
       '@novastarter/payments':
         specifier: workspace:*
         version: link:../payments
+      '@novastarter/utils':
+        specifier: workspace:*
+        version: link:../utils
       '@polar-sh/sdk':
         specifier: 'catalog:'
         version: 0.49.0
@@ -1827,6 +1860,9 @@ importers:
       '@novastarter/payments':
         specifier: workspace:*
         version: link:../payments
+      '@novastarter/utils':
+        specifier: workspace:*
+        version: link:../utils
       stripe:
         specifier: 'catalog:'
         version: 22.6.2(@types/node@24.13.6)
@@ -1948,6 +1984,9 @@ importers:
 
   packages/push-driver-fcm:
     dependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/push':
         specifier: workspace:*
         version: link:../push
@@ -2176,6 +2215,9 @@ importers:
 
   packages/sms-driver-twilio:
     dependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/sms':
         specifier: workspace:*
         version: link:../sms
@@ -2207,6 +2249,9 @@ importers:
 
   packages/sms-driver-vonage:
     dependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/sms':
         specifier: workspace:*
         version: link:../sms
@@ -2269,6 +2314,9 @@ importers:
       '@azure/storage-blob':
         specifier: 'catalog:'
         version: 12.33.0(supports-color@10.2.2)
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/storage':
         specifier: workspace:*
         version: link:../storage
@@ -2300,6 +2348,9 @@ importers:
 
   packages/storage-driver-cloudinary:
     dependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/storage':
         specifier: workspace:*
         version: link:../storage
@@ -2343,6 +2394,9 @@ importers:
       '@novastarter/constants':
         specifier: workspace:*
         version: link:../constants
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/storage':
         specifier: workspace:*
         version: link:../storage
@@ -2414,6 +2468,9 @@ importers:
       '@aws-sdk/lib-storage':
         specifier: 'catalog:'
         version: 3.1111.0(@aws-sdk/client-s3@3.1111.0)
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/logger':
         specifier: workspace:*
         version: link:../logger
@@ -2466,6 +2523,9 @@ importers:
       '@novastarter/constants':
         specifier: workspace:*
         version: link:../constants
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/storage':
         specifier: workspace:*
         version: link:../storage

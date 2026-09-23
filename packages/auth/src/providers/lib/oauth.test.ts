@@ -11,7 +11,14 @@ import { AuthProviderFailedError } from '../../errors/index.js';
 import { DEFAULT_OAUTH_STATE_TTL } from '../../lib/settings.js';
 import { useAuth } from '../../lib/use-auth.js';
 import type { AuthDriver } from '../driver.js';
-import type { AuthIdentity, AuthorizeParams, CallbackParams, Credentials } from '../types.js';
+import type {
+	AuthIdentity,
+	AuthorizeParams,
+	CallbackParams,
+	Credentials,
+	OAuthCallbackResult,
+	OAuthTokens,
+} from '../types.js';
 import { AUTH_SIGN_IN_FAILED_EVENT, AUTH_SIGN_IN_FILTER, AUTH_SIGNED_IN_EVENT } from './events.js';
 import { finishOAuth, startOAuth } from './oauth.js';
 
@@ -62,12 +69,30 @@ const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 const emitter = { emitFilter: vi.fn(async (_event: string, payload: unknown) => payload), emitAction: vi.fn() };
 
 /**
- * What the fake provider was asked to authorize and to exchange, and what its exchange throws, if anything.
+ * Tokens a provider issued with a sign-in; secrets that must never reach the filter or an event.
  */
-const provider: { authorized: AuthorizeParams[]; exchanged: CallbackParams[]; failure: unknown } = {
+const TOKENS: OAuthTokens = {
+	accessToken: 'gho_secret-access-token',
+	refreshToken: 'ghr_secret-refresh-token',
+	expiresAt: NOW + 28_800_000,
+	scope: ['read:user', 'user:email'],
+	tokenType: 'bearer',
+};
+
+/**
+ * What the fake provider was asked to authorize and to exchange, what its exchange throws, if anything, and the tokens
+ * it hands on with the identity, if any.
+ */
+const provider: {
+	authorized: AuthorizeParams[];
+	exchanged: CallbackParams[];
+	failure: unknown;
+	tokens: OAuthTokens | undefined;
+} = {
 	authorized: [],
 	exchanged: [],
 	failure: undefined,
+	tokens: undefined,
 };
 
 /**
@@ -88,12 +113,12 @@ class FakeOAuthDriver implements AuthDriver {
 	}
 
 	/**
-	 * Record the exchange and answer with the identity, or throw the failure a test set.
+	 * Record the exchange and answer with the identity and the tokens a test set, or throw the failure a test set.
 	 *
 	 * @param params - Code, verifier, nonce and redirect URI.
-	 * @returns The identity.
+	 * @returns The identity, with the tokens when a test set them.
 	 */
-	async callback(params: CallbackParams): Promise<AuthIdentity> {
+	async callback(params: CallbackParams): Promise<OAuthCallbackResult> {
 		// 1. Recorded, so the tests can check what `finishOAuth()` sent
 		provider.exchanged.push(params);
 
@@ -102,7 +127,8 @@ class FakeOAuthDriver implements AuthDriver {
 			throw provider.failure;
 		}
 
-		return IDENTITY;
+		// 3. The tokens ride on the identity, the way a driver hands them to `finishOAuth()`
+		return provider.tokens ? { ...IDENTITY, tokens: provider.tokens } : IDENTITY;
 	}
 }
 
@@ -183,6 +209,7 @@ afterEach(() => {
 	provider.authorized.length = 0;
 	provider.exchanged.length = 0;
 	provider.failure = undefined;
+	provider.tokens = undefined;
 	vi.clearAllMocks();
 });
 
@@ -297,6 +324,28 @@ describe('finishOAuth', () => {
 			identity: IDENTITY,
 			data: { next: '/billing', count: 2 },
 		});
+	});
+
+	test('Hands back the tokens of the driver beside the identity, never to the filter or the event', async () => {
+		register();
+		provider.tokens = TOKENS;
+
+		const { state, cookie } = await start({ next: '/repos' });
+		const result = await finishOAuth('github', { state, code: 'c', cookie });
+
+		// 1. The tokens come back on their own; the identity carries none
+		expect(result).toStrictEqual({ identity: IDENTITY, data: { next: '/repos' }, tokens: TOKENS });
+		expect(result.identity).not.toHaveProperty('tokens');
+
+		// 2. The filter and the event are handed the bare identity, and no token appears anywhere in what they got
+		expect(emitter.emitFilter).toHaveBeenCalledWith(AUTH_SIGN_IN_FILTER, IDENTITY, { location: 'github' });
+		expect(emitter.emitAction).toHaveBeenCalledWith(AUTH_SIGNED_IN_EVENT, { location: 'github', payload: IDENTITY });
+
+		const seen = JSON.stringify([...emitter.emitFilter.mock.calls, ...emitter.emitAction.mock.calls]);
+
+		expect(seen).not.toContain(TOKENS.accessToken);
+		expect(seen).not.toContain(TOKENS.refreshToken);
+		expect(logger.info).not.toHaveBeenCalled();
 	});
 
 	test('Refuses a missing cookie', async () => {

@@ -4,7 +4,7 @@
  */
 import { AuthProviderFailedError } from '@novastarter/auth';
 import { describe, expect, test, vi } from 'vitest';
-import { type AuthFetch, request } from './request.js';
+import { type AuthFetch, request, toHttpCallFetch } from './request.js';
 
 describe('request', () => {
 	test('Sends the method, the headers and the body with a deadline signal, and parses the JSON answer', async () => {
@@ -72,5 +72,50 @@ describe('request', () => {
 		).rejects.toThrow('the request to https://x.test failed: Timed out after 5 ms');
 
 		expect(seen?.aborted).toBe(true);
+	});
+});
+
+describe('toHttpCallFetch', () => {
+	test('Forwards the whole request, redirect and multipart body included; keeps a Response', async () => {
+		// 1. The platform's answer passes through untouched
+		const real = new Response('{}', { status: 200, headers: { 'x-a': '1' } });
+		const fetch = vi.fn<AuthFetch>(async () => real);
+		const body = new FormData();
+		const signal = new AbortController().signal;
+
+		const response = await toHttpCallFetch(fetch)('https://x.test', {
+			method: 'POST',
+			headers: {},
+			body,
+			signal,
+			redirect: 'manual',
+		});
+
+		expect(response).toBe(real);
+
+		// 2. `redirect: 'manual'` reaches the fetch, so it cannot follow a redirect with the credentials
+		expect(fetch.mock.calls[0]![1]).toStrictEqual({
+			method: 'POST',
+			headers: {},
+			body,
+			signal,
+			redirect: 'manual',
+		});
+	});
+
+	test('Gives a fake answer without headers empty ones', async () => {
+		// 1. A narrow fake answers status and text only; `httpCall()` still reads headers of it
+		const fetch = vi.fn<AuthFetch>(async () => ({ status: 204, ok: true, text: async () => '' }));
+
+		const response = await toHttpCallFetch(fetch)('https://x.test', {
+			method: 'GET',
+			headers: {},
+			signal: new AbortController().signal,
+			redirect: 'manual',
+		});
+
+		expect(response.status).toBe(204);
+		expect(response.headers.get('location')).toBeNull();
+		expect(await response.text()).toBe('');
 	});
 });

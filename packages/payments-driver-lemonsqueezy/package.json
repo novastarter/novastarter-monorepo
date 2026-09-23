@@ -27,7 +27,8 @@
 	"dependencies": {
 		"@novastarter/errors": "workspace:*",
 		"@novastarter/logger": "workspace:*",
-		"@novastarter/payments": "workspace:*"
+		"@novastarter/payments": "workspace:*",
+		"@novastarter/utils": "workspace:*"
 	},
 	"devDependencies": {
 		"@novastarter/tsconfig": "workspace:*",

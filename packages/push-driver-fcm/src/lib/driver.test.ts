@@ -3,6 +3,7 @@
  * error translation have their own tests next to `read-service-account.ts`, `to-fcm-message.ts` and
  * `describe-error.ts`.
  */
+import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { PushTargetGoneError } from '@novastarter/push';
 import { TimeoutError } from '@novastarter/utils';
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -216,5 +217,173 @@ describe('PushDriverFcm', () => {
 	test('Is the default export too', () => {
 		// 1. Both import forms hand out the same class
 		expect(defaultExport).toBe(PushDriverFcm);
+	});
+});
+
+describe('PushDriverFcm.call', () => {
+	/**
+	 * Stands in for the global `fetch` the call goes through; answers what each test scripts.
+	 */
+	const fetchSpy = vi.fn();
+
+	/**
+	 * A response the way `fetch` resolves one.
+	 *
+	 * @param status - The HTTP status.
+	 * @param body - The body, sent as JSON; `undefined` for none.
+	 * @param headers - Response headers.
+	 * @returns The response.
+	 */
+	const answer = (status: number, body?: unknown, headers: Record<string, string> = {}): Response =>
+		new Response(body === undefined ? null : JSON.stringify(body), { status, headers });
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	test('Sends a JSON body with the bearer token to the project path', async () => {
+		// 1. The access token authorises the request; `{projectId}` becomes the service account's project
+		vi.stubGlobal('fetch', fetchSpy);
+		getAccessToken.mockResolvedValueOnce({ access_token: 'ya29.secret', expires_in: 3600 });
+		fetchSpy.mockResolvedValueOnce(answer(200, { name: 'projects/proj/messages/1' }));
+
+		const driver = new PushDriverFcm({ serviceAccount: account });
+
+		const result = await driver.call('POST /v1/projects/{projectId}/messages:send', { message: { topic: 'news' } });
+
+		expect(result).toStrictEqual({ name: 'projects/proj/messages/1' });
+
+		const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
+
+		expect(url).toBe('https://fcm.googleapis.com/v1/projects/proj/messages:send');
+		expect(init.method).toBe('POST');
+		expect(init.headers['authorization']).toBe('Bearer ya29.secret');
+		expect(init.body).toBe(JSON.stringify({ message: { topic: 'news' } }));
+	});
+
+	test('Puts the parameters of a GET in the query and adds the caller headers', async () => {
+		// 1. A full URL on the Instance ID host is allowed; the caller's header joins the driver's
+		vi.stubGlobal('fetch', fetchSpy);
+		getAccessToken.mockResolvedValueOnce({ access_token: 'tok', expires_in: 3600 });
+		fetchSpy.mockResolvedValueOnce(answer(200, { rel: {} }));
+
+		const driver = new PushDriverFcm({ serviceAccount: account });
+
+		await driver.call(
+			'GET https://iid.googleapis.com/iid/info/abc',
+			{ details: true },
+			{ headers: { access_token_auth: 'true' } },
+		);
+
+		const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
+
+		expect(url).toBe('https://iid.googleapis.com/iid/info/abc?details=true');
+		expect(init.body).toBeUndefined();
+		expect(init.headers['access_token_auth']).toBe('true');
+	});
+
+	test('Throws ProviderCallError for an error status and HitRateLimitError for 429, with no token in them', async () => {
+		vi.stubGlobal('fetch', fetchSpy);
+		getAccessToken.mockResolvedValue({ access_token: 'ya29.secret', expires_in: 3600 });
+
+		const driver = new PushDriverFcm({ serviceAccount: account });
+
+		// 1. Google's error answer is kept with its status; the message names the reason, never the token
+		const refusal = { error: { code: 404, message: 'Requested entity was not found.', status: 'NOT_FOUND' } };
+
+		fetchSpy.mockResolvedValueOnce(answer(404, refusal));
+
+		const error = await driver.call('GET /v1/projects/{projectId}/x').catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ProviderCallError);
+		expect(error).toMatchObject({ extensions: { provider: 'fcm', status: 404, body: refusal } });
+		expect((error as Error).message).toContain('Requested entity was not found.');
+		expect((error as Error).message).not.toContain('ya29.secret');
+
+		// 2. Too many requests is a rate limit the caller may wait out
+		fetchSpy.mockResolvedValueOnce(answer(429, { error: { message: 'Quota exceeded' } }, { 'retry-after': '5' }));
+
+		await expect(driver.call('GET /v1/projects/{projectId}/x')).rejects.toBeInstanceOf(HitRateLimitError);
+	});
+
+	test('Refuses a foreign host before fetching a token or making a request', async () => {
+		vi.stubGlobal('fetch', fetchSpy);
+
+		const driver = new PushDriverFcm({ serviceAccount: account });
+
+		// 1. The token would go wherever the URL points, so a foreign host is refused first
+		await expect(driver.call('GET https://evil.example/steal')).rejects.toThrow(/not on a host of this provider/);
+
+		expect(getAccessToken).not.toHaveBeenCalled();
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
+
+	test('Fails with TimeoutError once the call timeout passes', async () => {
+		// 1. A fetch that never answers until aborted; the per-call timeout overrides the location's
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(
+				(_url: string, init: RequestInit) =>
+					new Promise((_resolve, reject) => {
+						init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+					}),
+			),
+		);
+
+		getAccessToken.mockResolvedValueOnce({ access_token: 'tok', expires_in: 3600 });
+
+		const driver = new PushDriverFcm({ serviceAccount: account, timeout: 60_000 });
+
+		await expect(driver.call('GET /v1/x', {}, { timeout: 10 })).rejects.toBeInstanceOf(TimeoutError);
+	});
+
+	test('Cuts a token fetch that outlives the timeout, and fetches nothing once aborted', async () => {
+		vi.stubGlobal('fetch', fetchSpy);
+
+		const driver = new PushDriverFcm({ serviceAccount: account });
+
+		// 1. A token that never comes is the call's deadline too; no request follows
+		getAccessToken.mockReturnValueOnce(new Promise(() => {}));
+
+		await expect(driver.call('GET /v1/x', {}, { timeout: 10 })).rejects.toBeInstanceOf(TimeoutError);
+
+		expect(fetchSpy).not.toHaveBeenCalled();
+
+		// 2. An already aborted signal stops the call before the token is asked for
+		getAccessToken.mockClear();
+
+		await expect(driver.call('GET /v1/x', {}, { signal: AbortSignal.abort(new Error('stop')) })).rejects.toThrow(
+			'stop',
+		);
+
+		expect(getAccessToken).not.toHaveBeenCalled();
+	});
+
+	test('Reports a refused token without the SDK error, and honours paramsIn', async () => {
+		vi.stubGlobal('fetch', fetchSpy);
+
+		const driver = new PushDriverFcm({ serviceAccount: account });
+
+		// 1. The SDK's error is not passed on as the cause
+		const refused = Object.assign(new Error('invalid_grant'), { config: { data: 'assertion=secret-jwt' } });
+
+		getAccessToken.mockRejectedValueOnce(refused);
+
+		const error = (await driver.call('GET /v1/x').catch((thrown: unknown) => thrown)) as Error;
+
+		expect(error.message).toBe('FCM: the access token could not be had: invalid_grant');
+		expect(error.cause).toBeUndefined();
+		expect(JSON.stringify(error)).not.toContain('secret-jwt');
+
+		// 2. A POST told to use the query sends no body
+		getAccessToken.mockResolvedValueOnce({ access_token: 'tok', expires_in: 3600 });
+		fetchSpy.mockResolvedValueOnce(answer(200, {}));
+
+		await driver.call('POST https://iid.googleapis.com/iid/v1:x', { a: 1 }, { paramsIn: 'query' });
+
+		const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+
+		expect(url).toBe('https://iid.googleapis.com/iid/v1:x?a=1');
+		expect(init.body).toBeUndefined();
 	});
 });

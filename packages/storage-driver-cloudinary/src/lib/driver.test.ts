@@ -22,8 +22,10 @@ import {
 	randUuid,
 	randWord,
 } from '@ngneat/falso';
+import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { StorageFileNotFoundError } from '@novastarter/storage';
-import { confinePath, joinPath, normalizePath } from '@novastarter/utils';
+import { confinePath, joinPath, normalizePath, parseCallMethod } from '@novastarter/utils';
+import { httpCall, resolveCallUrl } from '@novastarter/utils/node';
 import type { Response } from 'undici';
 import { fetch, FormData } from 'undici';
 import type { Mock } from 'vitest';
@@ -45,8 +47,17 @@ vi.mock('undici');
  * Real `joinPath`, kept for the suites that need genuine path joining while `@novastarter/utils` stays mocked for the
  * rest.
  */
-const { confinePath: confinePathActual, joinPath: joinPathActual } =
-	await vi.importActual<typeof import('@novastarter/utils')>('@novastarter/utils');
+const {
+	confinePath: confinePathActual,
+	joinPath: joinPathActual,
+	parseCallMethod: parseCallMethodActual,
+} = await vi.importActual<typeof import('@novastarter/utils')>('@novastarter/utils');
+
+/**
+ * Real `call()` helpers, kept for the `#call` suite while `@novastarter/utils/node` stays mocked for the rest.
+ */
+const { httpCall: httpCallActual, resolveCallUrl: resolveCallUrlActual } =
+	await vi.importActual<typeof import('@novastarter/utils/node')>('@novastarter/utils/node');
 
 /**
  * Real `Buffer` and `Blob`, kept for the suites that push actual bytes through the buffering code while `node:buffer`
@@ -1667,6 +1678,137 @@ describe('#list', () => {
 		await expect(driver.list(sample.path.input).next()).rejects.toThrow(
 			`Can't list for prefix "${sample.path.input}": ${mockResponseBody.error.message}`,
 		);
+	});
+});
+
+describe('#call', () => {
+	beforeEach(() => {
+		// 1. The real parser, URL check and request, over the mocked `undici` fetch
+		vi.mocked(parseCallMethod).mockImplementation(parseCallMethodActual);
+		vi.mocked(resolveCallUrl).mockImplementation(resolveCallUrlActual);
+		vi.mocked(httpCall).mockImplementation(httpCallActual);
+		vi.mocked(fetch).mockResolvedValue(new globalThis.Response('{"resources":[]}', { status: 200 }) as never);
+	});
+
+	/**
+	 * The URL and init of the one request made.
+	 *
+	 * @returns What `fetch` was called with.
+	 */
+	const request = (): [string, { method: string; headers: Record<string, string>; body?: unknown }] =>
+		vi.mocked(fetch).mock.calls[0] as never;
+
+	test('Requests a path under the cloud with basic auth and the query of a GET', async () => {
+		// 1. The path goes under `/v1_1/<cloud>`; the parameters into the query; the key and secret as basic auth
+		const result = await driver.call('GET /resources/image', { max_results: 100, prefix: 'a b' });
+
+		const [url, init] = request();
+
+		expect(url).toBe(
+			`https://api.cloudinary.com/v1_1/${sample.config.cloudName}/resources/image?max_results=100&prefix=a+b`,
+		);
+
+		expect(init.method).toBe('GET');
+		expect(init.headers['authorization']).toBe(sample.basicAuth);
+		expect(init.body).toBeUndefined();
+		expect(result).toEqual({ resources: [] });
+	});
+
+	test('Sends the parameters of a POST as JSON, with the headers of the caller', async () => {
+		// 1. A JSON body; the caller's headers go over the driver's
+		await driver.call('POST /tags/image', { tag: 'x', public_ids: ['a'] }, { headers: { 'X-Request-Id': 'r' } });
+
+		const [, init] = request();
+
+		expect(init.body).toBe('{"tag":"x","public_ids":["a"]}');
+		expect(init.headers).toMatchObject({ 'content-type': 'application/json', 'x-request-id': 'r' });
+	});
+
+	test('Hands a file among the parameters to undici as its own FormData', async () => {
+		// 1. The global `FormData` httpCall builds is copied into `undici`'s, stubbed so its fields can be asserted
+		const form = { append: vi.fn() };
+		vi.mocked(FormData).mockReturnValue(form as unknown as FormData);
+
+		await driver.call('POST /image/upload', { file: new File(['x'], 'a.png'), upload_preset: 'p' });
+
+		const [, init] = request();
+
+		expect(init.body).toBe(form);
+		expect(form.append).toHaveBeenCalledWith('upload_preset', 'p');
+		expect(form.append).toHaveBeenCalledWith('file', expect.any(File));
+	});
+
+	test('Hands undici redirect: manual, so a redirect is never followed with the credentials', async () => {
+		// 1. `httpCall` follows redirects itself and drops the credentials off the origin; undici must not do it first
+		await driver.call('GET /usage');
+
+		expect(request()[1]).toMatchObject({ redirect: 'manual' });
+	});
+
+	test('Puts the parameters where paramsIn says', async () => {
+		// 1. A POST whose API reads a query: the parameters go into the URL, and no body is sent
+		await driver.call('POST /usage', { a: 1 }, { paramsIn: 'query' });
+
+		const [url, init] = request();
+
+		expect(url).toContain('?a=1');
+		expect(init.body).toBeUndefined();
+	});
+
+	test('Refuses a full URL on a foreign host before any request', async () => {
+		// 1. The key and secret would go wherever the URL points
+		await expect(driver.call('GET https://evil.example/usage')).rejects.toThrow('not on a host of this provider');
+
+		expect(fetch).not.toHaveBeenCalled();
+	});
+
+	test('Turns an error status into a ProviderCallError without the credentials', async () => {
+		// 1. Cloudinary's `{ error: { message } }` reaches the message; the auth header never does
+		vi.mocked(fetch).mockResolvedValue(
+			new globalThis.Response('{"error":{"message":"Resource not found"}}', { status: 404 }) as never,
+		);
+
+		const error = await driver.call('GET /resources/image/upload/x').catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ProviderCallError);
+
+		expect((error as InstanceType<typeof ProviderCallError>).extensions).toEqual({
+			provider: 'cloudinary',
+			method: 'GET /resources/image/upload/x',
+			status: 404,
+			body: { error: { message: 'Resource not found' } },
+		});
+
+		expect((error as Error).message).toContain('Resource not found');
+		expect((error as Error).message).not.toContain(sample.basicAuth);
+		expect((error as Error).message).not.toContain(sample.config.apiSecret);
+		expect((error as Error).message).not.toContain(sample.config.apiKey);
+	});
+
+	test.each([429, 420])('Turns a %s into a HitRateLimitError', async (status) => {
+		// 1. Cloudinary's Admin API answers 420 once the hourly budget is spent; the reset time it names is the wait
+		const reset = new Date(Date.now() + 60_000);
+
+		vi.mocked(fetch).mockResolvedValue(
+			new globalThis.Response('{"error":{"message":"Rate Limit Exceeded"}}', {
+				status,
+				headers: { 'x-featureratelimit-reset': reset.toUTCString() },
+			}) as never,
+		);
+
+		const error = await driver.call('GET /usage').catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(HitRateLimitError);
+	});
+
+	test('Gives up at the timeout of the caller', async () => {
+		// 1. A request that never answers ends at the deadline; the error is matched by shape across module copies
+		vi.mocked(fetch).mockImplementation(
+			(_url, init) =>
+				new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))),
+		);
+
+		await expect(driver.call('GET /usage', {}, { timeout: 5 })).rejects.toMatchObject({ name: 'TimeoutError', ms: 5 });
 	});
 });
 

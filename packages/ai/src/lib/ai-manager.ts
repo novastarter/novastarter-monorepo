@@ -8,13 +8,53 @@ import type {
 	SpeechModelV4,
 	TranscriptionModelV4,
 } from '@ai-sdk/provider';
+import { toProviderCallError } from '@novastarter/errors';
+import { type CallOptions, parseCallMethod } from '@novastarter/utils';
+import { httpCall, resolveCallUrl } from '@novastarter/utils/node';
 import { createProviderRegistry, type ProviderRegistryProvider } from 'ai';
 import { AiModelNotFoundError } from '../errors/model-not-found.js';
+import { AiProviderNotFoundError } from '../errors/provider-not-found.js';
 
 /**
  * A provider of the AI SDK, as its package builds it: `createOpenAI({ apiKey })`, `createAnthropic(…)`, `gateway`.
  */
 export type AiProvider = ProviderV4 | ProviderV3;
+
+/**
+ * How long a {@link AiManager.call} may take when neither the call nor the provider's API names a timeout, in
+ * milliseconds.
+ *
+ * @defaultValue 30 seconds.
+ */
+export const DEFAULT_AI_CALL_TIMEOUT = 30_000;
+
+/**
+ * The HTTP API of a provider, for {@link AiManager.call}: an AI SDK provider does not expose its key or its base URL,
+ * so the application hands them over again when it registers the provider.
+ */
+export interface AiProviderApi {
+	/** The API's root: `https://api.openai.com`; a path in it (`https://api.example.com/v1`) is kept. */
+	baseURL: string;
+	/** Sent as `Authorization: Bearer <apiKey>`; a provider with another scheme takes its key through `headers`. */
+	apiKey?: string | undefined;
+	/**
+	 * Headers sent with every call: `{ 'x-api-key': key, 'anthropic-version': '2023-06-01' }` for Anthropic,
+	 * `{ 'x-goog-api-key': key }` for Google.
+	 */
+	headers?: Record<string, string> | undefined;
+	/** How long a call may take, in milliseconds; {@link DEFAULT_AI_CALL_TIMEOUT} unless given. */
+	timeout?: number | undefined;
+	/** The hosts a full URL in a call may point at, besides the base URL's own; `*.example.com` matches subdomains. */
+	allowedHosts?: string[] | undefined;
+}
+
+/**
+ * What {@link AiManager.registerProvider} takes besides the provider.
+ */
+export interface AiProviderOptions {
+	/** The provider's HTTP API, for {@link AiManager.call}; without it the provider serves models only. */
+	api?: AiProviderApi | undefined;
+}
 
 /**
  * A model id qualified with the name its provider is registered under: `openai:gpt-5-mini`.
@@ -55,6 +95,13 @@ export class AiManager {
 	private providers: Record<string, AiProvider> = {};
 
 	/**
+	 * The HTTP APIs of the providers registered with one, by provider name.
+	 *
+	 * @internal
+	 */
+	private apis: Record<string, AiProviderApi> = {};
+
+	/**
 	 * Aliases registered by the application, mapped to the model id each stands for.
 	 *
 	 * @internal
@@ -71,19 +118,52 @@ export class AiManager {
 	/**
 	 * Register a provider under a name, replacing the one registered under it before.
 	 *
+	 * The replacement is whole: registering again without `options.api` drops the API registered before, so
+	 * {@link call} never sends the old credentials along with a new provider.
+	 *
 	 * @param name - What model ids name it by: `openai` in `openai:gpt-5-mini`; must not contain a colon.
 	 * @param provider - The provider, as its `@ai-sdk/*` package builds it.
+	 * @param options - The provider's HTTP API, when the application wants {@link call} for it.
 	 * @throws Error when the name is empty or contains a colon, since no model id could name it.
+	 * @throws Error when `options.api.baseURL` is not an http(s) URL.
+	 * @example
+	 * ```ts
+	 * ai.registerProvider('anthropic', createAnthropic({ apiKey: key }), {
+	 * 	api: {
+	 * 		baseURL: 'https://api.anthropic.com',
+	 * 		headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+	 * 	},
+	 * });
+	 * ```
 	 */
-	registerProvider(name: string, provider: AiProvider): void {
+	registerProvider(name: string, provider: AiProvider, options: AiProviderOptions = {}): void {
 		// 1. The colon separates the provider from the model in an id, so a name holding one could never be reached
 		if (name === '' || name.includes(':')) {
 			throw new Error(`AI provider name "${name}" must be non-empty and must not contain ":"`);
 		}
 
-		// 2. Store it and drop the registry, so the next model is resolved against the new set of providers
+		// 2. A base URL that does not parse would only fail on the first call, far from the configuration that set it;
+		//    the URL itself stays out of the message, since a proxy URL may carry a key in its query
+		const api = options.api;
+
+		if (api !== undefined && !isHttpUrl(api.baseURL)) {
+			throw new Error(`The API of AI provider "${name}" needs a "baseURL" that is an http(s) URL`);
+		}
+
+		// 3. Store it and drop the registry, so the next model is resolved against the new set of providers
 		this.providers[name] = provider;
 		this.built = undefined;
+
+		// 4. The API copied, so a later change to the caller's object does not leak in; none drops the previous one
+		if (api === undefined) {
+			delete this.apis[name];
+		} else {
+			this.apis[name] = {
+				...api,
+				...(api.headers ? { headers: { ...api.headers } } : {}),
+				...(api.allowedHosts ? { allowedHosts: [...api.allowedHosts] } : {}),
+			};
+		}
 	}
 
 	/**
@@ -222,6 +302,87 @@ export class AiManager {
 	}
 
 	/**
+	 * Make a raw request to a provider's own HTTP API, with the credentials, timeout and hosts it was registered with.
+	 *
+	 * The escape hatch for what the AI SDK does not cover: listing models, files, batches, fine-tuning jobs. Only a
+	 * provider registered with `options.api` can be called, since an AI SDK provider does not expose its key or base URL.
+	 * The `apiKey` goes as `Authorization: Bearer`, the API's `headers` over it and the call's own headers on top.
+	 *
+	 * @typeParam T - What the provider answers; the caller knows it from the provider's documentation.
+	 * @param provider - The name the provider was registered under.
+	 * @param method - `'VERB /path'` from the API's base URL, or `'VERB https://host/path'` on the base URL's host or one
+	 * of its `allowedHosts`.
+	 * @param params - The query of a GET, HEAD or DELETE, the JSON body otherwise; multipart when a `Blob` is among them.
+	 * @param options - A timeout over the API's, an abort signal, extra headers, where the parameters go (`paramsIn`).
+	 * @returns The parsed JSON answer, else its text; `undefined` for an empty one.
+	 * @throws AiProviderNotFoundError when no provider is registered under the name.
+	 * @throws Error when the provider was registered without an API, the method is malformed, or a full URL points at a
+	 * host of another party.
+	 * @throws HitRateLimitError when the provider answers 429.
+	 * @throws ProviderCallError when the provider answers any other error status.
+	 * @throws TimeoutError when the call takes longer than the timeout.
+	 * @example
+	 * ```ts
+	 * const { data } = await useAi().call<{ data: { id: string }[] }>('openai', 'GET /v1/models');
+	 * ```
+	 */
+	async call<T = unknown>(
+		provider: string,
+		method: string,
+		params?: Record<string, unknown>,
+		options: CallOptions = {},
+	): Promise<T> {
+		// 1. The provider and its API first, so a typo or a missing API fails before any request is built
+		if (!this.hasProvider(provider)) {
+			throw new AiProviderNotFoundError({ provider });
+		}
+
+		const api = Object.hasOwn(this.apis, provider) ? this.apis[provider] : undefined;
+
+		if (api === undefined) {
+			throw new Error(
+				`AI provider "${provider}" was registered without an API: call() needs ` +
+					`registerProvider(name, provider, { api: { baseURL, … } })`,
+			);
+		}
+
+		// 2. The URL checked against the provider's hosts before the credentials are attached, so they never leave for
+		//    another party
+		const { verb, target } = parseCallMethod(method);
+		const url = resolveCallUrl(api.baseURL, target, api.allowedHosts);
+
+		// 3. The key as a bearer token, the API's headers over it — a provider with another scheme sets its own — and
+		//    the caller's on top
+		const response = await httpCall({
+			url,
+			verb,
+			params,
+			paramsIn: options.paramsIn,
+			headers: {
+				...(api.apiKey ? { authorization: `Bearer ${api.apiKey}` } : {}),
+				...api.headers,
+				...options.headers,
+			},
+			timeout: options.timeout ?? api.timeout ?? DEFAULT_AI_CALL_TIMEOUT,
+			signal: options.signal,
+		});
+
+		// 4. An error status becomes the kit's error, named after the registered provider; nothing of the request —
+		//    the key included — goes into it
+		if (response.status < 200 || response.status >= 300) {
+			throw toProviderCallError({
+				provider,
+				method,
+				status: response.status,
+				body: response.body,
+				headers: response.headers,
+			});
+		}
+
+		return response.body as T;
+	}
+
+	/**
 	 * Turn an alias or a model id into the id of a registered provider's model.
 	 *
 	 * @param model - An alias, or a `provider:model` id.
@@ -243,3 +404,21 @@ export class AiManager {
 		return id as AiModelId;
 	}
 }
+
+/**
+ * Tell whether a string is an absolute http(s) URL.
+ *
+ * @param value - The string.
+ * @returns `true` for an `http:` or `https:` URL that parses.
+ * @internal
+ */
+const isHttpUrl = (value: string): boolean => {
+	// 1. `new URL` throws on anything that is not an absolute URL; the protocol check keeps `file:` and the like out
+	try {
+		const { protocol } = new URL(value);
+
+		return protocol === 'http:' || protocol === 'https:';
+	} catch {
+		return false;
+	}
+};

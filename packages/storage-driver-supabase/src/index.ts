@@ -4,5 +4,9 @@
  */
 import { StorageDriverSupabase } from './lib/driver.js';
 
-export { StorageDriverSupabase, type StorageDriverSupabaseConfig } from './lib/driver.js';
+export {
+	DEFAULT_SUPABASE_CALL_TIMEOUT,
+	StorageDriverSupabase,
+	type StorageDriverSupabaseConfig,
+} from './lib/driver.js';
 export default StorageDriverSupabase;

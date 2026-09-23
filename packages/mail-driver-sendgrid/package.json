@@ -25,6 +25,7 @@
 		"test:coverage": "vitest run --coverage"
 	},
 	"dependencies": {
+		"@novastarter/errors": "workspace:*",
 		"@novastarter/mail": "workspace:*",
 		"@novastarter/utils": "workspace:*",
 		"@sendgrid/mail": "catalog:"

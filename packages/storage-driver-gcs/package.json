@@ -27,6 +27,7 @@
 	"dependencies": {
 		"@google-cloud/storage": "catalog:",
 		"@novastarter/constants": "workspace:*",
+		"@novastarter/errors": "workspace:*",
 		"@novastarter/storage": "workspace:*",
 		"@novastarter/utils": "workspace:*"
 	},

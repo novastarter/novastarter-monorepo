@@ -47,4 +47,19 @@ describe('describeError', () => {
 		// 2. A thrown non-error is still described rather than crashing the description
 		expect(describeError('boom')).toMatchObject({ message: 'Twilio: boom', cause: 'boom' });
 	});
+
+	test('Describes an axios error without keeping it as the cause', () => {
+		// 1. The config of an axios error carries the `Authorization` header; only the code and message survive
+		const axiosError = Object.assign(new Error('connect ECONNREFUSED'), {
+			isAxiosError: true,
+			code: 'ECONNREFUSED',
+			config: { headers: { Authorization: 'Basic c2VjcmV0' } },
+		});
+
+		const described = describeError(axiosError);
+
+		expect(described.message).toBe('Twilio: ECONNREFUSED: connect ECONNREFUSED');
+		expect(described.cause).toBeUndefined();
+		expect(JSON.stringify(described)).not.toContain('c2VjcmV0');
+	});
 });

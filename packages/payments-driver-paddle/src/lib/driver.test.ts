@@ -4,9 +4,15 @@
  * tested in `to-subscription.test.ts`, `to-invoice.test.ts`, `to-event.test.ts` and `to-metadata.test.ts`.
  */
 import { createHmac } from 'node:crypto';
-import { InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
+import {
+	HitRateLimitError,
+	InvalidCredentialsError,
+	InvalidPayloadError,
+	ProviderCallError,
+} from '@novastarter/errors';
+import { TimeoutError } from '@novastarter/utils';
 import { Environment, Paddle, Subscription, Transaction } from '@paddle/paddle-node-sdk';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { fixtureText } from '../fixtures/index.js';
 import { PaymentsDriverPaddle, PRORATION } from './driver.js';
 
@@ -308,5 +314,157 @@ describe('PaymentsDriverPaddle', () => {
 
 		await driver.verify();
 		expect(list).toHaveBeenCalled();
+	});
+});
+
+describe('call', () => {
+	/**
+	 * The stubbed `fetch` a call goes through.
+	 */
+	const fetchMock = vi.fn();
+
+	beforeEach(() => {
+		vi.stubGlobal('fetch', fetchMock);
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		fetchMock.mockReset();
+	});
+
+	/**
+	 * Make `fetch` answer once.
+	 *
+	 * @param body - The JSON body; none for an empty answer.
+	 * @param status - The HTTP status.
+	 * @param headers - The response headers.
+	 */
+	const answer = (body: unknown, status = 200, headers: Record<string, string> = {}): void => {
+		// 1. A real `Response`, so the body is read the way Paddle's is
+		fetchMock.mockResolvedValueOnce(
+			new Response(body === undefined ? null : JSON.stringify(body), { status, headers }),
+		);
+	};
+
+	/**
+	 * The URL and the init of the first request.
+	 *
+	 * @returns The URL and the init.
+	 */
+	const request = (): { url: string; init: RequestInit & { headers: Record<string, string> } } => {
+		// 1. Read back from the stub, as `fetch(url, init)` was called
+		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
+
+		return { url, init };
+	};
+
+	/**
+	 * A driver with a recognisable key, in the given environment.
+	 *
+	 * @param options - The environment or a stand-in URL.
+	 * @returns The driver.
+	 */
+	const paddle = (options: { environment?: 'sandbox'; apiUrl?: string } = {}) =>
+		new PaymentsDriverPaddle({ apiKey: 'pdl_sdbx_apikey_SECRET', webhookSecret: WEBHOOK_SECRET, ...options });
+
+	test('Sends a GET with its query and the bearer key to the environment’s API, and answers the body', async () => {
+		answer({ data: [{ id: 'dsc_1' }], meta: {} });
+
+		// 1. The sandbox API, the parameters in the query, undefined ones left out
+		await expect(
+			paddle({ environment: 'sandbox' }).call('GET /discounts', { status: 'active', per_page: 10, after: undefined }),
+		).resolves.toStrictEqual({ data: [{ id: 'dsc_1' }], meta: {} });
+
+		expect(request().url).toBe('https://sandbox-api.paddle.com/discounts?status=active&per_page=10');
+		expect(request().init.method).toBe('GET');
+		expect(request().init.headers['authorization']).toBe('Bearer pdl_sdbx_apikey_SECRET');
+		expect(request().init.body).toBeUndefined();
+	});
+
+	test('Posts a JSON body to production, with the caller’s headers and timeout', async () => {
+		answer(undefined, 204);
+
+		// 1. The body as JSON; an empty answer is `undefined`
+		await expect(
+			paddle().call(
+				'POST /adjustments',
+				{ action: 'refund', transaction_id: 'txn_1' },
+				{ headers: { 'Paddle-Version': '1' }, timeout: 5_000 },
+			),
+		).resolves.toBeUndefined();
+
+		expect(request().url).toBe('https://api.paddle.com/adjustments');
+		expect(JSON.parse(request().init.body as string)).toStrictEqual({ action: 'refund', transaction_id: 'txn_1' });
+		expect(request().init.headers['content-type']).toBe('application/json');
+		expect(request().init.headers['paddle-version']).toBe('1');
+	});
+
+	test('Reaches a full URL on the other Paddle host and the configured stand-in', async () => {
+		answer({ data: [] });
+		answer({ data: [] });
+
+		// 1. The sandbox host from a production driver; a path under a stand-in's root
+		await paddle().call('GET https://sandbox-api.paddle.com/prices');
+		await paddle({ apiUrl: 'http://localhost:4010' }).call('GET /prices');
+
+		expect(fetchMock.mock.calls.map(([url]) => url)).toStrictEqual([
+			'https://sandbox-api.paddle.com/prices',
+			'http://localhost:4010/prices',
+		]);
+	});
+
+	test('Sends the parameters of a DELETE as the body when asked', async () => {
+		answer(undefined, 204);
+
+		// 1. `paramsIn: 'body'` overrides the verb's query
+		await paddle().call('DELETE /notification-settings/ntfset_1', { reason: 'x' }, { paramsIn: 'body' });
+
+		expect(request().url).toBe('https://api.paddle.com/notification-settings/ntfset_1');
+		expect(JSON.parse(request().init.body as string)).toStrictEqual({ reason: 'x' });
+	});
+
+	test('Refuses a URL on another host before any request', async () => {
+		// 1. The key would travel with it
+		await expect(paddle().call('GET https://evil.example/prices')).rejects.toThrow('evil.example');
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	test('Turns an error status into ProviderCallError with Paddle’s answer, and never names the key', async () => {
+		const body = { error: { type: 'request_error', code: 'not_found', detail: 'Entity not found' } };
+
+		answer(body, 404);
+
+		// 1. The status and the answer in the extensions; the key neither in the message nor in them
+		const error = (await paddle()
+			.call('GET /discounts/dsc_404')
+			.catch((caught: unknown) => caught)) as InstanceType<typeof ProviderCallError>;
+
+		expect(error).toBeInstanceOf(ProviderCallError);
+		expect(error.extensions).toStrictEqual({ provider: 'paddle', method: 'GET /discounts/dsc_404', status: 404, body });
+		expect(error.message).not.toContain('SECRET');
+		expect(JSON.stringify(error.extensions)).not.toContain('SECRET');
+	});
+
+	test('Turns a 429 into HitRateLimitError', async () => {
+		answer({ error: { code: 'too_many_requests' } }, 429, { 'retry-after': '3' });
+
+		// 1. Reset at the Retry-After Paddle names
+		const error = (await paddle()
+			.call('GET /prices')
+			.catch((caught: unknown) => caught)) as InstanceType<typeof HitRateLimitError>;
+
+		expect(error).toBeInstanceOf(HitRateLimitError);
+		expect(error.extensions.reset.getTime()).toBeGreaterThan(Date.now() + 2_000);
+	});
+
+	test('Gives up with TimeoutError and aborts the request', async () => {
+		// 1. A request that only ends when its signal aborts
+		fetchMock.mockImplementationOnce(
+			(_url: string, init: RequestInit) =>
+				new Promise((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(init.signal?.reason))),
+		);
+
+		await expect(paddle().call('GET /prices', {}, { timeout: 10 })).rejects.toBeInstanceOf(TimeoutError);
+		expect(request().init.signal?.aborted).toBe(true);
 	});
 });

@@ -2,7 +2,9 @@
  * Tests of the Mailgun driver class with the SDK mocked; the message mapper has its own tests in
  * `to-mailgun-message.test.ts`.
  */
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
+import { TimeoutError } from '@novastarter/utils';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import defaultExport from '../index.js';
 import { DEFAULT_MAILGUN_HOST } from './constants.js';
 import { MailDriverMailgun } from './driver.js';
@@ -50,7 +52,34 @@ vi.mock('mailgun.js', () => ({
 	},
 }));
 
+/**
+ * The stubbed `fetch` the raw calls go through.
+ *
+ * @internal
+ */
+const fetchMock = vi.fn();
+
+/**
+ * The URL and the init of the n-th `fetch` call.
+ *
+ * @param index - Which call.
+ * @returns The URL and the init, headers as the record `httpCall()` builds.
+ * @internal
+ */
+const sent = (index = 0): { url: string; init: RequestInit & { headers: Record<string, string> } } => {
+	// 1. Read back from the stub, as `fetch(url, init)` was called
+	const [url, init] = fetchMock.mock.calls[index] as [string, RequestInit & { headers: Record<string, string> }];
+
+	return { url, init };
+};
+
+beforeEach(() => {
+	vi.stubGlobal('fetch', fetchMock);
+});
+
 afterEach(() => {
+	vi.unstubAllGlobals();
+	fetchMock.mockReset();
 	vi.clearAllMocks();
 });
 
@@ -141,5 +170,102 @@ describe('MailDriverMailgun', () => {
 		// 3. A refusal is wrapped with the provider's name
 		get.mockRejectedValueOnce(new Error('Domain not found'));
 		await expect(driver.verify()).rejects.toThrow('Mailgun: Domain not found');
+	});
+});
+
+describe('MailDriverMailgun.call', () => {
+	test('Sends a GET with the query on the domain, and a POST with a form body, over HTTP Basic', async () => {
+		// 1. `{domain}` is the location's domain; a GET carries its parameters in the query
+		fetchMock.mockResolvedValueOnce(new Response('{"items":[]}', { status: 200 }));
+		fetchMock.mockResolvedValueOnce(new Response('{"message":"Address has been added"}', { status: 200 }));
+
+		const driver = new MailDriverMailgun({ apiKey: 'key-SECRET', domain: 'mg.acme.test' });
+
+		expect(await driver.call('GET /v3/{domain}/events', { event: 'failed', limit: 50 })).toStrictEqual({ items: [] });
+		expect(sent().url).toBe('https://api.mailgun.net/v3/mg.acme.test/events?event=failed&limit=50');
+		expect(sent().init.headers['authorization']).toBe(`Basic ${Buffer.from('api:key-SECRET').toString('base64')}`);
+
+		// 2. A POST carries them as a form, a list repeating its key
+		await driver.call('POST /v3/{domain}/unsubscribes', { address: 'ada@example.com', tag: ['a', 'b'] });
+
+		expect(sent(1).url).toBe('https://api.mailgun.net/v3/mg.acme.test/unsubscribes');
+		expect(sent(1).init.body).toBe('address=ada%40example.com&tag=a&tag=b');
+		expect(sent(1).init.headers['content-type']).toBe('application/x-www-form-urlencoded');
+	});
+
+	test('Turns an error status into ProviderCallError without the key, and a 429 into HitRateLimitError', async () => {
+		// 1. The provider's status and answer in the extensions; the key nowhere in the message
+		fetchMock.mockResolvedValueOnce(new Response('{"message":"Domain not found"}', { status: 404 }));
+
+		const driver = new MailDriverMailgun({ apiKey: 'key-SECRET', domain: 'mg.acme.test' });
+		const error = await driver.call('GET /v4/domains/{domain}').catch((caught: unknown) => caught);
+
+		expect(error).toBeInstanceOf(ProviderCallError);
+
+		expect(error).toMatchObject({
+			extensions: {
+				provider: 'mailgun',
+				method: 'GET /v4/domains/{domain}',
+				status: 404,
+				body: { message: 'Domain not found' },
+			},
+		});
+
+		expect((error as Error).message).toBe('mailgun refused GET /v4/domains/{domain}: 404 Domain not found');
+		expect((error as Error).message).not.toContain('SECRET');
+
+		// 2. Too many requests is the rate-limit error
+		fetchMock.mockResolvedValueOnce(new Response('Too Many Requests', { status: 429 }));
+
+		await expect(driver.call('GET /v3/{domain}/bounces')).rejects.toBeInstanceOf(HitRateLimitError);
+	});
+
+	test('Accepts a full URL only on the location’s host, refusing another region before any request', async () => {
+		// 1. An EU location may not be sent to the US host, nor anywhere else
+		const driver = new MailDriverMailgun({ apiKey: 'key-SECRET', domain: 'mg.acme.test', host: 'api.eu.mailgun.net' });
+
+		await expect(driver.call('GET https://api.mailgun.net/v3/domains')).rejects.toThrow(
+			/not on a host of this provider/,
+		);
+
+		await expect(driver.call('GET https://evil.example/v3/domains')).rejects.toThrow(/not on a host of this provider/);
+		expect(fetchMock).not.toHaveBeenCalled();
+
+		// 2. Its own host is fine, and so is a path, joined to it
+		fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+		expect(await driver.call('DELETE https://api.eu.mailgun.net/v3/mg.acme.test/bounces/ada@example.com')).toBe(
+			undefined,
+		);
+
+		expect(sent().url).toBe('https://api.eu.mailgun.net/v3/mg.acme.test/bounces/ada@example.com');
+	});
+
+	test('Takes extra headers, and the location’s timeout unless the call names its own', async () => {
+		// 1. The caller's headers go on top of the driver's
+		fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+		const driver = new MailDriverMailgun({ apiKey: 'key-SECRET', domain: 'mg.acme.test', timeout: 10 });
+
+		await driver.call('GET /v3/domains', {}, { headers: { 'X-Mailgun-On-Behalf-Of': 'sub-1' } });
+		expect(sent().init.headers['x-mailgun-on-behalf-of']).toBe('sub-1');
+
+		// 2. A request that only ends when its signal aborts gives up at the location's timeout
+		const hang = (_url: string, init: RequestInit): Promise<Response> =>
+			new Promise((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
+
+		fetchMock.mockImplementationOnce(hang);
+		await expect(driver.call('GET /v3/domains')).rejects.toBeInstanceOf(TimeoutError);
+
+		// 3. And at the call's own timeout over the default one
+		fetchMock.mockImplementationOnce(hang);
+
+		await expect(
+			new MailDriverMailgun({ apiKey: 'key-SECRET', domain: 'mg.acme.test' }).call(
+				'GET /v3/domains',
+				{},
+				{ timeout: 10 },
+			),
+		).rejects.toBeInstanceOf(TimeoutError);
 	});
 });

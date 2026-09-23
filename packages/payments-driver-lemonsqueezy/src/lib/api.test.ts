@@ -2,6 +2,8 @@
  * Tests of the Lemon Squeezy JSON:API client on a fake fetch — the requests recorded, the responses queued: the
  * headers every request carries, how a refusal reads as an error, and the timeout it enforces and refuses.
  */
+import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
+import { TimeoutError } from '@novastarter/utils';
 import { describe, expect, test, vi } from 'vitest';
 import { type ApiFetch, LemonSqueezyApi, LemonSqueezyApiError, MAX_TIMEOUT } from './api.js';
 
@@ -44,6 +46,7 @@ const fakeFetch = (responses: { status?: number; body?: unknown }[]) => {
 		return {
 			status,
 			ok: status >= 200 && status < 300,
+			headers: new Headers(),
 			text: async () => (next.body === undefined ? '' : JSON.stringify(next.body)),
 		};
 	};
@@ -137,5 +140,140 @@ describe('LemonSqueezyApi', () => {
 
 		// 3. The abort reason is the `TimeoutError` of `AbortSignal.timeout()`, what a handler checks by name
 		await expect(api.request('GET', '/users/me')).rejects.toMatchObject({ name: 'TimeoutError' });
+	});
+});
+
+describe('LemonSqueezyApi.call', () => {
+	/**
+	 * A client with a recognisable key on a fetch that answers real `Response`s, headers included.
+	 *
+	 * @param responses - The responses, in order.
+	 * @param config - The base URL or timeout, when not the defaults.
+	 * @returns The client and the stub fetch.
+	 */
+	const setup = (responses: Response[], config: { apiUrl?: string; timeout?: number } = {}) => {
+		// 1. The stub answers in order; its calls are the requests the client made
+		const fetch = vi.fn<ApiFetch>();
+
+		for (const response of responses) fetch.mockResolvedValueOnce(response);
+
+		return { api: new LemonSqueezyApi({ apiKey: 'lemon-SECRET-key', fetch, ...config }), fetch };
+	};
+
+	/**
+	 * A JSON:API response.
+	 *
+	 * @param body - The document; none for an empty answer.
+	 * @param status - The HTTP status.
+	 * @param headers - The response headers.
+	 * @returns The response.
+	 */
+	const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
+		new Response(body === undefined ? null : JSON.stringify(body), { status, headers });
+
+	test('Sends a GET from the API root with its query, the JSON:API headers and the bearer key', async () => {
+		const { api, fetch } = setup([json({ data: [] })]);
+
+		// 1. The path names the version itself; the brackets of a JSON:API filter are in the key
+		await expect(api.call('GET /v1/discounts', { 'filter[store_id]': 1, 'page[size]': 10 })).resolves.toStrictEqual({
+			data: [],
+		});
+
+		const [url, init] = fetch.mock.calls[0]!;
+
+		expect(url).toBe('https://api.lemonsqueezy.com/v1/discounts?filter%5Bstore_id%5D=1&page%5Bsize%5D=10');
+
+		expect(init).toMatchObject({
+			method: 'GET',
+			headers: {
+				accept: 'application/vnd.api+json',
+				'content-type': 'application/vnd.api+json',
+				authorization: 'Bearer lemon-SECRET-key',
+			},
+		});
+
+		expect(init.body).toBeUndefined();
+	});
+
+	test('Posts a JSON:API body under the configured origin, with the caller’s headers and timeout', async () => {
+		const { api, fetch } = setup([json(undefined, 204)], { apiUrl: 'http://localhost:4010/v1/' });
+		const document = { data: { type: 'orders', id: '1', attributes: { amount: 500 } } };
+
+		// 1. The stand-in's origin with the caller's path; an empty answer is `undefined`
+		await expect(
+			api.call('POST /v1/orders/1/refund', document, { headers: { 'X-Trace': 't1' }, timeout: 5_000 }),
+		).resolves.toBeUndefined();
+
+		const [url, init] = fetch.mock.calls[0]!;
+
+		expect(url).toBe('http://localhost:4010/v1/orders/1/refund');
+		expect(JSON.parse(init.body!)).toStrictEqual(document);
+		expect(init.headers['x-trace']).toBe('t1');
+	});
+
+	test('Refuses a URL on another host before any request, and reaches one on Lemon Squeezy’s', async () => {
+		const { api, fetch } = setup([json({ data: {} })], { apiUrl: 'http://localhost:4010/v1' });
+
+		// 1. The key would travel with the request; the API's own host stays reachable from a stand-in
+		await expect(api.call('GET https://evil.example/v1/stores')).rejects.toThrow('evil.example');
+		await api.call('GET https://api.lemonsqueezy.com/v1/stores/1');
+
+		expect(fetch).toHaveBeenCalledTimes(1);
+		expect(fetch.mock.calls[0]![0]).toBe('https://api.lemonsqueezy.com/v1/stores/1');
+	});
+
+	test('Turns an error status into ProviderCallError with the JSON:API errors, and never names the key', async () => {
+		const body = { errors: [{ status: '404', title: 'Not Found', detail: 'The related resource does not exist.' }] };
+		const { api } = setup([json(body, 404)]);
+
+		// 1. The status and the answer in the extensions; the key neither in the message nor in them
+		const error = (await api.call('GET /v1/orders/9').catch((caught: unknown) => caught)) as InstanceType<
+			typeof ProviderCallError
+		>;
+
+		expect(error).toBeInstanceOf(ProviderCallError);
+		expect(error.extensions).toStrictEqual({ provider: 'lemonsqueezy', method: 'GET /v1/orders/9', status: 404, body });
+		expect(error.message).toContain('The related resource does not exist.');
+		expect(error.message).not.toContain('SECRET');
+		expect(JSON.stringify(error.extensions)).not.toContain('SECRET');
+	});
+
+	test('Turns a 429 into HitRateLimitError', async () => {
+		const { api } = setup([json({ errors: [] }, 429, { 'retry-after': '3' })]);
+
+		// 1. Reset at the Retry-After the API names
+		const error = (await api.call('GET /v1/stores').catch((caught: unknown) => caught)) as InstanceType<
+			typeof HitRateLimitError
+		>;
+
+		expect(error).toBeInstanceOf(HitRateLimitError);
+		expect(error.extensions.reset.getTime()).toBeGreaterThan(Date.now() + 2_000);
+	});
+
+	test('Gives up with TimeoutError at the client’s timeout and aborts the request', async () => {
+		const { api, fetch } = setup([], { timeout: 10 });
+
+		// 1. A request that only ends when its signal aborts
+		fetch.mockImplementationOnce(
+			(_url, init) =>
+				new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason))),
+		);
+
+		await expect(api.call('GET /v1/stores')).rejects.toBeInstanceOf(TimeoutError);
+		expect(fetch.mock.calls[0]![1].signal.aborted).toBe(true);
+	});
+
+	test('Keeps a stand-in’s path prefix, forwards redirect: manual and honours paramsIn', async () => {
+		const { api, fetch } = setup([json({ data: {} })], { apiUrl: 'http://localhost:4010/proxy/ls/v1' });
+
+		// 1. Only the trailing `/v1` of the base goes; the fetch is told not to follow redirects; a POST's parameters
+		//    go in the query when asked
+		await api.call('POST /v1/orders/1/refund', { amount: 500 }, { paramsIn: 'query' });
+
+		const [url, init] = fetch.mock.calls[0]!;
+
+		expect(url).toBe('http://localhost:4010/proxy/ls/v1/orders/1/refund?amount=500');
+		expect(init.redirect).toBe('manual');
+		expect(init.body).toBeUndefined();
 	});
 });

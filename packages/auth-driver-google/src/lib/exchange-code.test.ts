@@ -32,7 +32,10 @@ describe('exchangeCode', () => {
 	test('Posts the code, the verifier and the credentials as a form and answers the ID token', async () => {
 		const fetch = answer(200, { access_token: 'at', id_token: 'id.token.1', token_type: 'Bearer' });
 
-		expect(await exchangeCode({ fetch, timeout: 1_000 }, params)).toBe('id.token.1');
+		expect(await exchangeCode({ fetch, timeout: 1_000 }, params)).toStrictEqual({
+			idToken: 'id.token.1',
+			tokens: { accessToken: 'at', tokenType: 'Bearer' },
+		});
 
 		// 1. Every field of an authorization-code grant with PKCE, form-encoded
 		const [url, init] = fetch.mock.calls[0]!;
@@ -41,7 +44,7 @@ describe('exchangeCode', () => {
 		expect(init.method).toBe('POST');
 		expect(init.headers['Content-Type']).toBe('application/x-www-form-urlencoded');
 
-		expect(Object.fromEntries(new URLSearchParams(init.body))).toStrictEqual({
+		expect(Object.fromEntries(new URLSearchParams(init.body as string))).toStrictEqual({
 			grant_type: 'authorization_code',
 			code: 'code-1',
 			client_id: 'client-1',
@@ -49,6 +52,39 @@ describe('exchangeCode', () => {
 			redirect_uri: 'https://acme.test/callback',
 			code_verifier: 'verifier-1',
 		});
+	});
+
+	test('Answers the refresh token, the expiry and the granted scopes beside the ID token', async () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(1_000_000);
+
+		// 1. Offline access adds the refresh token; the scopes come space-separated
+		const fetch = answer(200, {
+			access_token: 'ya29.at',
+			refresh_token: '1//rt',
+			expires_in: 3599,
+			scope: 'openid https://www.googleapis.com/auth/userinfo.email',
+			token_type: 'Bearer',
+			id_token: 'id.token.1',
+		});
+
+		expect(await exchangeCode({ fetch, timeout: 1_000 }, params)).toStrictEqual({
+			idToken: 'id.token.1',
+			tokens: {
+				accessToken: 'ya29.at',
+				refreshToken: '1//rt',
+				expiresAt: 1_000_000 + 3_599_000,
+				scope: ['openid', 'https://www.googleapis.com/auth/userinfo.email'],
+				tokenType: 'Bearer',
+			},
+		});
+
+		vi.useRealTimers();
+
+		// 2. An answer with no access token has no tokens to hand on
+		expect(
+			await exchangeCode({ fetch: answer(200, { id_token: 'id.token.2' }), timeout: 1_000 }, params),
+		).toStrictEqual({ idToken: 'id.token.2' });
 	});
 
 	test('Throws a provider failure naming the OAuth error of a refusal', async () => {

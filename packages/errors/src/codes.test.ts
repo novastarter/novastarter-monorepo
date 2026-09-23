@@ -9,5 +9,6 @@ test('Values are the upper-cased names of their errors', () => {
 	//    value would silently change the API
 	expect(ErrorCode.InvalidCredentials).toBe('INVALID_CREDENTIALS');
 	expect(ErrorCode.InvalidPayload).toBe('INVALID_PAYLOAD');
+	expect(ErrorCode.ProviderCallFailed).toBe('PROVIDER_CALL_FAILED');
 	expect(ErrorCode.RequestsExceeded).toBe('REQUESTS_EXCEEDED');
 });

@@ -1,3 +1,6 @@
+import { toProviderCallError } from '@novastarter/errors';
+import { type CallOptions, parseCallMethod } from '@novastarter/utils';
+import { httpCall, type HttpCallFetch, resolveCallUrl } from '@novastarter/utils/node';
 import type { LsError } from '../types.js';
 
 /**
@@ -6,6 +9,14 @@ import type { LsError } from '../types.js';
  * @defaultValue `https://api.lemonsqueezy.com/v1`
  */
 export const API_URL = 'https://api.lemonsqueezy.com/v1';
+
+/**
+ * The hosts a full URL given to {@link LemonSqueezyApi.call} may point at, besides the configured API's own.
+ *
+ * @defaultValue `api.lemonsqueezy.com`
+ * @internal
+ */
+export const LEMONSQUEEZY_CALL_HOSTS: readonly string[] = ['api.lemonsqueezy.com'];
 
 /**
  * How long a request may take before it is abandoned, in milliseconds.
@@ -25,11 +36,20 @@ export const MAX_TIMEOUT = 2_147_483_647;
 
 /**
  * The fetch the API client sends with: the platform's signature, narrowed to what is used.
+ *
+ * A fetch handed in has to honour `redirect: 'manual'` when given, and answer the headers: `call()` follows
+ * redirects itself, by their `Location`, so the key never follows one to another host.
  */
 export type ApiFetch = (
 	url: string,
-	init: { method: string; headers: Record<string, string>; body?: string | undefined; signal: AbortSignal },
-) => Promise<{ status: number; ok: boolean; text(): Promise<string> }>;
+	init: {
+		method: string;
+		headers: Record<string, string>;
+		body?: string | undefined;
+		signal: AbortSignal;
+		redirect?: 'manual' | undefined;
+	},
+) => Promise<{ status: number; ok: boolean; headers: Headers; text(): Promise<string> }>;
 
 /**
  * Options of {@link LemonSqueezyApi}.
@@ -184,5 +204,68 @@ export class LemonSqueezyApi {
 
 		// 3. A 204 has no body; `undefined` rather than a parse error
 		return (text ? JSON.parse(text) : undefined) as T;
+	}
+
+	/**
+	 * Make a request of any endpoint of the API with the client's key, timeout and fetch, for the driver's `call()`.
+	 *
+	 * Paths are taken from the API's root rather than the `/v1` base of {@link request} — `GET /v1/stores` — the way
+	 * Lemon Squeezy's reference writes them; a full URL has to be on {@link LEMONSQUEEZY_CALL_HOSTS}. The parameters
+	 * of a `GET` or `DELETE` go in the query, JSON:API's brackets in the key (`'filter[store_id]': 1`), the others as
+	 * the JSON:API document of the body — `options.paramsIn` moves them.
+	 *
+	 * @typeParam T - What the endpoint answers with; the caller knows it from Lemon Squeezy's API reference.
+	 * @param method - The verb and the path from the API's root, or a full URL on Lemon Squeezy's host.
+	 * @param params - The query of a `GET` or `DELETE`, the body otherwise.
+	 * @param options - A timeout over the client's, an abort signal, extra headers, where the parameters go.
+	 * @returns The answer, parsed; `undefined` for an empty one.
+	 * @throws ProviderCallError when the API answers with an error status — its status and `{ errors }` in `extensions`.
+	 * @throws HitRateLimitError when the API answers 429.
+	 * @throws TimeoutError when the request outlives its timeout.
+	 * @throws Error when the method is malformed, or its URL is not on Lemon Squeezy's host.
+	 * @example
+	 * ```ts
+	 * await api.call('GET /v1/discounts', { 'filter[store_id]': 1 });
+	 * ```
+	 */
+	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, options: CallOptions = {}): Promise<T> {
+		// 1. The URL under the API's root — the base without its `/v1`, so the path names its version and a stand-in's
+		//    own path prefix is kept; a full URL only on Lemon Squeezy's host, so the key never travels anywhere else
+		const { verb, target } = parseCallMethod(method);
+		const url = resolveCallUrl(this.apiUrl.replace(/\/v1$/, ''), target, LEMONSQUEEZY_CALL_HOSTS);
+
+		// 2. The client's fetch — a test's fake included — under the shared helper's signature: the helper reads the
+		//    status, the headers and the text of what it answers, which a platform response has. `redirect: 'manual'`
+		//    is passed on by name, so the real fetch never follows a redirect with the key
+		const fetcher: HttpCallFetch = async (input, { redirect, ...init }) =>
+			(await this.fetch(input, {
+				...(init as Omit<Parameters<ApiFetch>[1], 'redirect'>),
+				redirect,
+			})) as unknown as Response;
+
+		// 3. The JSON:API media types and the bearer key, the caller's headers over them
+		const response = await httpCall({
+			url,
+			verb,
+			params,
+			paramsIn: options.paramsIn,
+			headers: { ...this.headers, ...options.headers },
+			timeout: options.timeout ?? this.timeout,
+			signal: options.signal,
+			fetch: fetcher,
+		});
+
+		// 4. An error status is the API refusing: its JSON:API `errors` go on to the caller
+		if (response.status >= 400) {
+			throw toProviderCallError({
+				provider: 'lemonsqueezy',
+				method,
+				status: response.status,
+				body: response.body,
+				headers: response.headers,
+			});
+		}
+
+		return response.body as T;
 	}
 }

@@ -35,6 +35,28 @@ storage.registerLocation('uploads', {
 Anywhere later: `useStorage().location('uploads').write(path, stream, type)` and the rest of the `StorageDriver`
 contract.
 
+## Any other request
+
+`call()` reaches any endpoint of the Supabase Storage API with the location's service-role key — buckets, signed URLs,
+bucket settings. The method is the verb and the path under the Storage API root
+(`https://<projectId>.supabase.co/storage/v1`, or the configured `endpoint`); `{bucket}` in it stands for the location's
+bucket. The parameters of a `GET`, `HEAD` or `DELETE` go in the query, the rest as the JSON body (multipart when a
+`Blob` is among them); `paramsIn` in the options changes that.
+
+```ts
+const uploads = useStorage().location('uploads');
+
+const buckets = await uploads.call!<{ id: string; public: boolean }[]>('GET /bucket');
+
+const { signedURL } = await uploads.call!<{ signedURL: string }>('POST /object/sign/{bucket}/report.pdf', {
+	expiresIn: 3600,
+});
+```
+
+A full URL may point only at the host of the Storage API root; any other host is refused before a request is made.
+Object names in a path are not placed under `root`. A refusal throws `ProviderCallError` with Supabase's status and
+answer, a 429 `HitRateLimitError`. The default timeout is 30 seconds.
+
 ## Options
 
 | Option          | Required | Description                                                                  |

@@ -36,6 +36,27 @@ routes.
 Through the official `@sendgrid/mail` SDK on a client of the location's own, so two keys never share state; the category
 and the tags become SendGrid categories, attachments go base64-encoded, inline when they carry a content id.
 
+## Any other request
+
+`call()` makes a request of the [SendGrid v3 API](https://www.twilio.com/docs/sendgrid/api-reference) with the
+location's key — the parameters of a `GET`, `HEAD` or `DELETE` go in the query, the rest as JSON. A refusal throws
+`ProviderCallError` with SendGrid's `errors` in `extensions.body` (`HitRateLimitError` on a 429). The default timeout is
+30 s; a timeout or an abort stops the request itself, and a signal aborted before the call sends nothing.
+`paramsIn: 'body'` sends a `DELETE`'s parameters as JSON, for the bulk removals:
+
+```ts
+const mail = useMail().location('main');
+
+const bounces = await mail.call?.('GET /v3/suppression/bounces', { start_time: 1_700_000_000 });
+
+await mail.call?.('POST /v3/asm/suppressions/global', { recipient_emails: ['ada@example.com'] });
+
+await mail.call?.('DELETE /v3/suppression/bounces', { emails: ['ada@example.com'] }, { paramsIn: 'body' });
+```
+
+A path is joined to `https://api.sendgrid.com`; a full URL may only point at `api.sendgrid.com`. The key needs the
+permission of the endpoint it calls.
+
 ## Options
 
 | Option    | Required | Description                                            |
