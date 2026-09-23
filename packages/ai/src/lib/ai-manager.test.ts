@@ -261,9 +261,9 @@ describe('AiManager.call', () => {
 		manager.registerProvider('openai', provider(), { api: { baseURL: 'https://api.openai.com', apiKey: KEY } });
 
 		// 1. The path goes under the base URL, the params into the query, the answer comes back parsed
-		const answer = await manager.call('openai', 'GET /v1/models', { limit: 2 });
+		const { data } = await manager.call('openai', 'GET /v1/models', { limit: 2 });
 
-		expect(answer).toStrictEqual({ data: [{ id: 'gpt-5-mini' }] });
+		expect(data).toStrictEqual({ data: [{ id: 'gpt-5-mini' }] });
 
 		const request = requestOf(fetchMock);
 
@@ -319,7 +319,10 @@ describe('AiManager.call', () => {
 		manager.registerProvider('proxy', provider(), { api: { baseURL: 'https://gateway.example.com/openai/v1' } });
 
 		// 1. A proxy's root path stays in front of the call's path; a 204 has nothing to parse
-		await expect(manager.call('proxy', 'DELETE /files/file-1')).resolves.toBeUndefined();
+		await expect(manager.call('proxy', 'DELETE /files/file-1')).resolves.toMatchObject({
+			status: 204,
+			data: undefined,
+		});
 
 		expect(requestOf(fetchMock).url).toBe('https://gateway.example.com/openai/v1/files/file-1');
 	});
@@ -484,5 +487,54 @@ describe('AiManager.call', () => {
 		await manager.call('openai', 'GET /v1/models');
 
 		expect(requestOf(fetchMock).headers['x-api-key']).toBe(KEY);
+	});
+});
+
+describe('AiManager.call placeholders and answers', () => {
+	afterEach(() => {
+		// 1. Every test stubs its own `fetch`
+		vi.unstubAllGlobals();
+	});
+
+	test('Fills a {name} from its parameter, encoded, and sends that parameter nowhere else', async () => {
+		const fetchMock = stubFetch(200, {});
+		const manager = new AiManager();
+
+		manager.registerProvider('openai', provider(), { api: { baseURL: 'https://api.openai.com', apiKey: KEY } });
+
+		// 1. A GET: the placeholder takes `id`, URL-encoded; the other parameters stay in the query
+		await manager.call('openai', 'GET /v1/files/{id}', { id: 'a/b', limit: 5 });
+		expect(requestOf(fetchMock).url).toBe('https://api.openai.com/v1/files/a%2Fb?limit=5');
+
+		// 2. A POST: the placeholder's parameter is not in the body
+		await manager.call('openai', 'POST /v1/batches/{id}/cancel', { id: 'batch_1', reason: 'x' });
+		expect(requestOf(fetchMock, 1).url).toBe('https://api.openai.com/v1/batches/batch_1/cancel');
+		expect(requestOf(fetchMock, 1).body).toBe('{"reason":"x"}');
+	});
+
+	test('Refuses a placeholder no parameter fills before any request', async () => {
+		const fetchMock = stubFetch(200, {});
+		const manager = new AiManager();
+
+		manager.registerProvider('openai', provider(), { api: { baseURL: 'https://api.openai.com', apiKey: KEY } });
+
+		// 1. Sent, it would reach the provider as `%7Bid%7D`
+		await expect(manager.call('openai', 'GET /v1/files/{id}')).rejects.toThrow(/"id" parameter/);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	test('Answers the status, the lower-cased headers and the body', async () => {
+		stubFetch(200, { ok: true }, { 'X-Request-Id': 'req_1' });
+
+		const manager = new AiManager();
+
+		manager.registerProvider('openai', provider(), { api: { baseURL: 'https://api.openai.com', apiKey: KEY } });
+
+		// 1. Status, headers and body, typed as a `CallResponse`
+		const answer = await manager.call<{ ok: boolean }>('openai', 'GET /v1/models');
+
+		expect(answer.status).toBe(200);
+		expect(answer.headers['x-request-id']).toBe('req_1');
+		expect(answer.data).toStrictEqual({ ok: true });
 	});
 });

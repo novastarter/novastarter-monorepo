@@ -50,16 +50,23 @@ which Mailjet's statistics group by. A message Mailjet answers with `Status: 'er
 
 `call()` makes a request of Mailjet's own API with the location's key pair — the way to contacts, lists, statistics and
 anything else the driver has no wrapper for. The method is the verb and a path from `https://api.mailjet.com`, the API
-version included; the parameters are the query of a `GET`, `HEAD` or `DELETE` and the JSON body otherwise.
+version included; the parameters are the query of a `GET`, `HEAD` or `DELETE` and the JSON body otherwise. It answers
+`{ status, headers, data }`.
 
 ```ts
 const mail = useMail().location('main');
 
-const contacts = await mail.call?.('GET /v3/REST/contact', { Limit: 10 });
+const { data: contacts } = await mail.call!('GET /v3/REST/contact', { Limit: 10 });
 
-await mail.call?.('POST /v3/REST/contactslist', { Name: 'Newsletter' });
+await mail.call!('POST /v3/REST/contactslist', { Name: 'Newsletter' });
 ```
 
-A full URL may point at `api.mailjet.com` only; any other host is refused before the request, so the key pair never
-leaves Mailjet. An error status throws `ProviderCallError` with Mailjet's status and answer, a 429 `HitRateLimitError`;
-the timeout is 30 seconds unless `{ timeout }` names another.
+A `{name}` in the path takes the parameter of that name, URL-encoded, and that parameter is not sent again:
+
+```ts
+const { status, data } = await mail.call!('GET /v3/REST/contact/{id}', { id: 'ada@example.com' });
+```
+
+A full URL may point at `api.mailjet.com` or, for the US region, `api.us.mailjet.com` only; any other host is refused
+before the request, so the key pair never leaves Mailjet. An error status throws `ProviderCallError` with Mailjet's
+status and answer, a 429 `HitRateLimitError`; the timeout is 30 seconds unless `{ timeout }` names another.

@@ -29,6 +29,61 @@ export interface Closable {
 }
 
 /**
+ * What a location sets once for every `call()` of its driver: headers and a timeout.
+ */
+export interface CallDefaults {
+	/** Headers every call sends — an API version, an account — under the call's own. */
+	headers?: Record<string, string> | undefined;
+	/** The timeout of every call, in milliseconds, unless the call names one. */
+	timeout?: number | undefined;
+}
+
+/**
+ * Merge a location's call defaults with a call's options: the call's headers over the defaults', its timeout first.
+ *
+ * @param defaults - The location's defaults.
+ * @param options - The call's options.
+ * @returns The options the driver gets.
+ * @example
+ * ```ts
+ * mergeCallOptions({ headers: { 'x-version': '1' }, timeout: 5_000 }, { headers: { 'x-trace': 'a' } });
+ * // { headers: { 'x-version': '1', 'x-trace': 'a' }, timeout: 5_000 }
+ * ```
+ */
+export const mergeCallOptions = <O extends CallDefaults & { headers?: Record<string, string> | undefined }>(
+	defaults: CallDefaults | undefined,
+	options?: O,
+): O => {
+	// 1. Nothing set on the location: the call's options as they are
+	if (!defaults) {
+		return (options ?? {}) as O;
+	}
+
+	// 2. The call wins where both say something; a header name is compared case-insensitively, so the call's
+	//    `Content-Type` replaces the location's `content-type` rather than both being sent
+	const headers: Record<string, string> = {};
+
+	for (const [name, value] of [...Object.entries(defaults.headers ?? {}), ...Object.entries(options?.headers ?? {})]) {
+		headers[name.toLowerCase()] = value;
+	}
+
+	const timeout = options?.timeout ?? defaults.timeout;
+
+	return {
+		...options,
+		...(Object.keys(headers).length > 0 ? { headers } : {}),
+		...(timeout !== undefined ? { timeout } : {}),
+	} as O;
+};
+
+/**
+ * The shape of a driver's `call()`, as the manager wraps it with a location's defaults.
+ *
+ * @internal
+ */
+type CallFunction = (method: string, params?: Record<string, unknown>, options?: CallDefaults) => Promise<unknown>;
+
+/**
  * One entry of {@link DriverManager.registerLocation}: which driver and what to hand its constructor.
  *
  * A discriminated union over the driver map, so `driver` decides the type of `options`: with
@@ -46,6 +101,11 @@ export type LocationConfig<Drivers extends object> = {
 		driver: Name;
 		/** Options forwarded verbatim to the driver constructor, on first use of the location. */
 		options: Drivers[Name];
+		/**
+		 * Headers and a timeout every `call()` of the location's driver gets — an API version, an account — under the
+		 * call's own options; ignored for a driver without `call()`.
+		 */
+		call?: CallDefaults | undefined;
 	};
 }[keyof Drivers & string];
 
@@ -143,7 +203,20 @@ export class DriverManager<
 			throw new Error(`Driver "${config.driver}" isn't registered.`);
 		}
 
-		return new Driver(config.options as never);
+		const instance = new Driver(config.options as never);
+
+		// 2. The location's call defaults go under every `call()` of the instance, so the application sets an API
+		//    version or an account once, at registration; a driver without `call()` is left as it is
+		const defaults = config.call;
+		const target = instance as Instance & { call?: CallFunction };
+
+		if (defaults && typeof target.call === 'function') {
+			const original = target.call.bind(instance);
+
+			target.call = (method, params, options) => original(method, params, mergeCallOptions(defaults, options));
+		}
+
+		return instance;
 	}
 
 	/**

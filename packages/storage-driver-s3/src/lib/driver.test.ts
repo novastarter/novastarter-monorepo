@@ -975,7 +975,7 @@ describe('#call', () => {
 		vi.mocked(withTimeout).mockImplementation(withTimeoutActual);
 	});
 
-	test('Sends the named command with the location bucket and returns its output without $metadata', async () => {
+	test('Sends the named command with the location bucket and answers the output without $metadata', async () => {
 		// 1. The command instance handed to `send` is the one built from the caller's input and the default bucket
 		const command = {} as GetBucketVersioningCommand;
 		vi.mocked(GetBucketVersioningCommand).mockReturnValue(command);
@@ -993,7 +993,7 @@ describe('#call', () => {
 		});
 
 		expect(driver['client'].send).toHaveBeenCalledWith(command, { abortSignal: expect.any(AbortSignal) });
-		expect(result).toEqual({ Status: 'Enabled' });
+		expect(result).toStrictEqual({ status: 200, headers: {}, data: { Status: 'Enabled' } });
 	});
 
 	test('Accepts the Command suffix and a bucket of the caller', async () => {
@@ -1003,7 +1003,7 @@ describe('#call', () => {
 		const result = await driver.call('PutBucketVersioningCommand', { Bucket: 'other' });
 
 		expect(PutBucketVersioningCommand).toHaveBeenCalledWith({ Bucket: 'other' });
-		expect(result).toEqual({});
+		expect(result).toStrictEqual({ status: 200, headers: {}, data: {} });
 	});
 
 	test.each(['NoSuchThing', 'getBucketVersioning', 'S3Client', 'GetBucketVersioning; x', ''])(
@@ -1015,6 +1015,15 @@ describe('#call', () => {
 			expect(driver['client'].send).not.toHaveBeenCalled();
 		},
 	);
+
+	test('Refuses headers before anything is sent, rather than dropping them', async () => {
+		// 1. The SDK builds and signs its own request; a header of the call or the location could never reach it
+		await expect(driver.call('GetBucketVersioning', {}, { headers: { 'x-trace': '1' } })).rejects.toThrow(
+			'S3 call() sends no extra headers; use the SDK client',
+		);
+
+		expect(driver['client'].send).not.toHaveBeenCalled();
+	});
 
 	test('Turns an answer of S3 into a ProviderCallError with its status and body', async () => {
 		// 1. A 404 of S3 keeps its status and error code for the caller; no credential is in the message
@@ -1065,41 +1074,6 @@ describe('#call', () => {
 		expect(error).toBeInstanceOf(ProviderCallError);
 		expect((error as InstanceType<typeof ProviderCallError>).extensions).toMatchObject({ status: 503 });
 		expect((error as Error).cause).toBeUndefined();
-	});
-
-	test('Adds the headers of the caller to the request at the build step, before signing', async () => {
-		// 1. The command is a stub whose middleware stack records what the driver adds
-		const add = vi.fn();
-		const command = { middlewareStack: { add } } as unknown as GetBucketVersioningCommand;
-
-		vi.mocked(GetBucketVersioningCommand).mockReturnValue(command);
-		vi.mocked(driver['client'].send).mockResolvedValue({ $metadata: {} } as never);
-
-		await driver.call('GetBucketVersioning', {}, { headers: { 'x-amz-request-payer': 'requester' } });
-
-		expect(add).toHaveBeenCalledWith(expect.any(Function), { step: 'build', name: 'novastarterCallHeaders' });
-
-		// 2. Run the middleware over a request as the SDK builds it: the caller's header joins, the rest stays
-		const next = vi.fn().mockResolvedValue({ output: {} });
-		const request = { headers: { host: 's3.amazonaws.com' } };
-
-		await add.mock.calls[0]![0](next)({ input: {}, request });
-
-		expect(request.headers).toEqual({ host: 's3.amazonaws.com', 'x-amz-request-payer': 'requester' });
-		expect(next).toHaveBeenCalledWith({ input: {}, request });
-	});
-
-	test('Adds no middleware without headers of the caller', async () => {
-		// 1. The command goes as the SDK built it
-		const add = vi.fn();
-		const command = { middlewareStack: { add } } as unknown as GetBucketVersioningCommand;
-
-		vi.mocked(GetBucketVersioningCommand).mockReturnValue(command);
-		vi.mocked(driver['client'].send).mockResolvedValue({ $metadata: {} } as never);
-
-		await driver.call('GetBucketVersioning');
-
-		expect(add).not.toHaveBeenCalled();
 	});
 
 	test('Passes a failure that is not an answer of S3 on as it is', async () => {

@@ -1,7 +1,14 @@
 import { toProviderCallError } from '@novastarter/errors';
+import {
+	type CallOptions,
+	type CallResponse,
+	DEFAULT_REQUEST_TIMEOUT,
+	parseCallMethod,
+	resolveCallUrl,
+	toHeaderRecord,
+} from '@novastarter/http';
 import type { SmsDriver, SmsMessage, SmsResult } from '@novastarter/sms';
-import { type CallOptions, callParamsIn, type CallVerb, parseCallMethod, withTimeout } from '@novastarter/utils';
-import { httpCall, resolveCallUrl } from '@novastarter/utils/node';
+import { withTimeout } from '@novastarter/utils';
 import twilio from 'twilio';
 import { describeError, describeTransportError } from './describe-error.js';
 import { toTwilioMessage } from './to-twilio-message.js';
@@ -9,7 +16,7 @@ import { toTwilioMessage } from './to-twilio-message.js';
 /**
  * The client `twilio()` builds; kept as a type of its own, since the SDK exports it only through its namespace.
  */
-type TwilioClient = ReturnType<typeof twilio>;
+export type TwilioClient = ReturnType<typeof twilio>;
 
 /**
  * The root a {@link SmsDriverTwilio.call} path is joined to: the core REST API.
@@ -26,22 +33,6 @@ const TWILIO_API_URL = 'https://api.twilio.com';
  * @internal
  */
 const TWILIO_FORM_TYPE = 'application/x-www-form-urlencoded';
-
-/**
- * The JSON content type, for the few Twilio APIs that take a JSON body.
- *
- * @defaultValue `application/json`
- * @internal
- */
-const TWILIO_JSON_TYPE = 'application/json';
-
-/**
- * How long a {@link SmsDriverTwilio.call} may take when neither the call nor the location sets a timeout, in
- * milliseconds — the SDK's own default.
- *
- * @defaultValue 30 000 ms.
- */
-export const DEFAULT_TWILIO_CALL_TIMEOUT = 30_000;
 
 /**
  * Hosts a full URL of {@link SmsDriverTwilio.call} may point at: Twilio's product APIs — Lookup, Verify, Messaging,
@@ -122,11 +113,17 @@ declare module '@novastarter/sms' {
  */
 export class SmsDriverTwilio implements SmsDriver {
 	/**
-	 * Twilio's client, bound to the location's credentials.
+	 * Twilio's own SDK client, bound to the location's credentials and timeout: the SDK's whole API, for what `send()`
+	 * and {@link call} do not cover — typed resources, paging, a Serverless asset upload.
 	 *
-	 * @internal
+	 * @example
+	 * ```ts
+	 * const twilio = useSms().location('twilio') as SmsDriverTwilio;
+	 *
+	 * const messages = await twilio.client.messages.list({ to: '+15558675310', limit: 50 });
+	 * ```
 	 */
-	private readonly client: TwilioClient;
+	readonly client: TwilioClient;
 
 	/**
 	 * What every message of this location carries on top of its own fields.
@@ -148,14 +145,6 @@ export class SmsDriverTwilio implements SmsDriver {
 	 * @internal
 	 */
 	private readonly timeout: number;
-
-	/**
-	 * The Basic `Authorization` header the client signs with — the API key pair, or the account SID and its auth
-	 * token — for the uploads {@link call} makes itself, since the SDK's client sends no multipart body.
-	 *
-	 * @internal
-	 */
-	private readonly authorization: string;
 
 	/**
 	 * Create a driver on a client of its own for the given account.
@@ -184,13 +173,9 @@ export class SmsDriverTwilio implements SmsDriver {
 			? twilio(config.apiKey, config.apiSecret, { ...options, accountSid: config.accountSid })
 			: twilio(config.accountSid, config.authToken, options);
 
-		// 4. The same pair the client signs with, kept as a header for the uploads made without the client
-		const username = hasApiKey ? config.apiKey : config.accountSid;
-		const password = hasApiKey ? config.apiSecret : config.authToken;
-
-		this.authorization = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
+		// 4. What `call()` fills `{AccountSid}` with, and its deadline — the SDK's own 30 s unless given
 		this.accountSid = config.accountSid;
-		this.timeout = config.timeout ?? DEFAULT_TWILIO_CALL_TIMEOUT;
+		this.timeout = config.timeout ?? DEFAULT_REQUEST_TIMEOUT;
 
 		this.defaults = {
 			...(config.messagingServiceSid !== undefined ? { messagingServiceSid: config.messagingServiceSid } : {}),
@@ -254,89 +239,62 @@ export class SmsDriverTwilio implements SmsDriver {
 	 *
 	 * The way to what `send()` does not cover — a message's status, a Lookup, a Verify check. The `method` is a verb and
 	 * a path from `https://api.twilio.com`, where `{AccountSid}` stands for the location's account, or a full URL on a
-	 * `*.twilio.com` host. The parameters are the query of a `GET`, `HEAD` or `DELETE` and a form body otherwise, as
-	 * Twilio's APIs take them — `options.paramsIn` moves them; a `content-type: application/json` header sends them as
-	 * JSON for the few that want it.
-	 *
-	 * A file — a `Blob` or `File` among the parameters, or in a list of them — is uploaded as a multipart body, a
-	 * Serverless asset version for one. The SDK's client sends no multipart body, so that request is made without it,
-	 * with the same credentials, host check, deadline and errors; the caller's content type is dropped for the
-	 * multipart one.
+	 * `*.twilio.com` host. Another `{name}` in it is filled from the parameter of that name, URL-encoded, and that
+	 * parameter is not sent again. The parameters are the query of a `GET`, `HEAD` or `DELETE` and a form body
+	 * otherwise, as Twilio's APIs take them; a `content-type: application/json` header, in any case, sends them as JSON
+	 * for the few that want it. No other type is sent. A file is not sent: the SDK's client makes no multipart body.
 	 *
 	 * @typeParam T - What the request answers with; the caller knows it from Twilio's documentation.
 	 * @param method - The verb and the path or full URL: `GET /2010-04-01/Accounts/{AccountSid}/Messages/SM123.json`.
-	 * @param params - Its query or body; `undefined` ones are left out.
-	 * @param options - A timeout over the location's, an abort signal, extra headers, where the parameters go.
-	 * @returns Twilio's answer: parsed JSON, else text; `undefined` for an empty one.
+	 * @param params - The placeholders' values, and its query or body; `undefined` ones are left out.
+	 * @param options - A timeout over the location's, an abort signal, extra headers.
+	 * @returns The status, the headers — names lower-cased — and Twilio's answer: parsed JSON, else text; `undefined`
+	 * for an empty one.
 	 * @throws ProviderCallError when Twilio answers with an error status — its status and answer (`code`, `message`,
 	 * `more_info`) in `extensions`.
 	 * @throws HitRateLimitError when Twilio answers `429`.
 	 * @throws TimeoutError when the request outlives its timeout.
-	 * @throws Error when the method is malformed, its URL is not on a Twilio host, the content type is neither a form
-	 * nor JSON, a file is put in the query, or Twilio cannot be reached — the SDK's error left out, since it carries
+	 * @throws Error when the method is malformed, a `{name}` placeholder is left unfilled, its URL is not on a Twilio
+	 * host, a file is among the parameters, a content type is neither a form nor JSON, or Twilio cannot be reached — the SDK's error left out, since it carries
 	 * the credentials.
 	 * @example
 	 * ```ts
 	 * const sms = useSms().location('twilio');
-	 * const lookup = await sms.call!('GET https://lookups.twilio.com/v2/PhoneNumbers/+15558675310', {
+	 * const { data } = await sms.call!('GET /2010-04-01/Accounts/{AccountSid}/Messages/{sid}.json', { sid: 'SM123' });
+	 * const { headers } = await sms.call!('GET https://lookups.twilio.com/v2/PhoneNumbers/+15558675310', {
 	 * 	Fields: 'line_type_intelligence',
-	 * });
-	 * const versions = 'https://serverless-upload.twilio.com/v1/Services/ZS123/Assets/ZH123/Versions';
-	 * const version = await sms.call!(`POST ${versions}`, {
-	 * 	Path: '/logo.png',
-	 * 	Visibility: 'public',
-	 * 	Content: new File([png], 'logo.png', { type: 'image/png' }),
 	 * });
 	 * ```
 	 */
-	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, options: CallOptions = {}): Promise<T> {
+	async call<T = unknown>(
+		method: string,
+		params?: Record<string, unknown>,
+		options: CallOptions = {},
+	): Promise<CallResponse<T>> {
 		// 1. The method checked and resolved before anything is sent: a URL on a foreign host is refused with the
-		//    credentials never used. `{AccountSid}` is filled in, since nearly every core path starts with the account
-		const { verb, target } = parseCallMethod(method);
+		//    credentials never used. The `{name}` placeholders take their parameters, which are then not sent again;
+		//    `{AccountSid}` left is the location's account, since nearly every core path starts with it
+		const { verb, target, params: rest } = parseCallMethod(method, params);
 		const url = resolveCallUrl(TWILIO_API_URL, target.replaceAll('{AccountSid}', this.accountSid), TWILIO_CALL_HOSTS);
 
-		// 2. Parameters without the `undefined` ones; the query or the body by the verb, unless the caller said
-		const defined = Object.fromEntries(Object.entries(params).filter(([, value]) => value !== undefined));
-		const inQuery = callParamsIn(verb, options.paramsIn) === 'query';
+		// 2. Parameters without the `undefined` ones; a file is refused rather than sent as the text `[object File]`,
+		//    the SDK's client making no multipart body
+		const defined = Object.fromEntries(Object.entries(rest).filter(([, value]) => value !== undefined));
 
-		// 3. A file goes as a multipart body, which the SDK's client cannot send: the upload is made without it. A file
-		//    has no place in a query, so one there is refused rather than sent as the text of an empty object
 		if (hasFile(defined)) {
-			if (inQuery) {
-				throw new Error(`The twilio call sends a file in a body only, not in the query of ${verb}`);
-			}
-
-			return this.upload<T>(method, url, verb, defined, options);
+			throw new Error('The twilio call sends no file; upload it through the SDK client: `driver.client`');
 		}
 
-		// 4. The SDK fills the body only when `Content-Type` is spelled exactly so and is a form or JSON — and sets
-		//    none of its own for a verb other than `POST` — so a caller's type is normalized and checked, and a body
-		//    goes as a form unless the caller asked for JSON; the other headers go as given, over the SDK's own
-		const headers: Record<string, string> = {};
-		let contentType: string | undefined;
-
-		for (const [name, value] of Object.entries(options.headers ?? {})) {
-			if (name.toLowerCase() === 'content-type') {
-				contentType = value.split(';')[0]?.trim().toLowerCase();
-			} else {
-				headers[name] = value;
-			}
-		}
-
-		if (contentType !== undefined && contentType !== TWILIO_FORM_TYPE && contentType !== TWILIO_JSON_TYPE) {
-			throw new Error(`The twilio call sends a form or JSON body only, not "${contentType}"`);
-		}
-
-		if (!inQuery || contentType !== undefined) {
-			headers['Content-Type'] = contentType ?? TWILIO_FORM_TYPE;
-		}
-
+		// 3. The query of a GET, HEAD or DELETE, a body otherwise — a form, the SDK filling one only under that exact
+		//    `Content-Type`, unless the caller's header, in any case, says JSON
+		const inQuery = verb === 'GET' || verb === 'HEAD' || verb === 'DELETE';
+		const headers = toTwilioHeaders(options.headers, inQuery);
 		const timeout = options.timeout ?? this.timeout;
 
-		// 5. The SDK signs the request and answers whatever the status; its own timeout is set, and the deadline
-		//    enforces it as the kit's `TimeoutError` and honours the caller's abort — an aborted signal sends nothing.
-		//    What the SDK throws — an axios error carrying the `Authorization` header in its config — never leaves
-		//    here: a plain error naming its code takes its place
+		// 4. The SDK signs the request and answers whatever the status; the deadline around it is the kit's
+		//    `TimeoutError` and honours the caller's abort — an aborted signal sends nothing. What the SDK throws — an
+		//    axios error carrying the `Authorization` header in its config — never leaves here: a plain error naming
+		//    its code takes its place
 		const response: TwilioRawResponse = await withTimeout(
 			() =>
 				(
@@ -354,10 +312,10 @@ export class SmsDriverTwilio implements SmsDriver {
 			options.signal ? { signal: options.signal } : {},
 		);
 
-		// 6. The body arrives parsed when it was JSON, as text otherwise; an empty one is nothing
+		// 5. The body arrives parsed when it was JSON, as text otherwise; an empty one is nothing
 		const body = parseBody(response.body);
 
-		// 7. A non-2xx answer becomes the kit's error, Twilio's `{ code, message, more_info }` kept as the body; no
+		// 6. A non-2xx answer becomes the kit's error, Twilio's `{ code, message, more_info }` kept as the body; no
 		//    header sent — the credentials — goes into it
 		if (response.statusCode < 200 || response.statusCode >= 300) {
 			throw toProviderCallError({
@@ -369,58 +327,7 @@ export class SmsDriverTwilio implements SmsDriver {
 			});
 		}
 
-		return body as T;
-	}
-
-	/**
-	 * Upload a file for {@link call}: a multipart request made with `httpCall`, since the SDK's client sends none.
-	 *
-	 * The credentials are the client's, as a Basic header; redirects are followed without them leaving the origin, and
-	 * the deadline covers the reading of the answer.
-	 *
-	 * @typeParam T - What the request answers with.
-	 * @param method - The method as the caller wrote it, for the error.
-	 * @param url - The URL, already checked to be on a Twilio host.
-	 * @param verb - The verb.
-	 * @param params - The defined parameters, a file among them.
-	 * @param options - The timeout, the signal, the caller's headers and where the parameters go.
-	 * @returns Twilio's answer: parsed JSON, else text; `undefined` for an empty one.
-	 * @throws ProviderCallError, or HitRateLimitError for a 429, when Twilio answers with an error status.
-	 * @throws TimeoutError when the request outlives its timeout.
-	 * @throws Error when Twilio cannot be reached — `fetch`'s error, which carries no request header.
-	 * @internal
-	 */
-	private async upload<T>(
-		method: string,
-		url: URL,
-		verb: CallVerb,
-		params: Record<string, unknown>,
-		options: CallOptions,
-	): Promise<T> {
-		// 1. The client's credentials, the caller's headers on top; `httpCall` builds the multipart body and its type
-		const response = await httpCall({
-			url,
-			verb,
-			params,
-			paramsIn: options.paramsIn,
-			headers: { authorization: this.authorization, ...options.headers },
-			timeout: options.timeout ?? this.timeout,
-			signal: options.signal,
-		});
-
-		// 2. A non-2xx answer becomes the kit's error, Twilio's `{ code, message, more_info }` as the body; no header
-		//    sent — the credentials — goes into it
-		if (response.status < 200 || response.status >= 300) {
-			throw toProviderCallError({
-				provider: 'twilio',
-				method,
-				status: response.status,
-				body: response.body,
-				headers: response.headers,
-			});
-		}
-
-		return response.body as T;
+		return { status: response.statusCode, headers: toHeaderRecord(response.headers), data: body as T };
 	}
 
 	/**
@@ -443,15 +350,47 @@ export class SmsDriverTwilio implements SmsDriver {
 }
 
 /**
- * Whether the parameters carry a file — a `Blob` or `File` — at the top level or in a list, which makes the request a
- * multipart upload.
+ * The caller's headers as the SDK reads them: a content type given in any case taken out, its parameters (`;
+ * charset=…`) dropped, and set back as `Content-Type` — the only spelling the SDK honours, so a body is never
+ * form-encoded while labelled JSON. A body without a type of the caller's is a form, as Twilio's APIs take it.
+ *
+ * @param headers - The caller's headers.
+ * @param inQuery - Whether the parameters go in the query, where no body needs a type.
+ * @returns The headers to hand the SDK.
+ * @throws Error when the caller's content type is neither a form nor JSON, the only bodies the SDK makes.
+ * @internal
+ */
+const toTwilioHeaders = (headers: Record<string, string> | undefined, inQuery: boolean): Record<string, string> => {
+	// 1. Every header but the content type, which is looked at on its own whatever its case
+	const rest: Record<string, string> = {};
+	let type: string | undefined;
+
+	for (const [name, value] of Object.entries(headers ?? {})) {
+		if (name.toLowerCase() === 'content-type') type = value.split(';')[0]?.trim().toLowerCase();
+		else rest[name] = value;
+	}
+
+	// 2. No type of the caller's: a body is a form, a query needs none
+	if (type === undefined || type === '') return inQuery ? rest : { ...rest, 'Content-Type': TWILIO_FORM_TYPE };
+
+	// 3. The SDK encodes a form or JSON only; any other type would label a body it is not
+	if (type !== TWILIO_FORM_TYPE && type !== 'application/json') {
+		throw new Error('The twilio call sends a form or JSON only; its content-type must be one of them');
+	}
+
+	return { ...rest, 'Content-Type': type };
+};
+
+/**
+ * Whether the parameters carry a file — a `Blob` or `File` — at the top level or in a list, which the SDK's client
+ * cannot send.
  *
  * @param params - The defined parameters.
  * @returns `true` when a file is among them.
  * @internal
  */
 const hasFile = (params: Record<string, unknown>): boolean => {
-	// 1. The two places `httpCall` turns into multipart parts: a parameter itself, or an item of a list
+	// 1. A parameter itself, or an item of a list
 	return Object.values(params).some(
 		(value) => value instanceof Blob || (Array.isArray(value) && value.some((item) => item instanceof Blob)),
 	);

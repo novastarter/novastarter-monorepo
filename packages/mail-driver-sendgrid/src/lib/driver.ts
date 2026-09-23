@@ -1,4 +1,4 @@
-import { toProviderCallError } from '@novastarter/errors';
+import { type CallOptions, type CallResponse, type HttpApi, request } from '@novastarter/http';
 import {
 	bareMailAddress,
 	type MailDriver,
@@ -6,8 +6,6 @@ import {
 	type MailResult,
 	toMailAddressList,
 } from '@novastarter/mail';
-import { type CallOptions, parseCallMethod } from '@novastarter/utils';
-import { httpCall, resolveCallUrl } from '@novastarter/utils/node';
 import { type ClientResponse, MailService } from '@sendgrid/mail';
 import { describeError } from './describe-error.js';
 import { toSendgridMail } from './to-sendgrid-mail.js';
@@ -23,13 +21,6 @@ export type MailDriverSendgridConfig = {
 };
 
 /**
- * How long a {@link MailDriverSendgrid.call} request may take when the caller names no timeout, in milliseconds.
- *
- * @defaultValue 30 000 ms.
- */
-export const DEFAULT_SENDGRID_CALL_TIMEOUT = 30_000;
-
-/**
  * The root of SendGrid's v3 API, which the paths of {@link MailDriverSendgrid.call} are joined to.
  *
  * @internal
@@ -37,12 +28,12 @@ export const DEFAULT_SENDGRID_CALL_TIMEOUT = 30_000;
 const SENDGRID_API_URL = 'https://api.sendgrid.com';
 
 /**
- * The hosts a full URL given to {@link MailDriverSendgrid.call} may point at, besides the API root's own: none, since
- * the driver's key is for SendGrid's global API.
+ * The hosts besides the root's own a full URL in {@link MailDriverSendgrid.call} may point at: the EU region's API,
+ * which a key of an EU subuser must be sent to. The key travels to SendGrid only.
  *
  * @internal
  */
-const SENDGRID_CALL_HOSTS: readonly string[] = [];
+const SENDGRID_CALL_HOSTS: readonly string[] = ['api.eu.sendgrid.com'];
 
 /**
  * Registers the driver's options in the map of `@novastarter/mail`, so a location naming `sendgrid` has its options
@@ -86,11 +77,12 @@ export class MailDriverSendgrid implements MailDriver {
 	private readonly client: MailService;
 
 	/**
-	 * The location's API key, kept for the `Authorization` header of {@link MailDriverSendgrid.call}.
+	 * SendGrid's v3 API with the location's key as a bearer token, which {@link MailDriverSendgrid.call} requests; no
+	 * host besides the root's own, since the key is for SendGrid's global API.
 	 *
 	 * @internal
 	 */
-	private readonly apiKey: string;
+	private readonly api: HttpApi;
 
 	/**
 	 * Whether every message is sent in sandbox mode.
@@ -111,12 +103,18 @@ export class MailDriverSendgrid implements MailDriver {
 			throw new Error('The sendgrid mail driver needs an "apiKey"');
 		}
 
-		// 2. A client per location, so two keys never share the package-level default; the key is also kept for raw
-		//    calls, which bypass the SDK
-		this.apiKey = config.apiKey;
+		// 2. A client per location, so two keys never share the package-level default; the key also goes to the API of
+		//    raw calls, which bypass the SDK
 		this.client = new MailService();
 		this.client.setApiKey(config.apiKey);
 		this.sandbox = Boolean(config.sandbox);
+
+		this.api = {
+			provider: 'sendgrid',
+			baseUrl: SENDGRID_API_URL,
+			hosts: SENDGRID_CALL_HOSTS,
+			headers: { authorization: `Bearer ${config.apiKey}` },
+		};
 	}
 
 	/**
@@ -159,16 +157,16 @@ export class MailDriverSendgrid implements MailDriver {
 	 *
 	 * The request goes over `fetch` rather than the SDK's client, which takes no abort signal: here a timeout or an
 	 * abort stops the request itself, and a signal already aborted sends nothing. The parameters are the query of a
-	 * `GET`, `HEAD` or `DELETE` — a list repeats its key — and the JSON body otherwise, unless `options.paramsIn` says
-	 * where they go.
+	 * `GET`, `HEAD` or `DELETE` — a list repeats its key — and the JSON body otherwise.
 	 *
 	 * @typeParam T - What the endpoint answers with; the caller knows it from SendGrid's documentation.
 	 * @param method - The verb and a path from `https://api.sendgrid.com` (`GET /v3/suppression/bounces`), or a full
-	 * URL on that host.
-	 * @param params - Its query or body.
-	 * @param options - A timeout over the default 30 s, an abort signal, extra headers, where the parameters go
-	 * (`paramsIn`).
-	 * @returns SendGrid's answer: parsed JSON, else text; `undefined` for an empty one.
+	 * URL on that host or `api.eu.sendgrid.com`.
+	 * @param params - Its query or body. A `{name}` in the path takes the parameter of that name, URL-encoded,
+	 * which is then not sent again.
+	 * @param options - A timeout over the default 30 s, an abort signal, extra headers.
+	 * @returns The status, the lower-cased headers and SendGrid's answer: parsed JSON, else text; `undefined` when
+	 * empty.
 	 * @throws ProviderCallError when SendGrid answers with an error status — its status and answer (`errors`) in
 	 * `extensions`.
 	 * @throws HitRateLimitError when SendGrid asks to slow down.
@@ -176,41 +174,18 @@ export class MailDriverSendgrid implements MailDriver {
 	 * @throws Error when the method is malformed, its URL is not on SendGrid's host, or SendGrid cannot be reached.
 	 * @example
 	 * ```ts
-	 * const bounces = await sendgrid.call<{ email: string }[]>('GET /v3/suppression/bounces', { limit: 100 });
+	 * const { data } = await sendgrid.call<{ email: string }[]>('GET /v3/suppression/bounces', { limit: 100 });
 	 *
 	 * await sendgrid.call('POST /v3/asm/suppressions/global', { recipient_emails: ['ada@example.com'] });
-	 *
-	 * await sendgrid.call('DELETE /v3/suppression/bounces', { emails: ['ada@example.com'] }, { paramsIn: 'body' });
 	 * ```
 	 */
-	async call<T = unknown>(method: string, params?: Record<string, unknown>, options: CallOptions = {}): Promise<T> {
-		// 1. The verb and the URL, checked before any request so the key never travels to a host other than SendGrid's
-		const { verb, target } = parseCallMethod(method);
-		const url = resolveCallUrl(SENDGRID_API_URL, target, SENDGRID_CALL_HOSTS);
-
-		// 2. The request with the key as a bearer token, the caller's headers on top, under the deadline; `paramsIn`
-		//    lets the caller reach an endpoint that reads a `DELETE` body, such as the bulk bounce removal
-		const response = await httpCall({
-			url,
-			verb,
-			params,
-			paramsIn: options.paramsIn,
-			headers: { authorization: `Bearer ${this.apiKey}`, ...options.headers },
-			timeout: options.timeout ?? DEFAULT_SENDGRID_CALL_TIMEOUT,
-			signal: options.signal,
-		});
-
-		// 3. A non-2xx answer becomes the kit's error; it carries the method and SendGrid's `errors`, never the key
-		if (response.status < 200 || response.status >= 300) {
-			throw toProviderCallError({
-				provider: 'sendgrid',
-				method,
-				status: response.status,
-				body: response.body,
-				headers: response.headers,
-			});
-		}
-
-		return response.body as T;
+	async call<T = unknown>(
+		method: string,
+		params?: Record<string, unknown>,
+		options?: CallOptions,
+	): Promise<CallResponse<T>> {
+		// 1. `request()` does the whole of it — placeholders, the host check before the key is sent, the deadline, the
+		//    kit's errors without the key — over the API the constructor described
+		return request<T>(this.api, method, params, options);
 	}
 }

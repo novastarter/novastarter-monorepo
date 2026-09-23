@@ -27,6 +27,7 @@
 	"dependencies": {
 		"@novastarter/emitter": "workspace:*",
 		"@novastarter/errors": "workspace:*",
+		"@novastarter/http": "workspace:*",
 		"@novastarter/logger": "workspace:*",
 		"@novastarter/memory": "workspace:*",
 		"@novastarter/utils": "workspace:*",

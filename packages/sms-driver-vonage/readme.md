@@ -52,27 +52,41 @@ the whole answer stays reachable.
 
 ## Any other request
 
-`call(method, params, options)` reaches the rest of Vonage's APIs through the SDK's client, with the location's key pair
-as a Basic `Authorization` header, its timeout and the kit's errors. A path goes under `https://rest.nexmo.com`; the
-parameters are the query of a `GET`, `HEAD` or `DELETE` and a JSON body otherwise (`options.paramsIn` moves them, a
-`content-type: application/x-www-form-urlencoded` header sends a form instead; any other content type is refused).
+`call(method, params, options)` reaches the rest of Vonage's APIs with the location's key pair as a Basic
+`Authorization` header, its timeout and the kit's errors, and answers `{ status, headers, data }`. A path goes under
+`https://rest.nexmo.com`; the parameters are the query of a `GET`, `HEAD` or `DELETE` and a JSON body otherwise (a
+`content-type: application/x-www-form-urlencoded` header sends a form instead). The request is made with `fetch`, not
+the SDK's client, which drops the response headers.
 
 ```ts
 const vonage = useSms().location('main');
 
-const balance = await vonage.call?.('GET /account/get-balance');
+const { data: balance } = await vonage.call!('GET /account/get-balance');
 
-const pricing = await vonage.call?.('GET /account/get-pricing/outbound/sms', { country: 'GB' });
+const { data: pricing } = await vonage.call!('GET /account/get-pricing/outbound/sms', { country: 'GB' });
 ```
 
 A file — a `Blob` or `File` among the parameters, or in a list — goes as a multipart body, for an endpoint that takes
-one; the SDK's client sends no multipart, so that request is made directly, with the same key pair, host check, timeout
-and errors. Vonage's messaging APIs take media by URL, so most calls need no upload at all.
+one. Vonage's messaging APIs take media by URL, so most calls need no upload at all.
 
 A full URL may point at `rest.nexmo.com`, `api.nexmo.com`, `api.vonage.com`, `api-eu.vonage.com`, `api-us.vonage.com`
 and `api-ap.vonage.com` only; any other host is refused before the key pair is sent. An error status throws
 `ProviderCallError` with Vonage's answer in `extensions.body`, a `429` throws `HitRateLimitError`, and the timeout
 `TimeoutError`.
+
+A `{name}` in the path is filled from the parameter of that name, URL-encoded, and that parameter is not sent again; a
+`{name}` no parameter fills is refused before a request. The response headers come with names lower-cased.
+
+```ts
+const vonage = useSms().location('main');
+
+const { status, headers, data } = await vonage.call!<{ countries: unknown[] }>(
+	'GET /account/get-full-pricing/outbound/{type}',
+	{ type: 'sms' },
+);
+
+console.log(status, headers['x-request-id'], data.countries.length);
+```
 
 ## Options
 

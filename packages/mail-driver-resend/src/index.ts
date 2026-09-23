@@ -4,5 +4,5 @@
  */
 import { MailDriverResend } from './lib/driver.js';
 
-export { DEFAULT_RESEND_CALL_TIMEOUT, MailDriverResend, type MailDriverResendConfig } from './lib/driver.js';
+export { MailDriverResend, type MailDriverResendConfig } from './lib/driver.js';
 export default MailDriverResend;

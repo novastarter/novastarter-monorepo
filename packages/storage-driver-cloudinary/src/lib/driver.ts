@@ -4,6 +4,14 @@ import { extname } from 'node:path';
 import { Readable } from 'node:stream';
 import { toProviderCallError } from '@novastarter/errors';
 import {
+	type CallOptions,
+	type CallResponse,
+	type HttpApi,
+	type HttpCallFetch,
+	type HttpCallResponse,
+	request,
+} from '@novastarter/http';
+import {
 	type ChunkedUploadContext,
 	type ReadOptions,
 	type Stat,
@@ -12,8 +20,7 @@ import {
 	toRelativePath,
 	type TusDriver,
 } from '@novastarter/storage';
-import { type CallOptions, confinePath, joinPath, normalizePath, parseCallMethod } from '@novastarter/utils';
-import { httpCall, type HttpCallFetch, resolveCallUrl } from '@novastarter/utils/node';
+import { confinePath, joinPath, normalizePath } from '@novastarter/utils';
 import PQueue from 'p-queue';
 import type { RequestInit } from 'undici';
 import { fetch, FormData } from 'undici';
@@ -22,19 +29,12 @@ import { toFormUrlEncoded } from './to-form-url-encoded.js';
 import { toSignatureString } from './to-signature-string.js';
 
 /**
- * How long a {@link StorageDriverCloudinary.call} may take when the caller names no timeout, in milliseconds.
- *
- * @defaultValue 30 000 ms.
- */
-export const DEFAULT_CLOUDINARY_CALL_TIMEOUT = 30_000;
-
-/**
- * The hosts a full URL given to {@link StorageDriverCloudinary.call} may point at: the API's own. The key and secret
- * go only there.
+ * The hosts a full URL given to {@link StorageDriverCloudinary.call} may point at: the API's own and its EU and Asia
+ * Pacific regions'. The key and secret go only there.
  *
  * @internal
  */
-const CLOUDINARY_CALL_HOSTS = ['api.cloudinary.com'];
+const CLOUDINARY_CALL_HOSTS = ['api.cloudinary.com', 'api-eu.cloudinary.com', 'api-ap.cloudinary.com'];
 
 /**
  * The status Cloudinary's Admin API answers with once the hourly request budget is spent, instead of 429.
@@ -45,12 +45,38 @@ const CLOUDINARY_CALL_HOSTS = ['api.cloudinary.com'];
 const CLOUDINARY_RATE_LIMITED = 420;
 
 /**
- * The `fetch` of `undici` in the shape {@link httpCall} takes, so `call()` goes out the way the driver's other
+ * Read Cloudinary's 420 — the Admin API's hourly budget spent — as the rate limit it is, reset at the time Cloudinary
+ * names in `X-FeatureRateLimit-Reset`.
+ *
+ * @param response - Cloudinary's answer.
+ * @param method - The call's method, for the error.
+ * @returns A `HitRateLimitError` for a 420; `undefined` for anything else, left to the generic mapping.
+ * @internal
+ */
+const refuseRateLimit = (response: HttpCallResponse, method: string): Error | undefined => {
+	// 1. Only the 420 is Cloudinary's own; a 429 and every other status go the generic way
+	if (response.status !== CLOUDINARY_RATE_LIMITED) return undefined;
+
+	// 2. The reset is a date; its distance from now is the wait
+	const reset = Date.parse(response.headers.get('x-featureratelimit-reset') ?? '');
+
+	return toProviderCallError({
+		provider: 'cloudinary',
+		method,
+		status: 429,
+		body: response.body,
+		headers: response.headers,
+		retryAfter: Number.isNaN(reset) ? undefined : Math.max(0, (reset - Date.now()) / 1000),
+	});
+};
+
+/**
+ * The `fetch` of `undici` in the shape `request()` takes, so `call()` goes out the way the driver's other
  * requests do.
  *
  * A multipart body arrives as the global `FormData`, which the `undici` package does not take for its own; it is
  * copied into `undici`'s `FormData` on the way. The rest of the request — `redirect: 'manual'` included — is
- * passed on as it is, so `undici` never follows a redirect with the credentials: {@link httpCall} follows them itself.
+ * passed on as it is, so `undici` never follows a redirect with the credentials: `request()` follows them itself.
  *
  * @param url - The URL.
  * @param init - The verb, headers, body and signal.
@@ -909,65 +935,63 @@ export class StorageDriverCloudinary implements TusDriver {
 	 * what the storage contract does not cover: usage, tags, metadata fields, upload presets, transformations.
 	 *
 	 * `method` is the verb and the path under `https://api.cloudinary.com/v1_1/<cloudName>`, or a full URL on
-	 * `api.cloudinary.com`. The request carries the key and secret as basic-auth credentials, the way the Admin API
-	 * takes them. The parameters are the query of a `GET`, `HEAD` or `DELETE` and the JSON body otherwise; public ids in
-	 * a path or the parameters are not placed under the location's root.
+	 * `api.cloudinary.com`, `api-eu.cloudinary.com` or `api-ap.cloudinary.com`; a `{name}` in it is filled from the parameter of that name, which is then not sent again.
+	 * The request carries the key and secret as basic-auth credentials, the way the Admin API takes them. The
+	 * parameters are the query of a `GET`, `HEAD` or `DELETE` and the JSON body otherwise; public ids in a path or the
+	 * parameters are not placed under the location's root.
 	 *
 	 * @typeParam T - What the API answers with; the caller knows it from Cloudinary's documentation.
 	 * @param method - The verb and path: `GET /resources/image`, `GET /usage`, `POST /tags/image`.
 	 * @param params - The query or the JSON body.
-	 * @param options - A timeout over {@link DEFAULT_CLOUDINARY_CALL_TIMEOUT}, an abort signal, extra headers.
-	 * @returns The parsed JSON answer, else its text; `undefined` for an empty one.
+	 * @param options - A timeout over the default 30 s, an abort signal, extra headers.
+	 * @returns The status, the headers — the `x-featureratelimit-*` budget among them — and the parsed JSON answer,
+	 * else its text; `undefined` for an empty one.
 	 * @throws ProviderCallError when Cloudinary answers with an error status — its status and `{ error: { message } }`
 	 * in `extensions`.
 	 * @throws HitRateLimitError when Cloudinary answers 429, or 420 once the hourly Admin API budget is spent.
 	 * @throws TimeoutError when the request outlives its timeout.
-	 * @throws Error when the method is malformed or its URL is not on `api.cloudinary.com`.
+	 * @throws Error when the method is malformed, a placeholder is left unfilled or its URL is not on
+	 * one of Cloudinary's API hosts.
 	 * @example
 	 * ```ts
-	 * const usage = await cloudinary.call<{ credits: { usage: number } }>('GET /usage');
+	 * const { data: usage } = await cloudinary.call<{ credits: { usage: number } }>('GET /usage');
 	 *
-	 * const { resources } = await cloudinary.call<{ resources: { public_id: string }[] }>(
+	 * const { data, headers } = await cloudinary.call<{ resources: { public_id: string }[] }>(
 	 * 	'GET /resources/image/upload',
 	 * 	{ max_results: 100, prefix: 'avatars/' },
 	 * );
+	 *
+	 * await cloudinary.call('GET /resources/{resource_type}/tags/{tag}', { resource_type: 'image', tag: 'avatar' });
 	 * ```
 	 */
-	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, options: CallOptions = {}): Promise<T> {
-		// 1. The verb and the URL; a full URL off `api.cloudinary.com` is refused before the credentials are attached
-		const { verb, target } = parseCallMethod(method);
-		const url = resolveCallUrl(`https://api.cloudinary.com/v1_1/${this.cloudName}`, target, CLOUDINARY_CALL_HOSTS);
+	async call<T = unknown>(
+		method: string,
+		params?: Record<string, unknown>,
+		options?: CallOptions,
+	): Promise<CallResponse<T>> {
+		// 1. The Admin API of the location's cloud does the rest: placeholders, the host check, the basic auth, the
+		//    deadline and the mapping of Cloudinary's refusals
+		return request<T>(this.api, method, params, options);
+	}
 
-		// 2. The request with the key and secret as basic auth, the caller's headers on top, through `undici` like the
-		//    driver's other requests
-		const response = await httpCall({
-			url,
-			verb,
-			params,
-			paramsIn: options.paramsIn,
-			headers: { authorization: this.getBasicAuth(), ...options.headers },
-			timeout: options.timeout ?? DEFAULT_CLOUDINARY_CALL_TIMEOUT,
-			signal: options.signal,
+	/**
+	 * Cloudinary's Admin API as {@link StorageDriverCloudinary.call} requests it: under the location's cloud, on
+	 * Cloudinary's API hosts only, with the key and secret as basic auth, through `undici` like the driver's other
+	 * requests, and its 420 read as a rate limit.
+	 *
+	 * @returns The API description for `request()`.
+	 * @internal
+	 */
+	private get api(): HttpApi {
+		// 1. Built on each call, so the credentials are always the driver's current ones
+		return {
+			provider: 'cloudinary',
+			baseUrl: `https://api.cloudinary.com/v1_1/${this.cloudName}`,
+			hosts: CLOUDINARY_CALL_HOSTS,
+			headers: { authorization: this.getBasicAuth() },
 			fetch: undiciFetch,
-		});
-
-		// 3. An error status becomes the kit's error; Cloudinary's 420 is its rate limit, reset at the time it names in
-		//    `X-FeatureRateLimit-Reset`
-		if (response.status >= 400) {
-			const limited = response.status === CLOUDINARY_RATE_LIMITED;
-			const reset = limited ? Date.parse(response.headers.get('x-featureratelimit-reset') ?? '') : Number.NaN;
-
-			throw toProviderCallError({
-				provider: 'cloudinary',
-				method,
-				status: limited ? 429 : response.status,
-				body: response.body,
-				headers: response.headers,
-				retryAfter: Number.isNaN(reset) ? undefined : Math.max(0, (reset - Date.now()) / 1000),
-			});
-		}
-
-		return response.body as T;
+			refuse: refuseRateLimit,
+		};
 	}
 
 	/**

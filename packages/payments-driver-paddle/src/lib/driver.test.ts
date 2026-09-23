@@ -371,9 +371,13 @@ describe('call', () => {
 		answer({ data: [{ id: 'dsc_1' }], meta: {} });
 
 		// 1. The sandbox API, the parameters in the query, undefined ones left out
-		await expect(
-			paddle({ environment: 'sandbox' }).call('GET /discounts', { status: 'active', per_page: 10, after: undefined }),
-		).resolves.toStrictEqual({ data: [{ id: 'dsc_1' }], meta: {} });
+		const { data } = await paddle({ environment: 'sandbox' }).call('GET /discounts', {
+			status: 'active',
+			per_page: 10,
+			after: undefined,
+		});
+
+		expect(data).toStrictEqual({ data: [{ id: 'dsc_1' }], meta: {} });
 
 		expect(request().url).toBe('https://sandbox-api.paddle.com/discounts?status=active&per_page=10');
 		expect(request().init.method).toBe('GET');
@@ -391,7 +395,7 @@ describe('call', () => {
 				{ action: 'refund', transaction_id: 'txn_1' },
 				{ headers: { 'Paddle-Version': '1' }, timeout: 5_000 },
 			),
-		).resolves.toBeUndefined();
+		).resolves.toStrictEqual({ status: 204, headers: {}, data: undefined });
 
 		expect(request().url).toBe('https://api.paddle.com/adjustments');
 		expect(JSON.parse(request().init.body as string)).toStrictEqual({ action: 'refund', transaction_id: 'txn_1' });
@@ -411,16 +415,6 @@ describe('call', () => {
 			'https://sandbox-api.paddle.com/prices',
 			'http://localhost:4010/prices',
 		]);
-	});
-
-	test('Sends the parameters of a DELETE as the body when asked', async () => {
-		answer(undefined, 204);
-
-		// 1. `paramsIn: 'body'` overrides the verb's query
-		await paddle().call('DELETE /notification-settings/ntfset_1', { reason: 'x' }, { paramsIn: 'body' });
-
-		expect(request().url).toBe('https://api.paddle.com/notification-settings/ntfset_1');
-		expect(JSON.parse(request().init.body as string)).toStrictEqual({ reason: 'x' });
 	});
 
 	test('Refuses a URL on another host before any request', async () => {
@@ -466,5 +460,40 @@ describe('call', () => {
 
 		await expect(paddle().call('GET /prices', {}, { timeout: 10 })).rejects.toBeInstanceOf(TimeoutError);
 		expect(request().init.signal?.aborted).toBe(true);
+	});
+
+	test('Answers the status, the lower-cased headers and the body', async () => {
+		answer({ data: { id: 'ctm_1' } }, 200, { 'X-Request-Id': 'req_1' });
+
+		// 1. Paddle's request id readable under its lower-case name
+		await expect(paddle().call('GET /customers/ctm_1')).resolves.toStrictEqual({
+			status: 200,
+			headers: { 'content-type': 'text/plain;charset=UTF-8', 'x-request-id': 'req_1' },
+			data: { data: { id: 'ctm_1' } },
+		});
+	});
+
+	test('Fills a {name} from its parameter, encoded, and sends that parameter nowhere else', async () => {
+		answer({ data: {} });
+		answer({ data: {} });
+
+		// 1. In a GET, the id leaves the query
+		await paddle().call('GET /customers/{id}', { id: 'ctm 1/x', include: 'addresses' });
+
+		expect(request().url).toBe('https://api.paddle.com/customers/ctm%201%2Fx?include=addresses');
+
+		// 2. In a PATCH, it leaves the body
+		await paddle().call('PATCH /customers/{id}', { id: 'ctm_1', name: 'Ada' });
+
+		const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+
+		expect(url).toBe('https://api.paddle.com/customers/ctm_1');
+		expect(JSON.parse(init.body as string)).toStrictEqual({ name: 'Ada' });
+	});
+
+	test('Refuses a {name} no parameter fills before any request', async () => {
+		// 1. Sent, it would reach Paddle as `%7Bid%7D`
+		await expect(paddle().call('GET /customers/{id}', { name: 'Ada' })).rejects.toThrow('{id}');
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 });

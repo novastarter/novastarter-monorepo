@@ -20,4 +20,4 @@
 '@novastarter/storage-driver-supabase': minor
 ---
 
-These drivers implement `call(method, params, options)`: any request of the provider's own API — `'POST /v1/refunds'`, a full URL on the provider's hosts, or an SDK command name for SES and S3 — with the location's credentials and timeout, errors as `ProviderCallError` or `HitRateLimitError`; each readme lists its endpoints and hosts.
+These drivers implement `call(method, params, options)`: any request of the provider's own API — `'POST /v1/refunds'`, a full URL on the provider's hosts, or an SDK command name for SES and S3 — with the location's credentials and timeout, answering `{ status, headers, data }`, errors as `ProviderCallError` or `HitRateLimitError`; the Stripe, Twilio, SES, S3, GCS and Azure drivers also expose their SDK as `client` for everything else, and each readme lists its endpoints and hosts.

@@ -1,6 +1,6 @@
 import { AuthProviderFailedError } from '@novastarter/auth';
+import type { HttpCallFetch } from '@novastarter/http';
 import { toErrorMessage, tryParseJSON, withTimeout } from '@novastarter/utils';
-import type { HttpCallFetch } from '@novastarter/utils/node';
 import { PROVIDER } from './constants.js';
 
 /**
@@ -82,7 +82,7 @@ export const request = async (context: RequestContext, url: string, init: Reques
 };
 
 /**
- * Adapt the driver's {@link AuthFetch} to the fetch `httpCall()` of `@novastarter/utils/node` sends a `call()` with.
+ * Adapt the driver's {@link AuthFetch} to the fetch `request()` of `@novastarter/http` sends a `call()` with.
  *
  * `httpCall()` follows redirects itself and asks the fetch for `redirect: 'manual'`, so credentials never follow a
  * redirect to another host; it may also send a multipart body. {@link AuthFetch} names neither, so that a narrowly

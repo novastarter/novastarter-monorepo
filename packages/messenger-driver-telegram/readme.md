@@ -47,17 +47,24 @@ message.
 
 The Bot API is one `POST /bot<token>/<method>` for every method, so `call()` reaches all of them — one this package does
 not know yet included — with the location's token, timeout and errors. A `Blob` or `File` among the parameters sends the
-call as multipart.
+call as multipart. It answers `{ status, headers, data }`, `data` being the `result` of Telegram's answer.
 
 ```ts
 const telegram = useMessenger().location('telegram');
 
-await telegram.call?.('setMessageReaction', {
+await telegram.call!('setMessageReaction', {
 	chat_id: chatId,
 	message_id: 7,
 	reaction: [{ type: 'emoji', emoji: '👍' }],
 });
-await telegram.call?.('sendPhoto', { chat_id: chatId, photo: new File([png], 'chart.png'), caption: 'Today' });
+
+const { data: photo } = await telegram.call!('sendPhoto', {
+	chat_id: chatId,
+	photo: new File([png], 'chart.png'),
+	caption: 'Today',
+});
+
+const { status, data: bot } = await telegram.call!('getMe');
 ```
 
 ## Without registration

@@ -57,21 +57,44 @@ location's unless given.
 ```ts
 const uploads = useStorage().location('uploads');
 
-const { Status } = await uploads.call!<{ Status?: string }>('GetBucketVersioning');
+const { data } = await uploads.call!<{ Status?: string }>('GetBucketVersioning');
 
 await uploads.call!('PutBucketLifecycleConfiguration', {
 	LifecycleConfiguration: {
 		Rules: [{ ID: 'expire-tmp', Status: 'Enabled', Filter: { Prefix: 'tmp/' }, Expiration: { Days: 7 } }],
 	},
 });
+
+const { status } = await uploads.call!('HeadBucket');
+
+console.log(data.Status, status);
 ```
 
-The answer is the command's output without the SDK's `$metadata`. There are no URLs, so no host list: every request goes
-to the location's S3 endpoint. Keys in the parameters are sent as given, not under `root`. A name that is not a command
-of `@aws-sdk/client-s3` is refused before anything is sent; a refusal of S3 throws `ProviderCallError` with its HTTP
-status and `{ name, message }`, a 429 or a throttling code — S3's 503 `SlowDown` — `HitRateLimitError`; the timeout is
-30 seconds unless `{ timeout }` names another. The `headers` option adds headers to the request before the SDK signs it;
-`paramsIn` does not apply.
+The answer is `{ status, headers, data }`: the HTTP status, no headers — the SDK does not hand them out — and the
+command's output without the SDK's `$metadata`. There are no URLs, so no host list: every request goes to the location's
+S3 endpoint. Keys in the parameters are sent as given, not under `root`. A name that is not a command of
+`@aws-sdk/client-s3` is refused before anything is sent; a refusal of S3 throws `ProviderCallError` with its HTTP status
+and `{ name, message }`, a 429 or a throttling code — S3's 503 `SlowDown` — `HitRateLimitError`; the timeout is 30
+seconds unless `{ timeout }` names another. A `headers` option — the call's or the location's — is refused with an error
+rather than dropped: `call()` covers plain commands only.
+
+## The SDK client
+
+`client` of the driver — what `location()` answers — is the location's `S3Client` of `@aws-sdk/client-s3`, with its
+credentials, region and endpoint — for presigned URLs, streamed uploads of `@aws-sdk/lib-storage`, paginators, waiters,
+or a command with extra headers. Keys are not placed under `root`, and the bucket is yours to name.
+
+```ts
+import { GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import type { StorageDriverS3 } from '@novastarter/storage-driver-s3';
+
+const { client } = useStorage().location('uploads') as StorageDriverS3;
+
+const url = await getSignedUrl(client, new GetObjectCommand({ Bucket: 'uploads', Key: 'report.pdf' }), {
+	expiresIn: 3600,
+});
+```
 
 ## Options
 

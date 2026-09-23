@@ -26,12 +26,13 @@
 	},
 	"dependencies": {
 		"@novastarter/errors": "workspace:*",
+		"@novastarter/http": "workspace:*",
 		"@novastarter/payments": "workspace:*",
-		"@novastarter/utils": "workspace:*",
 		"@polar-sh/sdk": "catalog:"
 	},
 	"devDependencies": {
 		"@novastarter/tsconfig": "workspace:*",
+		"@novastarter/utils": "workspace:*",
 		"@types/node": "catalog:",
 		"@vitest/coverage-v8": "catalog:",
 		"tsdown": "catalog:",

@@ -191,6 +191,13 @@ describe('SmsDriverTwilio', () => {
 });
 
 describe('SmsDriverTwilio.call', () => {
+	test('Exposes the SDK client it signs with', () => {
+		// 1. The SDK's own API, for what `call()` does not cover
+		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
+
+		expect(driver.client.request).toBe(request);
+	});
+
 	test('Sends a GET through the SDK with the query, the account filled in and the location timeout', async () => {
 		// 1. The SDK answers the body already parsed, whatever the status
 		request.mockResolvedValueOnce({ statusCode: 200, body: { sid: 'SM1', status: 'delivered' }, headers: {} });
@@ -202,7 +209,7 @@ describe('SmsDriverTwilio.call', () => {
 			PageSize: undefined,
 		});
 
-		expect(result).toStrictEqual({ sid: 'SM1', status: 'delivered' });
+		expect(result.data).toStrictEqual({ sid: 'SM1', status: 'delivered' });
 
 		expect(request).toHaveBeenCalledWith({
 			method: 'get',
@@ -214,7 +221,7 @@ describe('SmsDriverTwilio.call', () => {
 	});
 
 	test('Sends a POST body to a Twilio subdomain with the caller headers and timeout, JSON text parsed', async () => {
-		// 1. A body arriving as JSON text is parsed; a caller's content type is normalized to the SDK's spelling
+		// 1. A body arriving as JSON text is parsed; the caller's `Content-Type` asks the SDK for JSON
 		request.mockResolvedValueOnce({ statusCode: 201, body: '{"sid":"VE1"}', headers: {} });
 
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
@@ -224,11 +231,11 @@ describe('SmsDriverTwilio.call', () => {
 			{ To: '+14155550123', Channel: 'sms' },
 			{
 				timeout: 2_000,
-				headers: { 'content-type': ' Application/JSON; charset=utf-8', 'X-Twilio-Idempotency': 'k1' },
+				headers: { 'Content-Type': 'application/json', 'X-Twilio-Idempotency': 'k1' },
 			},
 		);
 
-		expect(result).toStrictEqual({ sid: 'VE1' });
+		expect(result).toStrictEqual({ status: 201, headers: {}, data: { sid: 'VE1' } });
 
 		expect(request).toHaveBeenCalledWith({
 			method: 'post',
@@ -241,7 +248,7 @@ describe('SmsDriverTwilio.call', () => {
 		// 2. An empty answer — a 204 of a DELETE — is nothing
 		request.mockResolvedValueOnce({ statusCode: 204, body: '', headers: {} });
 
-		expect(await driver.call('DELETE /2010-04-01/Accounts/{AccountSid}/Messages/SM1.json')).toBeUndefined();
+		expect((await driver.call('DELETE /2010-04-01/Accounts/{AccountSid}/Messages/SM1.json')).data).toBeUndefined();
 	});
 
 	test('Throws ProviderCallError with Twilio error body and HitRateLimitError for 429, no secret in them', async () => {
@@ -280,7 +287,7 @@ describe('SmsDriverTwilio.call', () => {
 		expect(request).not.toHaveBeenCalled();
 	});
 
-	test('Sends a body of any verb as a form unless JSON is asked, and refuses other content types', async () => {
+	test('Sends the body of any verb but GET, HEAD and DELETE as a form', async () => {
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
 
 		// 1. The SDK sets a form type for a POST only and fills the body only for an exact type, so a PUT gets one too
@@ -294,33 +301,43 @@ describe('SmsDriverTwilio.call', () => {
 				headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
 			}),
 		);
+	});
 
-		// 2. A DELETE told to carry a body gets the form type as well
-		request.mockResolvedValueOnce({ statusCode: 204, body: '', headers: {} });
+	test('Reads a content type in any case, so a lower-case JSON one sends JSON', async () => {
+		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
 
-		await driver.call('DELETE /2010-04-01/Accounts/{AccountSid}/Keys/SK1.json', { A: 1 }, { paramsIn: 'body' });
+		// 1. The caller's `content-type` replaces the form type rather than sitting next to it, its charset dropped
+		request.mockResolvedValueOnce({ statusCode: 201, body: {}, headers: {} });
+
+		await driver.call(
+			'POST https://verify.twilio.com/v2/Services/VA1/Verifications',
+			{ To: '+14155550123' },
+			{ headers: { 'content-type': 'Application/JSON; charset=utf-8', 'X-Trace': '1' } },
+		);
 
 		expect(request).toHaveBeenLastCalledWith(
 			expect.objectContaining({
-				data: { A: 1 },
-				headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+				data: { To: '+14155550123' },
+				headers: { 'X-Trace': '1', 'Content-Type': 'application/json' },
 			}),
 		);
 
-		// 3. A POST told to use the query sends no body
-		request.mockResolvedValueOnce({ statusCode: 200, body: {}, headers: {} });
-
-		await driver.call('POST /2010-04-01/Accounts/{AccountSid}/Calls/CA1.json', { B: 2 }, { paramsIn: 'query' });
-
-		expect(request).toHaveBeenLastCalledWith(expect.objectContaining({ params: { B: 2 }, headers: {} }));
-		expect(request.mock.lastCall?.[0]).not.toHaveProperty('data');
-
-		// 4. A type the SDK would silently send no body for is refused before anything is sent
+		// 2. A type the SDK cannot encode is refused before anything is sent
 		request.mockClear();
 
-		await expect(driver.call('POST /x', { C: 3 }, { headers: { 'Content-Type': 'text/plain' } })).rejects.toThrow(
-			/form or JSON/,
+		await expect(driver.call('POST /x', { a: 1 }, { headers: { 'content-type': 'text/plain' } })).rejects.toThrow(
+			'form or JSON only',
 		);
+
+		expect(request).not.toHaveBeenCalled();
+	});
+
+	test('Refuses a file before any request', async () => {
+		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
+
+		// 1. The SDK's client makes no multipart body; an upload goes through the SDK client itself
+		await expect(driver.call('POST /x', { Content: new Blob(['x']) })).rejects.toThrow('sends no file');
+		await expect(driver.call('POST /x', { Files: [new Blob(['x'])] })).rejects.toThrow('sends no file');
 
 		expect(request).not.toHaveBeenCalled();
 	});
@@ -378,131 +395,55 @@ describe('SmsDriverTwilio.call', () => {
 			TimeoutError,
 		);
 	});
-});
 
-describe('SmsDriverTwilio.call with a file', () => {
-	/** The URL of a Serverless asset version, where Twilio takes uploads. */
-	const ASSET_URL = 'https://serverless-upload.twilio.com/v1/Services/ZS1/Assets/ZH1/Versions';
+	test('Answers the status, the lower-cased headers and the body', async () => {
+		// 1. The SDK hands the headers as a record; their names come back lower-cased
+		const headers = { 'Twilio-Request-Id': 'RQ1', 'X-Home': 'us1' };
 
-	test('Uploads as multipart without the SDK, with the account credentials as Basic auth', async () => {
-		// 1. `fetch` answers Twilio's asset version; the SDK's client is not used for a file
-		const http = vi.fn(
-			async (_url: string, _init: RequestInit) => new Response(JSON.stringify({ sid: 'ZN1' }), { status: 201 }),
-		);
-
-		vi.stubGlobal('fetch', http);
-
-		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token', timeout: 5_000 });
-		const content = new File(['png'], 'logo.png', { type: 'image/png' });
-
-		const result = await driver.call(
-			`POST ${ASSET_URL}`,
-			{ Path: '/logo.png', Visibility: 'public', Content: content },
-			{ headers: { 'Content-Type': 'application/json', 'X-Trace': 't1' } },
-		);
-
-		expect(result).toStrictEqual({ sid: 'ZN1' });
-		expect(request).not.toHaveBeenCalled();
-
-		// 2. The URL as given, Basic auth of the SID and token, the caller's header, and the multipart body with the
-		//    file — the caller's content type dropped for the multipart one
-		const [url, init] = http.mock.calls[0]!;
-		const headers = init.headers as Record<string, string>;
-		const body = init.body as FormData;
-
-		expect(url).toBe(ASSET_URL);
-		expect(init.method).toBe('POST');
-		expect(headers['authorization']).toBe(`Basic ${Buffer.from('AC1:token').toString('base64')}`);
-		expect(headers['x-trace']).toBe('t1');
-		expect(headers).not.toHaveProperty('content-type');
-		expect(body).toBeInstanceOf(FormData);
-		expect(body.get('Path')).toBe('/logo.png');
-		expect((body.get('Content') as File).name).toBe('logo.png');
-		await expect((body.get('Content') as File).text()).resolves.toBe('png');
-	});
-
-	test('Signs an upload with the API key pair when the location has one, a list of files included', async () => {
-		// 1. The key pair is what the client signs with, so the upload uses it too
-		const http = vi.fn(async (_url: string, _init: RequestInit) => new Response(null, { status: 204 }));
-
-		vi.stubGlobal('fetch', http);
-
-		const driver = new SmsDriverTwilio({ accountSid: 'AC1', apiKey: 'SK1', apiSecret: 'shh' });
-
-		await expect(driver.call(`POST ${ASSET_URL}`, { Content: [new Blob(['a']), new Blob(['b'])] })).resolves.toBe(
-			undefined,
-		);
-
-		const [, init] = http.mock.calls[0]!;
-
-		expect((init.headers as Record<string, string>)['authorization']).toBe(
-			`Basic ${Buffer.from('SK1:shh').toString('base64')}`,
-		);
-
-		expect((init.body as FormData).getAll('Content')).toHaveLength(2);
-	});
-
-	test('Refuses a file in a query, and on a foreign host, before any request', async () => {
-		const http = vi.fn();
-
-		vi.stubGlobal('fetch', http);
+		request.mockResolvedValueOnce({ statusCode: 200, body: { sid: 'SM1' }, headers });
 
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
 
-		// 1. A file has no place in a query, and the credentials would go wherever the URL points
-		await expect(driver.call(`GET ${ASSET_URL}`, { Content: new Blob(['x']) })).rejects.toThrow('body only');
-
-		await expect(driver.call('POST https://evil.example/x', { Content: new Blob(['x']) })).rejects.toThrow(
-			/not on a host/,
-		);
-
-		expect(http).not.toHaveBeenCalled();
-		expect(request).not.toHaveBeenCalled();
+		await expect(driver.call('GET /2010-04-01/Accounts/{AccountSid}/Messages/SM1.json')).resolves.toStrictEqual({
+			status: 200,
+			headers: { 'twilio-request-id': 'RQ1', 'x-home': 'us1' },
+			data: { sid: 'SM1' },
+		});
 	});
 
-	test('Throws ProviderCallError and HitRateLimitError for a refused upload, no secret in them', async () => {
-		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'super-secret-token' });
-		const refusal = { code: 20001, message: 'Invalid Path', more_info: 'https://www.twilio.com/docs/errors/20001' };
+	test('Fills a {name} from its parameter, encoded, and sends that parameter nowhere else', async () => {
+		const answer = { statusCode: 200, body: {}, headers: {} };
 
-		// 1. Twilio's error JSON is kept as the body; the auth token is nowhere in the error
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () => new Response(JSON.stringify(refusal), { status: 400 })),
-		);
-
-		const error = (await driver
-			.call(`POST ${ASSET_URL}`, { Content: new Blob(['x']) })
-			.catch((thrown: unknown) => thrown)) as Error;
-
-		expect(error).toBeInstanceOf(ProviderCallError);
-		expect(error).toMatchObject({ extensions: { provider: 'twilio', status: 400, body: refusal } });
-		expect(error.message).not.toContain('super-secret-token');
-		expect(JSON.stringify(error)).not.toContain('super-secret-token');
-		expect(JSON.stringify(error)).not.toContain(Buffer.from('AC1:super-secret-token').toString('base64'));
-		expect(JSON.stringify(error.cause ?? null)).not.toContain('super-secret-token');
-
-		// 2. Too many requests is a rate limit the caller may wait out
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () => new Response('{}', { status: 429, headers: { 'retry-after': '1' } })),
-		);
-
-		await expect(driver.call(`POST ${ASSET_URL}`, { Content: new Blob(['x']) })).rejects.toBeInstanceOf(
-			HitRateLimitError,
-		);
-	});
-
-	test('Fails an upload with TimeoutError when Twilio does not answer in time', async () => {
-		// 1. A `fetch` that never answers is cut at the call's timeout
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(() => new Promise(() => {})),
-		);
+		request.mockResolvedValueOnce(answer).mockResolvedValueOnce(answer);
 
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
 
-		await expect(
-			driver.call(`POST ${ASSET_URL}`, { Content: new Blob(['x']) }, { timeout: 10 }),
-		).rejects.toBeInstanceOf(TimeoutError);
+		// 1. In a GET, the sid leaves the query; `{AccountSid}` is still the location's
+		await driver.call('GET /2010-04-01/Accounts/{AccountSid}/Messages/{sid}.json', { sid: 'SM 1/x', PageSize: 5 });
+
+		expect(request).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				uri: 'https://api.twilio.com/2010-04-01/Accounts/AC1/Messages/SM%201%2Fx.json',
+				params: { PageSize: 5 },
+			}),
+		);
+
+		// 2. In a POST, it leaves the body
+		await driver.call('POST /2010-04-01/Accounts/{AccountSid}/Messages/{sid}.json', { sid: 'SM1', Body: '' });
+
+		expect(request).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				uri: 'https://api.twilio.com/2010-04-01/Accounts/AC1/Messages/SM1.json',
+				data: { Body: '' },
+			}),
+		);
+	});
+
+	test('Refuses a {name} no parameter fills before any request', async () => {
+		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
+
+		// 1. Sent, it would reach Twilio as `%7Bsid%7D`
+		await expect(driver.call('GET /2010-04-01/Accounts/{AccountSid}/Messages/{sid}.json')).rejects.toThrow('{sid}');
+		expect(request).not.toHaveBeenCalled();
 	});
 });

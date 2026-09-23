@@ -4,6 +4,5 @@
  */
 import { MailDriverMailgun } from './lib/driver.js';
 
-export { DEFAULT_MAILGUN_CALL_TIMEOUT } from './lib/constants.js';
 export { MailDriverMailgun, type MailDriverMailgunConfig } from './lib/driver.js';
 export default MailDriverMailgun;

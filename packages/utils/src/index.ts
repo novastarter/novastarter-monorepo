@@ -4,7 +4,6 @@
  * Only helpers with no Node dependency belong here; anything that needs a Node built-in goes into the `./node` entry
  * point instead.
  */
-export * from './call.js';
 export * from './defaults.js';
 export * from './driver-manager.js';
 export * from './format-title/index.js';

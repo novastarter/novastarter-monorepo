@@ -130,13 +130,13 @@ describe('MailDriverResend.call', () => {
 		const driver = new MailDriverResend({ apiKey: 're_SECRET' });
 
 		// 1. A GET carries its parameters in the query and answers the parsed JSON
-		expect(await driver.call('GET /domains', { limit: 10 })).toStrictEqual({ data: [] });
+		expect((await driver.call('GET /domains', { limit: 10 })).data).toStrictEqual({ data: [] });
 		expect(sent().url).toBe('https://api.resend.com/domains?limit=10');
 		expect(sent().init.method).toBe('GET');
 		expect(sent().init.headers['authorization']).toBe('Bearer re_SECRET');
 
 		// 2. A POST carries them in the body; an empty answer is `undefined`
-		expect(await driver.call('POST /audiences/a1/contacts', { email: 'ada@example.com' })).toBeUndefined();
+		expect((await driver.call('POST /audiences/a1/contacts', { email: 'ada@example.com' })).data).toBeUndefined();
 
 		const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit & { headers: Record<string, string> }];
 
@@ -198,5 +198,47 @@ describe('MailDriverResend.call', () => {
 		);
 
 		await expect(driver.call('GET /domains', {}, { timeout: 10 })).rejects.toBeInstanceOf(TimeoutError);
+	});
+});
+
+describe('MailDriverResend.call placeholders and answers', () => {
+	test('Fills a {name} from its parameter, encoded, and sends that parameter nowhere else', async () => {
+		fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+		fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+		const driver = new MailDriverResend({ apiKey: 're_SECRET' });
+
+		// 1. A GET: the placeholder takes `id`, URL-encoded; the other parameters stay in the query
+		await driver.call('GET /domains/{id}', { id: 'a/b', limit: 5 });
+		expect((fetchMock.mock.calls[0] as [string])[0]).toBe('https://api.resend.com/domains/a%2Fb?limit=5');
+
+		// 2. A POST: the placeholder's parameter is not in the body
+		await driver.call('POST /audiences/{id}/contacts', { id: 42, name: 'welcome' });
+
+		const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+
+		expect(url).toBe('https://api.resend.com/audiences/42/contacts');
+		expect(init.body).toBe('{"name":"welcome"}');
+	});
+
+	test('Refuses a placeholder no parameter fills before any request', async () => {
+		await expect(new MailDriverResend({ apiKey: 're_SECRET' }).call('GET /domains/{id}')).rejects.toThrow(
+			/"id" parameter/,
+		);
+
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	test('Answers the status, the lower-cased headers and the body', async () => {
+		fetchMock.mockResolvedValueOnce(
+			new Response('{"ok":true}', { status: 201, headers: { 'X-RateLimit-Remaining': '9' } }),
+		);
+
+		const driver = new MailDriverResend({ apiKey: 're_SECRET' });
+
+		// 1. Every call answers the whole response, headers named in lower case
+		const answer = await driver.call('GET /domains/{id}', { id: 'x' });
+
+		expect(answer).toMatchObject({ status: 201, headers: { 'x-ratelimit-remaining': '9' }, data: { ok: true } });
 	});
 });

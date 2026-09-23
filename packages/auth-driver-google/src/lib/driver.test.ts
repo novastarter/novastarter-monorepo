@@ -199,7 +199,7 @@ describe('AuthDriverGoogle', () => {
 			const fetch = respond(200, { items: [{ id: 'primary' }] });
 			const driver = new AuthDriverGoogle({ ...credentials, fetch, jwks });
 
-			const list = await driver.call(
+			const { data: list } = await driver.call(
 				'GET /calendar/v3/users/me/calendarList',
 				{ maxResults: 50 },
 				{
@@ -216,6 +216,7 @@ describe('AuthDriverGoogle', () => {
 			expect(init.method).toBe('GET');
 			expect(init.body).toBeUndefined();
 			expect(init.headers['authorization']).toBe(`Bearer ${ACCESS_TOKEN}`);
+			expect(Object.keys(init.headers)).not.toContain('accesstoken');
 		});
 
 		test('Sends no Authorization without a token, and the params of a POST as the JSON body', async () => {
@@ -233,13 +234,56 @@ describe('AuthDriverGoogle', () => {
 			expect(JSON.parse(init.body as string)).toStrictEqual({ query: 'Ada' });
 		});
 
+		test('Fills a placeholder from the params, encoded, and does not send that param again', async () => {
+			const fetch = respond(200, { items: [] });
+			const driver = new AuthDriverGoogle({ ...credentials, fetch, jwks });
+
+			await driver.call(
+				'GET /calendar/v3/calendars/{calendarId}/events',
+				{ calendarId: 'team@group.calendar.google.com', maxResults: 10 },
+				{ accessToken: ACCESS_TOKEN },
+			);
+
+			// 1. `{calendarId}` takes its param, encoded, and only `maxResults` is left for the query
+			const url = new URL(fetch.mock.calls[0]![0]);
+
+			expect(url.pathname).toBe('/calendar/v3/calendars/team%40group.calendar.google.com/events');
+			expect(url.search).toBe('?maxResults=10');
+		});
+
+		test('Refuses a placeholder nobody filled before any request', async () => {
+			const fetch = respond(200, {});
+			const driver = new AuthDriverGoogle({ ...credentials, fetch, jwks });
+
+			// 1. Sent, `{calendarId}` would reach Google as `%7BcalendarId%7D`
+			await expect(driver.call('GET /calendar/v3/calendars/{calendarId}/events')).rejects.toThrow(
+				'needs a "calendarId" parameter',
+			);
+
+			expect(fetch).not.toHaveBeenCalled();
+		});
+
+		test('Answers with the status, the headers lower-cased and the body', async () => {
+			const fetch = respond(200, { items: [] }, { 'Content-Type': 'application/json', ETag: '"p1"' });
+			const driver = new AuthDriverGoogle({ ...credentials, fetch, jwks });
+
+			const result = await driver.call('GET /calendar/v3/users/me/calendarList');
+
+			// 1. Header names come lower-cased
+			expect(result).toStrictEqual({
+				status: 200,
+				headers: { 'content-type': 'application/json', etag: '"p1"' },
+				data: { items: [] },
+			});
+		});
+
 		test('Answers nothing for a 204', async () => {
 			const driver = new AuthDriverGoogle({ ...credentials, fetch: respond(204), jwks });
 
 			// 1. An empty answer is `undefined`
 			await expect(
 				driver.call('DELETE /calendar/v3/calendars/c1/events/e1', {}, { accessToken: ACCESS_TOKEN }),
-			).resolves.toBeUndefined();
+			).resolves.toMatchObject({ status: 204, data: undefined });
 		});
 
 		test('Refuses a full URL off googleapis.com and a malformed method before any request', async () => {

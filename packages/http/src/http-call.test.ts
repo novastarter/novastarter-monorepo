@@ -1,8 +1,8 @@
 /**
- * Tests of `utils/node/http-call`: the URL check, the query and the request of a driver's `call()`.
+ * Tests of `http/http-call`: the URL check, the query and the request of a driver's `call()`.
  */
+import { TimeoutError } from '@novastarter/utils';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { TimeoutError } from '../with-timeout.js';
 import { httpCall, resolveCallUrl, toQueryString } from './http-call.js';
 
 describe('resolveCallUrl', () => {
@@ -45,6 +45,13 @@ describe('resolveCallUrl', () => {
 
 		expect(() => resolveCallUrl('http://localhost:4010', 'http://api.paddle.com/v1', ['api.paddle.com'])).toThrow(
 			'not on a host of this provider',
+		);
+	});
+
+	test('Refuses a path with a placeholder nobody filled', () => {
+		// 1. It would reach the provider as `%7Bowner%7D`
+		expect(() => resolveCallUrl('https://api.github.com', '/repos/{owner}/x')).toThrow(
+			'The call path needs a "owner" parameter for its {owner} placeholder',
 		);
 	});
 
@@ -112,7 +119,12 @@ describe('httpCall', () => {
 
 		expect(url).toBe('https://api.example/v1/items?a=1&limit=2');
 		expect(init.body).toBeUndefined();
-		expect(init.headers).toStrictEqual({ accept: 'application/json', authorization: 'Bearer k' });
+
+		expect(init.headers).toStrictEqual({
+			accept: 'application/json',
+			'user-agent': 'novastarter',
+			authorization: 'Bearer k',
+		});
 	});
 
 	test('Sends JSON, a form, or multipart when a file is among the parameters', async () => {
@@ -220,8 +232,16 @@ describe('httpCall', () => {
 		const hops = fetchMock.mock.calls.map(([url, init]) => [url, init.headers, init.redirect]);
 
 		expect(hops).toStrictEqual([
-			['https://api.example/v1/items', { accept: 'application/json', 'x-api-key': 'SECRET' }, 'manual'],
-			['https://api.example/v2/items', { accept: 'application/json', 'x-api-key': 'SECRET' }, 'manual'],
+			[
+				'https://api.example/v1/items',
+				{ accept: 'application/json', 'user-agent': 'novastarter', 'x-api-key': 'SECRET' },
+				'manual',
+			],
+			[
+				'https://api.example/v2/items',
+				{ accept: 'application/json', 'user-agent': 'novastarter', 'x-api-key': 'SECRET' },
+				'manual',
+			],
 			['https://cdn.example/f', { accept: 'application/json' }, 'manual'],
 		]);
 	});
@@ -252,25 +272,10 @@ describe('httpCall', () => {
 		).rejects.toThrow('redirected more than 5 times');
 	});
 
-	test('Puts the parameters of a DELETE in the body when asked, and repeats a list of files', async () => {
+	test('Repeats a list of files, one part each, and leaves null out', async () => {
 		fetchMock.mockImplementation(async () => new Response(null, { status: 204 }));
 
-		// 1. An API that reads a DELETE body
-		await httpCall({
-			url: new URL('https://api.example/bounces'),
-			verb: 'DELETE',
-			params: { emails: ['a@x.com'] },
-			paramsIn: 'body',
-			timeout: 1000,
-			fetch: fetchMock,
-		});
-
-		expect(sent()[0]).toBe('https://api.example/bounces');
-		expect(sent()[1].body).toBe('{"emails":["a@x.com"]}');
-
-		// 2. A list of files: one part each; `null` left out
-		fetchMock.mockClear();
-
+		// 1. A list of files: one part each; `null` left out
 		await httpCall({
 			url: new URL('https://api.example/x'),
 			verb: 'POST',
@@ -294,7 +299,7 @@ describe('httpCall', () => {
 		).rejects.toBeInstanceOf(TimeoutError);
 	});
 
-	test('Lets the caller’s content type pick the body: a form, multipart, a raw XML body, a vendor JSON type', async () => {
+	test('Lets the caller’s content type pick the body: a form, multipart, a vendor JSON type', async () => {
 		fetchMock.mockImplementation(async () => new Response(null, { status: 204 }));
 
 		/**
@@ -331,13 +336,50 @@ describe('httpCall', () => {
 		expect(multipart.body).toBeInstanceOf(FormData);
 		expect(multipart.headers['content-type']).toBeUndefined();
 
-		// 3. XML as it is
-		expect((await post('application/xml', { body: '<a/>' })).body).toBe('<a/>');
-
-		// 4. A vendor JSON type is JSON, and stays the type sent
+		// 3. A vendor JSON type is JSON, and stays the type sent
 		const vendor = await post('application/vnd.api+json', { data: { type: 'x' } });
 
 		expect(vendor.body).toBe('{"data":{"type":"x"}}');
 		expect(vendor.headers['content-type']).toBe('application/vnd.api+json');
+	});
+
+	test('Refuses to follow a redirect to another origin with the body, or down to plain HTTP', async () => {
+		// 1. A 307 keeps the method and the body: to another host that body would go to someone else
+		fetchMock.mockResolvedValueOnce(new Response(null, { status: 307, headers: { location: 'https://b.example/x' } }));
+
+		await expect(
+			httpCall({
+				url: new URL('https://api.example/x'),
+				verb: 'POST',
+				params: { secret: 1 },
+				timeout: 1000,
+				fetch: fetchMock,
+			}),
+		).rejects.toThrow('redirected to another origin with its body: b.example');
+
+		// 2. Down to plain HTTP on another host
+		fetchMock.mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: 'http://b.example/x' } }));
+
+		await expect(
+			httpCall({ url: new URL('https://api.example/x'), verb: 'GET', timeout: 1000, fetch: fetchMock }),
+		).rejects.toThrow('redirected to another origin without TLS: b.example');
+	});
+
+	test('Keeps a scalar under a text type as text, and parses JSON under any type', async () => {
+		// 1. A text answer that looks like a number stays text
+		fetchMock.mockResolvedValueOnce(new Response('0012', { status: 200, headers: { 'content-type': 'text/plain' } }));
+
+		await expect(
+			httpCall({ url: new URL('https://api.example/x'), verb: 'GET', timeout: 1000, fetch: fetchMock }),
+		).resolves.toMatchObject({ body: '0012' });
+
+		// 2. A vendor JSON type is parsed, and so is an object labelled as text
+		fetchMock.mockResolvedValueOnce(
+			new Response('{"a":1}', { status: 200, headers: { 'content-type': 'application/vnd.api+json' } }),
+		);
+
+		await expect(
+			httpCall({ url: new URL('https://api.example/x'), verb: 'GET', timeout: 1000, fetch: fetchMock }),
+		).resolves.toMatchObject({ body: { a: 1 } });
 	});
 });

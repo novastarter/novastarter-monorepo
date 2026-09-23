@@ -8,9 +8,7 @@ import type {
 	SpeechModelV4,
 	TranscriptionModelV4,
 } from '@ai-sdk/provider';
-import { toProviderCallError } from '@novastarter/errors';
-import { type CallOptions, parseCallMethod } from '@novastarter/utils';
-import { httpCall, resolveCallUrl } from '@novastarter/utils/node';
+import { type CallOptions, type CallResponse, type HttpApi, request } from '@novastarter/http';
 import { createProviderRegistry, type ProviderRegistryProvider } from 'ai';
 import { AiModelNotFoundError } from '../errors/model-not-found.js';
 import { AiProviderNotFoundError } from '../errors/provider-not-found.js';
@@ -19,14 +17,6 @@ import { AiProviderNotFoundError } from '../errors/provider-not-found.js';
  * A provider of the AI SDK, as its package builds it: `createOpenAI({ apiKey })`, `createAnthropic(…)`, `gateway`.
  */
 export type AiProvider = ProviderV4 | ProviderV3;
-
-/**
- * How long a {@link AiManager.call} may take when neither the call nor the provider's API names a timeout, in
- * milliseconds.
- *
- * @defaultValue 30 seconds.
- */
-export const DEFAULT_AI_CALL_TIMEOUT = 30_000;
 
 /**
  * The HTTP API of a provider, for {@link AiManager.call}: an AI SDK provider does not expose its key or its base URL,
@@ -42,7 +32,7 @@ export interface AiProviderApi {
 	 * `{ 'x-goog-api-key': key }` for Google.
 	 */
 	headers?: Record<string, string> | undefined;
-	/** How long a call may take, in milliseconds; {@link DEFAULT_AI_CALL_TIMEOUT} unless given. */
+	/** How long a call may take, in milliseconds; 30 seconds unless given. */
 	timeout?: number | undefined;
 	/** The hosts a full URL in a call may point at, besides the base URL's own; `*.example.com` matches subdomains. */
 	allowedHosts?: string[] | undefined;
@@ -308,13 +298,16 @@ export class AiManager {
 	 * provider registered with `options.api` can be called, since an AI SDK provider does not expose its key or base URL.
 	 * The `apiKey` goes as `Authorization: Bearer`, the API's `headers` over it and the call's own headers on top.
 	 *
+	 * A `{name}` in the path is filled from the parameter of that name, URL-encoded — `GET /v1/files/{id}` with
+	 * `{ id }` — and that parameter is not sent again.
+	 *
 	 * @typeParam T - What the provider answers; the caller knows it from the provider's documentation.
 	 * @param provider - The name the provider was registered under.
 	 * @param method - `'VERB /path'` from the API's base URL, or `'VERB https://host/path'` on the base URL's host or one
 	 * of its `allowedHosts`.
 	 * @param params - The query of a GET, HEAD or DELETE, the JSON body otherwise; multipart when a `Blob` is among them.
-	 * @param options - A timeout over the API's, an abort signal, extra headers, where the parameters go (`paramsIn`).
-	 * @returns The parsed JSON answer, else its text; `undefined` for an empty one.
+	 * @param options - A timeout over the API's, an abort signal, extra headers.
+	 * @returns The status, the lower-cased headers and the body: parsed JSON, else its text; `undefined` when empty.
 	 * @throws AiProviderNotFoundError when no provider is registered under the name.
 	 * @throws Error when the provider was registered without an API, the method is malformed, or a full URL points at a
 	 * host of another party.
@@ -324,14 +317,16 @@ export class AiManager {
 	 * @example
 	 * ```ts
 	 * const { data } = await useAi().call<{ data: { id: string }[] }>('openai', 'GET /v1/models');
+	 *
+	 * const { headers } = await useAi().call('openai', 'GET /v1/files/{id}', { id: 'file-1' });
 	 * ```
 	 */
 	async call<T = unknown>(
 		provider: string,
 		method: string,
 		params?: Record<string, unknown>,
-		options: CallOptions = {},
-	): Promise<T> {
+		options?: CallOptions,
+	): Promise<CallResponse<T>> {
 		// 1. The provider and its API first, so a typo or a missing API fails before any request is built
 		if (!this.hasProvider(provider)) {
 			throw new AiProviderNotFoundError({ provider });
@@ -346,40 +341,19 @@ export class AiManager {
 			);
 		}
 
-		// 2. The URL checked against the provider's hosts before the credentials are attached, so they never leave for
-		//    another party
-		const { verb, target } = parseCallMethod(method);
-		const url = resolveCallUrl(api.baseURL, target, api.allowedHosts);
+		// 2. The registered API as `request()` takes it — the key as a bearer token, the API's headers over it, a
+		//    provider with another scheme setting its own — and errors named after the registered provider.
+		//    `request()` checks the URL against the hosts before the credentials are attached and keeps them out of
+		//    every error
+		const http: HttpApi = {
+			provider,
+			baseUrl: api.baseURL,
+			hosts: api.allowedHosts,
+			headers: { ...(api.apiKey ? { authorization: `Bearer ${api.apiKey}` } : {}), ...api.headers },
+			timeout: api.timeout,
+		};
 
-		// 3. The key as a bearer token, the API's headers over it — a provider with another scheme sets its own — and
-		//    the caller's on top
-		const response = await httpCall({
-			url,
-			verb,
-			params,
-			paramsIn: options.paramsIn,
-			headers: {
-				...(api.apiKey ? { authorization: `Bearer ${api.apiKey}` } : {}),
-				...api.headers,
-				...options.headers,
-			},
-			timeout: options.timeout ?? api.timeout ?? DEFAULT_AI_CALL_TIMEOUT,
-			signal: options.signal,
-		});
-
-		// 4. An error status becomes the kit's error, named after the registered provider; nothing of the request —
-		//    the key included — goes into it
-		if (response.status < 200 || response.status >= 300) {
-			throw toProviderCallError({
-				provider,
-				method,
-				status: response.status,
-				body: response.body,
-				headers: response.headers,
-			});
-		}
-
-		return response.body as T;
+		return request<T>(http, method, params, options);
 	}
 
 	/**

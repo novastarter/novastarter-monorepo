@@ -38,21 +38,42 @@ contract.
 
 `call()` reaches any endpoint of the GCS JSON API with an access token of the client's Application Default Credentials —
 IAM policies, bucket metadata, lifecycle rules, notifications. The method is the verb and the path under `/storage/v1`;
-`{bucket}` in it stands for the location's bucket. The parameters of a `GET`, `HEAD` or `DELETE` go in the query, the
-rest as the JSON body; `paramsIn` in the options changes that.
+a `{name}` in it is filled from the parameter of that name, URL-encoded, and that parameter is not sent again;
+`{bucket}` without one stands for the location's bucket. The parameters of a `GET`, `HEAD` or `DELETE` go in the query,
+the rest as the JSON body. Every call answers `{ status, headers, data }`, header names lower-cased.
 
 ```ts
 const uploads = useStorage().location('uploads');
 
-const policy = await uploads.call?.('GET /b/{bucket}/iam', { optionsRequestedPolicyVersion: 3 });
+const { data: policy } = await uploads.call!('GET /b/{bucket}/iam', { optionsRequestedPolicyVersion: 3 });
 
-await uploads.call?.('PATCH /b/{bucket}', { versioning: { enabled: true } });
+await uploads.call!('PATCH /b/{bucket}', { versioning: { enabled: true } });
+
+// `{object}` takes the `object` parameter, encoded: /b/<bucket>/o/media%2Fa.jpg
+const { data, headers } = await uploads.call!('GET /b/{bucket}/o/{object}', { object: 'media/a.jpg' });
+
+console.log(policy, data, headers['etag']);
 ```
 
-A full URL may point at `storage.googleapis.com` or the host of the configured `apiEndpoint`; any other host is refused
-before a request is made. Object names in a path are not placed under `root`. A refusal throws `ProviderCallError` with
-GCS's status and its `{ error: { code, message } }` body, a 429 `HitRateLimitError`; a failed call is not retried. The
-timeout — 30 seconds by default — covers fetching the token as well as the request.
+A full URL may point at `storage.googleapis.com` or the host of the configured `apiEndpoint`; any other host, like a
+placeholder nobody filled, is refused before a request is made. Object names in a path are not placed under `root`. A
+refusal throws `ProviderCallError` with GCS's status and its `{ error: { code, message } }` body, a 429
+`HitRateLimitError`; a failed call is not retried. The timeout — 30 seconds by default — covers fetching the token as
+well as the request. `call()` covers plain requests only; signed URLs and streams go through the SDK client.
+
+## The SDK client
+
+`client` of the driver — what `location()` answers — is the location's `Bucket` of `@google-cloud/storage`, with its
+Application Default Credentials and `apiEndpoint`: signed URLs, streamed uploads and downloads, object metadata.
+`client.storage` is the `Storage` behind it, for other buckets and HMAC keys. Object names are not placed under `root`.
+
+```ts
+import type { StorageDriverGcs } from '@novastarter/storage-driver-gcs';
+
+const { client } = useStorage().location('uploads') as StorageDriverGcs;
+
+const [url] = await client.file('report.pdf').getSignedUrl({ action: 'read', expires: Date.now() + 3_600_000 });
+```
 
 ## Options
 

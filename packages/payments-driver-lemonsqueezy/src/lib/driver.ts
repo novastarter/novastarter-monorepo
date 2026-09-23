@@ -1,4 +1,5 @@
 import { InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
+import type { CallOptions, CallResponse } from '@novastarter/http';
 import { useLogger } from '@novastarter/logger';
 import type {
 	BillingInterval,
@@ -17,7 +18,6 @@ import type {
 	UpdateSubscriptionInput,
 	WebhookHeaders,
 } from '@novastarter/payments';
-import type { CallOptions } from '@novastarter/utils';
 import type {
 	LsCheckoutAttributes,
 	LsCustomerAttributes,
@@ -536,27 +536,34 @@ export class PaymentsDriverLemonSqueezy implements PaymentsDriver {
 	 *
 	 * `method` is the verb and the path from the API's root — `GET /v1/discounts` — or a full URL on
 	 * `api.lemonsqueezy.com`. The parameters of a `GET` or `DELETE` go in the query, JSON:API's brackets in the key
-	 * (`'filter[store_id]': 1`), the others as the JSON:API document of the body — `options.paramsIn` moves them.
+	 * (`'filter[store_id]': 1`), the others as the JSON:API document of the body. A `{name}` in the path is filled
+	 * from the parameter of that name, URL-encoded, and that parameter is not sent again.
 	 *
 	 * @typeParam T - What the endpoint answers with; the caller knows it from Lemon Squeezy's API reference.
 	 * @param method - The verb and the path, or a full URL on Lemon Squeezy's host.
-	 * @param params - The query of a `GET` or `DELETE`, the body otherwise.
-	 * @param options - A timeout over the location's, an abort signal, extra headers, where the parameters go.
-	 * @returns The answer, parsed; `undefined` for an empty one.
+	 * @param params - The placeholders' values, and the query of a `GET` or `DELETE` or the body otherwise.
+	 * @param options - A timeout over the location's, an abort signal, extra headers.
+	 * @returns The status, the headers — names lower-cased — and the answer, parsed; `undefined` for an empty one.
 	 * @throws ProviderCallError when Lemon Squeezy answers with an error status — its status and `{ errors }` in
 	 * `extensions`.
 	 * @throws HitRateLimitError when Lemon Squeezy answers 429.
 	 * @throws TimeoutError when the request outlives its timeout.
-	 * @throws Error when the method is malformed, or its URL is not on Lemon Squeezy's host.
+	 * @throws Error when the method is malformed, a `{name}` placeholder is left unfilled, or its URL is not
+	 * on Lemon Squeezy's host.
 	 * @example
 	 * ```ts
-	 * await lemonsqueezy.call('GET /v1/discounts', { 'filter[store_id]': 1 });
+	 * const { data } = await lemonsqueezy.call('GET /v1/discounts', { 'filter[store_id]': 1 });
+	 * const { headers } = await lemonsqueezy.call('GET /v1/orders/{id}', { id: 123 });
 	 * await lemonsqueezy.call('POST /v1/orders/123/refund', {
 	 * 	data: { type: 'orders', id: '123', attributes: { amount: 500 } },
 	 * });
 	 * ```
 	 */
-	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, options: CallOptions = {}): Promise<T> {
+	async call<T = unknown>(
+		method: string,
+		params?: Record<string, unknown>,
+		options?: CallOptions,
+	): Promise<CallResponse<T>> {
 		// 1. The client holds the key, the timeout and the fetch; the request is its to make
 		return this.api.call<T>(method, params, options);
 	}

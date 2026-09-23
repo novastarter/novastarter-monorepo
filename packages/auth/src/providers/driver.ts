@@ -1,3 +1,4 @@
+import type { CallResponse } from '@novastarter/http';
 import type {
 	AuthCallOptions,
 	AuthIdentity,
@@ -78,35 +79,41 @@ export declare class AuthDriver {
 	complete?(input: ChallengeInput, state: Record<string, unknown> | undefined): Promise<AuthIdentity>;
 
 	/**
-	 * Make a request of the sign-in provider's own API with the location's credentials, timeout and errors — the way to
-	 * whatever the contract does not cover: the person's repositories, calendar or contacts, revoking a token.
+	 * Make a request of the provider's own API with the location's credentials, timeout and errors — the way to
+	 * whatever the contract does not cover, an endpoint the driver has no wrapper for yet included.
 	 *
-	 * The signature is the same for every driver; what `method` means is the provider's, so code calling it is written
-	 * for one provider: the verb and path of a REST API — GitHub's `GET /user/repos`, Google's
-	 * `GET /calendar/v3/users/me/calendarList` — or a full URL on one of the provider's own hosts. With
-	 * `options.accessToken` the request is made on behalf of that person; without it, with the app's own credentials
-	 * where the provider allows that. The parameters are the query of a `GET`, `HEAD` or `DELETE` and the body
-	 * otherwise.
+	 * The signature is the same for every driver; what `method` means is the provider's: the verb and path of a REST
+	 * API — GitHub's `GET /repos/{owner}/{repo}`, Google's `GET /oauth2/v3/userinfo` — or a full URL on one of the
+	 * provider's own hosts. A `{name}` in the path is filled from the parameter of that name; the other parameters are
+	 * the query of a `GET`, `HEAD` or `DELETE` and the body otherwise — JSON, a form or multipart as the `content-type`
+	 * header and the files among them say. Headers and a timeout for every call of a location go in its registration's
+	 * `call`.
 	 *
-	 * Optional: a driver whose provider has no API beyond the sign-in — a form, a link sent by mail — leaves it out.
+	 * Optional: a driver without an API of its own to reach — credentials, a link by mail, a passkey — leaves it out.
+	 * With `options.accessToken` the request is made on behalf of that person; without, with the app's own credentials
+	 * where the provider allows that.
 	 *
-	 * @typeParam T - What the request answers with; the caller knows it from the provider's documentation.
+	 * @typeParam T - What the provider's body is; the caller knows it from the provider's documentation.
 	 * @param method - The verb and path, or a full URL on the provider's hosts.
-	 * @param params - Its query or body.
-	 * @param options - The person's access token, a timeout, an abort signal, extra headers, and `paramsIn`.
-	 * @returns The provider's answer: parsed JSON, else text; `undefined` for an empty one.
+	 * @param params - The placeholders' values, and the query or body.
+	 * @param options - The person's `accessToken`, a timeout, an abort signal, extra headers.
+	 * @returns The status, the headers — names lower-cased — and the body: parsed JSON, else text.
 	 * @throws ProviderCallError when the provider answers with an error status — its status and answer in `extensions`.
 	 * @throws HitRateLimitError when the provider asks to slow down.
 	 * @throws TimeoutError when the request outlives its timeout.
-	 * @throws Error when the method is malformed or its URL is not on the provider's hosts.
+	 * @throws Error when the method is malformed, a placeholder is unfilled, or a URL is not on the provider's hosts.
 	 * @example
 	 * ```ts
-	 * const repos = await useAuth().location('github').call?.('GET /user/repos', { per_page: 100 }, {
-	 * 	accessToken: tokens.accessToken,
-	 * });
+	 * const driver = useAuth().location('github');
+	 * const { status, headers, data } = await driver.call!('GET /user/repos', {}, { accessToken });
 	 * ```
 	 */
-	call?<T = unknown>(method: string, params?: Record<string, unknown>, options?: AuthCallOptions): Promise<T>;
+
+	call?<T = unknown>(
+		method: string,
+		params?: Record<string, unknown>,
+		options?: AuthCallOptions,
+	): Promise<CallResponse<T>>;
 
 	/**
 	 * Check the driver can be used — credentials, connectivity — without signing anyone in.

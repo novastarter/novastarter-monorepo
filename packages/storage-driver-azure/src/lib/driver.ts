@@ -10,6 +10,15 @@ import {
 } from '@azure/storage-blob';
 import { toProviderCallError } from '@novastarter/errors';
 import {
+	type CallOptions,
+	type CallResponse,
+	type HttpApi,
+	type HttpCallFetch,
+	type HttpCallResponse,
+	parseCallMethod,
+	request,
+} from '@novastarter/http';
+import {
 	type ChunkedUploadContext,
 	type ReadOptions,
 	type Stat,
@@ -18,8 +27,7 @@ import {
 	toRelativePath,
 	type TusDriver,
 } from '@novastarter/storage';
-import { type CallOptions, confinePath, joinPath, parseCallMethod, withTimeout } from '@novastarter/utils';
-import { resolveCallUrl, toQueryString } from '@novastarter/utils/node';
+import { confinePath, joinPath } from '@novastarter/utils';
 
 /**
  * Largest chunk an append blob accepts per `Append Block` request.
@@ -31,13 +39,6 @@ import { resolveCallUrl, toQueryString } from '@novastarter/utils/node';
  * @see https://learn.microsoft.com/en-us/rest/api/storageservices/append-block#remarks
  */
 const MAXIMUM_CHUNK_SIZE = 104_857_600;
-
-/**
- * How long a {@link StorageDriverAzure.call} may take when the caller names no timeout, in milliseconds.
- *
- * @defaultValue 30 000 ms.
- */
-export const DEFAULT_AZURE_CALL_TIMEOUT = 30_000;
 
 /**
  * How long the account SAS a {@link StorageDriverAzure.call} signs its request with stays valid, in milliseconds.
@@ -119,11 +120,21 @@ declare module '@novastarter/storage' {
  */
 export class StorageDriverAzure implements TusDriver {
 	/**
-	 * Container handle every blob operation goes through.
+	 * The location's `ContainerClient` of `@azure/storage-blob` — the SDK's own API, with the location's shared-key
+	 * credential and endpoint — for what {@link StorageDriverAzure.call} does not cover: every write, SAS URLs, leases,
+	 * streamed uploads and downloads; `client.getBlockBlobClient(name)` and its kin reach single blobs. Every blob
+	 * operation of the driver goes through it too.
 	 *
-	 * @internal
+	 * Blob names given to it are not placed under the location's root.
+	 *
+	 * @example
+	 * ```ts
+	 * const { client } = useStorage().location('azure') as StorageDriverAzure;
+	 * await client.setMetadata({ owner: 'media' });
+	 * await client.getBlockBlobClient('report.pdf').setAccessTier('Cool');
+	 * ```
 	 */
-	private containerClient: ContainerClient;
+	readonly client: ContainerClient;
 
 	/**
 	 * Shared-key credential the service client signs requests with.
@@ -185,9 +196,9 @@ export class StorageDriverAzure implements TusDriver {
 		this.endpoint = config.endpoint ?? `https://${config.accountName}.blob.core.windows.net`;
 		this.containerName = config.containerName;
 
-		const client = new BlobServiceClient(this.endpoint, this.signedCredentials);
+		const service = new BlobServiceClient(this.endpoint, this.signedCredentials);
 
-		this.containerClient = client.getContainerClient(config.containerName);
+		this.client = service.getContainerClient(config.containerName);
 
 		// 4. Strip the leading slash from the root: blob names are not paths, and a leading `/` would become part of
 		//    the name and produce blobs nobody can find by the expected key
@@ -249,7 +260,7 @@ export class StorageDriverAzure implements TusDriver {
 		// 2. A 404 is the error every backend shares, so a caller tells a missing blob from a denied or failed read;
 		//    anything else says nothing about the blob and is rethrown
 		try {
-			({ readableStreamBody } = await this.containerClient
+			({ readableStreamBody } = await this.client
 				.getBlobClient(this.fullPath(filepath))
 				.download(range?.start, range?.end !== undefined ? range.end - (range.start ?? 0) + 1 : undefined));
 		} catch (error) {
@@ -280,7 +291,7 @@ export class StorageDriverAzure implements TusDriver {
 	 * @param type - MIME type stored as the blob's `Content-Type`; `application/octet-stream` when omitted.
 	 */
 	async write(filepath: string, content: Readable, type = 'application/octet-stream'): Promise<void> {
-		const blockBlobClient = this.containerClient.getBlockBlobClient(this.fullPath(filepath));
+		const blockBlobClient = this.client.getBlockBlobClient(this.fullPath(filepath));
 
 		// 1. `uploadStream` splits the stream into blocks and commits them, so the size need not be known in advance;
 		//    buffer size and concurrency are left at the SDK defaults
@@ -296,7 +307,7 @@ export class StorageDriverAzure implements TusDriver {
 	 */
 	async delete(filepath: string): Promise<void> {
 		// 1. `deleteIfExists` rather than `delete`, so removing a blob that is already gone is a no-op instead of a 404
-		await this.containerClient.getBlockBlobClient(this.fullPath(filepath)).deleteIfExists();
+		await this.client.getBlockBlobClient(this.fullPath(filepath)).deleteIfExists();
 	}
 
 	/**
@@ -314,7 +325,7 @@ export class StorageDriverAzure implements TusDriver {
 		//    one answer that confirms the blob is missing; it becomes the error every backend shares, anything else says
 		//    nothing about the blob and is rethrown
 		try {
-			props = await this.containerClient.getBlobClient(this.fullPath(filepath)).getProperties();
+			props = await this.client.getBlobClient(this.fullPath(filepath)).getProperties();
 		} catch (error) {
 			if ((error as { statusCode?: number })?.statusCode === 404) {
 				throw new StorageFileNotFoundError({ filepath }, { cause: error });
@@ -345,7 +356,7 @@ export class StorageDriverAzure implements TusDriver {
 	async exists(filepath: string): Promise<boolean> {
 		// 1. The SDK only answers `false` for a missing blob; any other failure keeps travelling so callers never act on
 		//    a wrong answer
-		return await this.containerClient.getBlockBlobClient(this.fullPath(filepath)).exists();
+		return await this.client.getBlockBlobClient(this.fullPath(filepath)).exists();
 	}
 
 	/**
@@ -357,7 +368,7 @@ export class StorageDriverAzure implements TusDriver {
 	async move(src: string, dest: string): Promise<void> {
 		// 1. Blob Storage has no rename, so a move is a server-side copy followed by deleting the source
 		await this.copy(src, dest);
-		await this.containerClient.getBlockBlobClient(this.fullPath(src)).deleteIfExists();
+		await this.client.getBlockBlobClient(this.fullPath(src)).deleteIfExists();
 	}
 
 	/**
@@ -367,8 +378,8 @@ export class StorageDriverAzure implements TusDriver {
 	 * @param dest - Path of the copy.
 	 */
 	async copy(src: string, dest: string): Promise<void> {
-		const source = this.containerClient.getBlockBlobClient(this.fullPath(src));
-		const target = this.containerClient.getBlockBlobClient(this.fullPath(dest));
+		const source = this.client.getBlockBlobClient(this.fullPath(src));
+		const target = this.client.getBlockBlobClient(this.fullPath(dest));
 
 		// 1. The copy runs server-side and asynchronously, so the poller is awaited until the service reports it done
 		//    rather than returning while the copy is still pending
@@ -386,7 +397,7 @@ export class StorageDriverAzure implements TusDriver {
 	async *list(prefix = ''): AsyncGenerator<string, void, unknown> {
 		// 1. A flat listing walks every blob under the prefix regardless of virtual folders, which is what a recursive
 		//    listing expects
-		const blobs = this.containerClient.listBlobsFlat({
+		const blobs = this.client.listBlobsFlat({
 			prefix: toListPrefix(this.fullPath(prefix), prefix),
 		});
 
@@ -424,7 +435,7 @@ export class StorageDriverAzure implements TusDriver {
 	async createChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<ChunkedUploadContext> {
 		// 1. An append blob must exist before blocks can be appended; `createIfNotExists` keeps a retried creation from
 		//    wiping blocks already appended
-		await this.containerClient.getAppendBlobClient(this.fullPath(filepath)).createIfNotExists();
+		await this.client.getAppendBlobClient(this.fullPath(filepath)).createIfNotExists();
 
 		return context;
 	}
@@ -446,7 +457,7 @@ export class StorageDriverAzure implements TusDriver {
 		offset: number,
 		_context: ChunkedUploadContext,
 	): Promise<number> {
-		const client = this.containerClient.getAppendBlobClient(this.fullPath(filepath));
+		const client = this.client.getAppendBlobClient(this.fullPath(filepath));
 
 		let bytesUploaded = offset || 0;
 		let chunkSize = 0;
@@ -488,48 +499,53 @@ export class StorageDriverAzure implements TusDriver {
 	}
 
 	/**
-	 * Make any request of the Blob service REST API with the location's account, endpoint and a timeout — the way to
-	 * what the storage contract does not cover: service properties, container metadata, leases, tags, access tiers.
+	 * Make a read of the Blob service REST API with the location's account, endpoint and a timeout — the way to what
+	 * the storage contract does not cover: service properties and stats, container metadata and ACLs, blob tags and
+	 * properties; and a `DELETE`. Every write goes through {@link StorageDriverAzure.client}.
 	 *
-	 * `method` is the verb and the path from the blob endpoint — `{container}` in it stands for the location's
+	 * `method` is a `GET`, `HEAD` or `DELETE` and the path from the blob endpoint — a `{name}` in it is filled from the
+	 * parameter of that name, which is then not sent again, and `{container}` without one stands for the location's
 	 * container — or a full URL on that endpoint's host. The request is authorised with an account SAS signed for it
 	 * alone and valid for a few minutes, since the SDK keeps its signing pipeline to itself; operations an account SAS
-	 * cannot authorise are refused by Azure. Every parameter goes into the query — the Blob service takes its
-	 * parameters there and in headers — except `body`: a string (XML) or a `Blob` sent as the request body. Blob names
-	 * in a path are not placed under the location's root.
+	 * cannot authorise are refused by Azure. The parameters go into the query, where the Blob service takes them. Blob
+	 * names in a path are not placed under the location's root.
 	 *
 	 * @typeParam T - What the service answers with, most often XML text; the caller knows it from Azure's documentation.
-	 * @param method - The verb and path: `GET /?restype=service&comp=properties`, `PUT /{container}?restype=container`.
-	 * @param params - The query, and the request body under `body`.
-	 * @param options - A timeout over {@link DEFAULT_AZURE_CALL_TIMEOUT}, an abort signal, extra headers — the
-	 * `x-ms-meta-*` and `x-ms-blob-type` headers many operations read.
-	 * @returns The answer: parsed JSON, else its text — XML for most operations; `undefined` for an empty one.
-	 * @throws ProviderCallError when Azure answers with an error status or a redirect — not followed, since the SAS
-	 * rides in the URL — its status and XML answer in `extensions`.
+	 * @param method - The verb and path: `GET /?restype=service&comp=properties`, `HEAD /{container}/a.jpg`.
+	 * @param params - The query.
+	 * @param options - A timeout over the default 30 s, an abort signal, extra headers.
+	 * @returns The status, the headers — the `x-ms-*` properties of a HEAD — and the answer: parsed JSON, else its
+	 * text — XML for most operations; `undefined` for an empty one.
+	 * @throws ProviderCallError when Azure answers with an error status — its status and XML answer, without the SAS,
+	 * in `extensions`.
 	 * @throws HitRateLimitError when Azure answers 429.
 	 * @throws TimeoutError when the request outlives its timeout.
-	 * @throws Error when the method is malformed, its URL is not on the endpoint's host, or Azure cannot be reached.
+	 * @throws Error when the verb is not a `GET`, `HEAD` or `DELETE`, the method is malformed, a placeholder is left
+	 * unfilled, its URL is not on the endpoint's host, or Azure cannot be reached.
 	 * @example
 	 * ```ts
-	 * const xml = await azure.call<string>('GET /', { restype: 'service', comp: 'properties' });
+	 * const { data: xml } = await azure.call<string>('GET /', { restype: 'service', comp: 'properties' });
 	 *
-	 * await azure.call('PUT /{container}', { restype: 'container', comp: 'metadata' }, {
-	 * 	headers: { 'x-ms-meta-owner': 'media' },
-	 * });
+	 * const { headers } = await azure.call('HEAD /{container}/a.jpg');
+	 *
+	 * await azure.call('GET /{container}/{blob}', { blob: 'media/a.jpg', comp: 'tags' }); // media%2Fa.jpg
 	 * ```
 	 */
-	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, options: CallOptions = {}): Promise<T> {
-		// 1. The verb and the URL; a full URL off the endpoint's host is refused here, before a SAS is signed for it
-		const { verb, target } = parseCallMethod(method);
-		const url = resolveCallUrl(this.endpoint, target.replaceAll('{container}', encodeURIComponent(this.containerName)));
-		const { body, ...query } = params;
+	async call<T = unknown>(
+		method: string,
+		params?: Record<string, unknown>,
+		options?: CallOptions,
+	): Promise<CallResponse<T>> {
+		// 1. Reads only: a write's body — XML, a blob — is the SDK's job, and a read's parameters belong in the query
+		const { verb } = parseCallMethod(method);
 
-		for (const [key, value] of new URLSearchParams(toQueryString(query)).entries()) {
-			url.searchParams.append(key, value);
+		if (verb !== 'GET' && verb !== 'HEAD' && verb !== 'DELETE') {
+			throw new Error(`The azure call "${method}" is not a GET, HEAD or DELETE; writes go through the client`);
 		}
 
-		// 2. A SAS for this request only: every blob permission, since the operation is the caller's choice, and a
-		//    lifetime of minutes. The start lies a minute back, so a service clock slightly behind still accepts it
+		// 2. A SAS for this request only — signed locally, it leaves the process only with the request, after the host
+		//    check: every blob permission, since the operation is the caller's choice, and a lifetime of minutes. The
+		//    start lies a minute back, so a service clock slightly behind still accepts it
 		const now = Date.now();
 
 		const sas = generateAccountSASQueryParameters(
@@ -539,77 +555,25 @@ export class StorageDriverAzure implements TusDriver {
 				permissions: AccountSASPermissions.parse('rwdxylacuptfi'),
 				services: 'b',
 				resourceTypes: 'sco',
-				...(url.protocol === 'https:' ? { protocol: SASProtocol.Https } : {}),
+				...(new URL(this.endpoint).protocol === 'https:' ? { protocol: SASProtocol.Https } : {}),
 			},
 			this.signedCredentials,
 		);
 
-		const signed = new URL(url);
+		// 3. The API for this call: the SAS in the query, the API version it was signed for in a header, `{container}`
+		//    the location's; a refusal loses the signature, should Azure quote it, and a failure to reach Azure its
+		//    cause, which may quote the signed URL
+		const api: HttpApi = {
+			provider: 'azure',
+			baseUrl: this.endpoint,
+			headers: { 'x-ms-version': sas.version },
+			placeholders: { container: this.containerName },
+			query: Object.fromEntries(new URLSearchParams(sas.toString()).entries()),
+			fetch: unreachableWithoutCause,
+			refuse: (response, refused) => refuseRedacted(response, refused, sas.signature),
+		};
 
-		for (const [key, value] of new URLSearchParams(sas.toString()).entries()) {
-			signed.searchParams.append(key, value);
-		}
-
-		// 3. The API version the SAS was signed for, the body's type unless the caller names one, the caller's headers on
-		//    top; header names folded to lower case so the caller's replace the driver's instead of doubling them
-		const headers: Record<string, string> = { 'x-ms-version': sas.version };
-
-		if (typeof body === 'string') headers['content-type'] = 'application/xml';
-		if (body instanceof Blob) headers['content-type'] = body.type || 'application/octet-stream';
-
-		for (const [name, value] of Object.entries(options.headers ?? {})) {
-			headers[name.toLowerCase()] = value;
-		}
-
-		// 4. The request and the reading of its answer under one deadline — a slow body is still the deadline's — and
-		//    the caller's signal aborts both. Only a string or a Blob is a body
-		const payload = typeof body === 'string' || body instanceof Blob ? body : undefined;
-
-		const { response, answer } = await withTimeout(
-			async (signal) => {
-				// 1. Redirects are not followed: the SAS rides in the URL, and `fetch` would carry it to wherever the
-				//    `Location` points. A failure to reach Azure is reported without its cause, whose details may quote
-				//    the signed URL; an abort passes on its own reason
-				let sent: Response;
-
-				try {
-					sent = await fetch(signed.href, {
-						method: verb,
-						headers,
-						signal,
-						redirect: 'manual',
-						...(payload === undefined ? {} : { body: payload }),
-					});
-				} catch (error) {
-					if (signal.aborted) throw signal.reason;
-
-					const code = (error as { cause?: { code?: unknown } } | null)?.cause?.code;
-					const suffix = typeof code === 'string' ? ` (${code})` : '';
-
-					// eslint-disable-next-line preserve-caught-error -- the cause may quote the signed URL
-					throw new Error(`The azure call "${method}" could not reach the service${suffix}`);
-				}
-
-				// 2. JSON when it parses, the text otherwise — XML for most operations; an empty answer is nothing
-				return { response: sent, answer: await parseAnswer(sent) };
-			},
-			options.timeout ?? DEFAULT_AZURE_CALL_TIMEOUT,
-			options.signal ? { signal: options.signal } : {},
-		);
-
-		// 5. An error status — or a redirect, which is not followed — becomes the kit's error; the signature is struck
-		//    from the answer, should Azure quote it, so no error or log line ever carries a working SAS
-		if (response.status >= 300) {
-			throw toProviderCallError({
-				provider: 'azure',
-				method,
-				status: response.status,
-				body: typeof answer === 'string' ? redact(answer, sas.signature) : answer,
-				headers: response.headers,
-			});
-		}
-
-		return answer as T;
+		return request<T>(api, method, params, options);
 	}
 
 	/**
@@ -635,24 +599,53 @@ export class StorageDriverAzure implements TusDriver {
 }
 
 /**
- * Read a response's body: JSON when it parses, the text otherwise.
+ * The global `fetch` for {@link StorageDriverAzure.call}, whose failure to reach Azure is reported without its cause:
+ * the details of a network error may quote the signed URL, SAS included.
  *
- * @param response - The response.
- * @returns The parsed body, the text, or `undefined` for an empty one.
+ * @param url - The URL, SAS included.
+ * @param init - The request.
+ * @returns The response.
+ * @throws Error naming only the network error's code; the abort reason when the signal aborted.
  * @internal
  */
-const parseAnswer = async (response: Response): Promise<unknown> => {
-	// 1. An empty body — a 201 of a created container, any HEAD — is nothing rather than an empty string
-	const text = await response.text();
-
-	if (text.length === 0) return undefined;
-
-	// 2. The Blob service answers XML, which is returned as it came; the odd JSON answer is parsed
+const unreachableWithoutCause: HttpCallFetch = async (url, { body, ...init }) => {
+	// 1. A body only when there is one; an abort passes on its own reason
 	try {
-		return JSON.parse(text) as unknown;
-	} catch {
-		return text;
+		return await fetch(url, body === undefined ? init : { ...init, body });
+	} catch (error) {
+		if (init.signal.aborted) throw init.signal.reason;
+
+		// 2. Only the code survives — `ENOTFOUND`, `ECONNRESET`
+		const code = (error as { cause?: { code?: unknown } } | null)?.cause?.code;
+		const suffix = typeof code === 'string' ? ` (${code})` : '';
+
+		// eslint-disable-next-line preserve-caught-error -- the cause may quote the signed URL
+		throw new Error(`The azure call could not reach the service${suffix}`);
 	}
+};
+
+/**
+ * Turn an error status of Azure into the kit's error, the SAS signature struck from the answer should Azure quote it,
+ * so no error or log line ever carries a working SAS.
+ *
+ * @param response - Azure's answer.
+ * @param method - The call's method, for the error.
+ * @param signature - The signature of the call's SAS.
+ * @returns The error for a status outside 2xx; `undefined` for a success.
+ * @internal
+ */
+const refuseRedacted = (response: HttpCallResponse, method: string, signature: string): Error | undefined => {
+	// 1. A success is left alone
+	if (response.status >= 200 && response.status < 300) return undefined;
+
+	// 2. The kit's error — a 429 the rate-limit one — with the answer's text redacted
+	return toProviderCallError({
+		provider: 'azure',
+		method,
+		status: response.status,
+		body: typeof response.body === 'string' ? redact(response.body, signature) : response.body,
+		headers: response.headers,
+	});
 };
 
 /**

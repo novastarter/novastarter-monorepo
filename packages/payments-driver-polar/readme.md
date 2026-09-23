@@ -59,20 +59,34 @@ reported instead of silently losing every delivery of that type.
 
 ## Any other request
 
-`call()` reaches any endpoint of Polar's API with the location's access token as the bearer token. The parameters of a
-`GET` or `DELETE` go in the query — a list as its key repeated — the others as a JSON body (`options.paramsIn` moves
-them). A refusal throws `ProviderCallError` with Polar's status and answer, a 429 `HitRateLimitError`.
+`call()` reaches any endpoint of Polar's API with the location's access token as the bearer token and answers
+`{ status, headers, data }`. The parameters of a `GET` or `DELETE` go in the query — a list as its key repeated — the
+others as a JSON body. A refusal throws `ProviderCallError` with Polar's status and answer, a 429 `HitRateLimitError`.
 
 ```ts
 const payments = usePayments().location('default');
 
-await payments.call?.('GET /v1/benefits/', { limit: 20 });
+const { data } = await payments.call!('GET /v1/benefits/', { limit: 20 });
 
-await payments.call?.('POST /v1/refunds/', { order_id: 'ord_123', reason: 'customer_request', amount: 500 });
+await payments.call!('POST /v1/refunds/', { order_id: 'ord_123', reason: 'customer_request', amount: 500 });
 ```
 
 Paths go to the server's API (`api.polar.sh`, `sandbox-api.polar.sh`). A full URL may point at `api.polar.sh` or
 `sandbox-api.polar.sh`; any other host is refused before a request is made. The default timeout is 30 seconds.
+
+A `{name}` in the path is filled from the parameter of that name, URL-encoded, and that parameter is not sent again; a
+`{name}` no parameter fills is refused before a request. The headers carry Polar's rate-limit headers, say.
+
+```ts
+const payments = usePayments().location('default');
+
+const { status, headers, data } = await payments.call!<{ id: string }>('PATCH /v1/customers/{id}', {
+	id: 'cus_123',
+	name: 'Ada Lovelace',
+});
+
+console.log(status, data.id, headers['x-ratelimit-remaining']);
+```
 
 ## Options
 

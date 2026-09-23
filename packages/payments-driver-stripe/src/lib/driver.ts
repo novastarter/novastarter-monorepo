@@ -1,4 +1,12 @@
 import { InvalidCredentialsError, InvalidPayloadError, toProviderCallError } from '@novastarter/errors';
+import {
+	type CallOptions,
+	type CallResponse,
+	DEFAULT_REQUEST_TIMEOUT,
+	type HeadersLike,
+	parseCallMethod,
+	toHeaderRecord,
+} from '@novastarter/http';
 import type {
 	CancelSubscriptionInput,
 	CheckoutSession,
@@ -15,8 +23,7 @@ import type {
 	UpdateSubscriptionInput,
 	WebhookHeaders,
 } from '@novastarter/payments';
-import { type CallOptions, type CallVerb, parseCallMethod, withTimeout } from '@novastarter/utils';
-import { httpCall, resolveCallUrl } from '@novastarter/utils/node';
+import { withTimeout } from '@novastarter/utils';
 import Stripe from 'stripe';
 import { fromUnix } from './from-unix.js';
 import { toEvent } from './to-event.js';
@@ -75,13 +82,6 @@ export const PRORATION: Record<
 };
 
 /**
- * How long a {@link PaymentsDriverStripe.call} may take unless its options name another deadline, in milliseconds.
- *
- * @defaultValue 30 seconds.
- */
-export const DEFAULT_STRIPE_CALL_TIMEOUT = 30_000;
-
-/**
  * The hosts a full URL given to {@link PaymentsDriverStripe.call} may point at, each with the `apiBase` the SDK
  * resolves it by — so the request still goes through the client, its key and its API version.
  *
@@ -119,11 +119,21 @@ export const STRIPE_CALL_HOSTS: Readonly<Record<string, NonNullable<Stripe.RawRe
  */
 export class PaymentsDriverStripe implements PaymentsDriver {
 	/**
-	 * The `stripe-node` client every request goes through.
+	 * The `stripe-node` client every request of the driver goes through: the SDK's own API, with the location's secret
+	 * key, for everything the contract and {@link call} do not cover — an upload through `files.create`, a typed
+	 * resource, auto-pagination.
 	 *
-	 * @internal
+	 * @example
+	 * ```ts
+	 * const stripe = usePayments().location('stripe') as PaymentsDriverStripe;
+	 *
+	 * const file = await stripe.client.files.create({
+	 * 	purpose: 'dispute_evidence',
+	 * 	file: { data: pdf, name: 'receipt.pdf', type: 'application/pdf' },
+	 * });
+	 * ```
 	 */
-	private readonly client: Stripe;
+	readonly client: Stripe;
 
 	/**
 	 * The signing secret of the webhook endpoint, checked on every delivery.
@@ -138,13 +148,6 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 * @internal
 	 */
 	private readonly webhookTolerance: number | undefined;
-
-	/**
-	 * The secret key, for the uploads {@link call} makes itself — the SDK's raw request sends no multipart body.
-	 *
-	 * @internal
-	 */
-	private readonly secretKey: string;
 
 	/**
 	 * Create a driver from its location options.
@@ -168,7 +171,6 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 			config.client ??
 			new Stripe(config.secretKey, { ...(config.appInfo !== undefined ? { appInfo: config.appInfo } : {}) });
 
-		this.secretKey = config.secretKey;
 		this.webhookSecret = config.webhookSecret;
 		this.webhookTolerance = config.webhookTolerance;
 	}
@@ -400,76 +402,63 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 * `rawRequest`.
 	 *
 	 * `method` is the verb and the path — `POST /v1/refunds` — or a full URL on one of {@link STRIPE_CALL_HOSTS}, which
-	 * picks the SDK's base for that host. The parameters of a `GET` or `DELETE` go in the query, in Stripe's bracket
+	 * picks the SDK's base for that host. A `{name}` in it is filled from the parameter of that name, URL-encoded, and
+	 * that parameter is not sent again. The parameters of a `GET` or `DELETE` go in the query, in Stripe's bracket
 	 * notation (`expand[0]=…`, `metadata[plan]=…`); those of a `POST` are the body, form-encoded under `/v1` and JSON
-	 * under `/v2`, as the SDK sends them; `options.paramsIn: 'query'` puts those of a `POST` in the query too. Stripe
-	 * takes a body on `POST` only — `paramsIn: 'body'` on another verb is refused.
-	 *
-	 * A file — a `Blob` or `File` among the parameters, or in a list of them — is uploaded as a multipart body. The
-	 * SDK's raw request makes none, so that request is made without the SDK, with the same key, the SDK's API version
-	 * (`Stripe-Version`), host check, deadline and errors; the SDK's retries do not apply to it. Its other parameters
-	 * go as flat fields — a nested one is written by its bracketed name, `'file_link_data[create]': 'true'`. Uploads
-	 * go to `https://files.stripe.com/v1/files`.
+	 * under `/v2`, as the SDK sends them. Stripe takes a body on `POST` only. A file is not sent: the SDK's raw request
+	 * makes no multipart body, so an upload goes through {@link client} — `client.files.create()`.
 	 *
 	 * @typeParam T - What the endpoint answers with; the caller knows it from Stripe's API reference.
 	 * @param method - The verb and the path, or a full URL on Stripe's hosts.
-	 * @param params - The query of a `GET` or `DELETE`, the body of a `POST`.
-	 * @param options - A timeout over {@link DEFAULT_STRIPE_CALL_TIMEOUT}, an abort signal, extra headers — an
-	 * `Idempotency-Key`, a `Stripe-Account` — and where the parameters go.
-	 * @returns Stripe's answer, parsed.
+	 * @param params - The placeholders' values, and the query of a `GET` or `DELETE` or the body of a `POST`.
+	 * @param options - A timeout over the default 30 seconds, an abort signal, extra headers — an `Idempotency-Key`, a
+	 * `Stripe-Account`.
+	 * @returns The status, the headers — names lower-cased — and Stripe's answer, parsed.
 	 * @throws ProviderCallError when Stripe answers with an error status — its status and `{ error }` in `extensions`.
 	 * @throws HitRateLimitError when Stripe answers 429.
 	 * @throws TimeoutError when the request outlives its timeout.
-	 * @throws Error when the method is malformed, its URL is not on Stripe's hosts, or parameters are given — or asked
-	 * into a body, or a file into the query — that the verb cannot carry; Stripe's `StripeConnectionError` when Stripe
-	 * cannot be reached, `fetch`'s error when an upload cannot reach it.
+	 * @throws Error when the method is malformed, a `{name}` placeholder is left unfilled, its URL is not on Stripe's
+	 * hosts, a `PUT` or `PATCH` carries parameters, or a file is among them; Stripe's `StripeConnectionError` when
+	 * Stripe cannot be reached.
 	 * @example
 	 * ```ts
-	 * await stripe.call('POST /v1/refunds', { payment_intent: 'pi_123', amount: 500 });
+	 * const { data } = await stripe.call('POST /v1/refunds', { payment_intent: 'pi_123', amount: 500 });
+	 * const { headers } = await stripe.call('GET /v1/customers/{id}', { id: 'cus_123' });
 	 * await stripe.call('GET /v1/customers', { email: 'ada@example.com', expand: ['data.default_source'] });
-	 * await stripe.call('POST https://files.stripe.com/v1/files', {
-	 * 	purpose: 'dispute_evidence',
-	 * 	file: new File([pdf], 'receipt.pdf', { type: 'application/pdf' }),
-	 * });
 	 * ```
 	 */
-	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, options: CallOptions = {}): Promise<T> {
-		// 1. The verb and the target; a full URL only on Stripe's own hosts, so the key never travels anywhere else
-		const { verb, target } = parseCallMethod(method);
+	async call<T = unknown>(
+		method: string,
+		params?: Record<string, unknown>,
+		options: CallOptions = {},
+	): Promise<CallResponse<T>> {
+		// 1. The verb and the target, its `{name}` placeholders filled from the parameters, which are then not sent
+		//    again; a full URL only on Stripe's own hosts, so the key never travels anywhere else
+		const { verb, target, params: rest } = parseCallMethod(method, params);
 		const { path, apiBase } = toStripeTarget(target);
 
-		// 2. The SDK takes a body on POST only: refused here, with the reason, rather than as the SDK's hint to put the
-		//    parameters in the path
-		const defined = Object.fromEntries(Object.entries(params).filter(([, value]) => value !== undefined));
+		// 2. Stripe takes a body on POST only, and the raw request sends no multipart one: both refused here, with the
+		//    reason, rather than as the SDK's hint or as a file sent as the text `[object File]`
+		const defined = Object.fromEntries(Object.entries(rest).filter(([, value]) => value !== undefined));
 		const hasParams = Object.keys(defined).length > 0;
 
-		if (options.paramsIn === 'body' && verb !== 'POST') {
-			throw new Error(`Stripe call() sends a body on POST only, not on ${verb}; the raw request has no other`);
-		}
-
-		if (hasParams && (verb === 'PUT' || verb === 'PATCH') && options.paramsIn !== 'query') {
+		if (hasParams && (verb === 'PUT' || verb === 'PATCH')) {
 			throw new Error(`Stripe takes a body on POST only, not on ${verb}`);
 		}
 
-		// 3. The other verbs — and a POST told so — carry their parameters in the path's query, in the notation Stripe
-		//    reads
-		const inQuery = verb !== 'POST' || options.paramsIn === 'query';
+		if (hasFile(defined)) {
+			throw new Error('Stripe call() sends no file; upload it with the client: `client.files.create()`');
+		}
+
+		// 3. The other verbs carry their parameters in the path's query, in the notation Stripe reads
+		const inQuery = verb !== 'POST';
 		const query = inQuery && hasParams ? toStripeQuery(defined) : '';
 		const fullPath = query ? `${path}${path.includes('?') ? '&' : '?'}${query}` : path;
 
-		// 4. A file goes as a multipart body, which the raw request cannot send: the upload is made without the SDK. A
-		//    file has no place in a query, so one there is refused rather than sent as the text of an empty object
-		if (hasFile(defined)) {
-			if (inQuery) {
-				throw new Error(`Stripe call() sends a file in a POST body only, not in the query of ${verb}`);
-			}
-
-			return this.upload<T>(method, verb, target, defined, options);
-		}
-
-		// 5. The SDK's own timeout closes the socket; the outer deadline and the caller's signal make sure the caller
-		//    gets a TimeoutError or the abort reason, retries included — and an already aborted signal sends nothing
-		const timeout = options.timeout ?? DEFAULT_STRIPE_CALL_TIMEOUT;
+		// 4. The SDK's own timeout closes the socket; the deadline around it and the caller's signal make sure the
+		//    caller gets a TimeoutError or the abort reason, retries included — and an already aborted signal sends
+		//    nothing
+		const timeout = options.timeout ?? DEFAULT_REQUEST_TIMEOUT;
 
 		const requestOptions: Stripe.RawRequestOptions = {
 			timeout,
@@ -478,14 +467,24 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 		};
 
 		try {
-			return (await withTimeout(
+			const answer = await withTimeout(
 				() => this.client.rawRequest(verb, fullPath, inQuery ? undefined : defined, requestOptions),
 				timeout,
 				options.signal ? { signal: options.signal } : {},
-			)) as T;
+			);
+
+			// 5. The SDK hangs the raw response on the answer, out of its enumerable keys: `statusCode` and a record
+			//    from Node's client, `status` and `Headers` from the fetch one
+			const last = (answer as { lastResponse?: StripeRawResponse } | null)?.lastResponse;
+
+			return {
+				status: last?.statusCode ?? last?.status ?? 200,
+				headers: toHeaderRecord(last?.headers),
+				data: answer as T,
+			};
 		} catch (error) {
-			// 6. An answer with a status is Stripe refusing: the kit's error, Stripe's own as the cause. No status — a
-			//    connection failure, a timeout — goes on as it is
+			// 6. An answer with a status is Stripe refusing: the kit's error, Stripe's own as the cause. No status —
+			//    a connection failure, a timeout — goes on as it is
 			if (error instanceof Stripe.errors.StripeError && typeof error.statusCode === 'number') {
 				throw toProviderCallError({
 					provider: 'stripe',
@@ -502,73 +501,6 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	}
 
 	/**
-	 * Upload a file for {@link call}: a multipart request made with `httpCall`, since the SDK's raw request sends none.
-	 *
-	 * The request is the SDK's in all but the transport: the same key as a Bearer token, the API version the client
-	 * pins as `Stripe-Version`, the client's host for a path and only Stripe's hosts for a full URL. Redirects are
-	 * followed without the key leaving the origin, and the deadline covers the reading of the answer.
-	 *
-	 * @typeParam T - What the endpoint answers with.
-	 * @param method - The method as the caller wrote it, for the error.
-	 * @param verb - The verb.
-	 * @param target - The path or the full URL.
-	 * @param params - The defined parameters, a file among them.
-	 * @param options - The timeout, the signal and the caller's headers.
-	 * @returns Stripe's answer, parsed.
-	 * @throws ProviderCallError, or HitRateLimitError for a 429, when Stripe answers with an error status.
-	 * @throws TimeoutError when the request outlives its timeout.
-	 * @throws Error when the URL is not on Stripe's hosts; `fetch`'s error when Stripe cannot be reached.
-	 * @internal
-	 */
-	private async upload<T>(
-		method: string,
-		verb: CallVerb,
-		target: string,
-		params: Record<string, unknown>,
-		options: CallOptions,
-	): Promise<T> {
-		// 1. A path goes to the host the client talks to — a `stripe-mock` in tests included — and a full URL only to
-		//    one of Stripe's hosts, so the key never reaches another party
-		const protocol = String(this.client.getApiField('protocol') ?? 'https');
-		const host = String(this.client.getApiField('host') ?? 'api.stripe.com');
-		const port = this.client.getApiField('port') as number | string | undefined;
-		const base = `${protocol}://${host}${port !== undefined ? `:${port}` : ''}`;
-		const url = resolveCallUrl(base, target, Object.keys(STRIPE_CALL_HOSTS));
-
-		// 2. The key and the client's API version, so an upload reads and writes objects the way every other request
-		//    of the location does; the caller's headers — a `Stripe-Account`, an `Idempotency-Key` — on top
-		const version = String(this.client.getApiField('version') ?? Stripe.API_VERSION);
-
-		const response = await httpCall({
-			url,
-			verb,
-			params,
-			paramsIn: options.paramsIn,
-			headers: {
-				authorization: `Bearer ${this.secretKey}`,
-				'stripe-version': version,
-				...options.headers,
-			},
-			timeout: options.timeout ?? DEFAULT_STRIPE_CALL_TIMEOUT,
-			signal: options.signal,
-		});
-
-		// 3. A non-2xx answer is Stripe refusing: its status and `{ error }`, no header of the request — the key — in
-		//    it
-		if (response.status < 200 || response.status >= 300) {
-			throw toProviderCallError({
-				provider: 'stripe',
-				method,
-				status: response.status,
-				body: response.body,
-				headers: response.headers,
-			});
-		}
-
-		return response.body as T;
-	}
-
-	/**
 	 * Prove the secret key works with the cheapest read there is.
 	 *
 	 * @throws Stripe's authentication error when it does not.
@@ -580,21 +512,44 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 }
 
 /**
+ * The raw response the SDK hangs on an answer as `lastResponse`: Node's `IncomingMessage` or a fetch `Response`,
+ * depending on the client's HTTP client.
+ *
+ * @internal
+ */
+interface StripeRawResponse {
+	/** The status, from Node's client. */
+	statusCode?: number;
+	/** The status, from the fetch client. */
+	status?: number;
+	/** The headers: a record from Node's client, `Headers` from the fetch one. */
+	headers?: HeadersLike;
+}
+
+/**
  * Turn the target of a {@link PaymentsDriverStripe.call} into the path the SDK takes and the base it goes to.
  *
  * @param target - A path from the API's root, or a full URL.
  * @returns The path with its query, and the SDK's base for a full URL; no base for a path, so the client's own host —
  * a `stripe-mock` in tests included — is kept.
- * @throws Error when the URL is not https or not on one of {@link STRIPE_CALL_HOSTS}.
+ * @throws Error when a `{name}` placeholder is left, or the URL is not https or not on one of
+ * {@link STRIPE_CALL_HOSTS}.
  * @internal
  */
 const toStripeTarget = (target: string): { path: string; apiBase?: Stripe.RawRequestOptions['apiBase'] } => {
-	// 1. A path goes to the client's host as it is
+	// 1. A placeholder no parameter filled would reach Stripe as `%7Bname%7D`: refused before any request
+	const unfilled = /\{([A-Za-z_][\w-]*)\}/.exec(target);
+
+	if (unfilled) {
+		throw new Error(`The call path needs a "${unfilled[1]}" parameter for its {${unfilled[1]}} placeholder`);
+	}
+
+	// 2. A path goes to the client's host as it is
 	if (target.startsWith('/')) {
 		return { path: target };
 	}
 
-	// 2. A full URL only over https and on a host the SDK knows a base for; the key would leak to any other
+	// 3. A full URL only over https and on a host the SDK knows a base for; the key would leak to any other
 	const url = new URL(target);
 	const apiBase = Object.hasOwn(STRIPE_CALL_HOSTS, url.host) ? STRIPE_CALL_HOSTS[url.host] : undefined;
 
@@ -606,15 +561,15 @@ const toStripeTarget = (target: string): { path: string; apiBase?: Stripe.RawReq
 };
 
 /**
- * Whether the parameters carry a file — a `Blob` or `File` — at the top level or in a list, which makes the request a
- * multipart upload.
+ * Whether the parameters carry a file — a `Blob` or `File` — at the top level or in a list, which the SDK's raw
+ * request cannot send.
  *
  * @param params - The defined parameters.
  * @returns `true` when a file is among them.
  * @internal
  */
 const hasFile = (params: Record<string, unknown>): boolean => {
-	// 1. The two places `httpCall` turns into multipart parts: a parameter itself, or an item of a list
+	// 1. A parameter itself, or an item of a list
 	return Object.values(params).some(
 		(value) => value instanceof Blob || (Array.isArray(value) && value.some((item) => item instanceof Blob)),
 	);

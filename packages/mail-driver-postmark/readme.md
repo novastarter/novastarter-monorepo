@@ -42,16 +42,20 @@ remaining tags go to `Metadata`, the tags comma-joined and spread over `tags`, `
 ## Any other request
 
 `call()` makes a request of the [Postmark API](https://postmarkapp.com/developer/api/overview) with the location's
-server token — a `GET`'s parameters go in the query, the rest as JSON. A refusal throws `ProviderCallError` with
-Postmark's `ErrorCode` and `Message` in `extensions.body` (`HitRateLimitError` on a 429); the timeout is the location's
-`timeout`, 30 s unless set.
+server token — the parameters of a `GET`, `HEAD` or `DELETE` go in the query, the body otherwise, as JSON. A refusal
+throws `ProviderCallError` with Postmark's `ErrorCode` and `Message` in `extensions.body` (`HitRateLimitError` on a
+429); the timeout is the location's `timeout`, 30 s unless set. It answers `{ status, headers, data }`.
 
 ```ts
 const mail = useMail().location('main');
 
-const bounces = await mail.call?.('GET /bounces', { count: 50, offset: 0, type: 'HardBounce' });
+const { data: bounces } = await mail.call!('GET /bounces', { count: 50, offset: 0, type: 'HardBounce' });
+```
 
-await mail.call?.('PUT /bounces/692560173/activate');
+A `{name}` in the path takes the parameter of that name, URL-encoded, and that parameter is not sent again:
+
+```ts
+const { status } = await mail.call!('PUT /bounces/{id}/activate', { id: 692560173 });
 ```
 
 A path is joined to `https://api.postmarkapp.com`; a full URL may only point at `api.postmarkapp.com`. The server token

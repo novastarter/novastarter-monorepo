@@ -27,6 +27,7 @@
 	"dependencies": {
 		"@novastarter/auth": "workspace:*",
 		"@novastarter/errors": "workspace:*",
+		"@novastarter/http": "workspace:*",
 		"@novastarter/utils": "workspace:*"
 	},
 	"devDependencies": {

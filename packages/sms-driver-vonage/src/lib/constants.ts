@@ -47,27 +47,3 @@ export const VONAGE_CALL_HOSTS: readonly string[] = [
 	'api-us.vonage.com',
 	'api-ap.vonage.com',
 ];
-
-/**
- * How long a {@link SmsDriverVonage.call} may take when neither the call nor the location sets a timeout, in
- * milliseconds.
- *
- * @defaultValue 30 000 ms.
- */
-export const DEFAULT_VONAGE_CALL_TIMEOUT = 30_000;
-
-/**
- * The JSON content type — what {@link SmsDriverVonage.call} sends a body as unless asked for a form.
- *
- * @defaultValue `application/json`
- * @internal
- */
-export const VONAGE_JSON_TYPE = 'application/json';
-
-/**
- * The form content type, for the account endpoints that take a form body.
- *
- * @defaultValue `application/x-www-form-urlencoded`
- * @internal
- */
-export const VONAGE_FORM_TYPE = 'application/x-www-form-urlencoded';

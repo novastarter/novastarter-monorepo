@@ -194,7 +194,11 @@ describe('MailDriverPostmark.call', () => {
 
 		const driver = new MailDriverPostmark({ serverToken: 'SECRET-token' });
 
-		expect(await driver.call('GET /bounces', { count: 50, offset: 0 })).toStrictEqual({ TotalCount: 0, Bounces: [] });
+		expect((await driver.call('GET /bounces', { count: 50, offset: 0 })).data).toStrictEqual({
+			TotalCount: 0,
+			Bounces: [],
+		});
+
 		expect(sent().url).toBe('https://api.postmarkapp.com/bounces?count=50&offset=0');
 		expect(sent().init.method).toBe('GET');
 		expect(sent().init.headers['x-postmark-server-token']).toBe('SECRET-token');
@@ -241,7 +245,7 @@ describe('MailDriverPostmark.call', () => {
 		// 2. Postmark's own host is fine
 		fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
 
-		expect(await driver.call('DELETE https://api.postmarkapp.com/templates/1')).toBeUndefined();
+		expect((await driver.call('DELETE https://api.postmarkapp.com/templates/1')).data).toBeUndefined();
 		expect(sent().url).toBe('https://api.postmarkapp.com/templates/1');
 	});
 
@@ -267,5 +271,47 @@ describe('MailDriverPostmark.call', () => {
 		await expect(
 			new MailDriverPostmark({ serverToken: 'SECRET-token' }).call('GET /server', {}, { timeout: 10 }),
 		).rejects.toBeInstanceOf(TimeoutError);
+	});
+});
+
+describe('MailDriverPostmark.call placeholders and answers', () => {
+	test('Fills a {name} from its parameter, encoded, and sends that parameter nowhere else', async () => {
+		fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+		fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+		const driver = new MailDriverPostmark({ serverToken: 'SECRET-token' });
+
+		// 1. A GET: the placeholder takes `id`, URL-encoded; the other parameters stay in the query
+		await driver.call('GET /bounces/{id}', { id: 'a/b', limit: 5 });
+		expect((fetchMock.mock.calls[0] as [string])[0]).toBe('https://api.postmarkapp.com/bounces/a%2Fb?limit=5');
+
+		// 2. A POST: the placeholder's parameter is not in the body
+		await driver.call('POST /templates/{id}/validate', { id: 42, name: 'welcome' });
+
+		const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+
+		expect(url).toBe('https://api.postmarkapp.com/templates/42/validate');
+		expect(init.body).toBe('{"name":"welcome"}');
+	});
+
+	test('Refuses a placeholder no parameter fills before any request', async () => {
+		await expect(new MailDriverPostmark({ serverToken: 'SECRET-token' }).call('GET /bounces/{id}')).rejects.toThrow(
+			/"id" parameter/,
+		);
+
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	test('Answers the status, the lower-cased headers and the body', async () => {
+		fetchMock.mockResolvedValueOnce(
+			new Response('{"ok":true}', { status: 201, headers: { 'X-RateLimit-Remaining': '9' } }),
+		);
+
+		const driver = new MailDriverPostmark({ serverToken: 'SECRET-token' });
+
+		// 1. Every call answers the whole response, headers named in lower case
+		const answer = await driver.call('GET /bounces/{id}', { id: 'x' });
+
+		expect(answer).toMatchObject({ status: 201, headers: { 'x-ratelimit-remaining': '9' }, data: { ok: true } });
 	});
 });

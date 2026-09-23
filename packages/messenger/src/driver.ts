@@ -1,4 +1,4 @@
-import type { CallOptions } from '@novastarter/utils';
+import type { CallOptions, CallResponse } from '@novastarter/http';
 import type { MessengerMessage, MessengerResult } from './types.js';
 
 /**
@@ -27,29 +27,35 @@ export declare class MessengerDriver {
 	send(message: MessengerMessage): Promise<MessengerResult>;
 
 	/**
-	 * Make a request of the messenger's own API, with the location's credentials, timeout and errors — the way to
-	 * whatever `send()` does not cover, a method the driver has no wrapper for yet included.
+	 * Make a request of the messenger's own API with the location's credentials, timeout and errors — the way to
+	 * whatever the contract does not cover, an endpoint the driver has no wrapper for yet included.
 	 *
-	 * The signature is the same for every driver; what `method` and `params` mean is the messenger's, so code calling
-	 * it is written for one messenger: a method name of an RPC-style API — Telegram's `sendPhoto`, Slack's
-	 * `chat.postMessage` — or the verb and path of a REST one — Discord's `POST /channels/123/messages`. A `Blob` or
-	 * `File` among the parameters is uploaded, where the API takes files.
+	 * The signature is the same for every driver; what `method` means is the provider's: the verb and path of a REST
+	 * API — Telegram's `sendPhoto`, Discord's `POST /channels/{id}/messages` — a full URL on one of the provider's own
+	 * hosts, or the command name of an RPC-style SDK. A `{name}` in the path is filled from the parameter of that name;
+	 * the other parameters are the query of a `GET`, `HEAD` or `DELETE` and the body otherwise — JSON, a form or
+	 * multipart as the `content-type` header and the files among them say. Headers and a timeout for every call of a
+	 * location go in its registration's `call`.
 	 *
-	 * Optional: a driver whose messenger has no API to reach may leave it out; the `console` driver logs the request.
+	 * The `console` driver logs the request.
 	 *
-	 * @typeParam T - What the request answers with; the caller knows it from the messenger's documentation.
-	 * @param method - The method, or the verb and path, in the messenger's terms.
-	 * @param params - Its parameters or body.
+	 * @typeParam T - What the provider's body is; the caller knows it from the provider's documentation.
+	 * @param method - The verb and path, a full URL on the provider's hosts, or a command name.
+	 * @param params - The placeholders' values, and the query or body.
 	 * @param options - A timeout, an abort signal, extra headers.
-	 * @returns The messenger's answer to the request.
-	 * @throws MessengerTargetGoneError when the recipient can no longer be reached.
-	 * @throws Error when the messenger refused the request or could not be reached.
+	 * @returns The status, the headers — names lower-cased — and the body: parsed JSON, else text.
+	 * @throws ProviderCallError when the provider answers with an error status — its status and answer in `extensions`.
+	 * @throws HitRateLimitError when the provider asks to slow down.
+	 * @throws TimeoutError when the request outlives its timeout.
+	 * @throws Error when the method is malformed, a placeholder is unfilled, or a URL is not on the provider's hosts.
 	 * @example
 	 * ```ts
-	 * await useMessenger().location('telegram').call?.('sendPhoto', { chat_id: chatId, photo: file });
+	 * const driver = useMessenger().location('telegram');
+	 * const { status, headers, data } = await driver.call!('sendPhoto', { chat_id: chatId, photo: file });
 	 * ```
 	 */
-	call?<T = unknown>(method: string, params?: Record<string, unknown>, options?: CallOptions): Promise<T>;
+
+	call?<T = unknown>(method: string, params?: Record<string, unknown>, options?: CallOptions): Promise<CallResponse<T>>;
 
 	/**
 	 * Check the driver can be used — the token, connectivity — without sending anything.

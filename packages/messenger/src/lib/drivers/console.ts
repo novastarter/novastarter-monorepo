@@ -1,5 +1,5 @@
+import type { CallOptions, CallResponse } from '@novastarter/http';
 import { type Logger, useLogger } from '@novastarter/logger';
-import type { CallOptions } from '@novastarter/utils';
 import type { MessengerDriver } from '../../driver.js';
 import type { MessengerMessage, MessengerResult } from '../../types.js';
 
@@ -83,20 +83,25 @@ export class MessengerDriverConsole implements MessengerDriver {
 	 * Lets code written against a provider's `call()` run in development without the provider; files are named, not
 	 * dumped, and the options are left out of the line, since their headers may carry secrets.
 	 *
-	 * @typeParam T - What the caller expects back; there is no answer, so it gets `undefined`.
+	 * @typeParam T - What the caller expects back; there is no answer, so its `data` is `undefined`.
 	 * @param method - The verb and path, or the command name.
 	 * @param params - Its parameters.
 	 * @param _options - Ignored: nothing is sent, so there is nothing to time out or add headers to.
-	 * @returns `undefined`.
+	 * @returns A `200` with no headers and no body, as no provider answered.
 	 */
-	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, _options?: CallOptions): Promise<T> {
+	async call<T = unknown>(
+		method: string,
+		params: Record<string, unknown> = {},
+		_options?: CallOptions,
+	): Promise<CallResponse<T>> {
 		// 1. A file stands for itself by its name, so the log line stays readable
 		const logged = Object.fromEntries(Object.entries(params).map(([key, value]) => [key, describeValue(value)]));
 
-		// 2. One line per request, what a developer reads; nothing comes back, as no provider answered
+		// 2. One line per request, what a developer reads; a plain 200 comes back, as no provider answered, so code
+		//    reading the status runs too
 		this.logger.info({ method, params: logged }, `Messenger call ${method}`);
 
-		return undefined as T;
+		return { status: 200, headers: {}, data: undefined as T };
 	}
 }
 

@@ -1,17 +1,8 @@
-import { toProviderCallError } from '@novastarter/errors';
+import { type CallOptions, type CallResponse, type HttpApi, request } from '@novastarter/http';
 import type { MailDriver, MailMessage, MailResult } from '@novastarter/mail';
-import { type CallOptions, parseCallMethod } from '@novastarter/utils';
-import { httpCall, resolveCallUrl } from '@novastarter/utils/node';
 import { Client, type LibraryResponse, type SendEmailV3_1 } from 'node-mailjet';
 import { describeError } from './describe-error.js';
 import { toMailjetMessage } from './to-mailjet-message.js';
-
-/**
- * How long a {@link MailDriverMailjet.call} may take unless the caller names another deadline, in milliseconds.
- *
- * @defaultValue 30 seconds.
- */
-export const DEFAULT_MAILJET_CALL_TIMEOUT = 30_000;
 
 /**
  * The root of Mailjet's REST API, the one {@link MailDriverMailjet.call} joins a path to.
@@ -21,12 +12,12 @@ export const DEFAULT_MAILJET_CALL_TIMEOUT = 30_000;
 const MAILJET_API_URL = 'https://api.mailjet.com';
 
 /**
- * The hosts a full URL in {@link MailDriverMailjet.call} may point at: Mailjet's API only, so the key pair never
- * travels anywhere else.
+ * The hosts a full URL in {@link MailDriverMailjet.call} may point at: Mailjet's API and its US region's, so the key
+ * pair never travels anywhere else.
  *
  * @internal
  */
-const MAILJET_CALL_HOSTS: readonly string[] = ['api.mailjet.com'];
+const MAILJET_CALL_HOSTS: readonly string[] = ['api.mailjet.com', 'api.us.mailjet.com'];
 
 /**
  * Options accepted by {@link MailDriverMailjet}.
@@ -87,12 +78,12 @@ export class MailDriverMailjet implements MailDriver {
 	private readonly sandbox: boolean;
 
 	/**
-	 * The `Authorization` header of a {@link call}: Basic auth on the key pair, since the SDK cannot request an
-	 * arbitrary path.
+	 * Mailjet's API as {@link MailDriverMailjet.call} requests it: Basic auth on the key pair, since the SDK cannot
+	 * request an arbitrary path, and `api.mailjet.com` and `api.us.mailjet.com` as the only hosts.
 	 *
 	 * @internal
 	 */
-	private readonly authorization: string;
+	private readonly api: HttpApi;
 
 	/**
 	 * Create a driver on a client of its own for the given key pair.
@@ -109,8 +100,15 @@ export class MailDriverMailjet implements MailDriver {
 		this.client = new Client({ apiKey: config.apiKey, apiSecret: config.apiSecret });
 		this.sandbox = Boolean(config.sandbox);
 
-		// 2. The key pair is kept as a ready header for `call()`, the one request that goes around the SDK
-		this.authorization = `Basic ${Buffer.from(`${config.apiKey}:${config.apiSecret}`).toString('base64')}`;
+		// 2. The key pair also goes to the API of `call()`, the one request that goes around the SDK
+		const basic = Buffer.from(`${config.apiKey}:${config.apiSecret}`).toString('base64');
+
+		this.api = {
+			provider: 'mailjet',
+			baseUrl: MAILJET_API_URL,
+			hosts: MAILJET_CALL_HOSTS,
+			headers: { authorization: `Basic ${basic}` },
+		};
 	}
 
 	/**
@@ -167,53 +165,33 @@ export class MailDriverMailjet implements MailDriver {
 	 * anything else the driver has no wrapper for.
 	 *
 	 * `method` is the verb and a path from `https://api.mailjet.com`, the API version included (`GET /v3/REST/contact`,
-	 * `POST /v3.1/send`), or a full URL on `api.mailjet.com`. The parameters are the query of a `GET`, `HEAD` or
-	 * `DELETE` and the JSON body otherwise. The SDK builds its URLs from a resource and a version and cannot take a
-	 * path, so the request is made directly, with Basic auth on the key pair.
+	 * `POST /v3.1/send`), or a full URL on `api.mailjet.com` or `api.us.mailjet.com`. The parameters are the query of
+	 * a `GET`, `HEAD` or `DELETE` and the JSON body otherwise. The SDK builds its URLs from a resource and a version
+	 * and cannot take a path, so the request is made directly, with Basic auth on the key pair.
 	 *
 	 * @typeParam T - What the request answers with, from Mailjet's documentation.
 	 * @param method - The verb and the path, or a full URL on Mailjet's API host.
-	 * @param params - The query or the body.
-	 * @param options - A timeout ({@link DEFAULT_MAILJET_CALL_TIMEOUT} unless given), an abort signal, extra headers,
-	 * where the parameters go (`paramsIn`).
-	 * @returns Mailjet's answer: parsed JSON, else text; `undefined` for an empty one.
+	 * @param params - The query or the body. A `{name}` in the path takes the parameter of that name, URL-encoded,
+	 * which is then not sent again.
+	 * @param options - A timeout (30 s unless given), an abort signal, extra headers.
+	 * @returns The status, the lower-cased headers and Mailjet's answer: parsed JSON, else text; `undefined` when
+	 * empty.
 	 * @throws ProviderCallError when Mailjet answers with an error status — its status and answer in `extensions`.
 	 * @throws HitRateLimitError when Mailjet answers 429.
 	 * @throws TimeoutError when the request outlives its timeout.
 	 * @throws Error when the method is malformed or its URL is not on Mailjet's API host.
 	 * @example
 	 * ```ts
-	 * const contacts = await useMail().location('mailjet').call?.('GET /v3/REST/contact', { Limit: 10 });
+	 * const { data } = await useMail().location('mailjet').call!('GET /v3/REST/contact', { Limit: 10 });
 	 * ```
 	 */
-	async call<T = unknown>(method: string, params?: Record<string, unknown>, options: CallOptions = {}): Promise<T> {
-		// 1. The method is taken apart and its URL checked before any request, so a foreign host never sees the keys
-		const { verb, target } = parseCallMethod(method);
-		const url = resolveCallUrl(MAILJET_API_URL, target, MAILJET_CALL_HOSTS);
-
-		// 2. The request with the key pair; the caller's headers go on top of the driver's
-		const response = await httpCall({
-			url,
-			verb,
-			params,
-			paramsIn: options.paramsIn,
-			headers: { authorization: this.authorization, ...options.headers },
-			timeout: options.timeout ?? DEFAULT_MAILJET_CALL_TIMEOUT,
-			signal: options.signal,
-		});
-
-		// 3. A refusal becomes the kit's error; Mailjet's `ErrorMessage` names the reason, and nothing of the request —
-		//    the key pair included — goes into it
-		if (response.status < 200 || response.status >= 300) {
-			throw toProviderCallError({
-				provider: 'mailjet',
-				method,
-				status: response.status,
-				body: response.body,
-				headers: response.headers,
-			});
-		}
-
-		return response.body as T;
+	async call<T = unknown>(
+		method: string,
+		params?: Record<string, unknown>,
+		options?: CallOptions,
+	): Promise<CallResponse<T>> {
+		// 1. `request()` does the whole of it — placeholders, the host check before the keys are sent, the deadline,
+		//    the kit's errors with Mailjet's `ErrorMessage` and without the keys — over the constructor's API
+		return request<T>(this.api, method, params, options);
 	}
 }

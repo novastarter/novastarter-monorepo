@@ -1,5 +1,6 @@
-import { callParamsIn, type CallVerb } from '../call.js';
-import { withTimeout } from '../with-timeout.js';
+import { withTimeout } from '@novastarter/utils';
+import { request as octokitRequest } from '@octokit/request';
+import type { CallVerb } from './call.js';
 
 /**
  * The URL a `call()` target points at: a path joined to the API's root, or a full URL, which has to be on one of the
@@ -13,7 +14,7 @@ import { withTimeout } from '../with-timeout.js';
  * @param target - A path from that root, or a full URL.
  * @param allowedHosts - The hosts a full URL may point at, besides the base's own; `*.twilio.com` matches subdomains.
  * @returns The URL.
- * @throws Error when a full URL points at a host of another party.
+ * @throws Error when a `{name}` placeholder is left unfilled, or a full URL points at a host of another party.
  * @example
  * ```ts
  * resolveCallUrl('https://api.stripe.com', '/v1/customers', []); // https://api.stripe.com/v1/customers
@@ -21,7 +22,15 @@ import { withTimeout } from '../with-timeout.js';
  * ```
  */
 export const resolveCallUrl = (base: string, target: string, allowedHosts: readonly string[] = []): URL => {
-	// 1. A path goes under the base: the base's own path kept in front, and a query the base carries — an API version —
+	// 1. A placeholder nobody filled — neither a parameter nor the driver — is a mistake of the caller; sent, it would
+	//    reach the provider as `%7Bname%7D`
+	const unfilled = /\{([A-Za-z_][\w-]*)\}/.exec(target);
+
+	if (unfilled) {
+		throw new Error(`The call path needs a "${unfilled[1]}" parameter for its {${unfilled[1]}} placeholder`);
+	}
+
+	// 2. A path goes under the base: the base's own path kept in front, and a query the base carries — an API version —
 	//    kept after the target's own
 	const root = new URL(base);
 
@@ -35,7 +44,7 @@ export const resolveCallUrl = (base: string, target: string, allowedHosts: reado
 		return url;
 	}
 
-	// 2. A full URL only on the base's host or one the driver allows — anywhere else would receive the credentials. The
+	// 3. A full URL only on the base's host or one the driver allows — anywhere else would receive the credentials. The
 	//    allowed hosts are read the way `URL` writes a host, lower-cased and in punycode, so `API.x.com` matches
 	const url = new URL(target);
 
@@ -43,7 +52,7 @@ export const resolveCallUrl = (base: string, target: string, allowedHosts: reado
 		host.startsWith('*.') ? url.host.endsWith(host.slice(1)) : url.host === host,
 	);
 
-	// 3. HTTPS everywhere but on the base's own host, which may be a plain-HTTP stand-in in tests; the provider's real
+	// 4. HTTPS everywhere but on the base's own host, which may be a plain-HTTP stand-in in tests; the provider's real
 	//    hosts are never reached without TLS
 	const secure = url.host === root.host ? url.protocol === root.protocol : url.protocol === 'https:';
 
@@ -132,13 +141,11 @@ export interface HttpCallRequest {
 	url: URL;
 	/** The verb. */
 	verb: CallVerb;
-	/** The parameters: the query of a GET, HEAD or DELETE, the body otherwise — unless `paramsIn` says. */
+	/** The parameters: the query of a GET, HEAD or DELETE, the body otherwise. */
 	params?: Record<string, unknown> | undefined;
-	/** Where the parameters go, overriding the verb's convention; see `CallOptions.paramsIn`. */
-	paramsIn?: 'query' | 'body' | undefined;
 	/**
 	 * The driver's headers — the credentials — and the caller's on top. A `content-type` among them decides how the body
-	 * goes: a form, multipart, the `body` parameter as it is for another non-JSON type, JSON otherwise.
+	 * goes: a form, multipart, JSON otherwise.
 	 */
 	headers?: Record<string, string> | undefined;
 	/**
@@ -165,8 +172,8 @@ export interface HttpCallRequest {
 export const MAX_CALL_REDIRECTS = 5;
 
 /**
- * Make the HTTP request of a driver's `call()`: the parameters as the query or the body, the deadline, the answer
- * parsed.
+ * Make the HTTP request of a driver's `call()` on `@octokit/request`: the parameters as the query or the body, the
+ * deadline, the answer parsed.
  *
  * It does not judge the status — every provider words its refusals its own way, so the driver turns a non-2xx answer
  * into its error, `toProviderCallError()` of `@novastarter/errors` for most. Nothing of the request — headers with
@@ -188,9 +195,9 @@ export const MAX_CALL_REDIRECTS = 5;
  * ```
  */
 export const httpCall = async (request: HttpCallRequest): Promise<HttpCallResponse> => {
-	// 1. The parameters go into the query of a GET, HEAD or DELETE and the body otherwise, unless the caller said
+	// 1. The parameters go into the query of a GET, HEAD or DELETE and the body otherwise
 	const params = request.params ?? {};
-	const inQuery = callParamsIn(request.verb, request.paramsIn) === 'query';
+	const inQuery = request.verb === 'GET' || request.verb === 'HEAD' || request.verb === 'DELETE';
 	const url = new URL(request.url);
 
 	if (inQuery) {
@@ -199,29 +206,119 @@ export const httpCall = async (request: HttpCallRequest): Promise<HttpCallRespon
 		}
 	}
 
-	// 2. Header names folded to lower case, so the driver's `Content-Type` and the default one are one header, not two
+	// 2. Header names folded to lower case, so the driver's `Content-Type` and the default one are one header, not two;
+	//    a neutral `accept` and `user-agent` replace the GitHub ones `@octokit/request` would send
 	const headers: Record<string, string> = Object.fromEntries(
-		Object.entries({ accept: 'application/json', ...request.headers }).map(([name, value]) => [
-			name.toLowerCase(),
-			value,
-		]),
+		Object.entries({ accept: 'application/json', 'user-agent': 'novastarter', ...request.headers }).map(
+			([name, value]) => [name.toLowerCase(), value],
+		),
 	);
 
 	const body = inQuery ? undefined : toBody(params, request.bodyType ?? 'json', headers);
 	const fetcher: HttpCallFetch = request.fetch ?? globalFetch;
 
-	// 3. The requests and the reading of the answer under one deadline — a slow body is still the deadline's — and the
-	//    caller's signal aborts them too
+	// 3. `@octokit/request` makes the request, through a `fetch` that follows the redirects safely and reads the answer
+	//    itself — Octokit's own reading turns big numbers into `BigInt`s, swallows a broken body and drops a repeated
+	//    header; all of it under one deadline, the caller's signal aborting it too
 	return withTimeout(
 		async (signal) => {
-			const response = await follow(fetcher, url, request.verb, headers, body, signal);
-			const text = await response.text();
+			let answer: HttpCallResponse | undefined;
 
-			return { status: response.status, headers: response.headers, body: parseBody(text) };
+			try {
+				await octokitRequest({
+					method: request.verb,
+					url: url.href,
+					headers,
+					...(body === undefined ? {} : { data: body }),
+					request: {
+						fetch: readingFetch(fetcher, url, (read) => {
+							answer = read;
+						}),
+						signal,
+						log: SILENT_LOG,
+					},
+				});
+			} catch (error) {
+				// 4. A failure to reach the provider — or a redirect refused — goes on as it was thrown, never as
+				//    Octokit's error, which quotes the request's headers
+				throw unwrapOctokitError(error);
+			}
+
+			// 5. The answer as read on the way, whatever its status: the caller judges it
+			if (!answer) {
+				throw new Error('The request ended without an answer');
+			}
+
+			return answer;
 		},
 		request.timeout,
 		request.signal ? { signal: request.signal } : {},
 	);
+};
+
+/**
+ * The logger `@octokit/request` warns through — about GitHub's deprecation headers — kept silent: the providers of the
+ * kit are not GitHub, and a warning on the console is not the application's log.
+ *
+ * @internal
+ */
+const SILENT_LOG = { debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined };
+
+/**
+ * A `fetch` for `@octokit/request` that sends our request and reads the answer itself.
+ *
+ * The URL is the one built here, not Octokit's — it reads a path as a template, dropping `:send` of `messages:send` and a
+ * trailing slash. The redirects are followed by hand, the way {@link follow} does, and a form body keeps no content type,
+ * so `fetch` writes its boundary. The answer is read here — a broken body throws — and handed to `onAnswer`; Octokit
+ * gets an empty `204`, so it has nothing to parse or judge.
+ *
+ * @param fetcher - The `fetch` the requests go through.
+ * @param target - The URL to request, as built by {@link httpCall}.
+ * @param onAnswer - Receives the answer as read.
+ * @returns The adapted `fetch`.
+ * @internal
+ */
+const readingFetch = (fetcher: HttpCallFetch, target: URL, onAnswer: (answer: HttpCallResponse) => void) => {
+	return async (_url: string, init: { method?: string; headers?: unknown; body?: unknown; signal?: AbortSignal }) => {
+		// 1. Octokit's headers are a plain record; a form body keeps no content type, so `fetch` writes its boundary
+		const headers = { ...(init.headers as Record<string, string>) };
+		const body = init.body as string | Blob | FormData | undefined;
+
+		if (body instanceof FormData) {
+			delete headers['content-type'];
+		}
+
+		// 2. The request, its redirects, and the whole answer read — the headers kept as `Headers`, repeats included
+		const response = await follow(fetcher, target, init.method ?? 'GET', headers, body, init.signal as AbortSignal);
+		const text = await response.text();
+
+		onAnswer({
+			status: response.status,
+			headers: response.headers,
+			body: parseBody(text, response.headers.get('content-type')),
+		});
+
+		return new Response(null, { status: 204 });
+	};
+};
+
+/**
+ * What a failed Octokit request is thrown as: the error the `fetch` threw — an unreachable host, a redirect refused, the
+ * abort reason — never Octokit's `HttpError`, whose request quotes every header but `authorization`.
+ *
+ * @param error - What `@octokit/request` threw.
+ * @returns The error to throw.
+ * @internal
+ */
+const unwrapOctokitError = (error: unknown): unknown => {
+	// 1. Octokit's error carries what `fetch` threw as its cause; without one, a plain error that quotes nothing
+	if (error instanceof Error && error.name === 'HttpError') {
+		const cause = (error as { cause?: unknown }).cause;
+
+		return cause !== undefined ? cause : new Error('The request could not be sent');
+	}
+
+	return error;
 };
 
 /**
@@ -242,8 +339,8 @@ const globalFetch: HttpCallFetch = (input, { body, ...init }) => {
  *
  * `fetch` would follow a redirect by itself and drop only `Authorization` on the way to another host; a key in a header
  * of the provider's own — `x-api-key`, `X-Postmark-Server-Token` — would go along. Here a redirect on the same origin
- * keeps every header, one to another origin keeps none but `accept`, and a `303`, or a `301`/`302` of a `POST`, turns
- * into a `GET` without a body, the way browsers do.
+ * keeps every header, one to another origin keeps none but `accept`, must stay on TLS and may not carry a body, and a
+ * `303`, or a `301`/`302` of a `POST`, turns into a `GET` without a body, the way browsers do.
  *
  * @param fetcher - The `fetch` to use.
  * @param start - The first URL.
@@ -252,7 +349,8 @@ const globalFetch: HttpCallFetch = (input, { body, ...init }) => {
  * @param body - The body, if any.
  * @param signal - Aborts every request of the chain.
  * @returns The first answer that is not a redirect, or the redirect itself when it names no `Location`.
- * @throws Error when the chain is longer than {@link MAX_CALL_REDIRECTS}.
+ * @throws Error when the chain is longer than {@link MAX_CALL_REDIRECTS}, or another origin would get plain HTTP or the
+ * body.
  * @internal
  */
 const follow = async (
@@ -284,12 +382,8 @@ const follow = async (
 			return response;
 		}
 
-		// 2. The next hop: the credentials only when it stays on the same origin, and a body only when the verb keeps it
+		// 2. The next hop: a `303`, or a `301`/`302` of a `POST`, becomes a `GET` without a body, the way browsers do
 		const next = new URL(location, url);
-
-		if (next.origin !== url.origin) {
-			sentHeaders = { accept: headers['accept'] ?? 'application/json' };
-		}
 
 		if (response.status === 303 || ((response.status === 301 || response.status === 302) && method === 'POST')) {
 			method = 'GET';
@@ -297,7 +391,21 @@ const follow = async (
 			delete sentHeaders['content-type'];
 		}
 
-		// 3. The redirect's own body is dropped, so the connection is released before the next request
+		// 3. Another origin gets no credentials, is reached over TLS when the chain started on it, and never gets a body:
+		//    what the caller sent was meant for the provider, not for wherever it points
+		if (next.origin !== url.origin) {
+			if (url.protocol === 'https:' && next.protocol !== 'https:') {
+				throw new Error(`The call was redirected to another origin without TLS: ${next.host}`);
+			}
+
+			if (sentBody !== undefined) {
+				throw new Error(`The call was redirected to another origin with its body: ${next.host}`);
+			}
+
+			sentHeaders = { accept: headers['accept'] ?? 'application/json' };
+		}
+
+		// 4. The redirect's own body is dropped, so the connection is released before the next request
 		await response.body?.cancel();
 		url = next;
 	}
@@ -306,15 +414,26 @@ const follow = async (
 };
 
 /**
- * The body of an answer: JSON when it parses, the text otherwise, nothing when empty.
+ * The body of an answer: JSON when it parses and its type is JSON, missing, or it is an object or a list; the text
+ * otherwise; nothing when empty.
  *
  * @param text - The body as text.
+ * @param type - The answer's `content-type`, when it has one.
  * @returns The parsed body.
  * @internal
  */
-const parseBody = (text: string): unknown => {
-	// 1. An empty body — a 204 — is nothing; a text that is not JSON — XML, HTML — stays text
+const parseBody = (text: string, type: string | null): unknown => {
+	// 1. An empty body — a 204 — is nothing
 	if (text.length === 0) return undefined;
+
+	// 2. JSON when the answer says so, says nothing, or is an object or a list whatever its type — providers label JSON
+	//    as text now and then; a bare scalar under a text type — `"0012"` as text/plain — stays the text it is
+	const media = type?.split(';')[0]?.trim().toLowerCase();
+	const json = !media || media === 'application/json' || media.endsWith('+json') || /^\s*[{[]/.test(text);
+
+	if (!json) {
+		return text;
+	}
 
 	try {
 		return JSON.parse(text);
@@ -336,7 +455,7 @@ const toBody = (
 	params: Record<string, unknown>,
 	bodyType: 'json' | 'form',
 	headers: Record<string, string>,
-): string | Blob | FormData => {
+): string | FormData => {
 	const entries = Object.entries(params).filter(([, value]) => value !== undefined);
 	const type = headers['content-type']?.split(';')[0]?.trim().toLowerCase();
 
@@ -373,32 +492,8 @@ const toBody = (
 		return toQueryString(Object.fromEntries(entries)).slice(1);
 	}
 
-	// 3. Another non-JSON type — XML, plain text, bytes — sends the `body` parameter as it is, the caller's type on it
-	const raw = params['body'];
-
-	if (
-		type !== undefined &&
-		!isJsonType(type) &&
-		entries.length === 1 &&
-		(typeof raw === 'string' || raw instanceof Blob)
-	) {
-		return raw;
-	}
-
-	// 4. JSON otherwise, under the caller's own JSON type when given — `application/vnd.api+json` stays
+	// 3. JSON otherwise, under the caller's own type when given — `application/vnd.api+json` stays
 	headers['content-type'] ??= 'application/json';
 
 	return JSON.stringify(Object.fromEntries(entries));
-};
-
-/**
- * Whether a content type is JSON: `application/json` or a `+json` suffix type.
- *
- * @param type - The media type, lower-case, without parameters.
- * @returns `true` for JSON.
- * @internal
- */
-const isJsonType = (type: string): boolean => {
-	// 1. The plain type and every vendor type built on it
-	return type === 'application/json' || type.endsWith('+json');
 };

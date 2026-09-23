@@ -61,16 +61,17 @@ arrives with the custom data. Everything else is verified and dropped.
 
 ## Any other request
 
-`call()` reaches any endpoint of Paddle's API with the location's key as the bearer token. The parameters of a `GET` or
-`DELETE` go in the query — a list as one comma-separated value — the others as a JSON body (`options.paramsIn` moves
-them). A refusal throws `ProviderCallError` with Paddle's status and `{ error }`, a 429 `HitRateLimitError`.
+`call()` reaches any endpoint of Paddle's API with the location's key as the bearer token and answers
+`{ status, headers, data }`. The parameters of a `GET` or `DELETE` go in the query — pass a list as one comma-separated
+string, e.g. `status: 'active,paused'` — the others as a JSON body. A refusal throws `ProviderCallError` with Paddle's
+status and `{ error }`, a 429 `HitRateLimitError`.
 
 ```ts
 const payments = usePayments().location('default');
 
-await payments.call?.('GET /discounts', { status: 'active,archived', per_page: 50 });
+const { data } = await payments.call!('GET /discounts', { status: 'active,archived', per_page: 50 });
 
-await payments.call?.('POST /adjustments', {
+await payments.call!('POST /adjustments', {
 	action: 'refund',
 	transaction_id: 'txn_123',
 	reason: 'Charged twice',
@@ -81,6 +82,20 @@ await payments.call?.('POST /adjustments', {
 Paths go to the environment's API (`api.paddle.com`, `sandbox-api.paddle.com`) or to `apiUrl`. A full URL may point at
 `api.paddle.com` or `sandbox-api.paddle.com`; any other host is refused before a request is made. The default timeout is
 30 seconds.
+
+A `{name}` in the path is filled from the parameter of that name, URL-encoded, and that parameter is not sent again; a
+`{name}` no parameter fills is refused before a request. The headers carry Paddle's `x-request-id`, say.
+
+```ts
+const payments = usePayments().location('default');
+
+const { status, headers, data } = await payments.call!<{ data: { id: string } }>('GET /customers/{id}', {
+	id: 'ctm_123',
+	include: 'addresses',
+});
+
+console.log(status, data.data.id, headers['x-request-id']);
+```
 
 ## Options
 

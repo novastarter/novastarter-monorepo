@@ -181,7 +181,10 @@ describe('MailDriverMailgun.call', () => {
 
 		const driver = new MailDriverMailgun({ apiKey: 'key-SECRET', domain: 'mg.acme.test' });
 
-		expect(await driver.call('GET /v3/{domain}/events', { event: 'failed', limit: 50 })).toStrictEqual({ items: [] });
+		expect((await driver.call('GET /v3/{domain}/events', { event: 'failed', limit: 50 })).data).toStrictEqual({
+			items: [],
+		});
+
 		expect(sent().url).toBe('https://api.mailgun.net/v3/mg.acme.test/events?event=failed&limit=50');
 		expect(sent().init.headers['authorization']).toBe(`Basic ${Buffer.from('api:key-SECRET').toString('base64')}`);
 
@@ -234,9 +237,9 @@ describe('MailDriverMailgun.call', () => {
 		// 2. Its own host is fine, and so is a path, joined to it
 		fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
 
-		expect(await driver.call('DELETE https://api.eu.mailgun.net/v3/mg.acme.test/bounces/ada@example.com')).toBe(
-			undefined,
-		);
+		const { data } = await driver.call('DELETE https://api.eu.mailgun.net/v3/mg.acme.test/bounces/ada@example.com');
+
+		expect(data).toBeUndefined();
 
 		expect(sent().url).toBe('https://api.eu.mailgun.net/v3/mg.acme.test/bounces/ada@example.com');
 	});
@@ -267,5 +270,49 @@ describe('MailDriverMailgun.call', () => {
 				{ timeout: 10 },
 			),
 		).rejects.toBeInstanceOf(TimeoutError);
+	});
+});
+
+describe('MailDriverMailgun.call placeholders and answers', () => {
+	test('Fills a {name} from its parameter, encoded, and sends that parameter nowhere else', async () => {
+		fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+		fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+		const driver = new MailDriverMailgun({ apiKey: 'key-SECRET', domain: 'mg.acme.test' });
+
+		// 1. A GET: the placeholder takes `id`, URL-encoded; the other parameters stay in the query
+		await driver.call('GET /v3/{domain}/tags/{id}', { id: 'a/b', limit: 5 });
+		const [first] = fetchMock.mock.calls[0] as [string];
+
+		expect(first).toBe('https://api.mailgun.net/v3/mg.acme.test/tags/a%2Fb?limit=5');
+
+		// 2. A POST: the placeholder's parameter is not in the body
+		await driver.call('POST /v3/{domain}/templates/{id}/versions', { id: 42, name: 'welcome' });
+
+		const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+
+		expect(url).toBe('https://api.mailgun.net/v3/mg.acme.test/templates/42/versions');
+		expect(init.body).toBe('name=welcome');
+	});
+
+	test('Refuses a placeholder no parameter fills before any request', async () => {
+		await expect(
+			new MailDriverMailgun({ apiKey: 'key-SECRET', domain: 'mg.acme.test' }).call('GET /v3/{domain}/tags/{id}'),
+		).rejects.toThrow(/"id" parameter/);
+
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	test('Answers the status, the lower-cased headers and the body', async () => {
+		fetchMock.mockResolvedValueOnce(
+			new Response('{"ok":true}', { status: 201, headers: { 'X-RateLimit-Remaining': '9' } }),
+		);
+
+		const driver = new MailDriverMailgun({ apiKey: 'key-SECRET', domain: 'mg.acme.test' });
+
+		// 1. Every call answers the whole response, headers named in lower case
+		const answer = await driver.call('GET /v3/{domain}/tags/{id}', { id: 'x' });
+
+		expect(answer).toMatchObject({ status: 201, headers: { 'x-ratelimit-remaining': '9' }, data: { ok: true } });
 	});
 });

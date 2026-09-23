@@ -6,8 +6,8 @@ import type {
 	OAuthCallbackResult,
 } from '@novastarter/auth';
 import { toProviderCallError } from '@novastarter/errors';
-import { MAX_TIMER_DELAY, parseCallMethod } from '@novastarter/utils';
-import { httpCall, resolveCallUrl } from '@novastarter/utils/node';
+import { type CallResponse, type HttpApi, type HttpCallResponse, request } from '@novastarter/http';
+import { MAX_TIMER_DELAY } from '@novastarter/utils';
 import { buildAuthorizeUrl } from './build-authorize-url.js';
 import {
 	API_URL,
@@ -194,7 +194,9 @@ export class AuthDriverGithub implements AuthDriver {
 	 * With `options.accessToken` the request carries it as a Bearer token and acts as that person — within the scopes
 	 * they granted. Without it the request is authenticated as the OAuth app, with Basic `clientId:clientSecret`: what
 	 * GitHub's `/applications/{client_id}/…` endpoints take — checking, resetting or revoking a token — with
-	 * `{client_id}` in the method replaced by the app's client id. Every request pins the API version and carries
+	 * `{client_id}` in the method replaced by the app's client id. Any other `{name}` in the method is filled from the
+	 * parameter of that name — `{owner}` and `{repo}` of `/repos/{owner}/{repo}` — which is then not sent again. Every
+	 * request pins the API version and carries
 	 * GitHub's media type and a user agent; the caller's headers go on top. The parameters are the query of a `GET`,
 	 * `HEAD` or `DELETE` and the JSON body otherwise.
 	 *
@@ -203,72 +205,96 @@ export class AuthDriverGithub implements AuthDriver {
 	 * `uploads.github.com`.
 	 * @param params - Its query or body.
 	 * @param options - The person's access token, a timeout (the location's unless given), an abort signal, extra
-	 * headers, where the parameters go (`paramsIn`).
-	 * @returns GitHub's answer: parsed JSON, else text; `undefined` for an empty one — a `204`.
+	 * headers.
+	 * @returns The status, the headers — the `link` to the next page, the `x-ratelimit-*` budget — and GitHub's answer:
+	 * parsed JSON, else text; `undefined` for an empty one — a `204`.
 	 * @throws ProviderCallError when GitHub answers with an error status — its status and answer in `extensions`.
 	 * @throws HitRateLimitError when GitHub refuses for a rate limit: a 429, or a 403 with its limit spent
 	 * (`x-ratelimit-remaining: 0`, reset at `x-ratelimit-reset`) or a `Retry-After`.
 	 * @throws TimeoutError when the request outlives its timeout.
-	 * @throws Error when the method is malformed or its URL is not on GitHub's hosts.
+	 * @throws Error when the method is malformed, a placeholder is left unfilled or its URL is not on GitHub's hosts.
 	 * @example
 	 * ```ts
 	 * const github = useAuth().location('github');
 	 *
-	 * const repos = await github.call?.('GET /user/repos', { per_page: 100 }, { accessToken: tokens.accessToken });
-	 * const check = await github.call?.('POST /applications/{client_id}/token', { access_token: tokens.accessToken });
+	 * const { data: repos } = await github.call!('GET /user/repos', { per_page: 100 }, { accessToken });
+	 * const { status } = await github.call!('POST /applications/{client_id}/token', { access_token: accessToken });
+	 * const { data, headers } = await github.call!('GET /repos/{owner}/{repo}/issues', { owner: 'acme', repo: 'web' });
 	 * ```
 	 */
 	async call<T = unknown>(
 		method: string,
-		params: Record<string, unknown> = {},
+		params?: Record<string, unknown>,
 		options: AuthCallOptions = {},
-	): Promise<T> {
-		// 1. The method taken apart, the app's client id put in for the placeholder of GitHub's app endpoints, and the
-		//    URL checked against GitHub's hosts before any credential goes near it
-		const { verb, target } = parseCallMethod(method);
-		const resolved = target.replaceAll('{client_id}', encodeURIComponent(this.clientId));
-		const url = resolveCallUrl(API_URL, resolved, CALL_HOSTS);
+	): Promise<CallResponse<T>> {
+		// 1. The app's client id put in for the placeholder of GitHub's app endpoints first — the Basic credentials are
+		//    this app's, so no parameter names another one; the token stays out of the options handed on, so it is
+		//    never sent as a header of its own
+		const { accessToken, ...rest } = options;
 
-		// 2. The person's token when the caller has one, the app's own credentials otherwise
-		const authorization = options.accessToken
-			? `Bearer ${options.accessToken}`
+		return request<T>(
+			this.api(accessToken),
+			method.replaceAll('{client_id}', encodeURIComponent(this.clientId)),
+			params,
+			rest,
+		);
+	}
+
+	/**
+	 * GitHub's REST API as {@link AuthDriverGithub.call} requests it: on GitHub's hosts only, with the headers every
+	 * GitHub REST client sends, under the location's deadline, through the driver's fetch, and GitHub's rate limits
+	 * read as such.
+	 *
+	 * @param accessToken - The person's token; the app's Basic credentials without one.
+	 * @returns The API description for `request()`.
+	 * @internal
+	 */
+	private api(accessToken: string | undefined): HttpApi {
+		// 1. The person's token when the caller has one, the app's own credentials otherwise — so the API is built per
+		//    call
+		const authorization = accessToken
+			? `Bearer ${accessToken}`
 			: `Basic ${Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64')}`;
 
-		// 3. The request with the headers every GitHub REST client sends, under the caller's deadline or the location's;
-		//    the driver's fetch is the one tests replace, and it answers what `httpCall` reads of a response
-		const response = await httpCall({
-			url,
-			verb,
-			params,
-			paramsIn: options.paramsIn,
+		return {
+			provider: PROVIDER,
+			baseUrl: API_URL,
+			hosts: CALL_HOSTS,
 			headers: {
 				Accept: 'application/vnd.github+json',
 				'X-GitHub-Api-Version': API_VERSION,
 				'User-Agent': USER_AGENT,
 				Authorization: authorization,
-				...options.headers,
 			},
-			timeout: options.timeout ?? this.context.timeout,
-			signal: options.signal,
+			timeout: this.context.timeout,
 			fetch: toHttpCallFetch(this.context.fetch),
-		});
-
-		// 4. A status outside 2xx becomes the kit's error; its message names the method and GitHub's reason, never the
-		//    credentials, which stay in the request. A rate limit — a 403 as often as a 429 on GitHub — goes as a
-		//    429 with GitHub's wait, so the caller gets a `HitRateLimitError` either way
-		if (response.status < 200 || response.status >= 300) {
-			const wait = githubRateLimitWait(response.status, response.headers);
-
-			throw toProviderCallError({
-				provider: PROVIDER,
-				method,
-				status: wait === undefined ? response.status : 429,
-				body: response.body,
-				headers: response.headers,
-				retryAfter: wait,
-			});
-		}
-
-		return response.body as T;
+			refuse: refuseRateLimit,
+		};
 	}
 }
+
+/**
+ * Read GitHub's rate limits — a 403 as often as a 429 — as a 429 with GitHub's wait, so the caller gets a
+ * `HitRateLimitError` either way; a 403 that is a missing permission is left to the generic mapping.
+ *
+ * @param response - GitHub's answer.
+ * @param method - The call's method, for the error.
+ * @returns The rate-limit error, or `undefined` when the answer is not a rate limit.
+ * @internal
+ */
+const refuseRateLimit = (response: HttpCallResponse, method: string): Error | undefined => {
+	// 1. The wait GitHub names, if the refusal is a rate limit at all
+	const wait = githubRateLimitWait(response.status, response.headers, response.body);
+
+	if (wait === undefined) return undefined;
+
+	// 2. The kit's error names the method and GitHub's reason, never the credentials, which stay in the request
+	return toProviderCallError({
+		provider: PROVIDER,
+		method,
+		status: 429,
+		body: response.body,
+		headers: response.headers,
+		retryAfter: wait,
+	});
+};

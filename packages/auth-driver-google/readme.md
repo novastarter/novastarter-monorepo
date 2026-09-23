@@ -88,14 +88,33 @@ body otherwise:
 const google = useAuth().location('google');
 
 // Scope https://www.googleapis.com/auth/calendar.readonly
-const calendars = await google.call?.('GET /calendar/v3/users/me/calendarList', { maxResults: 50 }, { accessToken });
+const { data: calendars } = await google.call!(
+	'GET /calendar/v3/users/me/calendarList',
+	{ maxResults: 50 },
+	{ accessToken },
+);
 
 // Scope https://www.googleapis.com/auth/contacts.readonly
-const me = await google.call?.(
+const { data: me } = await google.call!(
 	'GET https://people.googleapis.com/v1/people/me',
 	{ personFields: 'names,emailAddresses' },
 	{ accessToken },
 );
+```
+
+A `{name}` in the path is filled from the parameter of that name, URL-encoded, and that parameter is not sent again; a
+placeholder nobody filled is refused before the request. Every call answers `{ status, headers, data }`, header names
+lower-cased:
+
+```ts
+// GET /calendar/v3/calendars/primary/events?maxResults=10
+const { status, headers, data } = await google.call!(
+	'GET /calendar/v3/calendars/{calendarId}/events',
+	{ calendarId: 'primary', maxResults: 10 },
+	{ accessToken },
+);
+
+console.log(status, headers['etag'], data);
 ```
 
 Without `accessToken` no `Authorization` header is sent — for an endpoint that needs none, or one that takes an API key

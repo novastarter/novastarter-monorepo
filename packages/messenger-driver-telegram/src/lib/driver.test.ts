@@ -55,6 +55,23 @@ describe('constructor', () => {
 		expect(() => new MessengerDriverTelegram({ token: '' })).toThrow('The Telegram driver needs a bot "token"');
 		expect(defaultExport).toBe(MessengerDriverTelegram);
 	});
+
+	test('Refuses an apiUrl that is not a URL, naming neither it nor the token', () => {
+		// 1. Caught here, a call never builds an invalid URL whose `TypeError` would hold the token
+		const error = ((): Error | undefined => {
+			try {
+				new MessengerDriverTelegram({ token: '123:secret-token', apiUrl: 'not a url' });
+
+				return undefined;
+			} catch (thrown) {
+				return thrown as Error;
+			}
+		})();
+
+		expect(error?.message).toBe('The Telegram driver\'s "apiUrl" is not a valid URL');
+		expect(JSON.stringify(error)).not.toContain('secret-token');
+		expect(error?.message).not.toContain('not a url');
+	});
 });
 
 describe('send', () => {
@@ -72,7 +89,13 @@ describe('send', () => {
 
 		expect(url).toBe(`${TELEGRAM_API_URL}/botT/sendMessage`);
 		expect(init.method).toBe('POST');
-		expect(init.headers).toStrictEqual({ 'content-type': 'application/json' });
+
+		expect(init.headers).toStrictEqual({
+			accept: 'application/json',
+			'user-agent': 'novastarter',
+			'content-type': 'application/json',
+		});
+
 		expect(JSON.parse(init.body as string)).toStrictEqual({ chat_id: '42', text: 'Hi' });
 	});
 
@@ -97,7 +120,7 @@ describe('send', () => {
 		const form = init.body as FormData;
 
 		expect(url).toBe('http://bot-api.local/botT/sendMediaGroup');
-		expect(init.headers).toBeUndefined();
+		expect(init.headers).toStrictEqual({ accept: 'application/json', 'user-agent': 'novastarter' });
 		expect(form.get('chat_id')).toBe('42');
 
 		expect(JSON.parse(form.get('media') as string)).toStrictEqual([
@@ -129,7 +152,7 @@ describe('call', () => {
 				message_id: 7,
 				is_big: undefined,
 			}),
-		).resolves.toBe(true);
+		).resolves.toMatchObject({ status: 200, data: true });
 
 		expect(request().url).toBe(`${TELEGRAM_API_URL}/botT/setMessageReaction`);
 		expect(JSON.parse(request().init.body as string)).toStrictEqual({ chat_id: '42', message_id: 7 });
@@ -176,13 +199,40 @@ describe('call', () => {
 		expect(request().init.signal?.aborted).toBe(true);
 	});
 
+	test('Gives up at the timeout when the headers arrive but the body never ends', async () => {
+		// 1. The headers come at once; the body sends one chunk and then stalls, never closing
+		fetchMock.mockImplementationOnce(
+			async () =>
+				new Response(
+					new ReadableStream({
+						start(controller) {
+							controller.enqueue(new TextEncoder().encode('{"ok":true,'));
+						},
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				),
+		);
+
+		// 2. Reading the body is under the deadline too, so the call fails at the timeout instead of hanging
+		await expect(new MessengerDriverTelegram({ token: 'T', timeout: 10 }).call('getMe')).rejects.toBeInstanceOf(
+			TimeoutError,
+		);
+
+		expect(request().init.signal?.aborted).toBe(true);
+	});
+
 	test('Takes a timeout, extra headers and a signal per call', async () => {
 		answer({ ok: true, result: true });
 
 		// 1. The caller's headers go on top of the JSON type
 		await new MessengerDriverTelegram({ token: 'T' }).call('getMe', {}, { headers: { 'x-trace': '1' } });
 
-		expect(request().init.headers).toStrictEqual({ 'content-type': 'application/json', 'x-trace': '1' });
+		expect(request().init.headers).toStrictEqual({
+			accept: 'application/json',
+			'user-agent': 'novastarter',
+			'content-type': 'application/json',
+			'x-trace': '1',
+		});
 
 		// 2. An aborted signal stops the call before it is sent
 		const controller = new AbortController();
@@ -192,6 +242,19 @@ describe('call', () => {
 		await expect(
 			new MessengerDriverTelegram({ token: 'T' }).call('getMe', {}, { signal: controller.signal }),
 		).rejects.toThrow('stop');
+	});
+
+	test('Answers the status, the lower-cased headers and the result, without the envelope', async () => {
+		fetchMock.mockResolvedValueOnce(
+			new Response('{"ok":true,"result":{"id":1}}', { status: 200, headers: { 'X-Request-Id': 'r1' } }),
+		);
+
+		// 1. The `result` as the data, not the whole `{ ok, result }` envelope
+		await expect(new MessengerDriverTelegram({ token: 'T' }).call('getMe')).resolves.toMatchObject({
+			status: 200,
+			headers: { 'x-request-id': 'r1' },
+			data: { id: 1 },
+		});
 	});
 });
 

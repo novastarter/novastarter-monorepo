@@ -84,15 +84,31 @@ The driver has no `verify()`: GitHub offers no request that checks a client secr
 ```ts
 const github = useAuth().location('github');
 
-const repos = await github.call?.('GET /user/repos', { per_page: 100, sort: 'updated' }, { accessToken });
+const { data: repos } = await github.call!('GET /user/repos', { per_page: 100, sort: 'updated' }, { accessToken });
+```
+
+A `{name}` in the path is filled from the parameter of that name, URL-encoded, and that parameter is not sent again; a
+placeholder nobody filled is refused before the request. Every call answers `{ status, headers, data }`, header names
+lower-cased — the `link` to the next page, the `x-ratelimit-remaining` budget:
+
+```ts
+// GET /repos/acme/web/issues?state=open
+const { headers, data } = await github.call!(
+	'GET /repos/{owner}/{repo}/issues',
+	{ owner: 'acme', repo: 'web', state: 'open' },
+	{ accessToken },
+);
+
+console.log(data, headers['link'], headers['x-ratelimit-remaining']);
 ```
 
 Without `accessToken` the request is authenticated as the OAuth app, with Basic `clientId:clientSecret` — what the
-`/applications/{client_id}/…` endpoints take; `{client_id}` in the path is replaced with the app's client id:
+`/applications/{client_id}/…` endpoints take; `{client_id}` in the path is always replaced with the app's client id,
+whose credentials the request carries:
 
 ```ts
 // Check a stored token is still valid, and read the scopes and the user it belongs to
-const check = await github.call?.('POST /applications/{client_id}/token', { access_token: accessToken });
+const { data: check } = await github.call!('POST /applications/{client_id}/token', { access_token: accessToken });
 ```
 
 Every request carries `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28` and a `User-Agent`;

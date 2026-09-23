@@ -1,4 +1,4 @@
-import type { CallOptions } from '@novastarter/utils';
+import type { CallOptions, CallResponse } from '@novastarter/http';
 import type {
 	CancelSubscriptionInput,
 	CheckoutSession,
@@ -114,30 +114,32 @@ export declare class PaymentsDriver {
 	 * Make a request of the payment provider's own API with the location's credentials, timeout and errors — the way to
 	 * whatever the contract does not cover, an endpoint the driver has no wrapper for yet included.
 	 *
-	 * The signature is the same for every driver; what `method` means is the provider's, so code calling it is written
-	 * for one provider: the verb and path of a REST API — Stripe's `POST /v1/refunds`, Paddle's `GET /discounts`,
-	 * Polar's `GET /v1/benefits/`, Lemon Squeezy's `GET /v1/discounts` — a full URL on one of the provider's own hosts,
-	 * or the command name of an RPC-style SDK. The parameters are the query of a `GET`, `HEAD` or `DELETE` and the body
-	 * otherwise; a `Blob` or `File` among them is uploaded, where the API takes files.
+	 * The signature is the same for every driver; what `method` means is the provider's: the verb and path of a REST
+	 * API — Stripe's `POST /v1/refunds`, Polar's `GET /v1/products/{id}` — a full URL on one of the provider's own
+	 * hosts, or the command name of an RPC-style SDK. A `{name}` in the path is filled from the parameter of that name;
+	 * the other parameters are the query of a `GET`, `HEAD` or `DELETE` and the body otherwise — JSON, a form or
+	 * multipart as the `content-type` header and the files among them say. Headers and a timeout for every call of a
+	 * location go in its registration's `call`.
 	 *
-	 * Optional: a driver whose provider has nothing to reach beyond the contract may leave it out.
+	 * A driver on an SDK also exposes the SDK itself as `client`, for everything else.
 	 *
-	 * @typeParam T - What the request answers with; the caller knows it from the provider's documentation.
+	 * @typeParam T - What the provider's body is; the caller knows it from the provider's documentation.
 	 * @param method - The verb and path, a full URL on the provider's hosts, or a command name.
-	 * @param params - Its query or body.
-	 * @param options - A timeout, an abort signal, extra headers, and `paramsIn` — `body` for an API that reads a
-	 * `DELETE` body.
-	 * @returns The provider's answer: parsed JSON, else text; `undefined` for an empty one.
+	 * @param params - The placeholders' values, and the query or body.
+	 * @param options - A timeout, an abort signal, extra headers.
+	 * @returns The status, the headers — names lower-cased — and the body: parsed JSON, else text.
 	 * @throws ProviderCallError when the provider answers with an error status — its status and answer in `extensions`.
 	 * @throws HitRateLimitError when the provider asks to slow down.
 	 * @throws TimeoutError when the request outlives its timeout.
-	 * @throws Error when the method is malformed or its URL is not on the provider's hosts.
+	 * @throws Error when the method is malformed, a placeholder is unfilled, or a URL is not on the provider's hosts.
 	 * @example
 	 * ```ts
-	 * await usePayments().location('stripe').call?.('POST /v1/refunds', { payment_intent: 'pi_123' });
+	 * const driver = usePayments().location('stripe');
+	 * const { status, headers, data } = await driver.call!('POST /v1/refunds', { payment_intent: 'pi_123' });
 	 * ```
 	 */
-	call?<T = unknown>(method: string, params?: Record<string, unknown>, options?: CallOptions): Promise<T>;
+
+	call?<T = unknown>(method: string, params?: Record<string, unknown>, options?: CallOptions): Promise<CallResponse<T>>;
 
 	/**
 	 * Check the credentials work — a cheap read against the provider — without changing anything.
