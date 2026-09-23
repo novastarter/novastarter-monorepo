@@ -1,11 +1,11 @@
 {
-	"name": "@novastarter/notifications",
+	"name": "@novastarter/messenger",
 	"version": "0.0.1",
-	"description": "Notifications for Novastarter: one notification to a user over mail, SMS, push, messengers and an in-app inbox, with their preferences",
+	"description": "Messenger messages for Novastarter: a driver contract, a manager of bot locations and sendMessage(), with text, formatting and attachments",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
-		"directory": "packages/notifications"
+		"directory": "packages/messenger"
 	},
 	"sideEffects": false,
 	"type": "module",
@@ -26,13 +26,9 @@
 	},
 	"dependencies": {
 		"@novastarter/emitter": "workspace:*",
-		"@novastarter/mail": "workspace:*",
-		"@novastarter/memory": "workspace:*",
-		"@novastarter/messenger": "workspace:*",
-		"@novastarter/push": "workspace:*",
-		"@novastarter/sms": "workspace:*",
-		"@novastarter/utils": "workspace:*",
-		"zod": "catalog:"
+		"@novastarter/errors": "workspace:*",
+		"@novastarter/logger": "workspace:*",
+		"@novastarter/utils": "workspace:*"
 	},
 	"devDependencies": {
 		"@novastarter/tsconfig": "workspace:*",

@@ -1,11 +1,11 @@
 {
-	"name": "@novastarter/notifications",
+	"name": "@novastarter/messenger-driver-telegram",
 	"version": "0.0.1",
-	"description": "Notifications for Novastarter: one notification to a user over mail, SMS, push, messengers and an in-app inbox, with their preferences",
+	"description": "Telegram Bot API driver for `@novastarter/messenger`",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/novastarter/novastarter-monorepo.git",
-		"directory": "packages/notifications"
+		"directory": "packages/messenger-driver-telegram"
 	},
 	"sideEffects": false,
 	"type": "module",
@@ -25,14 +25,9 @@
 		"test:coverage": "vitest run --coverage"
 	},
 	"dependencies": {
-		"@novastarter/emitter": "workspace:*",
-		"@novastarter/mail": "workspace:*",
-		"@novastarter/memory": "workspace:*",
+		"@novastarter/errors": "workspace:*",
 		"@novastarter/messenger": "workspace:*",
-		"@novastarter/push": "workspace:*",
-		"@novastarter/sms": "workspace:*",
-		"@novastarter/utils": "workspace:*",
-		"zod": "catalog:"
+		"@novastarter/utils": "workspace:*"
 	},
 	"devDependencies": {
 		"@novastarter/tsconfig": "workspace:*",

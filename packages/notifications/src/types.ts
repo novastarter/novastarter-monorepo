@@ -1,4 +1,5 @@
 import type { MailMessage } from '@novastarter/mail';
+import type { MessengerMessage } from '@novastarter/messenger';
 import type { PushMessage } from '@novastarter/push';
 import type { SmsMessage } from '@novastarter/sms';
 import { z } from 'zod';
@@ -49,6 +50,8 @@ export interface NotificationRecipient {
 	phone?: string | null | undefined;
 	/** Every device of the user; a push goes to each. */
 	pushTargets?: PushTarget[] | undefined;
+	/** The user's chat with each messenger location — `{ telegram: '123456789' }` — as the application linked them. */
+	messengers?: Record<string, string> | undefined;
 	/** The user's language, for the application's `render`. */
 	locale?: string | undefined;
 }
@@ -67,6 +70,11 @@ export type SmsContent = Omit<SmsMessage, 'to'>;
  * The content of a push notification: a message without its target.
  */
 export type PushContent = Omit<PushMessage, 'subscription' | 'token' | 'platform' | 'location'>;
+
+/**
+ * The content of a messenger notification: a message without its chat and location, which the channel fills in.
+ */
+export type MessengerContent = Omit<MessengerMessage, 'to' | 'location'>;
 
 /**
  * The content of an in-app notification: what the inbox shows.
