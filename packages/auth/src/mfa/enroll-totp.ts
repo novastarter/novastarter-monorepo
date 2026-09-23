@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { authSettings } from '../lib/settings-access.js';
 import { encodeBase32, encrypt } from '../utils/index.js';
-import { mfaKey } from './mfa-key.js';
+import { mfaKeys } from './mfa-key.js';
 import { otpauthUri } from './totp.js';
 
 /**
@@ -27,7 +27,7 @@ export interface TotpEnrolment {
 	secret: string;
 	/** The `otpauth://` URI to render as a QR code. */
 	uri: string;
-	/** The secret encrypted with `mfa.encryptionKey`, for the application to store. */
+	/** The secret encrypted with the current `mfa.encryptionKey`, for the application to store. */
 	encryptedSecret: string;
 }
 
@@ -55,6 +55,6 @@ export const enrollTotp = (options: EnrollTotpOptions): TotpEnrolment => {
 	return {
 		secret,
 		uri: otpauthUri(secret, authSettings().mfa?.issuer ?? 'Novastarter', options.accountName),
-		encryptedSecret: encrypt(secret, mfaKey()),
+		encryptedSecret: encrypt(secret, mfaKeys()[0]!, 'totp-secret'),
 	};
 };

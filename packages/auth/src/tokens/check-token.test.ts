@@ -1,13 +1,14 @@
 /**
  * Tests of `auth/tokens/check-token`.
  *
- * The limiter is the real local one of `@novastarter/memory`.
+ * The limiter is the real local one of `@novastarter/memory`; storage is a map the `spend` callback deletes from.
  */
 import { LimiterDriverLocal } from '@novastarter/memory';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { useAuth } from '../lib/use-auth.js';
 import type { TokenRecord } from '../types.js';
 import { checkToken } from './check-token.js';
+import { createToken } from './create-token.js';
 
 /**
  * The frozen clock every test starts at.
@@ -20,14 +21,30 @@ const NOW = Date.UTC(2026, 0, 1);
 const INVALID = { code: 'AUTH_INVALID_TOKEN' };
 
 /**
- * Build a token record of a purpose, valid for a minute.
+ * Storage the way an application keeps it: records by id, with an atomic take-out.
  *
- * @param purpose - What the token was made for.
- * @returns The record.
+ * @returns The map and the `spend` callback that deletes from it.
  */
-const record = (purpose: string): TokenRecord => {
-	// 1. The id does not matter to the check: the application already found the record by it
-	return { id: 'id', purpose, userId: 'user-1', createdAt: NOW, expiresAt: NOW + 60_000, data: { next: '/' } };
+const storage = (): {
+	records: Map<string, TokenRecord>;
+	spend: (id: string, purpose: string) => Promise<TokenRecord | null>;
+} => {
+	const records = new Map<string, TokenRecord>();
+
+	// 1. The same match as `DELETE … WHERE id = $id AND purpose = $purpose RETURNING *`: gone once taken
+	const spend = async (id: string, purpose: string): Promise<TokenRecord | null> => {
+		const record = records.get(id);
+
+		if (!record || record.purpose !== purpose) {
+			return null;
+		}
+
+		records.delete(id);
+
+		return record;
+	};
+
+	return { records, spend };
 };
 
 beforeEach(() => {
@@ -41,58 +58,101 @@ afterEach(() => {
 });
 
 describe('checkToken', () => {
-	test('Returns a current record of the purpose', async () => {
-		const found = record('password-reset');
+	test('Returns the record of a current link token, once', async () => {
+		const { records, spend } = storage();
+		const { token, record } = createToken({ purpose: 'password-reset', userId: 'user-1', data: { next: '/' } });
+
+		records.set(record.id, record);
 
 		// 1. The very record, with its user and data
-		await expect(checkToken('password-reset', found)).resolves.toBe(found);
+		await expect(checkToken({ purpose: 'password-reset', token, spend })).resolves.toBe(record);
+
+		// 2. Spent: the same token again finds nothing
+		await expect(checkToken({ purpose: 'password-reset', token, spend })).rejects.toMatchObject(INVALID);
+	});
+
+	test('Looks a code up by the user and the code together', async () => {
+		const { records, spend } = storage();
+		const { token, record } = createToken({ purpose: 'sign-in', userId: 'user-1', format: 'code' });
+
+		records.set(record.id, record);
+
+		// 1. Without the user, or with another one, the code matches nothing — and stays for the right user
+		await expect(checkToken({ purpose: 'sign-in', token, spend })).rejects.toMatchObject(INVALID);
+		await expect(checkToken({ purpose: 'sign-in', token, userId: 'user-2', spend })).rejects.toMatchObject(INVALID);
+		await expect(checkToken({ purpose: 'sign-in', token, userId: 'user-1', spend })).resolves.toBe(record);
 	});
 
 	test('Refuses a missing record, another purpose and an expired one alike', async () => {
-		// 1. Nothing came back from the delete
-		await expect(checkToken('password-reset', undefined)).rejects.toMatchObject(INVALID);
-		await expect(checkToken('password-reset', null)).rejects.toMatchObject(INVALID);
+		const { records, spend } = storage();
 
-		// 2. A token for another purpose cannot stand in
-		await expect(checkToken('password-reset', record('email-confirm'))).rejects.toMatchObject(INVALID);
+		// 1. Nothing matched
+		await expect(checkToken({ purpose: 'password-reset', token: 'nope', spend })).rejects.toMatchObject(INVALID);
+
+		// 2. A record of another purpose, even if the callback hands it back, cannot stand in
+		const other = createToken({ purpose: 'email-confirm' });
+
+		await expect(
+			checkToken({ purpose: 'password-reset', token: other.token, spend: async () => other.record }),
+		).rejects.toMatchObject(INVALID);
 
 		// 3. At its deadline the token is dead
+		const expiring = createToken({ purpose: 'password-reset', ttl: 60_000 });
+
+		records.set(expiring.record.id, expiring.record);
 		vi.setSystemTime(NOW + 60_000);
-		await expect(checkToken('password-reset', record('password-reset'))).rejects.toMatchObject(INVALID);
+
+		await expect(checkToken({ purpose: 'password-reset', token: expiring.token, spend })).rejects.toMatchObject(
+			INVALID,
+		);
 	});
 
-	test('Charges the code limiter per purpose and user on every attempt, misses included', async () => {
+	test('Charges the code limiter per purpose and user on every miss, and resets it on a hit', async () => {
+		const { records, spend } = storage();
 		const code = new LimiterDriverLocal({ points: 2, duration: 60 });
 		const consume = vi.spyOn(code, 'consume');
+		const reset = vi.spyOn(code, 'delete');
 
 		useAuth().registerSettings({ limiters: { code } });
 
-		// 1. A miss and a hit both cost a point, under the purpose and the user
-		await expect(checkToken('sign-in', undefined, { userId: 'user-1' })).rejects.toMatchObject(INVALID);
-		await expect(checkToken('sign-in', record('sign-in'), { userId: 'user-1' })).resolves.toBeDefined();
+		const attempt = (token: string, userId = 'user-1', purpose = 'sign-in'): Promise<TokenRecord> => {
+			return checkToken({ purpose, token, userId, spend });
+		};
 
-		expect(consume).toHaveBeenNthCalledWith(1, 'sign-in:user-1');
-		expect(consume).toHaveBeenNthCalledWith(2, 'sign-in:user-1');
+		// 1. A miss costs a point under the purpose and the user
+		await expect(attempt('wrong')).rejects.toMatchObject(INVALID);
+		expect(consume).toHaveBeenLastCalledWith('sign-in:user-1');
 
-		// 2. The budget is spent: even a right code is refused now
-		await expect(checkToken('sign-in', record('sign-in'), { userId: 'user-1' })).rejects.toMatchObject({
-			code: 'REQUESTS_EXCEEDED',
-		});
+		// 2. A hit costs a point too, then clears the count
+		const first = createToken({ purpose: 'sign-in', userId: 'user-1', format: 'code' });
 
-		// 3. Another user and another purpose have budgets of their own
-		await expect(checkToken('sign-in', record('sign-in'), { userId: 'user-2' })).resolves.toBeDefined();
-		await expect(checkToken('email-confirm', record('email-confirm'), { userId: 'user-1' })).resolves.toBeDefined();
+		records.set(first.record.id, first.record);
+		await expect(attempt(first.token)).resolves.toBe(first.record);
+		expect(reset).toHaveBeenCalledWith('sign-in:user-1');
+
+		// 3. Two misses spend the budget: even a right code is refused now
+		const second = createToken({ purpose: 'sign-in', userId: 'user-1', format: 'code' });
+
+		records.set(second.record.id, second.record);
+		await expect(attempt('wrong')).rejects.toMatchObject(INVALID);
+		await expect(attempt('wrong')).rejects.toMatchObject(INVALID);
+		await expect(attempt(second.token)).rejects.toMatchObject({ code: 'REQUESTS_EXCEEDED' });
+
+		// 4. Another user and another purpose have budgets of their own
+		await expect(attempt('wrong', 'user-2')).rejects.toMatchObject(INVALID);
+		await expect(attempt('wrong', 'user-1', 'email-confirm')).rejects.toMatchObject(INVALID);
 	});
 
 	test('Does not charge the limiter for a link token', async () => {
+		const { spend } = storage();
 		const code = new LimiterDriverLocal({ points: 1, duration: 60 });
 		const consume = vi.spyOn(code, 'consume');
 
 		useAuth().registerSettings({ limiters: { code } });
 
 		// 1. No user given means a link: 256 bits need no limiter
-		await checkToken('password-reset', record('password-reset'));
-		await checkToken('password-reset', record('password-reset'));
+		await expect(checkToken({ purpose: 'password-reset', token: 'a', spend })).rejects.toMatchObject(INVALID);
+		await expect(checkToken({ purpose: 'password-reset', token: 'b', spend })).rejects.toMatchObject(INVALID);
 
 		expect(consume).not.toHaveBeenCalled();
 	});

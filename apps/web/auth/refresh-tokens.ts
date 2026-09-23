@@ -1,11 +1,4 @@
-import {
-	AuthInvalidTokenError,
-	hashToken,
-	issueTokenPair,
-	type RefreshRecord,
-	refreshTokenPair,
-	type TokenPair,
-} from '@novastarter/auth';
+import { hashToken, issueTokenPair, type RefreshRecord, refreshTokenPair, type TokenPair } from '@novastarter/auth';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { useDb } from '../db';
 import { authRefreshTokens } from '../db/schema';
@@ -103,7 +96,8 @@ export const issueTokens = async (userId: string, claims?: Record<string, unknow
  * Exchange a refresh token for a new pair; the presented token works once.
  *
  * A used token presented again gives a theft away, and so does losing the race to rotate the same token: two parties
- * hold it. Either way the whole family is deleted, so the thief and the client both have to sign in again.
+ * hold it. Either way the package deletes the whole family through {@link deleteFamily}, so the thief and the client
+ * both have to sign in again.
  *
  * The successor is stored before the token is marked used, so a crash between the two leaves an unused token the
  * client can retry with rather than a family nobody can refresh. The mark is one conditional `UPDATE … WHERE used_at
@@ -118,35 +112,28 @@ export const issueTokens = async (userId: string, claims?: Record<string, unknow
 export const refreshTokens = async (token: string, claims?: Record<string, unknown>): Promise<RefreshedTokens> => {
 	const db = useDb();
 
-	// 1. Looked up by the token's hash; the package throws for a missing or expired one
-	const id = hashToken(token);
-	const [row] = await db.select().from(authRefreshTokens).where(eq(authRefreshTokens.id, id)).limit(1);
-	const outcome = await refreshTokenPair(row ? toRecord(row) : null, claims ? { claims } : {});
+	// 1. The package looks the token up, judges it and decides on a replay; the app supplies the three statements
+	return refreshTokenPair({
+		token,
+		...(claims ? { claims } : {}),
+		find: async (id) => {
+			const [row] = await db.select().from(authRefreshTokens).where(eq(authRefreshTokens.id, id)).limit(1);
 
-	// 2. A replay: the family goes, and the caller learns no more than that the token is invalid
-	if (outcome.status === 'reused') {
-		await deleteFamily(outcome.familyId);
+			return row ? toRecord(row) : null;
+		},
+		rotate: async (current, next) => {
+			await db.insert(authRefreshTokens).values(toRow(next));
 
-		throw new AuthInvalidTokenError();
-	}
+			const marked = await db
+				.update(authRefreshTokens)
+				.set({ usedAt: new Date() })
+				.where(and(eq(authRefreshTokens.id, current.id), isNull(authRefreshTokens.usedAt)))
+				.returning({ id: authRefreshTokens.id });
 
-	// 3. The successor first, then the conditional mark that decides which of two concurrent rotations won
-	await db.insert(authRefreshTokens).values(toRow(outcome.next));
-
-	const marked = await db
-		.update(authRefreshTokens)
-		.set({ usedAt: new Date() })
-		.where(and(eq(authRefreshTokens.id, id), isNull(authRefreshTokens.usedAt)))
-		.returning({ id: authRefreshTokens.id });
-
-	// 4. The mark moved nothing: another request rotated the same token first — a replay, so the family goes
-	if (marked.length === 0) {
-		await deleteFamily(outcome.next.familyId);
-
-		throw new AuthInvalidTokenError();
-	}
-
-	return { userId: outcome.userId, pair: outcome.pair };
+			return marked.length > 0;
+		},
+		revokeFamily: deleteFamily,
+	});
 };
 
 /**

@@ -3,7 +3,7 @@
  */
 import { afterEach, describe, expect, test } from 'vitest';
 import { useAuth } from '../lib/use-auth.js';
-import { mfaKey } from './mfa-key.js';
+import { mfaKeys } from './mfa-key.js';
 
 /**
  * An encryption key long enough to be accepted.
@@ -19,32 +19,43 @@ afterEach(() => {
 	useAuth.reset();
 });
 
-describe('mfaKey', () => {
-	test('Returns the encryption key of the settings', () => {
+describe('mfaKeys', () => {
+	test('Returns the encryption key of the settings as a list', () => {
 		useAuth().registerSettings({ mfa: { encryptionKey: KEY } });
 
-		// 1. Read as registered
-		expect(mfaKey()).toBe(KEY);
+		// 1. One key is a list of one
+		expect(mfaKeys()).toStrictEqual([KEY]);
+
+		// 2. A list is kept in order, current first
+		useAuth().registerSettings({ mfa: { encryptionKey: [KEY, 'o'.repeat(32)] } });
+		expect(mfaKeys()).toStrictEqual([KEY, 'o'.repeat(32)]);
 	});
 
 	test('Refuses to run without one, an empty one included', () => {
 		// 1. No settings, no mfa section, and an empty key are all a missing key
-		expect(() => mfaKey()).toThrow(MESSAGE);
+		expect(() => mfaKeys()).toThrow(MESSAGE);
 
 		useAuth().registerSettings({ mfa: { issuer: 'Acme' } });
-		expect(() => mfaKey()).toThrow(MESSAGE);
+		expect(() => mfaKeys()).toThrow(MESSAGE);
 
 		useAuth().registerSettings({ mfa: { encryptionKey: '' } });
-		expect(() => mfaKey()).toThrow(MESSAGE);
+		expect(() => mfaKeys()).toThrow(MESSAGE);
+
+		useAuth().registerSettings({ mfa: { encryptionKey: [] } });
+		expect(() => mfaKeys()).toThrow(MESSAGE);
 	});
 
 	test('Refuses a key shorter than 32 characters', () => {
 		// 1. Thirty-one characters is not random data, and would let a database dump be decrypted offline
 		useAuth().registerSettings({ mfa: { encryptionKey: 'k'.repeat(31) } });
-		expect(() => mfaKey()).toThrow(MESSAGE);
+		expect(() => mfaKeys()).toThrow(MESSAGE);
 
-		// 2. Thirty-two is the bar
+		// 2. An old key kept for rotation is held to the same bar
+		useAuth().registerSettings({ mfa: { encryptionKey: [KEY, 'k'.repeat(31)] } });
+		expect(() => mfaKeys()).toThrow(MESSAGE);
+
+		// 3. Thirty-two is the bar
 		useAuth().registerSettings({ mfa: { encryptionKey: 'k'.repeat(32) } });
-		expect(mfaKey()).toBe('k'.repeat(32));
+		expect(mfaKeys()).toStrictEqual(['k'.repeat(32)]);
 	});
 });

@@ -23,30 +23,38 @@ const flip = (text: string, index: number): string => {
 	return text.slice(0, index) + replacement + text.slice(index + 1);
 };
 
+/**
+ * A second secret, as an older key kept during rotation.
+ */
+const OLD_SECRET = 'an-older-application-secret-of-32+-characters';
+
 describe('encrypt / decrypt', () => {
-	test('Roundtrips a string, Unicode included, in the v1 format', () => {
-		const payload = encrypt('JBSWY3DPEHPK3PXP — секрет', SECRET);
+	test('Roundtrips a string, Unicode included, in the v2 format', () => {
+		const payload = encrypt('JBSWY3DPEHPK3PXP — секрет', SECRET, 'totp-secret');
 
 		// 1. Four dot-separated parts, the first naming the format
 		expect(payload.split('.')).toHaveLength(4);
-		expect(payload.startsWith('v1.')).toBe(true);
+		expect(payload.startsWith('v2.')).toBe(true);
 
-		// 2. The plaintext comes back byte for byte
-		expect(decrypt(payload, SECRET)).toBe('JBSWY3DPEHPK3PXP — секрет');
+		// 2. The plaintext comes back byte for byte, opened by the first secret
+		expect(decrypt(payload, [SECRET], 'totp-secret')).toStrictEqual({
+			plaintext: 'JBSWY3DPEHPK3PXP — секрет',
+			keyIndex: 0,
+		});
 	});
 
 	test('Uses a fresh IV per message, so equal plaintexts encrypt differently', () => {
 		// 1. A reused IV under GCM would leak the XOR of the plaintexts
-		expect(encrypt('same', SECRET)).not.toBe(encrypt('same', SECRET));
+		expect(encrypt('same', SECRET, 'totp-secret')).not.toBe(encrypt('same', SECRET, 'totp-secret'));
 	});
 
 	test('Roundtrips an empty string', () => {
 		// 1. An empty ciphertext part is still a valid payload
-		expect(decrypt(encrypt('', SECRET), SECRET)).toBe('');
+		expect(decrypt(encrypt('', SECRET, 'oauth-cookie'), [SECRET], 'oauth-cookie').plaintext).toBe('');
 	});
 
 	test('Refuses a tampered ciphertext, tag or IV', () => {
-		const [version, iv, tag, ciphertext] = encrypt('secret value', SECRET).split('.') as [
+		const [version, iv, tag, ciphertext] = encrypt('secret value', SECRET, 'totp-secret').split('.') as [
 			string,
 			string,
 			string,
@@ -54,21 +62,43 @@ describe('encrypt / decrypt', () => {
 		];
 
 		// 1. Each part is covered by the tag: changing any one fails the authentication instead of returning garbage
-		expect(() => decrypt([version, iv, tag, flip(ciphertext, 0)].join('.'), SECRET)).toThrow();
-		expect(() => decrypt([version, iv, flip(tag, 0), ciphertext].join('.'), SECRET)).toThrow();
-		expect(() => decrypt([version, flip(iv, 0), tag, ciphertext].join('.'), SECRET)).toThrow();
+		expect(() => decrypt([version, iv, tag, flip(ciphertext, 0)].join('.'), [SECRET], 'totp-secret')).toThrow();
+		expect(() => decrypt([version, iv, flip(tag, 0), ciphertext].join('.'), [SECRET], 'totp-secret')).toThrow();
+		expect(() => decrypt([version, flip(iv, 0), tag, ciphertext].join('.'), [SECRET], 'totp-secret')).toThrow();
 	});
 
 	test('Refuses another key', () => {
 		// 1. The tag does not verify under another key
-		expect(() => decrypt(encrypt('secret value', SECRET), 'another-secret')).toThrow();
+		expect(() => decrypt(encrypt('secret value', SECRET, 'totp-secret'), [OLD_SECRET], 'totp-secret')).toThrow(
+			'The encrypted value does not open with any of the configured secrets',
+		);
+	});
+
+	test('Refuses another purpose under the same secret', () => {
+		// 1. The purpose derives a key of its own: an OAuth cookie never opens as a TOTP secret
+		expect(() => decrypt(encrypt('secret value', SECRET, 'oauth-cookie'), [SECRET], 'totp-secret')).toThrow(
+			'The encrypted value does not open with any of the configured secrets',
+		);
+	});
+
+	test('Opens a value under an older secret and says which one opened it', () => {
+		const payload = encrypt('secret value', OLD_SECRET, 'totp-secret');
+
+		// 1. The current secret is tried first, the older one after it
+		expect(decrypt(payload, [SECRET, OLD_SECRET], 'totp-secret')).toStrictEqual({
+			plaintext: 'secret value',
+			keyIndex: 1,
+		});
 	});
 
 	test('Refuses a value not in the format before any cryptography', () => {
-		// 1. Wrong version, missing parts and plain text all fail with the same readable message
-		expect(() => decrypt('v2.a.b.c', SECRET)).toThrow('The encrypted value is not in a known format');
-		expect(() => decrypt('v1.a.b', SECRET)).toThrow('The encrypted value is not in a known format');
-		expect(() => decrypt('v1..b.c', SECRET)).toThrow('The encrypted value is not in a known format');
-		expect(() => decrypt('JBSWY3DPEHPK3PXP', SECRET)).toThrow('The encrypted value is not in a known format');
+		const message = 'The encrypted value is not in a known format';
+
+		// 1. The old version, missing or extra parts and plain text all fail with the same readable message
+		expect(() => decrypt('v1.a.b.c', [SECRET], 'totp-secret')).toThrow(message);
+		expect(() => decrypt('v2.a.b', [SECRET], 'totp-secret')).toThrow(message);
+		expect(() => decrypt('v2..b.c', [SECRET], 'totp-secret')).toThrow(message);
+		expect(() => decrypt('v2.a.b.c.d', [SECRET], 'totp-secret')).toThrow(message);
+		expect(() => decrypt('JBSWY3DPEHPK3PXP', [SECRET], 'totp-secret')).toThrow(message);
 	});
 });

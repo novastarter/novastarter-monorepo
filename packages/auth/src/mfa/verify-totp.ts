@@ -1,7 +1,7 @@
 import { InvalidCredentialsError } from '@novastarter/errors';
 import { authSettings } from '../lib/settings-access.js';
 import { decodeBase32, decrypt } from '../utils/index.js';
-import { mfaKey } from './mfa-key.js';
+import { mfaKeys } from './mfa-key.js';
 import { matchTotp, TOTP_DIGITS } from './totp.js';
 
 /**
@@ -47,7 +47,7 @@ export const isTotpCode = (code: string): boolean => {
  * @returns The accepted time step.
  * @throws InvalidCredentialsError when the code does not match or its step was used already.
  * @throws HitRateLimitError when the user tried too many codes.
- * @throws Error without a usable `mfa.encryptionKey` in the settings, or when the secret was encrypted with another.
+ * @throws Error without a usable `mfa.encryptionKey` in the settings, or when the secret opens with none of its keys.
  * @example
  * ```ts
  * await verifyTotp({
@@ -67,7 +67,7 @@ export const verifyTotp = async (options: VerifyTotpOptions): Promise<number> =>
 
 	// 2. The secret is decrypted only for the comparison; the step must be new for the user
 	const step = matchTotp(
-		decodeBase32(decrypt(options.encryptedSecret, mfaKey())),
+		decodeBase32(decrypt(options.encryptedSecret, mfaKeys(), 'totp-secret').plaintext),
 		String(options.code).trim(),
 		Date.now(),
 	);

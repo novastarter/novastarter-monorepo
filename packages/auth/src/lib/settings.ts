@@ -91,8 +91,13 @@ export interface AuthJwtSettings {
 export interface AuthMfaSettings {
 	/** The name authenticator apps show above the code: the application's name. */
 	issuer?: string | undefined;
-	/** The secret TOTP secrets are encrypted with at rest: at least 32 random bytes, in any encoding. */
-	encryptionKey?: string | undefined;
+	/**
+	 * The secret TOTP secrets are encrypted with at rest: at least {@link MIN_SECRET_LENGTH} characters of random data.
+	 *
+	 * A list rotates it: the first encrypts, every one decrypts. Put the new key first, re-encrypt the stored secrets
+	 * with `reencryptTotpSecret()`, then drop the old key.
+	 */
+	encryptionKey?: string | readonly string[] | undefined;
 }
 
 /**
@@ -102,8 +107,11 @@ export interface AuthOAuthSettings {
 	/**
 	 * The secret the OAuth cookie is encrypted with — it carries the state, the PKCE verifier and the nonce between
 	 * `startOAuth()` and `finishOAuth()`: at least {@link MIN_SECRET_LENGTH} characters of random data.
+	 *
+	 * A list rotates it: the first encrypts, every one decrypts. The cookie lives for {@link stateTtl}, so the old secret
+	 * can go once that has passed.
 	 */
-	secret?: string | undefined;
+	secret?: string | readonly string[] | undefined;
 	/** How long the browser has to come back, in milliseconds; {@link DEFAULT_OAUTH_STATE_TTL} unless given. */
 	stateTtl?: number | undefined;
 }

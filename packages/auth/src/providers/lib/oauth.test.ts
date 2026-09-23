@@ -226,7 +226,7 @@ describe('startOAuth', () => {
 		const [params] = provider.authorized;
 
 		// 1. Encrypted: none of the secrets, the redirect URI or the data appear in it
-		expect(cookie.startsWith('v1.')).toBe(true);
+		expect(cookie.startsWith('v2.')).toBe(true);
 
 		for (const value of [params!.state, params!.nonce, REDIRECT_URI, '/secret-page', 'github']) {
 			expect(cookie).not.toContain(value);
@@ -328,10 +328,21 @@ describe('finishOAuth', () => {
 
 		const { state, cookie } = await start();
 
-		// 1. The secret rotated between the start and the callback
+		// 1. The secret was replaced between the start and the callback, the old one dropped
 		useAuth().registerSettings({ oauth: { secret: 'another-oauth-secret-of-32-characters!' } });
 
 		await expectRefused(finishOAuth('github', { state, code: 'c', cookie }));
+	});
+
+	test('Accepts a cookie sealed with an older secret kept for rotation', async () => {
+		register();
+
+		const { state, cookie } = await start();
+
+		// 1. The new secret goes first; the old one behind it still opens a cookie issued before the rotation
+		useAuth().registerSettings({ oauth: { secret: ['another-oauth-secret-of-32-characters!', SECRET] } });
+
+		await expect(finishOAuth('github', { state, code: 'c', cookie })).resolves.toStrictEqual({ identity: IDENTITY });
 	});
 
 	test('Refuses an expired cookie', async () => {

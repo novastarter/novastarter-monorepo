@@ -1,8 +1,9 @@
 /**
- * Integration tests of `auth/sessions` on PGlite in memory, migrated with the app's `drizzle/` folder. No service is
- * needed, so the suite always runs.
+ * Integration tests of `auth/sessions` on PGlite in memory, migrated with the app's `drizzle/` folder, with the
+ * in-process cache in front of it. No service is needed, so the suite always runs.
  */
 import { hashToken, useAuth } from '@novastarter/auth';
+import { useCache } from '@novastarter/memory';
 import { eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import { useDb } from '../db';
@@ -132,5 +133,102 @@ describe('auth sessions on PGlite', { timeout: 30_000 }, () => {
 		// 2. Past the first one's deadline only the second is live
 		vi.setSystemTime(first.session.expiresAt);
 		expect((await listSessions('1')).map((session) => session.id)).toEqual([second.session.id]);
+	});
+
+	describe('the session cache', () => {
+		test('Serves a started session from the cache without the table', async () => {
+			const { token, session } = await startSession('1');
+
+			// 1. The row goes behind the module's back; the cached copy still answers — the documented cost of the
+			//    cache, bounded by its ttl
+			await useDb().delete(authSessions).where(eq(authSessions.id, session.id));
+
+			expect(await readSession(token)).toEqual(session);
+		});
+
+		test('Caches a session read from the table on a miss', async () => {
+			const { token, session } = await startSession('1');
+
+			// 1. A flushed cache sends the read to the table, which fills the cache again
+			await useCache().location().clear();
+
+			expect(await readSession(token)).toEqual(session);
+			expect(await useCache().location().get(`auth-session:${session.id}`)).toEqual(session);
+		});
+
+		test('Signs out at once: every way of ending a session drops the cached copy', async () => {
+			const one = await startSession('1');
+			const two = await startSession('1');
+			const three = await startSession('1');
+
+			// 1. Each is cached, so a stale copy would answer if an end forgot the cache
+			await endSession(one.token);
+			await endSessionById('1', two.session.id);
+
+			expect(await readSession(one.token)).toBeNull();
+			expect(await readSession(two.token)).toBeNull();
+
+			// 2. Everywhere, by the ids the table returned
+			const four = await startSession('1');
+
+			expect(await endAllSessions('1')).toBe(2);
+			expect(await readSession(three.token)).toBeNull();
+			expect(await readSession(four.token)).toBeNull();
+		});
+
+		test('Drops an expired cached session from the table and the cache', async () => {
+			const { token, session } = await startSession('1');
+
+			// 1. The cached copy expires like the row; both go on the read that notices
+			vi.setSystemTime(session.expiresAt);
+
+			expect(await readSession(token)).toBeNull();
+			expect(await useCache().location().get(`auth-session:${session.id}`)).toBeUndefined();
+			expect(await useDb().select().from(authSessions)).toEqual([]);
+		});
+
+		test('Stores a moved idle deadline in the table and the cache', async () => {
+			useAuth().registerSettings({ session: { ttl: 60 * MINUTE, idleTtl: 10 * MINUTE } });
+
+			const { token, session } = await startSession('1');
+
+			// 1. Past half the idle lifetime the deadline moves; both copies carry the new one
+			vi.setSystemTime(NOW + 6 * MINUTE);
+
+			const read = await readSession(token);
+
+			expect(read?.expiresAt).toBe(NOW + 16 * MINUTE);
+			expect(await useCache().location().get(`auth-session:${session.id}`)).toEqual(read);
+
+			const [row] = await useDb().select().from(authSessions);
+
+			expect(row?.expiresAt).toEqual(new Date(NOW + 16 * MINUTE));
+		});
+
+		test('Does not bring back a session ended while its deadline was being moved', async () => {
+			useAuth().registerSettings({ session: { ttl: 60 * MINUTE, idleTtl: 10 * MINUTE } });
+
+			const { token, session } = await startSession('1');
+
+			// 1. The row goes while the cached copy stays, as when another request ends it concurrently; the read that
+			//    would slide the deadline finds nothing to update and drops the copy rather than caching it again
+			await useDb().delete(authSessions).where(eq(authSessions.id, session.id));
+			vi.setSystemTime(NOW + 6 * MINUTE);
+
+			expect(await readSession(token)).toBeNull();
+			expect(await useCache().location().get(`auth-session:${session.id}`)).toBeUndefined();
+		});
+
+		test('Falls back to the table when the cache fails', async () => {
+			const { token, session } = await startSession('1');
+
+			// 1. A broken cache is logged and skipped: the table still answers
+			const location = useCache().location();
+			const get = vi.spyOn(location, 'get').mockRejectedValue(new Error('cache down'));
+
+			expect(await readSession(token)).toEqual(session);
+
+			get.mockRestore();
+		});
 	});
 });

@@ -10,7 +10,7 @@ import { createError, type NovastarterErrorConstructor } from '@novastarter/erro
  * @example
  * ```ts
  * try {
- * 	await checkToken('password-reset', spent);
+ * 	await checkToken({ purpose: 'password-reset', token, spend });
  * } catch (error) {
  * 	if (error instanceof AuthInvalidTokenError) return redirect('/reset/expired');
  * 	throw error;
