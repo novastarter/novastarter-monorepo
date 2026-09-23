@@ -176,6 +176,43 @@ describe('http', () => {
 
 		fetchMock.mockResolvedValueOnce(new Response(broken, { status: 200 }));
 
-		await expect(http('GET https://api.example.com/x', {}, { fetch: fetchMock })).rejects.toThrow('ECONNRESET');
+		const cut = await http('GET https://api.example.com/x', {}, { fetch: fetchMock }).catch(
+			(caught: unknown) => caught,
+		);
+
+		expect(cut).toMatchObject({ name: 'Error', message: 'ECONNRESET' });
+		expect(cut).not.toHaveProperty('request');
+	});
+
+	test('Throws what the fetch threw as it is: the abort reason untouched, a HEAD refused like any other', async () => {
+		// 1. Octokit would mark an `AbortError` with `status = 500`; the caller's reason stays as it was
+		const controller = new AbortController();
+		const reason = Object.freeze(new DOMException('stop', 'AbortError'));
+
+		fetchMock.mockImplementationOnce(
+			(_url, init) =>
+				new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason))),
+		);
+
+		const pending = http('GET https://api.example.com/x', {}, { signal: controller.signal, fetch: fetchMock });
+
+		controller.abort(reason);
+
+		await expect(pending).rejects.toBe(reason);
+		expect(reason).not.toHaveProperty('status');
+
+		// 2. An unreachable host is the fetch's own error, not Octokit's
+		const unreachable = new TypeError('fetch failed');
+
+		fetchMock.mockRejectedValueOnce(unreachable);
+
+		await expect(http('GET https://api.example.com/x', {}, { fetch: fetchMock })).rejects.toBe(unreachable);
+
+		// 3. A `HEAD` answered 404 is judged like any other verb
+		fetchMock.mockResolvedValueOnce(new Response(null, { status: 404 }));
+
+		await expect(http('HEAD https://api.example.com/x', {}, { fetch: fetchMock })).rejects.toBeInstanceOf(
+			ProviderCallError,
+		);
 	});
 });
