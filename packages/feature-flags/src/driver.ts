@@ -1,20 +1,13 @@
 import type { FeatureFlagContext, FeatureFlagDefinition, FeatureFlagValues } from './types.js';
 
 /**
- * Contract every feature flags driver implements.
+ * Contract every source of feature flags implements.
  *
- * Declared as an ambient class rather than an interface so that `typeof FeatureFlagsDriver` describes a constructor
- * for `FeatureFlagsManager.registerDriver`; no runtime code exists behind it. Where the flags come from — the app's
- * configuration, a table, a vendor — is the driver's business; a flag the driver does not know is off.
+ * The application hands a ready instance to `registerFeatureFlags({ driver })`, so the contract says nothing about
+ * construction. Where the flags come from — the app's configuration, a table, a vendor — is the driver's business; a
+ * flag the driver does not know is off.
  */
-export declare class FeatureFlagsDriver {
-	/**
-	 * Create a driver from its location options.
-	 *
-	 * @param config - Driver-specific options, as given in the location's `options`.
-	 */
-	constructor(config: Record<string, unknown>);
-
+export interface FeatureFlagsDriver {
 	/**
 	 * Whether a flag is on for a context.
 	 *
@@ -42,7 +35,7 @@ export declare class FeatureFlagsDriver {
 	/**
 	 * Release what the driver holds — a client, a subscription — so the process can exit.
 	 *
-	 * Optional: a driver that keeps nothing open has nothing to release. The manager calls it at shutdown.
+	 * Optional: a driver that keeps nothing open has nothing to release.
 	 *
 	 * @returns Once everything is released.
 	 */
