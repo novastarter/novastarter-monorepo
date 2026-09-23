@@ -127,7 +127,7 @@ export type HttpCallFetch = (
 	init: {
 		method: string;
 		headers: Record<string, string>;
-		body?: string | Blob | FormData | undefined;
+		body?: string | FormData | undefined;
 		signal: AbortSignal;
 		redirect: 'manual';
 	},
@@ -223,6 +223,7 @@ export const httpCall = async (request: HttpCallRequest): Promise<HttpCallRespon
 	return withTimeout(
 		async (signal) => {
 			let answer: HttpCallResponse | undefined;
+			let failure: { error: unknown } | undefined;
 
 			try {
 				await octokitRequest({
@@ -231,17 +232,24 @@ export const httpCall = async (request: HttpCallRequest): Promise<HttpCallRespon
 					headers,
 					...(body === undefined ? {} : { data: body }),
 					request: {
-						fetch: readingFetch(fetcher, url, (read) => {
-							answer = read;
-						}),
+						fetch: readingFetch(
+							fetcher,
+							url,
+							(read) => {
+								answer = read;
+							},
+							(error) => {
+								failure = { error };
+							},
+						),
 						signal,
 						log: SILENT_LOG,
 					},
 				});
-			} catch (error) {
-				// 4. A failure to reach the provider — or a redirect refused — goes on as it was thrown, never as
-				//    Octokit's error, which quotes the request's headers
-				throw unwrapOctokitError(error);
+			} catch {
+				// 4. A failure to reach the provider — a redirect refused, the abort reason — goes on as it was thrown,
+				//    untouched by Octokit and never as its error, which quotes the request's headers
+				throw failure ? failure.error : new Error('The request could not be sent');
 			}
 
 			// 5. The answer as read on the way, whatever its status: the caller judges it
@@ -270,55 +278,51 @@ const SILENT_LOG = { debug: () => undefined, info: () => undefined, warn: () => 
  * The URL is the one built here, not Octokit's — it reads a path as a template, dropping `:send` of `messages:send` and a
  * trailing slash. The redirects are followed by hand, the way {@link follow} does, and a form body keeps no content type,
  * so `fetch` writes its boundary. The answer is read here — a broken body throws — and handed to `onAnswer`; Octokit
- * gets an empty `204`, so it has nothing to parse or judge.
+ * gets an empty `204`, so it has nothing to parse or judge. A failure is handed to `onFailure` and Octokit sees only a
+ * plain error in its place: it marks an `AbortError` with `status = 500`, and that error is the caller's abort reason.
  *
  * @param fetcher - The `fetch` the requests go through.
  * @param target - The URL to request, as built by {@link httpCall}.
  * @param onAnswer - Receives the answer as read.
+ * @param onFailure - Receives what the request or the reading threw.
  * @returns The adapted `fetch`.
  * @internal
  */
-const readingFetch = (fetcher: HttpCallFetch, target: URL, onAnswer: (answer: HttpCallResponse) => void) => {
+const readingFetch = (
+	fetcher: HttpCallFetch,
+	target: URL,
+	onAnswer: (answer: HttpCallResponse) => void,
+	onFailure: (error: unknown) => void,
+) => {
 	return async (_url: string, init: { method?: string; headers?: unknown; body?: unknown; signal?: AbortSignal }) => {
 		// 1. Octokit's headers are a plain record; a form body keeps no content type, so `fetch` writes its boundary
 		const headers = { ...(init.headers as Record<string, string>) };
-		const body = init.body as string | Blob | FormData | undefined;
+		const body = init.body as string | FormData | undefined;
 
 		if (body instanceof FormData) {
 			delete headers['content-type'];
 		}
 
-		// 2. The request, its redirects, and the whole answer read — the headers kept as `Headers`, repeats included
-		const response = await follow(fetcher, target, init.method ?? 'GET', headers, body, init.signal as AbortSignal);
-		const text = await response.text();
+		try {
+			// 2. The request, its redirects, and the whole answer read — the headers kept as `Headers`, repeats included
+			const response = await follow(fetcher, target, init.method ?? 'GET', headers, body, init.signal as AbortSignal);
+			const text = await response.text();
 
-		onAnswer({
-			status: response.status,
-			headers: response.headers,
-			body: parseBody(text, response.headers.get('content-type')),
-		});
+			onAnswer({
+				status: response.status,
+				headers: response.headers,
+				body: parseBody(text, response.headers.get('content-type')),
+			});
+		} catch (error) {
+			// 3. What was thrown is kept for the caller, out of Octokit's reach
+			onFailure(error);
+
+			// eslint-disable-next-line preserve-caught-error -- Octokit must not reach the error: it marks an abort reason
+			throw new Error('The request failed');
+		}
 
 		return new Response(null, { status: 204 });
 	};
-};
-
-/**
- * What a failed Octokit request is thrown as: the error the `fetch` threw — an unreachable host, a redirect refused, the
- * abort reason — never Octokit's `HttpError`, whose request quotes every header but `authorization`.
- *
- * @param error - What `@octokit/request` threw.
- * @returns The error to throw.
- * @internal
- */
-const unwrapOctokitError = (error: unknown): unknown => {
-	// 1. Octokit's error carries what `fetch` threw as its cause; without one, a plain error that quotes nothing
-	if (error instanceof Error && error.name === 'HttpError') {
-		const cause = (error as { cause?: unknown }).cause;
-
-		return cause !== undefined ? cause : new Error('The request could not be sent');
-	}
-
-	return error;
 };
 
 /**
@@ -358,7 +362,7 @@ const follow = async (
 	start: URL,
 	verb: string,
 	headers: Record<string, string>,
-	body: string | Blob | FormData | undefined,
+	body: string | FormData | undefined,
 	signal: AbortSignal,
 ): Promise<Response> => {
 	let url = start;

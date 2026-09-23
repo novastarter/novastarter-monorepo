@@ -75,8 +75,9 @@ What `request(api, method, params, options)` does:
 - `headers` are the credentials — or a function fetching a token, run under the call's deadline; the caller's
   `options.headers` go on top. `query` is a secret query (a signature) sent with the request and never shown.
 - Redirects are followed by hand: on the same origin with every header, to another origin with none but `accept`, so a
-  key never leaves with a redirect. The deadline — `options.timeout`, else `api.timeout`, else 30 s — covers the token,
-  every hop and the reading of the answer; `options.signal` aborts it all.
+  key never leaves with a redirect; one that would take the body to another origin, or leave TLS, is refused. The
+  deadline — `options.timeout`, else `api.timeout`, else 30 s — covers the token, every hop and the reading of the
+  answer; `options.signal` aborts it all.
 - The answer is `{ status, headers, data }`: headers lower-cased, the body parsed as JSON or kept as text. `refuse`
   judges the provider's own refusals first (a rate limit sent as 403); any other error status throws `ProviderCallError`
   of `@novastarter/errors` with the provider's status and answer, a 429 `HitRateLimitError`. No credential ever goes

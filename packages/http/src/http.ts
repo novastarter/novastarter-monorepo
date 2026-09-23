@@ -34,7 +34,7 @@ export interface HttpOptions extends CallOptions {
  * `method` is the verb and a full URL — `'GET https://api.github.com/repos/{owner}/{repo}'` — its `{name}` filled from
  * the parameter of that name; the other parameters are the query of a `GET`, `HEAD` or `DELETE` and the body otherwise:
  * JSON, a form or multipart as the `content-type` header and the files among them say. Redirects are followed by hand —
- * to another origin without the headers or the body — and the timeout covers every hop and the reading of the answer.
+ * to another origin without the headers; one that would carry the body there, or leave TLS, is refused — and the timeout covers every hop and the reading of the answer.
  *
  * @typeParam T - What the body is.
  * @param method - The verb and the full URL.
