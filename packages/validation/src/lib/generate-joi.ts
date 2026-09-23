@@ -365,7 +365,9 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 
 		// 9. Substring operators: a non-string compare value cannot match anything, so the rule becomes
 		//    {@link never}, which fails for any present value; a string is checked on the value itself or on any item of
-		//    an array value
+		//    an array value; the `_ncontains` array branch stops at its first forbidden item, because several
+		//    `array.excludes` reports would make the alternatives wrap everything into one `alternatives.match` error that
+		//    cannot be mapped back to the operator
 		if (operator === '_contains') {
 			if (compareValue === null || compareValue === undefined || typeof compareValue !== 'string') {
 				schema[key] = never();
@@ -394,7 +396,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			} else {
 				schema[key] = Joi.alternatives().try(
 					getStringSchema().ncontains(compareValue),
-					Joi.array().items(getStringSchema().contains(compareValue).forbidden()),
+					Joi.array().items(getStringSchema().contains(compareValue).forbidden()).prefs({ abortEarly: true }),
 				);
 			}
 		}

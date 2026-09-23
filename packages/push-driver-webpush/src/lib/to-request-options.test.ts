@@ -18,7 +18,7 @@ const subject = 'mailto:ops@example.com';
 /**
  * A browser subscription with placeholder keys; the mapping never decodes them.
  */
-const subscription = { endpoint: 'https://push.example/abc', keys: { p256dh: 'p', auth: 'a' } };
+const subscription = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys: { p256dh: 'p', auth: 'a' } };
 
 describe('toTopic', () => {
 	test('Cuts the tag to the URL-safe alphabet and the length limit, dropping an empty one', () => {

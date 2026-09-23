@@ -11,7 +11,7 @@ test('ships no runtime code', () => {
 });
 
 test('a backend satisfies the contract with three methods', () => {
-	// 1. The interface is the whole surface a backend needs to implement; `close` is the only optional member
+	// 1. The interface is the whole surface a backend needs to implement; `close` and `onReconnect` are optional
 	const backend: BusDriver = {
 		publish: async () => {},
 		subscribe: async (_channel, _callback) => {},

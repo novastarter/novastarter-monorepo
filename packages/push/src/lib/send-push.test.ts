@@ -147,7 +147,7 @@ const register = (locations: Record<string, 'ok-web' | 'ok-token' | 'down' | 'go
 /**
  * A browser subscription with everything `platformOf()` checks for.
  */
-const subscription = { endpoint: 'https://push.example/abc', keys: { p256dh: 'p', auth: 'a' } };
+const subscription = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys: { p256dh: 'p', auth: 'a' } };
 
 /**
  * A web push message most tests send.
@@ -325,6 +325,37 @@ describe('sendPush', () => {
 		usePush().registerRoutes({ webpush: 'fcm' });
 
 		await expect(sendPush(message)).rejects.toBeInstanceOf(PushTargetGoneError);
+	});
+
+	test('Does not pass a gone target on as is when a filter redirected the message in place', async () => {
+		register({ webpush: 'gone', fcm: 'gone' });
+
+		// 1. The handler swaps the token on the caller's own object and returns nothing, which the emitter treats as
+		//    "keep it"; the target compared against must still be the caller's token, not the mutated one
+		emitter.emitFilter.mockImplementationOnce(async (_event: string, payload: unknown) => {
+			(payload as PushMessage).token = 'dev-phone';
+
+			return payload;
+		});
+
+		const error = await sendPush({ token: 'user-phone', title: 'Hi' }).catch((caught: unknown) => caught);
+
+		expect(error).not.toBeInstanceOf(PushTargetGoneError);
+		expect((error as Error).cause).toBeInstanceOf(PushTargetGoneError);
+
+		// 2. The same for a subscription whose endpoint the handler swaps in place
+		emitter.emitFilter.mockImplementationOnce(async (_event: string, payload: unknown) => {
+			(payload as PushMessage).subscription!.endpoint = 'https://fcm.googleapis.com/fcm/send/dev-browser';
+
+			return payload;
+		});
+
+		const redirected = await sendPush({ ...message, subscription: { ...subscription } }).catch(
+			(caught: unknown) => caught,
+		);
+
+		expect(redirected).not.toBeInstanceOf(PushTargetGoneError);
+		expect((redirected as Error).cause).toBeInstanceOf(PushTargetGoneError);
 	});
 
 	test('Wraps any other failure, after push.failed', async () => {

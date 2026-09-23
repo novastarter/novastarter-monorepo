@@ -42,9 +42,11 @@ subscription, the product as `productId`. Customers carry no custom data, so the
 custom data and comes back on every event of the order and the subscription; a checkout has no cancel URL (its back link
 leads to the store) and trials are the variant's; the portal is the customer's signed link, valid a day; a subscription
 is cancelled at the end of its paid period only (`cancelled` is the grace period — the kit's `active` with
-`cancelAtPeriodEnd`; `expired` is `canceled`); invoices are the subscription invoices of the customer's subscriptions,
-most recent first, with the hosted link and no PDF — every subscription of the customer is collected, page by page,
-before the invoices are read. Test mode is a property of the API key; there is no option for it.
+`cancelAtPeriodEnd`; `expired` is `canceled`), so `cancelSubscription({ immediately: true })` rejects with an Error
+before any request instead of being downgraded to a period-end cancellation; invoices are the subscription invoices of
+the customer's subscriptions, most recent first, with the hosted link and no PDF — every subscription of the customer is
+collected, page by page, before the invoices are read. Test mode is a property of the API key; there is no option for
+it.
 
 Webhooks are verified by the hex HMAC-SHA256 of the body under the signing secret (`X-Signature`), compared in constant
 time. `order_created` → `checkout.completed`; `subscription_created` → `subscription.created`; `subscription_updated`,

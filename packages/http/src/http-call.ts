@@ -79,8 +79,25 @@ const normalizeHost = (host: string): string => {
 };
 
 /**
- * Turn parameters into a query string, the way REST APIs read them: a list repeats its key, an object goes as JSON,
- * `undefined` is left out.
+ * Turn one parameter value into the text a query, form or multipart field carries.
+ *
+ * A `Date` goes as its ISO 8601 string: it is an object, and `JSON.stringify` would wrap it in quotes that then land
+ * on the wire. Any other object goes as JSON, a scalar as its plain string.
+ *
+ * @param item - The value, never `null` or `undefined`.
+ * @returns The field's text.
+ * @internal
+ */
+const toFieldValue = (item: unknown): string => {
+	// 1. A date first, since it is an object too; then JSON for objects and plain text for scalars
+	if (item instanceof Date) return item.toISOString();
+
+	return typeof item === 'object' ? JSON.stringify(item) : String(item);
+};
+
+/**
+ * Turn parameters into a query string, the way REST APIs read them: a list repeats its key, a `Date` goes as its ISO
+ * string, any other object as JSON, `undefined` is left out.
  *
  * @param params - The parameters.
  * @returns The query, with its leading `?`, or an empty string when there is nothing to send.
@@ -97,7 +114,7 @@ export const toQueryString = (params: Record<string, unknown> = {}): string => {
 		for (const item of Array.isArray(value) ? value : [value]) {
 			if (item === undefined || item === null) continue;
 
-			search.append(key, typeof item === 'object' ? JSON.stringify(item) : String(item));
+			search.append(key, toFieldValue(item));
 		}
 	}
 
@@ -487,7 +504,7 @@ const toBody = (
 				if (item instanceof Blob) {
 					form.append(key, item, item instanceof File ? item.name : key);
 				} else {
-					form.append(key, typeof item === 'string' ? item : JSON.stringify(item));
+					form.append(key, toFieldValue(item));
 				}
 			}
 		}

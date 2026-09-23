@@ -382,14 +382,26 @@ describe('PaymentsDriverLemonSqueezy', () => {
 	test('Cancels at the end of the period', async () => {
 		const { driver, calls } = setup([{ body: { data: fixture('subscription_cancelled').data } }, { body: variant }]);
 
-		// 1. `immediately` has no counterpart: the subscription stays active on its grace period, cancelled at its end
-		await expect(driver.cancelSubscription({ subscriptionId: '3001', immediately: true })).resolves.toMatchObject({
+		// 1. The subscription stays active on its grace period, cancelled at its end
+		await expect(driver.cancelSubscription({ subscriptionId: '3001' })).resolves.toMatchObject({
 			status: 'active',
 			cancelAtPeriodEnd: true,
 			cancelAt: new Date('2026-10-01T10:00:00.000000Z'),
 		});
 
 		expect(calls[0]).toMatchObject({ method: 'DELETE', url: 'https://api.lemonsqueezy.com/v1/subscriptions/3001' });
+	});
+
+	test('Refuses an immediate cancellation without a request', async () => {
+		const { driver, calls } = setup([]);
+
+		// 1. `immediately` has no counterpart: it is refused rather than quietly downgraded to a period-end cancellation
+		await expect(driver.cancelSubscription({ subscriptionId: '3001', immediately: true })).rejects.toThrow(
+			/cannot end a subscription immediately/,
+		);
+
+		// 2. Nothing reached Lemon Squeezy, so the subscription is left as it was
+		expect(calls).toHaveLength(0);
 	});
 
 	test('Lists the invoices of the customer’s subscriptions, most recent first', async () => {

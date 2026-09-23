@@ -12,6 +12,15 @@ import type { MailAddress } from '../types.js';
 const HEADER_UNSAFE_CHARACTERS = /[\x00-\x08\x0a-\x1f\x7f]/;
 
 /**
+ * Characters that may never appear in the address part of a `MailAddress` object.
+ *
+ * Mailgun, Postmark and Resend parse the formatted string as an RFC 5322 address list, so whitespace, a list separator
+ * (`,` `;`), an angle bracket, a quote or a comment parenthesis in the address would let one object become several
+ * recipients or a different angle-address. A single addr-spec never needs any of them.
+ */
+const ADDRESS_LIST_CHARACTERS = /[\s,;<>"()]/;
+
+/**
  * Refuse an address part that would break the header line it is formatted into.
  *
  * @param value - The address or name to check.
@@ -36,11 +45,13 @@ const assertHeaderSafe = (value: string, what: string): void => {
  *
  * A CR, LF or other control character in the name, the address, or a pre-formatted string is refused with an
  * {@link InvalidPayloadError}: the result is one line of a header on the vendor APIs, and a line break inside it
- * would let the rest of the value forge a header of its own.
+ * would let the rest of the value forge a header of its own. The address of an object must also be a single addr-spec:
+ * whitespace or any of `, ; < > " ( )` in it is refused, since the vendors would read those as a second recipient.
  *
  * @param address - Ours.
  * @returns `Name <address>`, `"Quoted, name" <address>`, or the bare address.
- * @throws InvalidPayloadError when a part holds CR, LF or another control character.
+ * @throws InvalidPayloadError when a part holds CR, LF or another control character, or the address of an object holds
+ * whitespace or a list or angle-address delimiter.
  * @example
  * ```ts
  * formatMailAddress({ name: 'Ada', address: 'ada@example.com' });
@@ -64,13 +75,21 @@ export const formatMailAddress = (address: MailAddress): string => {
 	assertHeaderSafe(address.name, 'A mail address name');
 	assertHeaderSafe(address.address, 'A mail address');
 
-	// 3. A name of nothing but whitespace formats as nothing at all; the bare address keeps the stray space out of
+	// 3. The address goes into the angle brackets unquoted, so a comma, bracket or the like in it would let one object
+	//    turn into several recipients on the vendors that parse an address list; a single addr-spec never holds them
+	if (ADDRESS_LIST_CHARACTERS.test(address.address)) {
+		throw new InvalidPayloadError({
+			reason: 'A mail address must be a single addr-spec, without whitespace or , ; < > " ( )',
+		});
+	}
+
+	// 4. A name of nothing but whitespace formats as nothing at all; the bare address keeps the stray space out of
 	//    the line
 	const trimmed = address.name.trim();
 
 	if (trimmed === '') return address.address;
 
-	// 4. Only a name of plain characters may stand bare; RFC 5322 specials (`,` `<` `"` `@` and the like) and
+	// 5. Only a name of plain characters may stand bare; RFC 5322 specials (`,` `<` `"` `@` and the like) and
 	//    anything non-ASCII go inside a quoted-string, where only the quote and the backslash need escaping
 	const name = /[^\w .'-]/.test(trimmed) ? `"${trimmed.replace(/["\\]/g, '\\$&')}"` : trimmed;
 

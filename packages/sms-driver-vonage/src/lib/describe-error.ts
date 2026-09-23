@@ -16,9 +16,15 @@ import { SmsPartialDeliveryError } from './errors/index.js';
  * the SDK compares its failure count with Vonage's `message-count`, which arrives as a string, so it throws
  * `MessageSendPartialFailure` even for a message refused whole.
  *
- * @param error - What was thrown: an `SMSFailure` for a refused message, a plain error for the network.
- * @returns The non-retryable {@link SmsPartialDeliveryError} for a partially delivered message; otherwise an error
- * naming the status and the reason, with the original as its cause.
+ * An error status from Vonage (`401`, `429`, `5xx`) makes the SDK throw a `VetchError`, whose `config` is the prepared
+ * request with the Basic `Authorization` header — the key pair. It is described by its HTTP status alone and never
+ * travels as the cause, so the credentials cannot reach a log or an error tracker that prints causes.
+ *
+ * @param error - What was thrown: an `SMSFailure` for a refused message, a `VetchError` for an error status, a plain
+ * error for the network.
+ * @returns The non-retryable {@link SmsPartialDeliveryError} for a partially delivered message; an error naming the HTTP
+ * status and no cause for an error status; otherwise an error naming the status and the reason, with the original as
+ * its cause.
  * @example
  * ```ts
  * try {
@@ -45,6 +51,15 @@ export const describeError = (error: unknown): Error => {
 		return new Error(`Vonage: ${reason}`, { cause: error });
 	}
 
-	// 3. Anything else — the network, a bad host — as is, prefixed
+	// 3. An error status from Vonage: the SDK's VetchError carries the request, Authorization header included, in
+	//    `config`, so only the status and the message are kept and the error itself is dropped rather than made the cause.
+	//    Matched by shape, since `@vonage/vetch` is the SDK's own dependency and not one of this package
+	if (error instanceof Error && 'config' in error && 'response' in error) {
+		const response = (error as { response?: { status?: number; statusText?: string } }).response;
+
+		return new Error(`Vonage: ${response?.status ?? 'unknown'}: ${response?.statusText || error.message}`);
+	}
+
+	// 4. Anything else — the network, a bad host — as is, prefixed
 	return new Error(`Vonage: ${toErrorMessage(error)}`, { cause: error });
 };

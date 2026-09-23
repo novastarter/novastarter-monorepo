@@ -140,13 +140,21 @@ describe('MailDriverSes', () => {
 	});
 
 	test('Builds the SES transport and sends with tags and the configuration set', async () => {
-		// 1. The transport is nodemailer's SES one, on a client built from the location options
+		// 1. The transport is nodemailer's SES one, on a client built from the location options with deadlines, so a
+		//    stalled endpoint cannot hang the send forever
 		sendMail.mockResolvedValueOnce({ messageId: '<ses-1>', envelope: { to: ['ada@example.com'] }, response: '0100…' });
 
 		const driver = new MailDriverSes({ region: 'eu-west-1', configurationSet: 'main' });
 
 		expect(nodemailer.createTransport).toHaveBeenCalledWith({
-			SES: expect.objectContaining({ sesClient: expect.objectContaining({ config: { region: 'eu-west-1' } }) }),
+			SES: expect.objectContaining({
+				sesClient: expect.objectContaining({
+					config: {
+						region: 'eu-west-1',
+						requestHandler: { connectionTimeout: 10_000, requestTimeout: 30_000, throwOnRequestTimeout: true },
+					},
+				}),
+			}),
 		});
 
 		// 2. Category and tags become SES message tags next to the configuration set
@@ -217,6 +225,29 @@ describe('MailDriverSes', () => {
 		);
 	});
 
+	test('Gives up on a send that outlives 30 s, whatever the SDK is still waiting for', async () => {
+		// 1. A send that never settles, as when SES sends the headers and stalls the body, or the SDK keeps retrying
+		vi.useFakeTimers();
+
+		try {
+			sendMail.mockReturnValueOnce(new Promise(() => {}));
+
+			const driver = new MailDriverSes();
+			const sent = driver.send({ to: 'a@b.c', from: 'x@y.z', subject: 'x', text: 'x' });
+
+			const outcome = expect(sent).rejects.toMatchObject({
+				message: expect.stringMatching(/^SES: /),
+				cause: expect.any(TimeoutError),
+			});
+
+			// 2. The deadline fails the send, so the fallback to the next location can run
+			await vi.advanceTimersByTimeAsync(30_000);
+			await outcome;
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	test('Names the provider in a refusal, keeping the error as the cause', async () => {
 		// 1. A refusal of the transport or the SDK is wrapped, not replaced: the cause keeps its details
 		const refusal = new Error('Message rejected: Email address is not verified.');
@@ -242,7 +273,8 @@ describe('call', () => {
 
 		const driver = new MailDriverSes({ region: 'eu-west-1' });
 
-		// 1. The command class of the action, built on the input, sent on the location's client with a signal
+		// 1. The command class of the action, built on the input, sent on the location's client with a signal and the
+		//    30 s deadline per attempt
 		await expect(driver.call('GetAccount', { Foo: 1 })).resolves.toStrictEqual({
 			status: 200,
 			headers: {},
@@ -253,7 +285,7 @@ describe('call', () => {
 
 		expect(command.input).toStrictEqual({ Foo: 1 });
 		expect(command.constructor.name).toBe('GetAccountCommand');
-		expect(options).toStrictEqual({ abortSignal: expect.any(AbortSignal) });
+		expect(options).toStrictEqual({ abortSignal: expect.any(AbortSignal), requestTimeout: 30_000 });
 
 		// 2. The SDK's own class name works as well; no input means an empty one
 		await driver.call('GetAccountCommand');
@@ -341,6 +373,17 @@ describe('call', () => {
 		);
 
 		await expect(driver.call('GetAccount')).rejects.toBeInstanceOf(HitRateLimitError);
+	});
+
+	test("Hands the caller's timeout to each HTTP attempt, over the client's 30 s request deadline", async () => {
+		// 1. A timeout above the client's own deadline must reach the request, or every attempt would still die at 30 s
+		send.mockResolvedValueOnce({ $metadata: { httpStatusCode: 200 } });
+
+		const driver = new MailDriverSes();
+
+		await driver.call('GetAccount', {}, { timeout: 120_000 });
+
+		expect(send.mock.calls[0]?.[1]).toMatchObject({ requestTimeout: 120_000 });
 	});
 
 	test('Gives up at the timeout and aborts the request; other errors pass through', async () => {

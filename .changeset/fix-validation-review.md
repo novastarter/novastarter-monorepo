@@ -3,3 +3,5 @@
 ---
 
 A malformed rule (`_in: []`, a non-string `_contains`, an unparseable range bound, a bad `_regex`) now fails every present value, including `true`, reported as `{ type: 'in', valid: [] }`; a bare value like `{ status: 'published' }` throws a plain `Error` instead of overflowing the stack, and a second field, operator or sibling key on one filter level throws instead of being skipped.
+
+`validatePayload` with an `_ncontains` filter now returns an `ncontains` validation error when an array holds several forbidden items, instead of throwing a generic `Error`.

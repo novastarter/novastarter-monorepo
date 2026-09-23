@@ -44,7 +44,8 @@ export interface GithubProfile {
  * @param accessToken - The token of the code exchange.
  * @returns The profile and the primary verified address.
  * @throws AuthProviderFailedError when a request fails, is refused, or the profile has no numeric id.
- * @throws HitRateLimitError when GitHub refuses the addresses for a spent rate limit, reset at GitHub's wait.
+ * @throws HitRateLimitError when GitHub refuses the profile or the addresses for a spent rate limit, reset at GitHub's
+ *   wait.
  * @example
  * ```ts
  * const { user, email } = await fetchProfile(context, accessToken);
@@ -65,7 +66,24 @@ export const fetchProfile = async (context: RequestContext, accessToken: string)
 
 	const [user, emails] = await Promise.all([request(context, USER_URL, init), request(context, EMAILS_URL, init)]);
 
-	// 2. No profile, no sign-in; a profile without a numeric id has nothing stable to link by
+	// 2. Both requests share the token's rate limit, so a spent limit refuses the profile too: that refusal fails the
+	//    sign-in as the retryable limit it is, with GitHub's wait, before it could read as a permanent provider failure
+	if (!user.ok) {
+		const wait = githubRateLimitWait(user.status, user.headers, user.body);
+
+		if (wait !== undefined) {
+			throw toProviderCallError({
+				provider: PROVIDER,
+				method: 'GET /user',
+				status: 429,
+				body: user.body,
+				headers: user.headers,
+				retryAfter: wait,
+			});
+		}
+	}
+
+	// 3. No profile, no sign-in; a profile without a numeric id has nothing stable to link by
 	if (!user.ok) {
 		throw new AuthProviderFailedError(
 			{ provider: PROVIDER, reason: describeRefusal('the user endpoint', user) },
@@ -82,7 +100,7 @@ export const fetchProfile = async (context: RequestContext, accessToken: string)
 		);
 	}
 
-	// 3. GitHub spends its rate limit with a 403 as well, and that is not "no address": the refusal fails the sign-in
+	// 4. GitHub spends its rate limit with a 403 as well, and that is not "no address": the refusal fails the sign-in
 	//    with the wait GitHub names, so the caller can retry instead of signing in an email-less identity
 	if (!emails.ok) {
 		const wait = githubRateLimitWait(emails.status, emails.headers, emails.body);
@@ -99,7 +117,7 @@ export const fetchProfile = async (context: RequestContext, accessToken: string)
 		}
 	}
 
-	// 4. A scope not granted reads as no address; anything else refused is a failure worth reporting
+	// 5. A scope not granted reads as no address; anything else refused is a failure worth reporting
 	if (!emails.ok && emails.status !== 403 && emails.status !== 404) {
 		throw new AuthProviderFailedError(
 			{ provider: PROVIDER, reason: describeRefusal('the emails endpoint', emails) },

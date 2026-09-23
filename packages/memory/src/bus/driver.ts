@@ -39,6 +39,17 @@ export interface BusDriver {
 	unsubscribe<T = unknown>(channel: string, callback: MessageHandler<T>): Promise<void>;
 
 	/**
+	 * Register a callback run every time the subscribing connection comes back after it was lost.
+	 *
+	 * Optional: only a driver that talks to a backend over a connection can lose it. Pub/sub is fire-and-forget, so
+	 * every message published while the connection was down is gone for good; a subscriber that keeps state derived
+	 * from the messages — an L1 cache kept coherent by invalidations — resets that state here.
+	 *
+	 * @param callback - Invoked after each reconnect once the subscriptions are active again, not on the first connect.
+	 */
+	onReconnect?(callback: () => void | Promise<void>): void;
+
+	/**
 	 * Release what the driver holds — the subscribing connection — so the process can exit.
 	 *
 	 * Optional: a driver in memory or on a connection it was handed has nothing to release. The manager calls it at

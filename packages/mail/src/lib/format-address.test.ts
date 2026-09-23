@@ -75,6 +75,21 @@ describe('formatMailAddress', () => {
 		expect(() => formatMailAddress({ name: 'A\x1bB', address: 'a@b.com' })).toThrow(InvalidPayloadError);
 		expect(formatMailAddress({ name: 'A\tB', address: 'a@b.com' })).toBe('"A\tB" <a@b.com>');
 	});
+
+	test('Refuses an object address holding whitespace or a list or angle-address delimiter', () => {
+		// 1. A closing bracket and a comma would turn one recipient into several on the vendors that parse a list
+		expect(() => formatMailAddress({ name: 'A', address: 'v@x.com>, e@evil.com' })).toThrow(
+			/must be a single addr-spec/,
+		);
+
+		// 2. The same holds without a name, where the bare address would be handed on as the whole value
+		expect(() => formatMailAddress({ name: '', address: 'v@x.com, e@evil.com' })).toThrow(InvalidPayloadError);
+
+		// 3. Every other delimiter is refused just the same
+		for (const bad of ['v@x.com;e@evil.com', 'v@x.com e@evil.com', '<v@x.com>', '"v"@x.com', 'v(c)@x.com']) {
+			expect(() => formatMailAddress({ name: 'A', address: bad })).toThrow(InvalidPayloadError);
+		}
+	});
 });
 
 describe('bareMailAddress', () => {

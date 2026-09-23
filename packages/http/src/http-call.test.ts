@@ -78,6 +78,13 @@ describe('toQueryString', () => {
 
 		expect(toQueryString({})).toBe('');
 	});
+
+	test('Sends a date as its ISO string, without JSON quotes', () => {
+		// 1. A date is an object, but the API wants the bare timestamp
+		expect(toQueryString({ d: new Date(0), list: [new Date(0)] })).toBe(
+			'?d=1970-01-01T00%3A00%3A00.000Z&list=1970-01-01T00%3A00%3A00.000Z',
+		);
+	});
 });
 
 describe('httpCall', () => {
@@ -348,10 +355,12 @@ describe('httpCall', () => {
 		);
 
 		// 2. Multipart without a file, the type left to `fetch` for its boundary
-		const multipart = await post('multipart/form-data', { name: 'a' });
+		const multipart = await post('multipart/form-data', { name: 'a', at: new Date(0), count: 2 });
 
 		expect(multipart.body).toBeInstanceOf(FormData);
 		expect(multipart.headers['content-type']).toBeUndefined();
+		expect((multipart.body as FormData).get('at')).toBe('1970-01-01T00:00:00.000Z');
+		expect((multipart.body as FormData).get('count')).toBe('2');
 
 		// 3. A vendor JSON type is JSON, and stays the type sent
 		const vendor = await post('application/vnd.api+json', { data: { type: 'x' } });

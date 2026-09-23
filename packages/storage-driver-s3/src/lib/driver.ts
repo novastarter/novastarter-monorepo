@@ -22,7 +22,6 @@ import {
 	CopyObjectCommand,
 	CreateMultipartUploadCommand,
 	DeleteObjectCommand,
-	DeleteObjectsCommand,
 	GetObjectCommand,
 	type GetObjectCommandOutput,
 	HeadObjectCommand,
@@ -510,13 +509,17 @@ export class StorageDriverS3 implements TusDriver {
 	 * Move an object by copying it to the new key and deleting the old one.
 	 *
 	 * S3 has no rename, so this takes two requests and is not atomic: a failure after the copy leaves both objects in
-	 * place.
+	 * place. A move onto the key the source already resolves to does nothing.
 	 *
 	 * @param src - Current object path.
 	 * @param dest - Path to move the object to.
 	 */
 	async move(src: string, dest: string): Promise<void> {
-		// 1. Copy before deleting, so a failure at any point never loses the data
+		// 1. Paths such as `a.png` and `./a.png` resolve to the same key; with encryption configured S3 accepts the
+		//    copy onto itself, and the delete that follows would then remove the only copy, so such a move is a no-op
+		if (this.fullPath(src) === this.fullPath(dest)) return;
+
+		// 2. Copy before deleting, so a failure at any point never loses the data
 		await this.copy(src, dest);
 		await this.delete(src);
 	}
@@ -805,11 +808,17 @@ export class StorageDriverS3 implements TusDriver {
 			}
 		}
 
-		// 4. Open the multipart upload now: S3 assigns the id every later part refers to, so nothing can be sent
+		// 4. Same canned ACL as a plain write: S3 takes it only when the multipart upload is created, not when it is
+		//    completed, so it has to go on this request
+		if (this.config.acl) {
+			params.ACL = this.config.acl;
+		}
+
+		// 5. Open the multipart upload now: S3 assigns the id every later part refers to, so nothing can be sent
 		//    before it exists
 		const res = await this.client.send(new CreateMultipartUploadCommand(params));
 
-		// 5. Keep the upload id in the context: it is the only handle S3 gives for adding parts, and the context is
+		// 6. Keep the upload id in the context: it is the only handle S3 gives for adding parts, and the context is
 		//    what the TUS server hands back on every later call
 		metadata['upload-id'] = res.UploadId!;
 
@@ -868,13 +877,13 @@ export class StorageDriverS3 implements TusDriver {
 			throw ERRORS.FILE_NOT_FOUND;
 		}
 
-		// 5. Remove the object under the key, so a termination after a completed upload does not leave the file behind
+		// 5. Remove the object under the key, so a termination after a completed upload does not leave the file behind.
+		//    The single-object delete is used because it throws on a failure such as AccessDenied, where the batch
+		//    `DeleteObjects` answers 200 and only lists the failure in `Errors`, which would report a false success
 		await this.client.send(
-			new DeleteObjectsCommand({
+			new DeleteObjectCommand({
 				Bucket: this.config.bucket,
-				Delete: {
-					Objects: [{ Key: key }],
-				},
+				Key: key,
 			}),
 		);
 	}
@@ -960,6 +969,12 @@ export class StorageDriverS3 implements TusDriver {
 				}
 			}
 
+			// 4. Same canned ACL as `createChunkedUpload`: the object is created by this request, so the ACL goes here
+			if (this.config.acl) {
+				params.ACL = this.config.acl;
+			}
+
+			// 5. Write the empty object in place of the abandoned multipart upload
 			await this.client.send(new PutObjectCommand(params));
 
 			return;

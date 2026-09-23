@@ -43,4 +43,17 @@ describe('toInvoice', () => {
 			paidAt: null,
 		});
 	});
+
+	test('A partially refunded invoice stays paid', () => {
+		// 1. A partial refund does not unpay the invoice: the whole total counts as paid, nothing is due
+		const invoice = invoiceOf('subscription_payment_success');
+		const refunded = { ...invoice, attributes: { ...invoice.attributes, status: 'partial_refund' as const } };
+
+		expect(toInvoice(refunded)).toMatchObject({
+			status: 'paid',
+			amountPaid: 10440,
+			amountDue: 0,
+			paidAt: new Date('2026-10-01T10:00:00.000000Z'),
+		});
+	});
 });

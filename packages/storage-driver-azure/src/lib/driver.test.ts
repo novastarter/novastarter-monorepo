@@ -639,6 +639,8 @@ describe('#copy', () => {
 	let mockPollUntilDone: Mock;
 	let mockBeginCopyFromUrl: Mock;
 	let mockBlockBlobClient: Mock;
+	let mockBlobClient: Mock;
+	let mockTargetDeleteIfExists: Mock;
 	let mockUrl: string;
 
 	beforeEach(() => {
@@ -649,26 +651,30 @@ describe('#copy', () => {
 			pollUntilDone: mockPollUntilDone,
 		});
 
+		mockTargetDeleteIfExists = vi.fn().mockResolvedValue(undefined);
+
 		mockUrl = randUrl();
 
-		// 2. The first client is the source (only its `url` is read), the second is the target the copy is started on
-		mockBlockBlobClient = vi
-			.fn()
-			.mockReturnValueOnce({
-				url: mockUrl,
-			})
-			.mockReturnValueOnce({
-				beginCopyFromURL: mockBeginCopyFromUrl,
-			});
+		// 2. The source is a block blob client (only its `url` is read); the target is a plain blob client, since it
+		//    may hold an append blob from a TUS upload
+		mockBlockBlobClient = vi.fn().mockReturnValue({
+			url: mockUrl,
+		});
+
+		mockBlobClient = vi.fn().mockReturnValue({
+			beginCopyFromURL: mockBeginCopyFromUrl,
+			deleteIfExists: mockTargetDeleteIfExists,
+		});
 
 		Object.assign(driver, {
 			client: {
 				getBlockBlobClient: mockBlockBlobClient,
+				getBlobClient: mockBlobClient,
 			} as unknown as ContainerClient,
 		});
 	});
 
-	test('Gets BlockBlobClient for src and dest', async () => {
+	test('Gets clients for src and dest', async () => {
 		// 1. Both names are resolved, so neither end of the copy can escape the root
 		await driver.copy(sample.path.src, sample.path.dest);
 
@@ -676,9 +682,41 @@ describe('#copy', () => {
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.src);
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.dest);
 
-		expect(mockBlockBlobClient).toHaveBeenCalledTimes(2);
+		expect(mockBlockBlobClient).toHaveBeenCalledOnce();
 		expect(mockBlockBlobClient).toHaveBeenCalledWith(sample.path.srcFull);
-		expect(mockBlockBlobClient).toHaveBeenCalledWith(sample.path.destFull);
+		expect(mockBlobClient).toHaveBeenCalledOnce();
+		expect(mockBlobClient).toHaveBeenCalledWith(sample.path.destFull);
+	});
+
+	test('Removes a target of another blob type and copies again', async () => {
+		// 1. Azure copies onto an existing blob only of the source's type; an append blob from a TUS upload is refused
+		//    as the target of a block blob, and the other way round
+		mockBeginCopyFromUrl.mockRejectedValueOnce(
+			Object.assign(new Error('invalid blob type'), { statusCode: 409, code: 'InvalidBlobType' }),
+		);
+
+		await driver.copy(sample.path.src, sample.path.dest);
+
+		// 2. The mismatched target is deleted before the second copy, which then succeeds
+		expect(mockTargetDeleteIfExists).toHaveBeenCalledOnce();
+		expect(mockBeginCopyFromUrl).toHaveBeenCalledTimes(2);
+
+		expect(mockTargetDeleteIfExists.mock.invocationCallOrder[0]).toBeLessThan(
+			mockBeginCopyFromUrl.mock.invocationCallOrder[1] as number,
+		);
+
+		expect(mockPollUntilDone).toHaveBeenCalledOnce();
+	});
+
+	test('Rethrows any other conflict without touching the target', async () => {
+		// 1. A conflict other than `InvalidBlobType`, such as a copy still pending on the target, is not recoverable
+		const error = Object.assign(new Error('pending copy'), { statusCode: 409, code: 'PendingCopyOperation' });
+		mockBeginCopyFromUrl.mockRejectedValueOnce(error);
+
+		await expect(driver.copy(sample.path.src, sample.path.dest)).rejects.toBe(error);
+
+		// 2. The target is kept, so the existing content is not lost
+		expect(mockTargetDeleteIfExists).not.toHaveBeenCalled();
 	});
 
 	test('Calls beginCopyFromUrl with source url', async () => {

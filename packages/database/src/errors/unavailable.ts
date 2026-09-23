@@ -27,7 +27,63 @@ export const DatabaseUnavailableError: NovastarterErrorConstructor<DatabaseUnava
 	);
 
 /**
+ * Peel Drizzle's query wrapper off an error, so the connection's own error is what remains.
+ *
+ * Drizzle wraps every failed query in a `DrizzleQueryError` whose message is only the query text
+ * (`Failed query: select 1\nparams: `), with the driver's error as its `cause`. The check is duck-typed on that
+ * message because this package does not depend on `drizzle-orm`.
+ *
+ * @param error - Whatever the backend threw or rejected with.
+ * @returns The wrapped driver error when `error` is Drizzle's wrapper, otherwise `error` itself.
+ * @internal
+ */
+const unwrapQueryError = (error: unknown): unknown => {
+	// 1. Only Drizzle's wrapper carries the query text as its message and the real failure as its cause
+	if (error instanceof Error && error.message.startsWith('Failed query:') && error.cause !== undefined) {
+		return error.cause;
+	}
+
+	// 2. Anything else already is the connection's own error
+	return error;
+};
+
+/**
+ * Describe a connection's error in one line.
+ *
+ * Node reports a refused connection to a host with several addresses (`localhost` resolves to `::1` and
+ * `127.0.0.1`) as an `AggregateError` with an empty message, one inner error per attempted address. Its name alone
+ * (`AggregateError`) says nothing, so the inner messages are joined instead, and the `code` stands in when there are
+ * none.
+ *
+ * @param error - The connection's own error, Drizzle's wrapper already peeled off.
+ * @returns The line that becomes the reason of a {@link DatabaseUnavailableError}.
+ * @internal
+ */
+const describeError = (error: unknown): string => {
+	// 1. An `AggregateError` without a message of its own is described by what failed inside it: every attempted
+	//    address, or the error code when the list is empty
+	if (error instanceof AggregateError && error.message === '') {
+		const inner = (error.errors as unknown[]).map((item) => toErrorMessage(item)).join('; ');
+		const code: unknown = (error as { code?: unknown }).code;
+
+		if (inner !== '') {
+			return inner;
+		}
+
+		if (typeof code === 'string' && code !== '') {
+			return code;
+		}
+	}
+
+	// 2. Any other error already says what went wrong in its message
+	return toErrorMessage(error);
+};
+
+/**
  * Wrap what a connection raised into a {@link DatabaseUnavailableError}.
+ *
+ * A Drizzle query wrapper is peeled off first, so the reason names the real failure (refused, auth, DNS) rather
+ * than the query text. An `AggregateError` without a message (a refused `localhost`) is described by its inner errors.
  *
  * @param error - Whatever the backend threw or rejected with.
  * @param database - The location's label, when known.
@@ -45,7 +101,10 @@ export const toUnavailableError = (
 	error: unknown,
 	database?: string,
 ): NovastarterError<DatabaseUnavailableErrorExtensions> => {
-	// 1. The backend's message becomes the reason, so the line reads on its own; the backend's error stays as `cause`
+	// 1. Look past Drizzle's query wrapper, whose message is only the query text and says nothing of the failure
+	const source = unwrapQueryError(error);
+
+	// 2. The backend's message becomes the reason, so the line reads on its own; the backend's error stays as `cause`
 	//    for whoever needs its code or its stack
-	return new DatabaseUnavailableError({ database, reason: toErrorMessage(error) }, { cause: error });
+	return new DatabaseUnavailableError({ database, reason: describeError(source) }, { cause: source });
 };

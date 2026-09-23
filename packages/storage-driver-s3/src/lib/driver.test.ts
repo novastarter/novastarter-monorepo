@@ -10,7 +10,6 @@ import {
 	CopyObjectCommand,
 	CreateMultipartUploadCommand,
 	DeleteObjectCommand,
-	DeleteObjectsCommand,
 	GetBucketVersioningCommand,
 	GetObjectCommand,
 	HeadObjectCommand,
@@ -701,6 +700,19 @@ describe('#move', () => {
 		// 1. Only the source goes: deleting the destination would undo the copy
 		expect(driver.delete).toHaveBeenCalledWith(sample.path.src);
 	});
+
+	test('Does nothing when both paths resolve to the same key', async () => {
+		// 1. Clear the calls of the move run in `beforeEach` and make the destination resolve to the source key
+		vi.mocked(driver.copy).mockClear();
+		vi.mocked(driver.delete).mockClear();
+		vi.mocked(driver['fullPath']).mockReturnValue(sample.path.srcFull);
+
+		await driver.move(sample.path.src, sample.path.dest);
+
+		// 2. With encryption configured S3 accepts a copy onto itself, so the delete would remove the only copy
+		expect(driver.copy).not.toHaveBeenCalled();
+		expect(driver.delete).not.toHaveBeenCalled();
+	});
 });
 
 /**
@@ -1296,6 +1308,20 @@ describe('#createChunkedUpload', () => {
 			});
 		},
 	);
+
+	test('Sets the configured canned ACL on the create request', async () => {
+		// 1. S3 takes the ACL only when the multipart upload is created, so a TUS upload gets it here or not at all
+		driver['config'].acl = 'public-read';
+
+		await driver.createChunkedUpload(sample.path.input, { metadata: {} });
+
+		expect(CreateMultipartUploadCommand).toHaveBeenCalledWith({
+			Bucket: sample.config.bucket,
+			Key: sample.path.inputFull,
+			Metadata: { 'tus-version': '1.0.0' },
+			ACL: 'public-read',
+		});
+	});
 });
 
 describe('#deleteChunkedUpload', () => {
@@ -1328,7 +1354,7 @@ describe('#deleteChunkedUpload', () => {
 		});
 
 		expect(driver.exists).not.toHaveBeenCalled();
-		expect(DeleteObjectsCommand).not.toHaveBeenCalled();
+		expect(DeleteObjectCommand).not.toHaveBeenCalled();
 	});
 
 	test('Still removes the object when the upload was completed before', async () => {
@@ -1340,10 +1366,25 @@ describe('#deleteChunkedUpload', () => {
 
 		expect(driver.exists).toHaveBeenCalledWith(sample.path.input);
 
-		expect(DeleteObjectsCommand).toHaveBeenCalledWith({
+		expect(DeleteObjectCommand).toHaveBeenCalledWith({
 			Bucket: sample.config.bucket,
-			Delete: { Objects: [{ Key: sample.path.inputFull }] },
+			Key: sample.path.inputFull,
 		});
+	});
+
+	test('Rejects when S3 refuses to delete the object', async () => {
+		// 1. The single-object delete throws on a refusal, so the termination fails instead of reporting a success
+		//    while the file stays in the bucket
+		const denied = Object.assign(new Error('AccessDenied'), {
+			name: 'AccessDenied',
+			$metadata: { httpStatusCode: 403 },
+		});
+
+		vi.mocked(driver['client'].send)
+			.mockRejectedValueOnce(noSuchUpload() as never)
+			.mockRejectedValueOnce(denied as never);
+
+		await expect(driver.deleteChunkedUpload(sample.path.input, context)).rejects.toBe(denied);
 	});
 
 	test('Throws the TUS not-found error when neither the upload nor an object exists', async () => {
@@ -1352,7 +1393,7 @@ describe('#deleteChunkedUpload', () => {
 		vi.mocked(driver.exists).mockResolvedValue(false);
 
 		await expect(driver.deleteChunkedUpload(sample.path.input, context)).rejects.toBe(ERRORS.FILE_NOT_FOUND);
-		expect(DeleteObjectsCommand).not.toHaveBeenCalled();
+		expect(DeleteObjectCommand).not.toHaveBeenCalled();
 	});
 
 	test('Checks for the object when no upload id was ever recorded', async () => {
@@ -1377,7 +1418,7 @@ describe('#deleteChunkedUpload', () => {
 		vi.mocked(driver['client'].send).mockRejectedValueOnce(denied as never);
 
 		await expect(driver.deleteChunkedUpload(sample.path.input, context)).rejects.toBe(denied);
-		expect(DeleteObjectsCommand).not.toHaveBeenCalled();
+		expect(DeleteObjectCommand).not.toHaveBeenCalled();
 	});
 });
 
@@ -1578,6 +1619,22 @@ describe('#finishChunkedUpload', () => {
 			CacheControl: 'max-age=60',
 			ServerSideEncryption: ServerSideEncryption.aws_kms,
 			SSEKMSKeyId: sample.config.serverSideEncryptionKmsKeyId,
+		});
+	});
+
+	test('Sets the configured canned ACL on the empty object', async () => {
+		// 1. The empty object is created by the PutObject, so the ACL must travel with it like on the multipart path
+		driver['config'].acl = 'public-read';
+
+		vi.mocked(driver['client'].send).mockResolvedValue({} as unknown as void);
+
+		await driver.finishChunkedUpload(sample.path.input, { metadata: { 'upload-id': uploadId }, size: 0 });
+
+		expect(PutObjectCommand).toHaveBeenCalledWith({
+			Bucket: sample.config.bucket,
+			Key: sample.path.inputFull,
+			Body: Buffer.alloc(0),
+			ACL: 'public-read',
 		});
 	});
 });

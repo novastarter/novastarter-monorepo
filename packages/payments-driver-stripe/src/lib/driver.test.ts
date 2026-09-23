@@ -185,7 +185,8 @@ describe('PaymentsDriverStripe', () => {
 			quantity: 3,
 		});
 
-		// 3. A plan change and a seat change go on the item, with the proration as asked
+		// 3. A plan change and a seat change go on the item, with the proration as asked; a change that needs a
+		//    payment waits until it is paid, so a declined card leaves the old price in place
 		await driver.updateSubscription({
 			subscriptionId: 'sub_1S5abcDEF123456789',
 			priceId: 'price_business_monthly',
@@ -196,6 +197,7 @@ describe('PaymentsDriverStripe', () => {
 		expect(update).toHaveBeenLastCalledWith('sub_1S5abcDEF123456789', {
 			items: [{ id: 'si_T1abcDEF12345', price: 'price_business_monthly', quantity: 10 }],
 			proration_behavior: 'always_invoice',
+			payment_behavior: 'pending_if_incomplete',
 		});
 
 		// 4. Without a proration choice the kit prorates, and only the given change goes on the item
@@ -204,6 +206,7 @@ describe('PaymentsDriverStripe', () => {
 		expect(update).toHaveBeenLastCalledWith('sub_1S5abcDEF123456789', {
 			items: [{ id: 'si_T1abcDEF12345', quantity: 4 }],
 			proration_behavior: PRORATION.prorate,
+			payment_behavior: 'pending_if_incomplete',
 		});
 
 		// 5. Cancelling at period end is an update; right away is a cancel — both pass the reason on
@@ -224,6 +227,38 @@ describe('PaymentsDriverStripe', () => {
 		);
 
 		expect(retrieve).toHaveBeenCalledTimes(3);
+	});
+
+	test('Throws when the change waits in pending_update because its payment failed', async () => {
+		// 1. Stripe answers the update with the old item and the change held in pending_update, as it does when the
+		//    invoice for a change sent with pending_if_incomplete is declined
+		const { client, driver } = setup();
+		const stripeSubscription = fixture('customer.subscription.created').data.object as Stripe.Subscription;
+
+		vi.spyOn(client.subscriptions, 'retrieve').mockResolvedValue(stripeSubscription as never);
+
+		vi.spyOn(client.subscriptions, 'update').mockResolvedValue({
+			...stripeSubscription,
+			latest_invoice: 'in_1Declined',
+			pending_update: {
+				billing_cycle_anchor: null,
+				expires_at: 1_700_000_000,
+				subscription_items: [],
+				trial_end: null,
+				trial_from_plan: null,
+			},
+		} as never);
+
+		// 2. The unchanged subscription is not answered as if the change was made; the error names the invoice
+		await expect(
+			driver.updateSubscription({
+				subscriptionId: 'sub_1S5abcDEF123456789',
+				priceId: 'price_business_monthly',
+				proration: 'invoice',
+			}),
+		).rejects.toThrow(
+			'was not changed: the payment for the change failed, and the change waits in pending_update until invoice "in_1Declined" is paid',
+		);
 	});
 
 	test('Lists invoices', async () => {
@@ -327,8 +362,9 @@ describe('call', () => {
 	});
 
 	test('Posts the body through rawRequest and answers what Stripe answered', async () => {
-		// 1. A POST carries its parameters as the body; the path and verb go to the SDK as given; without a raw
-		//    response on the answer the status is 200 and there are no headers
+		// 1. A POST carries its parameters as the body; the path and verb go to the SDK as given, with its network
+		//    retries off so none outlives the deadline; without a raw response on the answer the status is 200 and
+		//    there are no headers
 		const { client, driver } = setup();
 		const raw = vi.spyOn(client, 'rawRequest').mockResolvedValue({ id: 're_1', object: 'refund' });
 
@@ -342,7 +378,7 @@ describe('call', () => {
 			'POST',
 			'/v1/refunds',
 			{ payment_intent: 'pi_1', amount: 500 },
-			{ timeout: 30_000 },
+			{ timeout: 30_000, maxNetworkRetries: 0 },
 		);
 	});
 
@@ -361,7 +397,7 @@ describe('call', () => {
 			'GET',
 			'/v1/invoices?customer=cus_1&expand[0]=data.customer&created[gte]=10',
 			undefined,
-			{ timeout: 5_000, additionalHeaders: { 'Stripe-Account': 'acct_1' } },
+			{ timeout: 5_000, maxNetworkRetries: 0, additionalHeaders: { 'Stripe-Account': 'acct_1' } },
 		);
 	});
 
@@ -372,7 +408,11 @@ describe('call', () => {
 
 		await driver.call('GET https://files.stripe.com/v1/files?limit=3');
 
-		expect(raw).toHaveBeenCalledWith('GET', '/v1/files?limit=3', undefined, { timeout: 30_000, apiBase: 'files' });
+		expect(raw).toHaveBeenCalledWith('GET', '/v1/files?limit=3', undefined, {
+			timeout: 30_000,
+			maxNetworkRetries: 0,
+			apiBase: 'files',
+		});
 	});
 
 	test('Refuses a URL on another host, or plain http, before any request', async () => {
@@ -516,12 +556,21 @@ describe('call', () => {
 
 		expect(raw).toHaveBeenCalledWith('GET', '/v1/customers/cus%2F1%20x?expand[0]=subscriptions', undefined, {
 			timeout: 30_000,
+			maxNetworkRetries: 0,
 		});
 
 		// 2. In a POST, the body loses the parameter too
 		await driver.call('POST /v1/customers/{id}', { id: 'cus_1', name: 'Ada' });
 
-		expect(raw).toHaveBeenLastCalledWith('POST', '/v1/customers/cus_1', { name: 'Ada' }, { timeout: 30_000 });
+		expect(raw).toHaveBeenLastCalledWith(
+			'POST',
+			'/v1/customers/cus_1',
+			{ name: 'Ada' },
+			{
+				timeout: 30_000,
+				maxNetworkRetries: 0,
+			},
+		);
 	});
 
 	test('Refuses a {name} no parameter fills before any request', async () => {

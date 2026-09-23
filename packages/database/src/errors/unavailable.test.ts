@@ -35,6 +35,44 @@ describe('toUnavailableError', () => {
 		expect(error.cause).toBe(cause);
 	});
 
+	test("Looks past Drizzle's query wrapper to the connection's own error", () => {
+		const cause = new Error('connect ECONNREFUSED 127.0.0.1:5432');
+		const wrapper = new Error('Failed query: select 1\nparams: ', { cause });
+
+		const error = toUnavailableError(wrapper, 'main');
+
+		// 1. The reason names the real failure, not the query text, and the driver's error is the cause
+		expect(error.extensions.reason).toBe('connect ECONNREFUSED 127.0.0.1:5432');
+		expect(error.cause).toBe(cause);
+	});
+
+	test('Describes an AggregateError without a message by its inner errors', () => {
+		const cause = Object.assign(
+			new AggregateError(
+				[new Error('connect ECONNREFUSED ::1:5432'), new Error('connect ECONNREFUSED 127.0.0.1:5432')],
+				'',
+			),
+			{ code: 'ECONNREFUSED' },
+		);
+
+		const wrapper = new Error('Failed query: select 1\nparams: ', { cause });
+
+		const error = toUnavailableError(wrapper, 'main');
+
+		// 1. Node's refused `localhost` names every attempted address instead of the bare class name
+		expect(error.extensions.reason).toBe('connect ECONNREFUSED ::1:5432; connect ECONNREFUSED 127.0.0.1:5432');
+		expect(error.cause).toBe(cause);
+	});
+
+	test('Falls back to the code of an AggregateError without a message or inner errors', () => {
+		const cause = Object.assign(new AggregateError([], ''), { code: 'ECONNREFUSED' });
+
+		const error = toUnavailableError(cause);
+
+		// 1. The code is the only thing that says what failed
+		expect(error.extensions.reason).toBe('ECONNREFUSED');
+	});
+
 	test('Takes a thrown value that is no Error as it is', () => {
 		const error = toUnavailableError('boom');
 

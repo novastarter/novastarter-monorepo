@@ -201,15 +201,16 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	/**
 	 * Start a hosted checkout for a product.
 	 *
-	 * The trial is expressed in days; the metadata goes on the checkout, and Polar copies it onto the subscription
-	 * it creates.
+	 * The trial is expressed in days, and a checkout without one has the product's own trial switched off; the
+	 * metadata goes on the checkout, and Polar copies it onto the subscription it creates.
 	 *
 	 * @param input - Customer, product, seats, redirects, trial, metadata.
 	 * @returns The checkout and its page.
 	 * @throws Polar's `PolarError` when the request is refused, or its `HTTPClientError` when Polar cannot be reached.
 	 */
 	async createCheckoutSession(input: CreateCheckoutSessionInput): Promise<CheckoutSession> {
-		// 1. One product per checkout; the trial is expressed in days and the cancel URL is Polar's return URL
+		// 1. One product per checkout; the trial is expressed in days and the cancel URL is Polar's return URL. Without
+		//    a positive trial `allowTrial: false` is sent, because Polar otherwise falls back to the product's own trial
 		const checkout = await this.client.checkouts.create({
 			products: [input.priceId],
 			customerId: input.customerId,
@@ -218,8 +219,8 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 			...(input.quantity !== undefined ? { seats: input.quantity } : {}),
 			...(input.allowPromotionCodes !== undefined ? { allowDiscountCodes: input.allowPromotionCodes } : {}),
 			...(input.trialDays !== undefined && input.trialDays > 0
-				? { trialInterval: 'day' as const, trialIntervalCount: input.trialDays }
-				: {}),
+				? { allowTrial: true, trialInterval: 'day' as const, trialIntervalCount: input.trialDays }
+				: { allowTrial: false }),
 			...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
 		});
 

@@ -84,6 +84,29 @@ describe('fetchProfile', () => {
 		expect(error.extensions.reset.getTime()).toBeLessThanOrEqual(reset * 1000 + 2_000);
 	});
 
+	test('Fails on a spent rate limit of the profile as the rate limit, not a provider failure', async () => {
+		// 1. Both requests draw on the token's one budget, so a spent limit refuses the profile as well; the profile is
+		//    checked first, and its refusal must still carry GitHub's reset rather than read as a permanent failure
+		const reset = Math.floor(Date.now() / 1000) + 120;
+
+		const fetch = vi.fn<AuthFetch>(
+			async () =>
+				new Response(JSON.stringify({ message: 'API rate limit exceeded for user ID 1.' }), {
+					status: 403,
+					headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) },
+				}),
+		);
+
+		const error = (await fetchProfile({ fetch, timeout: 1_000 }, 'gho_1').catch(
+			(thrown: unknown) => thrown,
+		)) as InstanceType<typeof HitRateLimitError>;
+
+		// 2. The retryable limit, reset at GitHub's time, not an AuthProviderFailedError
+		expect(error).toBeInstanceOf(HitRateLimitError);
+		expect(error.extensions.reset.getTime()).toBeGreaterThanOrEqual(reset * 1000 - 2_000);
+		expect(error.extensions.reset.getTime()).toBeLessThanOrEqual(reset * 1000 + 2_000);
+	});
+
 	test('Fails on a refused profile, a profile without an id, and an addresses outage', async () => {
 		// 1. A revoked token: the profile is refused with GitHub's message
 		const refused = routed({

@@ -64,12 +64,13 @@ so a token works exactly once.
 
 ## Options
 
-| Option     | Required | Description                                                                              |
-| ---------- | -------- | ---------------------------------------------------------------------------------------- |
-| `findUser` | yes      | `(email) => Promise<{ id } \| null>`.                                                    |
-| `issue`    | yes      | `(record) => Promise<void>`: store a token record.                                       |
-| `spend`    | yes      | `(id, purpose) => Promise<record \| null>`: take a record out atomically.                |
-| `send`     | yes      | `({ email, token, format, userId, expiresAt }) => Promise<void>`: send the link or code. |
-| `signUp`   | —        | Send a link to an address no account has; `false` unless given.                          |
-| `ttl`      | —        | Link lifetime, milliseconds; the `tokens.ttl` setting unless given.                      |
-| `codeTtl`  | —        | Code lifetime, milliseconds; the `tokens.codeTtl` setting unless given.                  |
+| Option        | Required | Description                                                                                                        |
+| ------------- | -------- | ------------------------------------------------------------------------------------------------------------------ |
+| `findUser`    | yes      | `(email) => Promise<{ id } \| null>`.                                                                              |
+| `issue`       | yes      | `(record) => Promise<void>`: store a token record.                                                                 |
+| `spend`       | yes      | `(id, purpose) => Promise<record \| null>`: take a record out atomically.                                          |
+| `send`        | yes      | `({ email, token, format, userId, expiresAt }) => Promise<void>`: send the link or code; not awaited by `begin()`. |
+| `onSendError` | —        | `(error, email) => void`: report a failed `send`; failures are dropped unless given.                               |
+| `signUp`      | —        | Send a link to an address no account has; `false` unless given.                                                    |
+| `ttl`         | —        | Link lifetime, milliseconds; the `tokens.ttl` setting unless given.                                                |
+| `codeTtl`     | —        | Code lifetime, milliseconds; the `tokens.codeTtl` setting unless given.                                            |

@@ -2,6 +2,7 @@ import { type CallOptions, type CallResponse, DEFAULT_REQUEST_TIMEOUT, type Http
 import type { MailDriver, MailMessage, MailResult } from '@novastarter/mail';
 import { Client, type LibraryResponse, type SendEmailV3_1 } from 'node-mailjet';
 import { describeError } from './describe-error.js';
+import { mailjetFetch } from './mailjet-fetch.js';
 import { toMailjetMessage } from './to-mailjet-message.js';
 
 /**
@@ -109,7 +110,8 @@ export class MailDriverMailjet implements MailDriver {
 		this.client = new Client({ apiKey: config.apiKey, apiSecret: config.apiSecret, options: { timeout } });
 		this.sandbox = Boolean(config.sandbox);
 
-		// 3. The key pair and the timeout also go to the API of `call()`, the one request that goes around the SDK
+		// 3. The key pair and the timeout also go to the API of `call()`, the one request that goes around the SDK; its
+		//    `fetch` keeps Mailjet's 64-bit ids as strings, as the SDK does, since a plain `JSON.parse` would round them
 		const basic = Buffer.from(`${config.apiKey}:${config.apiSecret}`).toString('base64');
 
 		this.api = {
@@ -118,6 +120,7 @@ export class MailDriverMailjet implements MailDriver {
 			hosts: MAILJET_CALL_HOSTS,
 			headers: { authorization: `Basic ${basic}` },
 			timeout,
+			fetch: mailjetFetch,
 		};
 	}
 
@@ -185,7 +188,8 @@ export class MailDriverMailjet implements MailDriver {
 	 * which is then not sent again.
 	 * @param options - A timeout over the location's (30 s unless it set one), an abort signal, extra headers.
 	 * @returns The status, the lower-cased headers and Mailjet's answer: parsed JSON, else text; `undefined` when
-	 * empty.
+	 * empty. An integer too large for a `number` — a message `ID` — comes back as a string of its exact digits, the
+	 * way `send()` reads it.
 	 * @throws ProviderCallError when Mailjet answers with an error status — its status and answer in `extensions`.
 	 * @throws HitRateLimitError when Mailjet answers 429.
 	 * @throws TimeoutError when the request outlives its timeout.

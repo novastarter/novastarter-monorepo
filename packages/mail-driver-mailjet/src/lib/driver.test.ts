@@ -303,3 +303,21 @@ describe('MailDriverMailjet.call placeholders and answers', () => {
 		expect(answer).toMatchObject({ status: 201, headers: { 'x-ratelimit-remaining': '9' }, data: { ok: true } });
 	});
 });
+
+describe('MailDriverMailjet.call big ids', () => {
+	test('Answers a 64-bit message id as its exact digits, as send() reads it', async () => {
+		fetchMock.mockResolvedValueOnce(
+			new Response('{"Data":[{"ID":1152921504606847023,"Size":1.5}]}', {
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+			}),
+		);
+
+		const driver = new MailDriverMailjet({ apiKey: 'k', apiSecret: 's' });
+
+		// 1. A plain `JSON.parse` would round the id to 1152921504606846976; a safe number stays a number
+		const { data } = await driver.call('GET /v3/REST/message');
+
+		expect(data).toStrictEqual({ Data: [{ ID: '1152921504606847023', Size: 1.5 }] });
+	});
+});

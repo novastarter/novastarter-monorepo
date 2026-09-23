@@ -239,9 +239,10 @@ describe('PaymentsDriverPaddle', () => {
 			data: ConstructorParameters<typeof Transaction>[0];
 		};
 
-		// 2. `list()` answers a collection; only its first page is read, so only `next()` needs to exist
+		// 2. `list()` answers a collection whose one page holds everything, so `hasMore` stops the paging after it
 		const list = vi.spyOn(client.transactions, 'list').mockReturnValue({
 			next: async () => [new Transaction(data)],
+			hasMore: false,
 		} as never);
 
 		const invoices = await driver.listInvoices({ customerId: 'ctm_1', limit: 5 });
@@ -257,6 +258,70 @@ describe('PaymentsDriverPaddle', () => {
 		// 4. The page's transactions come back as invoices
 		expect(invoices).toHaveLength(1);
 		expect(invoices[0]).toMatchObject({ id: 'txn_01h7zcgmdc8n1v3ypn6pkqtb3t', status: 'paid', number: '325-10001' });
+	});
+
+	test('Pages through the transactions when the limit is above what one Paddle page holds', async () => {
+		const { client, driver } = setup();
+
+		// 1. The API entity built from the fixture, repeated to fill full pages of 30
+		const { data } = JSON.parse(fixtureText('transaction.completed')) as {
+			data: ConstructorParameters<typeof Transaction>[0];
+		};
+
+		const pageOf = (size: number) => Array.from({ length: size }, () => new Transaction(data));
+
+		// 2. Two full pages and a last one of 20: `hasMore` stays true until the third page is read
+		const pages = [pageOf(30), pageOf(30), pageOf(20)];
+
+		const collection = {
+			hasMore: true,
+			next: vi.fn(async () => {
+				const next = pages.shift() ?? [];
+				collection.hasMore = pages.length > 0;
+
+				return next;
+			}),
+		};
+
+		const list = vi.spyOn(client.transactions, 'list').mockReturnValue(collection as never);
+
+		// 3. A limit of 70 is asked for in pages of Paddle's maximum and stops once 70 are collected
+		const invoices = await driver.listInvoices({ customerId: 'ctm_1', limit: 70 });
+
+		expect(list).toHaveBeenCalledWith(expect.objectContaining({ perPage: 30 }));
+		expect(collection.next).toHaveBeenCalledTimes(3);
+		expect(invoices).toHaveLength(70);
+	});
+
+	test('Keeps every other item on the subscription when the first one is rewritten', async () => {
+		const { client, driver } = setup();
+
+		// 1. A subscription with an add-on next to its base price, the way the dashboard or `call()` could leave it
+		const base = apiSubscription('subscription.created');
+		const [first] = base.items;
+
+		if (!first) {
+			throw new Error('The fixture has no items');
+		}
+
+		const addOn = Object.assign(Object.create(Object.getPrototypeOf(first) as object) as typeof first, first, {
+			price: { ...first.price, id: 'pri_addon' },
+			quantity: 7,
+		});
+
+		vi.spyOn(client.subscriptions, 'get').mockResolvedValue(Object.assign(base, { items: [first, addOn] }));
+		const update = vi.spyOn(client.subscriptions, 'update').mockResolvedValue(apiSubscription('subscription.created'));
+
+		// 2. A seat change rewrites the first item only; the add-on goes back unchanged so Paddle does not remove it
+		await driver.updateSubscription({ subscriptionId: 'sub_1', quantity: 5 });
+
+		expect(update).toHaveBeenCalledWith('sub_1', {
+			items: [
+				{ priceId: 'pri_01gsz8x8sawmvhz1pv30nge1ke', quantity: 5 },
+				{ priceId: 'pri_addon', quantity: 7 },
+			],
+			prorationBillingMode: PRORATION.prorate,
+		});
 	});
 
 	test('Verifies a webhook and refuses a bad or missing signature', async () => {

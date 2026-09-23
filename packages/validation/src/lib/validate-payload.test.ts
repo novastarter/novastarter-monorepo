@@ -409,6 +409,14 @@ describe('validatePayload', () => {
 			expect(validatePayload(mockFilter, { value: ['substring-match'] }, options)).toHaveLength(1);
 		});
 
+		test('array values with several forbidden items', () => {
+			// 1. Two offending items must still yield one `ncontains` error, pointing at the first one, instead of a throw
+			const errors = validatePayload(mockFilter, { value: ['match-1', 'match-2'] }, options);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0]!.extensions).toStrictEqual({ field: 'value', path: [0], type: 'ncontains' });
+		});
+
 		test('other values', () => {
 			// 1. Anything that is neither a string nor an array fails by type, `undefined` by `requireAll`
 			expect(validatePayload(mockFilter, { value: null }, options)).toHaveLength(1);

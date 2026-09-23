@@ -4,12 +4,13 @@ import type { LsResource, LsSubscriptionInvoiceAttributes } from '../types.js';
 /**
  * How a subscription invoice's status reads as the kit's: a refund does not unpay an invoice.
  *
- * @defaultValue `pending` → `open`, `paid`, `refunded` → `paid`, `void`
+ * @defaultValue `pending` → `open`, `paid`, `refunded`, `partial_refund` → `paid`, `void`
  */
 export const INVOICE_STATUS: Record<string, InvoiceStatus> = {
 	pending: 'open',
 	paid: 'paid',
 	refunded: 'paid',
+	partial_refund: 'paid',
 	void: 'void',
 };
 

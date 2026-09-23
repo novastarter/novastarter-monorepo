@@ -136,6 +136,80 @@ describe('constructor', () => {
 
 		expect(mockWarn).toHaveBeenCalledWith(expect.any(Error), 'The Redis subscriber connection of the bus failed');
 	});
+
+	test('Runs the reconnect callbacks on every ready after the first one, logging a failing one', async () => {
+		// 1. Pub/sub keeps no messages, so a reconnect is what a subscriber must learn about to reset derived state
+		const listener = vi.mocked(mockSubRedis.on).mock.calls.find(([event]) => event === 'ready')![1] as () => void;
+		const callback = vi.fn();
+		const failing = vi.fn().mockRejectedValue(new Error('reset failed'));
+
+		bus.onReconnect(failing);
+		bus.onReconnect(callback);
+
+		// 2. The first `ready` is the initial connect: nothing was missed yet
+		listener();
+		await Promise.resolve();
+
+		expect(callback).not.toHaveBeenCalled();
+
+		// 3. A later `ready` is a reconnect; a failing callback is logged and does not keep the others from running
+		listener();
+
+		await vi.waitFor(() =>
+			expect(mockWarn).toHaveBeenCalledWith(expect.any(Error), 'A reconnect callback of the bus failed'),
+		);
+
+		expect(callback).toHaveBeenCalledOnce();
+		expect(failing).toHaveBeenCalledOnce();
+	});
+
+	test('Runs the reconnect callbacks only after a PING sent behind the resubscribe was answered', async () => {
+		// 1. ioredis emits `ready` before it sends the resubscribe; a reset done before the subscription is active
+		//    would leave a window in which an invalidation is lost
+		const listener = vi.mocked(mockSubRedis.on).mock.calls.find(([event]) => event === 'ready')![1] as () => void;
+		const callback = vi.fn();
+		const order: string[] = [];
+		let pong!: () => void;
+
+		vi.mocked(mockSubRedis.ping).mockImplementation((() => {
+			order.push('ping');
+
+			return new Promise<'PONG'>((resolve) => {
+				pong = () => resolve('PONG');
+			});
+		}) as never);
+
+		bus.onReconnect(callback);
+		listener();
+
+		// 2. The reconnect: the `SUBSCRIBE` ioredis sends right after emitting `ready` must go out before the PING
+		listener();
+		order.push('subscribe');
+
+		await vi.waitFor(() => expect(mockSubRedis.ping).toHaveBeenCalledOnce());
+
+		expect(order).toStrictEqual(['subscribe', 'ping']);
+		expect(callback).not.toHaveBeenCalled();
+
+		// 3. The PING reply comes after the `SUBSCRIBE` reply, so the subscription is active and the reset can run
+		pong();
+
+		await vi.waitFor(() => expect(callback).toHaveBeenCalledOnce());
+	});
+
+	test('Still runs the reconnect callbacks when the PING behind the resubscribe fails', async () => {
+		// 1. A failed PING means the connection dropped again; a reset is harmless, so it is not skipped
+		const listener = vi.mocked(mockSubRedis.on).mock.calls.find(([event]) => event === 'ready')![1] as () => void;
+		const callback = vi.fn();
+
+		vi.mocked(mockSubRedis.ping).mockRejectedValue(new Error('Connection is closed.'));
+
+		bus.onReconnect(callback);
+		listener();
+		listener();
+
+		await vi.waitFor(() => expect(callback).toHaveBeenCalledOnce());
+	});
 });
 
 describe('publish', () => {

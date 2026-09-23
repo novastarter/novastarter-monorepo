@@ -22,7 +22,7 @@ const subject = 'mailto:ops@example.com';
 /**
  * A browser subscription with placeholder keys; the stub never encrypts for them.
  */
-const subscription = { endpoint: 'https://push.example/abc', keys: { p256dh: 'p', auth: 'a' } };
+const subscription = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys: { p256dh: 'p', auth: 'a' } };
 
 /**
  * Spy standing in for `web-push`'s `sendNotification()`, so a test can script the push service's answer.
@@ -119,6 +119,20 @@ describe('PushDriverWebPush', () => {
 		await expect(driver.send({ token: 'tok', title: 'Hi' })).rejects.toThrow(/needs a subscription/);
 	});
 
+	test('Refuses an endpoint off the browser push services without posting, even when called directly', async () => {
+		const { driver, sendNotification } = build();
+
+		// 1. `location(name).send()` skips `sendPush()`, so the driver checks the client-supplied endpoint itself
+		for (const endpoint of ['https://10.0.0.5:8443/x', 'https://internal-admin.svc.cluster.local/api/reset']) {
+			await expect(driver.send({ subscription: { ...subscription, endpoint }, title: 'Hi' })).rejects.toThrow(
+				/not a known push service/,
+			);
+		}
+
+		// 2. Nothing reached the network
+		expect(sendNotification).not.toHaveBeenCalled();
+	});
+
 	test('Reports a gone target and any other answer or failure as an error with the cause', async () => {
 		const { driver, sendNotification } = build();
 
@@ -141,7 +155,7 @@ describe('PushDriverWebPush', () => {
 		sendNotification.mockRejectedValueOnce(refused);
 
 		await expect(driver.send({ subscription, title: 'Hi' })).rejects.toMatchObject({
-			message: 'Web push: 413 from https://push.example/abc: payload too large',
+			message: 'Web push: 413 from https://fcm.googleapis.com/fcm/send/abc: payload too large',
 			cause: refused,
 		});
 

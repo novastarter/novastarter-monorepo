@@ -146,7 +146,8 @@ export interface EnqueueOptions {
 	/**
 	 * Explicit job id; overrides what `unique` would derive and names the record in the driver. Like a `unique` id it
 	 * collapses a second enqueue while the job is queued, retrying or running, and runs again once it finished: the
-	 * `bullmq` driver drops a completed or failed record under the id before adding.
+	 * `bullmq` driver drops a completed or failed record under the id before adding. Must not contain `:` or be an
+	 * integer string such as `"123"`: BullMQ refuses both, so `enqueue()` throws on every driver.
 	 */
 	jobId?: string;
 }

@@ -810,47 +810,106 @@ describe('#exists', () => {
 });
 
 describe('#move', () => {
-	test('passes arguments to move', async () => {
-		// 1. Both names go through `fullPath`, which is the identity without a root, so the client sees them as given
-		driver['bucket'] = {
-			move: vi.fn(async () => ({ data: null, error: null })),
-		} as any;
+	beforeEach(() => {
+		// 1. The copy goes through the mocked `undici` fetch; the source removal through the bucket handle
+		vi.mocked(fetch).mockResolvedValue(new globalThis.Response('{"Key":"x"}', { status: 200 }) as never);
 
-		await driver.move(sample.path.input, 'new/path');
-		expect(driver['bucket'].move).toHaveBeenCalledWith(sample.path.input, 'new/path');
+		driver['bucket'] = { remove: vi.fn(async () => ({ data: [], error: null })) } as any;
 	});
 
-	test('Throws when the client reports the move failed instead of resolving', async () => {
-		// 1. storage-js answers a failure as `{ error }`; a move that did not happen must not read as done
-		const cause = new Error('Object not found');
-		driver['bucket'] = { move: vi.fn(async () => ({ data: null, error: cause })) } as any;
+	test('Copies with upsert onto the destination and then removes the source', async () => {
+		await driver.move(sample.path.input, 'new/path');
+
+		// 1. The native move refuses an existing destination, so the move is an upserting copy and a removal
+		const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, any];
+
+		expect(url).toBe(`https://${sample.config.projectId}.supabase.co/storage/v1/object/copy`);
+		expect(init.headers).toMatchObject({ 'x-upsert': 'true' });
+
+		expect(JSON.parse(init.body)).toStrictEqual({
+			bucketId: sample.config.bucket,
+			sourceKey: sample.path.input,
+			destinationKey: 'new/path',
+		});
+
+		expect(driver['bucket'].remove).toHaveBeenCalledWith([sample.path.input]);
+	});
+
+	test.each([
+		['a.png', 'a.png'],
+		['a.png', './a.png'],
+	])('Does nothing when "%s" and "%s" name the same object', async (src, dest) => {
+		await driver.move(src, dest);
+
+		// 1. The upserting copy would succeed onto itself, so removing the source would delete the only copy
+		expect(fetch).not.toHaveBeenCalled();
+		expect(driver['bucket'].remove).not.toHaveBeenCalled();
+	});
+
+	test('Keeps the source and throws when the copy fails', async () => {
+		// 1. A refused copy must not be followed by removing the source, or the object would be lost
+		vi.mocked(fetch).mockResolvedValue(
+			new globalThis.Response('{"statusCode":"404","error":"not_found","message":"Object not found"}', {
+				status: 404,
+			}) as never,
+		);
 
 		await expect(driver.move('a.png', 'b.png')).rejects.toMatchObject({
 			message: 'Error moving file "a.png" to "b.png"',
-			cause,
+		});
+
+		expect(driver['bucket'].remove).not.toHaveBeenCalled();
+	});
+
+	test('Throws when the source removal fails instead of resolving', async () => {
+		// 1. storage-js answers a failure as `{ error }`; a move whose source is still there must not read as done
+		const cause = new Error('Access denied');
+		driver['bucket'] = { remove: vi.fn(async () => ({ data: null, error: cause })) } as any;
+
+		await expect(driver.move('a.png', 'b.png')).rejects.toMatchObject({
+			message: 'Error moving file "a.png" to "b.png"',
+			cause: { cause },
 		});
 	});
 });
 
 describe('#copy', () => {
-	test('passes arguments to copy', async () => {
-		// 1. Both names go through `fullPath`, which is the identity without a root, so the client sees them as given
-		driver['bucket'] = {
-			copy: vi.fn(async () => ({ data: null, error: null })),
-		} as any;
+	test('Posts the copy with upsert, so an existing destination is replaced', async () => {
+		vi.mocked(fetch).mockResolvedValue(new globalThis.Response('{"Key":"x"}', { status: 200 }) as never);
 
 		await driver.copy(sample.path.input, 'new/path');
-		expect(driver['bucket'].copy).toHaveBeenCalledWith(sample.path.input, 'new/path');
+
+		// 1. Both names go through `fullPath`, which is the identity without a root; `x-upsert` is what storage-js
+		//    leaves out and what makes Supabase overwrite instead of answering 409
+		const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, any];
+
+		expect(url).toBe(`https://${sample.config.projectId}.supabase.co/storage/v1/object/copy`);
+		expect(init.method).toBe('POST');
+
+		expect(init.headers).toMatchObject({
+			'x-upsert': 'true',
+			authorization: `Bearer ${sample.config.serviceRole}`,
+			apikey: sample.config.serviceRole,
+		});
+
+		expect(JSON.parse(init.body)).toStrictEqual({
+			bucketId: sample.config.bucket,
+			sourceKey: sample.path.input,
+			destinationKey: 'new/path',
+		});
 	});
 
-	test('Throws when the client reports the copy failed instead of resolving', async () => {
-		// 1. storage-js answers a failure as `{ error }`; a copy that did not happen must not read as done
-		const cause = new Error('Object not found');
-		driver['bucket'] = { copy: vi.fn(async () => ({ data: null, error: cause })) } as any;
+	test('Throws when Supabase refuses the copy instead of resolving', async () => {
+		// 1. An error status must not read as a copy that happened
+		vi.mocked(fetch).mockResolvedValue(
+			new globalThis.Response('{"statusCode":"404","error":"not_found","message":"Object not found"}', {
+				status: 404,
+			}) as never,
+		);
 
 		await expect(driver.copy('a.png', 'b.png')).rejects.toMatchObject({
 			message: 'Error copying file "a.png" to "b.png"',
-			cause,
+			cause: expect.any(ProviderCallError),
 		});
 	});
 });
@@ -1615,7 +1674,7 @@ describe('#writeChunk', () => {
 		};
 
 		mockUpload.start.mockImplementation(() => {
-			captured!.options.onChunkComplete(3, 3, sample.file.size);
+			captured!.options.onChunkComplete(3, 6, sample.file.size);
 		});
 
 		const result = await driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 3, context);
@@ -1633,6 +1692,95 @@ describe('#writeChunk', () => {
 		});
 
 		expect(result).toBe(6);
+	});
+
+	test('Gives no creation endpoint when resuming, so an unknown upload fails instead of restarting at 0', async () => {
+		const context = {
+			size: sample.file.size,
+			metadata: { 'upload-url': uploadUrl, creation_date: randPastDate().toString() },
+		};
+
+		mockUpload.start.mockImplementation(() => {
+			captured!.options.onChunkComplete(3, 6, sample.file.size);
+		});
+
+		await driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 3, context);
+
+		// 1. With an endpoint, a 4xx resume HEAD makes the library create a new upload and PATCH this chunk at offset 0
+		expect(captured!.options.endpoint).toBeNull();
+	});
+
+	test('Returns the offset Supabase acknowledged rather than a computed one', async () => {
+		const context = { size: sample.file.size, metadata: {} };
+
+		mockUpload.start.mockImplementation(() => {
+			captured!.options.onChunkComplete(3, 2, sample.file.size);
+		});
+
+		// 1. Supabase took only two of the three bytes; the TUS server must learn the real offset
+		await expect(driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 0, context)).resolves.toBe(2);
+	});
+
+	describe('Checks the resumed offset against the chunk offset', () => {
+		/**
+		 * Drive the resume HEAD through the driver's `onAfterResponse` with the given server offset.
+		 *
+		 * @param serverOffset - The `Upload-Offset` Supabase answers the HEAD with.
+		 * @returns Whether the callback threw, which stops the library before the PATCH.
+		 */
+		const answerHead = (serverOffset: number) => {
+			mockUpload.start.mockImplementation(async () => {
+				// 1. The HEAD answer is checked first; a throw is what the library turns into `onError`
+				try {
+					await captured!.options.onAfterResponse(
+						{ getMethod: () => 'HEAD' },
+						{ getHeader: (name: string) => (name === 'Upload-Offset' ? String(serverOffset) : undefined) },
+					);
+				} catch (error) {
+					captured!.options.onError(error);
+
+					return;
+				}
+
+				// 2. A matching offset lets the PATCH go out, which then completes the chunk
+				captured!.options.onChunkComplete(3, serverOffset + 3, sample.file.size);
+			});
+		};
+
+		/**
+		 * Context of an upload already created by an earlier chunk.
+		 *
+		 * @returns A context with a recorded upload URL.
+		 */
+		const resumedContext = () => ({
+			size: sample.file.size,
+			metadata: { 'upload-url': uploadUrl, creation_date: randPastDate().toString() },
+		});
+
+		test('Sends the chunk when Supabase holds the upload at the chunk offset', async () => {
+			answerHead(8);
+
+			await expect(
+				driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 8, resumedContext()),
+			).resolves.toBe(11);
+		});
+
+		test('Resolves without resending when an earlier attempt of this chunk already landed', async () => {
+			answerHead(11);
+
+			// 1. The response of the first attempt was lost; appending the bytes again would shift every later chunk
+			await expect(
+				driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 8, resumedContext()),
+			).resolves.toBe(11);
+		});
+
+		test('Refuses the chunk when Supabase holds the upload at another offset', async () => {
+			answerHead(16);
+
+			await expect(
+				driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 8, resumedContext()),
+			).rejects.toThrowError(`Supabase upload offset 16 does not match chunk offset 8 of "${sample.path.input}"`);
+		});
 	});
 
 	test('Rejects with the library error when the chunk is rejected', async () => {
@@ -1685,15 +1833,59 @@ describe('#finishChunkedUpload', () => {
 });
 
 describe('#deleteChunkedUpload', () => {
-	test('Removes the object under the final name', async () => {
-		// 1. An unfinished TUS upload has no handle the driver could abort, and Supabase expires it on its own, so
-		//    termination is a plain delete of the object under the final name
-		driver['bucket'] = {
-			remove: vi.fn().mockResolvedValue({ data: [], error: null }),
-		} as any;
+	beforeEach(() => {
+		// 1. The object removal is watched, so a test can prove the previous version under the final name survives
+		driver['bucket'] = { remove: vi.fn().mockResolvedValue({ data: [], error: null }) } as any;
+	});
 
+	test('Terminates the recorded TUS upload and leaves the object under the final name alone', async () => {
+		const uploadUrl = `https://uploads.supabase.co/upload/resumable/${randUnique()}`;
+
+		vi.mocked(tus.Upload.terminate).mockResolvedValue();
+
+		await driver.deleteChunkedUpload(sample.path.input, {
+			size: sample.file.size,
+			metadata: { 'upload-url': uploadUrl },
+		});
+
+		// 1. The unfinished upload has not replaced the object yet, so removing it would delete the previous version
+		expect(tus.Upload.terminate).toHaveBeenCalledWith(uploadUrl, {
+			headers: { Authorization: `Bearer ${sample.config.serviceRole}` },
+			retryDelays: null,
+		});
+
+		expect(driver['bucket'].remove).not.toHaveBeenCalled();
+	});
+
+	test('Does nothing when no chunk was ever sent', async () => {
+		// 1. Without an upload URL nothing exists on Supabase to terminate
 		await driver.deleteChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} });
 
-		expect(driver['bucket'].remove).toHaveBeenCalledWith([sample.path.input]);
+		expect(tus.Upload.terminate).not.toHaveBeenCalled();
+		expect(driver['bucket'].remove).not.toHaveBeenCalled();
+	});
+
+	test.each([404, 410])('Resolves when Supabase answers %i because the upload is already gone', async (status) => {
+		// 1. An expired or finished upload has nothing left to abort; the library reports it as a DetailedError
+		//    carrying the response
+		vi.mocked(tus.Upload.terminate).mockRejectedValue(
+			Object.assign(new Error('tus: unexpected response while terminating upload'), {
+				originalResponse: { getStatus: () => status },
+			}),
+		);
+
+		await expect(
+			driver.deleteChunkedUpload(sample.path.input, { size: sample.file.size, metadata: { 'upload-url': 'u' } }),
+		).resolves.toBeUndefined();
+	});
+
+	test('Rejects with the library error when Supabase refuses the termination', async () => {
+		const failure = new Error('tus: unexpected response while terminating upload');
+
+		vi.mocked(tus.Upload.terminate).mockRejectedValue(failure);
+
+		await expect(
+			driver.deleteChunkedUpload(sample.path.input, { size: sample.file.size, metadata: { 'upload-url': 'u' } }),
+		).rejects.toBe(failure);
 	});
 });

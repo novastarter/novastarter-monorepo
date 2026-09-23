@@ -60,6 +60,19 @@ describe('getJobId', () => {
 		expect(() => getJobId(contract, { customer: 'c1' }, { jobId: 'x:y' })).toThrow('must not contain ":"');
 	});
 
+	test('Refuses an explicit integer id, which BullMQ refuses as a custom id', () => {
+		// 1. An integer string is refused on every driver, with the offending id and job in the message, `"0"` included
+		expect(() => getJobId(contract, { customer: 'c1' }, { jobId: '123' })).toThrow(
+			'The id "123" of job "billing.sync" must not be an integer',
+		);
+
+		expect(() => getJobId(contract, { customer: 'c1' }, { jobId: '0' })).toThrow('must not be an integer');
+
+		// 2. An id that merely starts or ends with digits is not an integer and passes through unchanged
+		expect(getJobId(contract, { customer: 'c1' }, { jobId: 'order-123' })).toBe('order-123');
+		expect(getJobId(contract, { customer: 'c1' }, { jobId: '123abc' })).toBe('123abc');
+	});
+
 	test('Hands out a fresh id otherwise', () => {
 		// 1. Without `unique` or `jobId` every call gets a fresh UUID, so identical payloads never collapse
 		const first = getJobId(contract, { customer: 'c1' }, {});

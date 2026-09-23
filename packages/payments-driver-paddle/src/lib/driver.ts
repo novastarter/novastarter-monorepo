@@ -67,6 +67,14 @@ declare module '@novastarter/payments' {
 export const SIGNATURE_HEADER = 'paddle-signature';
 
 /**
+ * The largest page Paddle's list endpoints answer; a larger `per_page` is capped to it.
+ *
+ * @defaultValue 30
+ * @internal
+ */
+const PADDLE_MAX_PER_PAGE = 30;
+
+/**
  * How the kit's proration choice maps onto Paddle's `proration_billing_mode`: `prorate` charges the difference on
  * the next bill, `invoice` right away, `none` never.
  *
@@ -278,8 +286,8 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	/**
 	 * Change the price (plan) and/or the seat count.
 	 *
-	 * Paddle takes the full list of items on an update, so the current item is read first and rewritten with the
-	 * new price and/or quantity.
+	 * Paddle takes the full list of items on an update, so the current items are read first: the first one is
+	 * rewritten with the new price and/or quantity, every other one is sent back unchanged so Paddle keeps it.
 	 *
 	 * @param input - Subscription, new price and/or seats, proration.
 	 * @returns The subscription after the change.
@@ -295,12 +303,21 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 			);
 		}
 
-		// 2. The item as it is, for whichever of price and quantity stays
-		const current = toSubscription(await this.client.subscriptions.get(input.subscriptionId));
+		// 2. The subscription as it is: the raw entity keeps every item, the mapped one the price and quantity that stay
+		const raw = await this.client.subscriptions.get(input.subscriptionId);
+		const current = toSubscription(raw);
 
-		// 3. Paddle takes the full item list, so the one item is rewritten with the merged price and quantity
+		// 3. Paddle takes the full item list and removes what is left out, so every other item (an add-on added on the
+		// dashboard or through `call()`) is sent back unchanged and only the first one gets the merged price and quantity
+		const items = raw.items.map((item, index) =>
+			index === 0
+				? { priceId: input.priceId ?? current.priceId, quantity: input.quantity ?? current.quantity }
+				: { priceId: item.price.id, quantity: item.quantity },
+		);
+
+		// 4. One update carries the item list and the proration mode mapped onto Paddle's
 		const updated = await this.client.subscriptions.update(input.subscriptionId, {
-			items: [{ priceId: input.priceId ?? current.priceId, quantity: input.quantity ?? current.quantity }],
+			items,
 			prorationBillingMode: PRORATION[input.proration ?? 'prorate'],
 		});
 
@@ -335,20 +352,26 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	 * @throws Paddle's `ApiError` when the request is refused, or the fetch error when Paddle cannot be reached.
 	 */
 	async listInvoices(input: ListInvoicesInput): Promise<Invoice[]> {
-		// 1. A page of this many transactions is asked for; the caller's default otherwise
+		// 1. This many transactions are asked for; the caller's default otherwise
 		const limit = input.limit ?? 20;
 
-		// 2. Only the billed states: a draft or an abandoned checkout is not an invoice
+		// 2. Only the billed states: a draft or an abandoned checkout is not an invoice. Paddle caps a page at
+		// `PADDLE_MAX_PER_PAGE`, so a larger limit is asked for in pages of that size
 		const page = this.client.transactions.list({
 			customerId: [input.customerId],
 			status: ['billed', 'paid', 'completed', 'past_due', 'canceled'],
 			orderBy: 'created_at[DESC]',
-			perPage: limit,
+			perPage: Math.min(limit, PADDLE_MAX_PER_PAGE),
 		});
 
-		// 3. One page is what the caller asked for; the collection would keep paging
-		const transactions = await page.next();
+		// 3. Pages are read until the limit is reached or Paddle has no more, so a limit above one page is not cut short
+		const transactions: Awaited<ReturnType<typeof page.next>> = [];
 
+		do {
+			transactions.push(...(await page.next()));
+		} while (transactions.length < limit && page.hasMore);
+
+		// 4. The last page may overshoot the limit; only the requested number goes back
 		return transactions.slice(0, limit).map(toInvoice);
 	}
 

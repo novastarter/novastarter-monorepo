@@ -49,8 +49,11 @@ keeps its pool between requests is what it is for.
 `neon-http` — one fetch per query. Nothing to warm up, nothing to close, the lowest latency for a single statement: what
 a serverless function or an edge runtime wants. No sessions: `capabilities.transactions` is `false`, `db.transaction()`
 throws (`No transactions support in neon-http driver`), `db.batch([...])` runs several statements in one non-interactive
-transaction instead, and `migrate()` applies its statements one by one without a rollback — a failing migration leaves
-the statements before it applied; fix the cause and run again. `options.authToken` carries a JWT for Neon Authorize.
+transaction instead, and `migrate()` sends each migration with its journal row as one such transaction — a failing
+migration is rolled back, the ones before it stay applied and recorded; fix the cause and run again. Statements Postgres
+refuses inside a transaction block are therefore not supported in a migration: `CREATE INDEX CONCURRENTLY`, or an enum
+value added by `ALTER TYPE ... ADD VALUE` and used later in the same migration. `options.readOnly` and
+`options.deferrable` apply to `db.batch()`, not to `migrate()`. `options.authToken` carries a JWT for Neon Authorize.
 
 Over plain TCP — a long-running server with sockets — `@novastarter/database-driver-postgres` on the same connection
 string is the simpler choice.

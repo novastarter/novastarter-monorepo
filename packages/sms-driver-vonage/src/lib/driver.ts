@@ -139,10 +139,15 @@ export class SmsDriverVonage implements SmsDriver {
 		//    message and `messageCount` says how many were billed
 		const first = answer.messages[0];
 
+		// 3. Vonage sends `message-count` as a JSON string and the SDK only renames the key, whatever its typings say, so
+		//    the count is made a number here to keep `segments` a number, and left out when it is not one
+		const count = answer.messageCount as unknown;
+		const segments = Number(count);
+
 		return {
 			...(first?.messageId !== undefined ? { messageId: first.messageId } : {}),
 			...(first?.status !== undefined ? { status: first.status } : {}),
-			...(answer.messageCount !== undefined ? { segments: answer.messageCount } : {}),
+			...(count != null && count !== '' && Number.isFinite(segments) ? { segments } : {}),
 			...(first?.remainingBalance !== undefined ? { response: `balance ${first.remainingBalance}` } : {}),
 		};
 	}
