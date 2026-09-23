@@ -24,18 +24,11 @@ export interface FeatureFlagsDriverStaticConfig {
  *
  * @example
  * ```ts
- * const flags = useFeatureFlags();
- *
- * flags.registerLocation('default', {
- * 	driver: 'static',
- * 	options: {
- * 		flags: [
- * 			{ key: 'new-billing', enabled: env.FEATURE_NEW_BILLING, rules: { percentage: 10 } },
- * 		],
- * 	},
+ * const driver = new FeatureFlagsDriverStatic({
+ * 	flags: [{ key: 'new-billing', enabled: env.FEATURE_NEW_BILLING, rules: { percentage: 10 } }],
  * });
  *
- * await flags.location('default').get('new-billing', { user: 'u1' });
+ * await driver.get('new-billing', { user: 'u1' });
  * ```
  */
 export class FeatureFlagsDriverStatic implements FeatureFlagsDriver {
@@ -57,7 +50,7 @@ export class FeatureFlagsDriverStatic implements FeatureFlagsDriver {
 		this.flags = new Map();
 
 		for (const definition of config.flags) {
-			// 1. Validated here, since the manager builds the driver on first use: a typo fails there, not silently later
+			// 1. Validated here, where the application builds the driver at start-up: a typo fails the boot, not a request
 			const valid = featureFlagDefinitionSchema.parse(definition);
 
 			// 2. A duplicate key is a configuration mistake: which of the two wins would depend on the order
