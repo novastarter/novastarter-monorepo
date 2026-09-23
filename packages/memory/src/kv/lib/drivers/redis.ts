@@ -313,10 +313,11 @@ export class KvDriverRedis implements KvDriver {
 			return undefined;
 		}
 
-		// 2. Compression is decided per value on write, so detect it from the gzip header rather than from config
+		// 2. Compression is decided per value on write, so detect it from the gzip header alone: a value gzipped by
+		//    another process under the same namespace must read back fine for one with compression off
 		let binaryArray = bufferToUint8Array(value);
 
-		if (this.compression === true && isCompressed(binaryArray)) {
+		if (isCompressed(binaryArray)) {
 			binaryArray = await decompress(binaryArray);
 		}
 

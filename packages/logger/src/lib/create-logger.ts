@@ -173,6 +173,15 @@ export const createLogger = (options: CreateLoggerOptions = {}): Logger<never> =
 	if (options.logsStream) {
 		const streamLevel = options.logsStream.level ?? mergedOptions.level!;
 
+		// 5. pino's multistream resolves an unknown level name to `undefined` and then writes nothing anywhere, the
+		//    console stream included, so a typo in the configured level must fail at start-up, as loud as pino's own
+		//    `unknown level` error for a bad top-level level
+		if (pino.levels.values[streamLevel] === undefined) {
+			throw new Error(`unknown level ${streamLevel}`);
+		}
+
+		// 6. The comparison still goes through the numeric values: the logger level drops only when the stream really
+		//    asks for a lower one
 		if (getLoggerLevelValue(streamLevel) < getLoggerLevelValue(mergedOptions.level!)) {
 			mergedOptions.level = streamLevel;
 		}

@@ -1,10 +1,11 @@
 /**
  * Tests of `request`: what reaches the fetch, how a body is read, and how a request without an answer becomes an
- * `AuthProviderFailedError`.
+ * `AuthProviderFailedError`; and of the two adapters from the driver's fetch: `toHttpCallFetch` for `call()` and
+ * `toJwksFetch` for the key set `jose` reads.
  */
 import { AuthProviderFailedError } from '@novastarter/auth';
 import { describe, expect, test, vi } from 'vitest';
-import { type AuthFetch, request, toHttpCallFetch } from './request.js';
+import { type AuthFetch, request, toHttpCallFetch, toJwksFetch } from './request.js';
 
 describe('request', () => {
 	test('Sends the method, the headers and the body with a deadline signal, and parses the JSON answer', async () => {
@@ -117,5 +118,46 @@ describe('toHttpCallFetch', () => {
 		expect(response.status).toBe(204);
 		expect(response.headers.get('location')).toBeNull();
 		expect(await response.text()).toBe('');
+	});
+});
+
+describe('toJwksFetch', () => {
+	test('Forwards the whole request, redirect included; keeps a Response', async () => {
+		// 1. The platform's answer passes through untouched
+		const real = new Response('{"keys":[]}', { status: 200 });
+		const fetch = vi.fn<AuthFetch>(async () => real);
+		const headers = new Headers({ Accept: 'application/jwk-set+json' });
+		const signal = new AbortController().signal;
+
+		const response = await toJwksFetch(fetch)('https://x.test/jwks', {
+			method: 'GET',
+			headers,
+			signal,
+			redirect: 'manual',
+		});
+
+		expect(response).toBe(real);
+
+		// 2. The request reaches the configured fetch whole, `redirect: 'manual'` included
+		expect(fetch.mock.calls[0]![1]).toStrictEqual({ method: 'GET', headers, signal, redirect: 'manual' });
+	});
+
+	test('Gives a fake answer the JSON reader jose needs', async () => {
+		// 1. A narrow fake answers status and text only; `createRemoteJWKSet` still reads the key set out of it
+		const fetch = vi.fn<AuthFetch>(async () => ({
+			status: 200,
+			ok: true,
+			text: async () => '{"keys":[{"kty":"RSA","kid":"k1"}]}',
+		}));
+
+		const response = await toJwksFetch(fetch)('https://x.test/jwks', {
+			method: 'GET',
+			headers: new Headers(),
+			signal: new AbortController().signal,
+			redirect: 'manual',
+		});
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toStrictEqual({ keys: [{ kty: 'RSA', kid: 'k1' }] });
 	});
 });

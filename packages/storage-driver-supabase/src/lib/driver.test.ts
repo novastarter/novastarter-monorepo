@@ -183,6 +183,21 @@ describe('#constructor', () => {
 		//    not `undefined` that would end up in joined object names
 		expect(driver['config'].root).toBe('');
 	});
+
+	test.each([[-1], [0], [Number.NaN]])('Refuses a non-positive chunk size of %s', (chunkSize) => {
+		// 1. A zero, negative or NaN size would be kept as the per-chunk bound and refuse every arriving chunk with a
+		//    misleading "exceeds the chunk size limit" error; NaN slips through every comparison, which is why the
+		//    check is written as `!(size > 0)`
+		expect(
+			() =>
+				new StorageDriverSupabase({
+					serviceRole: sample.config.serviceRole,
+					bucket: sample.config.bucket,
+					projectId: sample.config.projectId,
+					tus: { chunkSize },
+				}),
+		).toThrowError('The supabase storage driver got a "tus.chunkSize" below 1 byte');
+	});
 });
 
 describe('#getClient', () => {
@@ -1486,17 +1501,44 @@ describe('#writeChunk', () => {
 		expect(result).toBe(3);
 	});
 
-	test('Falls back to the generic content type and omits uploadSize when the length is deferred', async () => {
-		const context = { size: undefined, metadata: undefined };
+	test('Refuses a deferred length with a named error instead of reaching the library', async () => {
+		const context = { size: undefined, metadata: {} };
+
+		// 1. A chunk without a known total can never be forwarded: `tus-js-client` would reject it before any request
+		//    with a size-derivation error, so the refusal names the limitation up front, before an upload is created
+		await expect(
+			driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 0, context),
+		).rejects.toThrowError(
+			`Cannot write a chunk of "${sample.path.input}": the supabase storage driver does not support deferred-length uploads`,
+		);
+
+		expect(tus.Upload).not.toHaveBeenCalled();
+	});
+
+	test('Falls back to the generic content type when the client sends none', async () => {
+		const context = { size: sample.file.size, metadata: undefined };
 
 		mockUpload.start.mockImplementation(() => {
-			captured!.options.onChunkComplete(3, 3, 0);
+			captured!.options.onChunkComplete(3, 3, sample.file.size);
 		});
 
 		await driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 0, context);
 
+		// 1. A POST without `Upload-Metadata` still produces a valid upload: the content type falls back to a generic
+		//    binary type and the known size goes out as `uploadSize`
 		expect(captured!.options.metadata['contentType']).toBe('application/octet-stream');
-		expect(captured!.options.uploadSize).toBeUndefined();
+		expect(captured!.options.uploadSize).toBe(sample.file.size);
+	});
+
+	test('Sends no request for an empty chunk and returns the offset unchanged', async () => {
+		const context = { size: sample.file.size, metadata: {} };
+
+		// 1. A zero-length chunk is a no-op, the way the Azure and Cloudinary drivers treat one: `tus-js-client`
+		//    would reject the empty one-shot source with a size-mismatch error, so no upload is created and the given
+		//    offset comes back
+		await expect(driver.writeChunk(sample.path.input, Readable.from([]), 3, context)).resolves.toBe(3);
+
+		expect(tus.Upload).not.toHaveBeenCalled();
 	});
 
 	test('Records the upload URL in the context when Supabase assigns one', async () => {
@@ -1544,25 +1586,6 @@ describe('#writeChunk', () => {
 		});
 
 		expect(result).toBe(6);
-	});
-
-	test('Resumes a deferred-length upload with a null size', async () => {
-		const context = {
-			size: undefined,
-			metadata: { 'upload-url': uploadUrl, creation_date: randPastDate().toString() },
-		};
-
-		mockUpload.start.mockImplementation(() => {
-			captured!.options.onChunkComplete(3, 3, 0);
-		});
-
-		await driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 0, context);
-
-		// 1. `null` is the previous-upload contract's own marker for an unknown total, where the old non-null
-		//    assertion handed the library `undefined` under a `number` type
-		expect(mockUpload.resumeFromPreviousUpload).toHaveBeenCalledWith(
-			expect.objectContaining({ size: null, uploadUrl }),
-		);
 	});
 
 	test('Rejects with the library error when the chunk is rejected', async () => {

@@ -92,6 +92,17 @@ test('Layers the built ignore over the caller autoLogging instead of dropping it
 	expect(callerIgnore).not.toHaveBeenCalled();
 });
 
+test('Keeps autoLogging off when the caller disabled it, even with ignorePaths', () => {
+	// 1. pino-http gates completion logging on `autoLogging !== false`; an `ignore` object built here would replace
+	//    the boolean and silently re-enable the logging the caller turned off
+	createHttpLogger({ logger, ignorePaths: ['/server/ping'], http: { autoLogging: false } });
+
+	const options = vi.mocked(pinoHttp).mock.calls.at(-1)![0] as Options;
+
+	expect(options.autoLogging).toBe(false);
+	expect(lastOptions().ignore).toBeUndefined();
+});
+
 test('Merges the serializers of the caller and redacts after its req serializer ran', () => {
 	// 1. A `res` serializer of the caller's must survive next to the `req` built here
 	const res = vi.fn((response: { statusCode: number }) => ({ status: response.statusCode }));

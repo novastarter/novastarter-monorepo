@@ -5,12 +5,13 @@
  * `@novastarter/memory`.
  */
 import { useEmitter } from '@novastarter/emitter';
+import { createError } from '@novastarter/errors';
 import { useLogger } from '@novastarter/logger';
 import { LimiterDriverLocal } from '@novastarter/memory';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { SmsDriver } from '../driver.js';
 import type { SmsMessage, SmsResult } from '../types.js';
-import { sendSms, SMS_FAILED_EVENT, SMS_SEND_FILTER, SMS_SENT_EVENT } from './send-sms.js';
+import { sendSms, SMS_FAILED_EVENT, SMS_PARTIAL_DELIVERY_CODE, SMS_SEND_FILTER, SMS_SENT_EVENT } from './send-sms.js';
 import { useSms } from './use-sms.js';
 
 vi.mock('@novastarter/logger');
@@ -22,6 +23,7 @@ declare module './sms-manager.js' {
 		ok: Record<string, never>;
 		broken: Record<string, never>;
 		rude: Record<string, never>;
+		partial: Record<string, never>;
 	}
 }
 
@@ -89,17 +91,44 @@ class RudeDriver implements SmsDriver {
 }
 
 /**
+ * The error a driver throws when the provider accepted some parts of a long text and refused the rest, built the way
+ * `@novastarter/sms-driver-vonage` builds its `SmsPartialDeliveryError`: a `createError` class carrying
+ * {@link SMS_PARTIAL_DELIVERY_CODE}, so the chain's structural `isNovastarterError` check sees the real shape.
+ */
+const SmsPartialDeliveryError = createError<{ delivered: number; parts: number; reason: string }>(
+	SMS_PARTIAL_DELIVERY_CODE,
+	({ delivered, parts, reason }) =>
+		`The sms was partially delivered: ${delivered} of ${parts} parts went out; do not re-send, those parts would go out twice (${reason})`,
+);
+
+/**
+ * A driver whose provider accepts a long text in part only.
+ */
+class PartialDriver implements SmsDriver {
+	/**
+	 * Throw a partial-delivery error for every message.
+	 *
+	 * @throws Always, the `SmsPartialDeliveryError`-shaped error above.
+	 */
+	async send(): Promise<SmsResult> {
+		// 1. The shape `@novastarter/sms-driver-vonage` throws for a half-accepted text
+		throw new SmsPartialDeliveryError({ delivered: 1, parts: 2, reason: '9: Partner quota violation' });
+	}
+}
+
+/**
  * Register the fake drivers and the given locations on the process-wide manager.
  *
  * @param locations - Location name to driver name.
  */
-const register = (locations: Record<string, 'ok' | 'broken' | 'rude'>): void => {
+const register = (locations: Record<string, 'ok' | 'broken' | 'rude' | 'partial'>): void => {
 	// 1. Every fake driver is always known; the test decides which locations exist and in which order
 	const manager = useSms();
 
 	manager.registerDriver('ok', OkDriver);
 	manager.registerDriver('broken', BrokenDriver);
 	manager.registerDriver('rude', RudeDriver);
+	manager.registerDriver('partial', PartialDriver);
 
 	for (const [name, driver] of Object.entries(locations)) {
 		manager.registerLocation(name, {
@@ -218,6 +247,28 @@ describe('sendSms', () => {
 			SMS_FAILED_EVENT,
 			expect.objectContaining({ locations: ['first'] }),
 		);
+	});
+
+	test('Rethrows a partial delivery as-is instead of falling back', async () => {
+		register({ first: 'partial', second: 'ok' });
+		useSms().registerRoutes({ from: 'Acme', transactional: ['first', 'second'] });
+
+		// 1. The part the provider accepted is already on its way: the chain must not hand the message to the next
+		//    location, which would deliver that part again
+		const error = await sendSms(message).catch((thrown: unknown) => thrown);
+
+		// 2. The driver's error passes untouched: not wrapped in 'Every sms location failed', not logged as a failed
+		//    location, and no sms.failed event — a partial delivery is neither a send nor a refusal
+		expect(error).toBeInstanceOf(SmsPartialDeliveryError);
+
+		expect(error).toMatchObject({
+			code: SMS_PARTIAL_DELIVERY_CODE,
+			extensions: { delivered: 1, parts: 2, reason: '9: Partner quota violation' },
+		});
+
+		expect(sent).toHaveLength(0);
+		expect(logger.warn).not.toHaveBeenCalled();
+		expect(emitter.emitAction).not.toHaveBeenCalled();
 	});
 
 	test('Logs a non-Error rejection as an Error, keeping the location in the line', async () => {

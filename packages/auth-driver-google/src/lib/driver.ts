@@ -8,12 +8,12 @@ import {
 } from '@novastarter/auth';
 import { type CallResponse, type HttpApi, request as requestApi } from '@novastarter/http';
 import { MAX_TIMER_DELAY } from '@novastarter/utils';
-import { createRemoteJWKSet, type JWTVerifyGetKey } from 'jose';
+import { createRemoteJWKSet, customFetch, type JWTVerifyGetKey } from 'jose';
 import { buildAuthorizeUrl } from './build-authorize-url.js';
 import { API_URL, CALL_HOSTS, DEFAULT_SCOPES, DEFAULT_TIMEOUT, JWKS_URL, PROVIDER } from './constants.js';
 import { describeRefusal } from './describe-refusal.js';
 import { exchangeCode } from './exchange-code.js';
-import { type AuthFetch, request, type RequestContext, toHttpCallFetch } from './request.js';
+import { type AuthFetch, request, type RequestContext, toHttpCallFetch, toJwksFetch } from './request.js';
 import { toIdentity } from './to-identity.js';
 import { verifyIdToken } from './verify-id-token.js';
 
@@ -159,8 +159,15 @@ export class AuthDriverGoogle implements AuthDriver {
 		};
 
 		// 4. The remote set is lazy — nothing is fetched until the first token — and `jose` caches it and refetches on
-		//    an unknown `kid`, which is how Google's key rotation is followed; the same deadline bounds its fetch
-		this.jwks = config.jwks ?? createRemoteJWKSet(new URL(JWKS_URL), { timeoutDuration: timeout });
+		//    an unknown `kid`, which is how Google's key rotation is followed; the same deadline bounds its fetch, and
+		//    it goes through the configured fetch too — behind an egress proxy the key set must not be readable around
+		//    the fetch the location set
+		this.jwks =
+			config.jwks ??
+			createRemoteJWKSet(new URL(JWKS_URL), {
+				timeoutDuration: timeout,
+				[customFetch]: toJwksFetch(this.context.fetch),
+			});
 	}
 
 	/**

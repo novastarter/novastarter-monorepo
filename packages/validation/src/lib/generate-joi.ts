@@ -172,6 +172,49 @@ const defaults: JoiOptions = {
 };
 
 /**
+ * Tell whether the compare value of a two-bound operator is an array of exactly two entries that all parse as safe
+ * numbers.
+ *
+ * A `Date` bound is never numeric — `Number(date)` would give a timestamp, which is not what a date bound means —
+ * and an out-of-safe-range number cannot be compared exactly, so either makes the pair non-numeric. A numeric string
+ * counts, mirroring the single-bound range operators.
+ *
+ * @param compareValue - Raw compare value of a `_between` / `_nbetween` rule.
+ * @returns `true` when `compareValue` is an array of two entries each parseable as a safe number.
+ * @internal
+ */
+const isSafeNumberPair = (compareValue: unknown): boolean =>
+	// 1. Exactly two bounds are required: fewer leave a bound `undefined`, more are silently ignored otherwise
+	Array.isArray(compareValue) &&
+	compareValue.length === 2 &&
+	// 2. Every bound must parse to a finite, safe number; `Date` bounds are excluded by forcing them to `NaN`
+	compareValue.every((value) => {
+		const val = Number(value instanceof Date ? NaN : value);
+
+		return !Number.isNaN(val) && Math.abs(val) <= Number.MAX_SAFE_INTEGER;
+	});
+
+/**
+ * Tell whether the compare value of a two-bound operator is an array of exactly two entries that are all `Date`
+ * objects or strings parseable as dates.
+ *
+ * This is the fallback once {@link isSafeNumberPair} rejects the pair: raw numbers are not date bounds here (Joi
+ * would throw on them at schema-build time), only genuine dates and date strings are.
+ *
+ * @param compareValue - Raw compare value of a `_between` / `_nbetween` rule.
+ * @returns `true` when `compareValue` is an array of two entries each a `Date` or a parseable date string.
+ * @internal
+ */
+const isDatePair = (compareValue: unknown): boolean =>
+	// 1. Exactly two bounds, each a `Date` or a string `Date.parse` can read; a numeric string never gets here,
+	//    because `isSafeNumberPair` claims it first
+	Array.isArray(compareValue) &&
+	compareValue.length === 2 &&
+	compareValue.every(
+		(value) => value instanceof Date || (typeof value === 'string' && !Number.isNaN(Date.parse(value))),
+	);
+
+/**
  * Build a Joi schema from one field filter.
  *
  * The filter holds a single field key whose value is either an operator object (`{ _gte: 18 }`) or another field
@@ -366,57 +409,77 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			}
 		}
 
-		// 10. List membership maps straight onto Joi's allow / deny lists. An empty `_in` list holds no allowed
-		//     values, so it becomes the never-validating rule of the malformed compare values above — Joi's `equal()`
-		//     without values would build a no-op `any` schema that passes everything; an empty `_nin` list forbids
-		//     nothing, so every value passes, which is what Joi's `not()` without values already builds and is stated
-		//     here so the vacuous truth reads on purpose
+		// 10. List membership maps straight onto Joi's allow / deny lists. A string compare value is spread into
+		//     single characters and a non-empty array into its entries — the string spread is intentional,
+		//     documented behaviour. Anything that is neither (an empty list, a number, `null`, …) cannot hold compare
+		//     values: `_in` becomes the never-validating rule `equal(true)`, since a list of nothing allows nothing,
+		//     and `_nin` becomes a no-op `any`, since forbidding nothing passes everything — the vacuous truth, stated
+		//     here so it reads on purpose
 		if (operator === '_in') {
 			schema[key] =
-				Array.isArray(compareValue) && compareValue.length === 0
-					? Joi.any().equal(true)
-					: getAnySchema().equal(...(compareValue as (string | number)[]));
+				typeof compareValue === 'string' || (Array.isArray(compareValue) && compareValue.length > 0)
+					? getAnySchema().equal(...(compareValue as (string | number)[]))
+					: Joi.any().equal(true);
 		}
 
 		if (operator === '_nin') {
 			schema[key] =
-				Array.isArray(compareValue) && compareValue.length === 0
-					? Joi.any()
-					: getAnySchema().not(...(compareValue as (string | number)[]));
+				typeof compareValue === 'string' || (Array.isArray(compareValue) && compareValue.length > 0)
+					? getAnySchema().not(...(compareValue as (string | number)[]))
+					: Joi.any();
 		}
 
 		// 11. Range operators: a value that is a `Date` or does not parse as a number is compared as a date, so
-		//     `'2024-01-01'` and `'18'` both work without the caller declaring the type
+		//     `'2024-01-01'` and `'18'` both work without the caller declaring the type. A string bound that is
+		//     neither numeric nor a valid date can never be reached by a real value, so the rule degrades to the
+		//     never-validating schema the malformed compare values get, instead of Joi throwing an assert at
+		//     schema-build time: the payload under validation is not at fault for a bad filter
 		if (operator === '_gt') {
 			const isDate = compareValue instanceof Date || Number.isNaN(Number(compareValue));
 
-			schema[key] = isDate
-				? getDateSchema().greater(compareValue as string | Date)
-				: getNumberSchema().greater(Number(compareValue));
+			if (isDate && typeof compareValue === 'string' && Number.isNaN(Date.parse(compareValue))) {
+				schema[key] = Joi.any().equal(true);
+			} else if (isDate) {
+				schema[key] = getDateSchema().greater(compareValue as string | Date);
+			} else {
+				schema[key] = getNumberSchema().greater(Number(compareValue));
+			}
 		}
 
 		if (operator === '_gte') {
 			const isDate = compareValue instanceof Date || Number.isNaN(Number(compareValue));
 
-			schema[key] = isDate
-				? getDateSchema().min(compareValue as string | Date)
-				: getNumberSchema().min(Number(compareValue));
+			if (isDate && typeof compareValue === 'string' && Number.isNaN(Date.parse(compareValue))) {
+				schema[key] = Joi.any().equal(true);
+			} else if (isDate) {
+				schema[key] = getDateSchema().min(compareValue as string | Date);
+			} else {
+				schema[key] = getNumberSchema().min(Number(compareValue));
+			}
 		}
 
 		if (operator === '_lt') {
 			const isDate = compareValue instanceof Date || Number.isNaN(Number(compareValue));
 
-			schema[key] = isDate
-				? getDateSchema().less(compareValue as string | Date)
-				: getNumberSchema().less(Number(compareValue));
+			if (isDate && typeof compareValue === 'string' && Number.isNaN(Date.parse(compareValue))) {
+				schema[key] = Joi.any().equal(true);
+			} else if (isDate) {
+				schema[key] = getDateSchema().less(compareValue as string | Date);
+			} else {
+				schema[key] = getNumberSchema().less(Number(compareValue));
+			}
 		}
 
 		if (operator === '_lte') {
 			const isDate = compareValue instanceof Date || Number.isNaN(Number(compareValue));
 
-			schema[key] = isDate
-				? getDateSchema().max(compareValue as string | Date)
-				: getNumberSchema().max(Number(compareValue));
+			if (isDate && typeof compareValue === 'string' && Number.isNaN(Date.parse(compareValue))) {
+				schema[key] = Joi.any().equal(true);
+			} else if (isDate) {
+				schema[key] = getDateSchema().max(compareValue as string | Date);
+			} else {
+				schema[key] = getNumberSchema().max(Number(compareValue));
+			}
 		}
 
 		// 12. Null and empty checks are allow / deny lists with a single entry
@@ -436,46 +499,41 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			schema[key] = getAnySchema().invalid('');
 		}
 
-		// 13. `_between` is numeric only when the compare value is an array of safe numbers; otherwise array bounds are
-		//     read as dates. A compare value that is not an array cannot hold two bounds, so the rule becomes
-		//     `equal(true)`, which fails for any real value, as with the substring operators above
+		// 13. `_between` needs exactly two bounds: a pair of safe numbers builds the numeric range, a pair of dates
+		//     the date range. Anything else — a non-array, fewer or more bounds, unsafe numbers, unparseable strings —
+		//     cannot describe a range the payload could satisfy, so the rule becomes `equal(true)`, which fails for
+		//     any real value, as with the malformed compare values above
 		if (operator === '_between') {
-			if (Array.isArray(compareValue) === false) {
-				schema[key] = Joi.any().equal(true);
-			} else if (
-				(compareValue as (string | number | Date)[]).every((value) => {
-					const val = Number(value instanceof Date ? NaN : value);
-					return !Number.isNaN(val) && Math.abs(val) <= Number.MAX_SAFE_INTEGER;
-				})
-			) {
+			if (isSafeNumberPair(compareValue)) {
 				const values = compareValue as [number, number];
+
 				schema[key] = getNumberSchema().min(Number(values[0])).max(Number(values[1]));
-			} else {
-				const values = compareValue as [string, string];
+			} else if (isDatePair(compareValue)) {
+				const values = compareValue as [string | Date, string | Date];
+
 				schema[key] = getDateSchema().min(values[0]).max(values[1]);
+			} else {
+				schema[key] = Joi.any().equal(true);
 			}
 		}
 
 		// 14. `_nbetween` is the complement of the range: below the low bound or above the high bound. Joi ANDs the
-		//     rules of one schema, so "or" needs two alternatives; a non-array compare value fails like the one above
+		//     rules of one schema, so "or" needs two alternatives; the bounds classify exactly like `_between` above
+		//     and anything that is not a usable pair degrades the same way
 		if (operator === '_nbetween') {
-			if (Array.isArray(compareValue) === false) {
-				schema[key] = Joi.any().equal(true);
-			} else if (
-				(compareValue as (string | number | Date)[]).every((value) => {
-					const val = Number(value instanceof Date ? NaN : value);
-					return !Number.isNaN(val) && Math.abs(val) <= Number.MAX_SAFE_INTEGER;
-				})
-			) {
+			if (isSafeNumberPair(compareValue)) {
 				const values = compareValue as [number, number];
 
 				schema[key] = Joi.alternatives().try(
 					getNumberSchema().less(Number(values[0])),
 					getNumberSchema().greater(Number(values[1])),
 				);
-			} else {
-				const values = compareValue as [string, string];
+			} else if (isDatePair(compareValue)) {
+				const values = compareValue as [string | Date, string | Date];
+
 				schema[key] = Joi.alternatives().try(getDateSchema().less(values[0]), getDateSchema().greater(values[1]));
+			} else {
+				schema[key] = Joi.any().equal(true);
 			}
 		}
 

@@ -55,4 +55,19 @@ describe('toInvoice', () => {
 			}),
 		).toMatchObject({ number: null, hostedUrl: null, pdfUrl: null, subscriptionId: null, customerId: '' });
 	});
+
+	test('Falls back to the top-level subscription of a delivery pinned to an older API version', () => {
+		// 1. Before API version 2025-03-31 the subscription sat on the invoice, not on the parent: an endpoint pinned
+		//    to an earlier version receives deliveries without a parent, and the subscription must map instead of
+		//    failing silently. A distinct id proves the value is read from the invoice itself, not from the parent
+		const invoice = invoiceOf('invoice.paid');
+
+		const legacy = {
+			...invoice,
+			parent: null,
+			subscription: 'sub_1PinnedToOlderApi',
+		} as unknown as Stripe.Invoice;
+
+		expect(toInvoice(legacy)).toMatchObject({ subscriptionId: 'sub_1PinnedToOlderApi' });
+	});
 });

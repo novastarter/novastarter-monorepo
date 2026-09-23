@@ -926,10 +926,11 @@ describe('#call', () => {
 	});
 
 	test('Signs a short-lived blob SAS with the account credential', async () => {
-		// 1. Blob service only, every resource type, a lifetime of minutes
+		// 1. Blob service only, the resource types `call()` addresses, a lifetime of minutes — and read, delete, list
+		//    and tag only, never write or create, so a SAS that leaks cannot change anything in the account
 		await driver.call('GET /', { restype: 'service', comp: 'properties' });
 
-		expect(AccountSASPermissions.parse).toHaveBeenCalledWith('rwdxylacuptfi');
+		expect(AccountSASPermissions.parse).toHaveBeenCalledWith('rdlt');
 
 		expect(generateAccountSASQueryParameters).toHaveBeenCalledWith(
 			expect.objectContaining({ services: 'b', resourceTypes: 'sco', protocol: 'https' }),

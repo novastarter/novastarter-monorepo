@@ -91,7 +91,9 @@ const rangeLimit = (limit: unknown): string | number => {
  * converter, so both report the same value for the same rule; range bounds pass through {@link rangeLimit}, which
  * normalises a date bound to its ISO string. A value of the wrong type maps to `required`, since
  * that is the closest thing the client can say about it. The substring rules are the ones registered on the extended
- * `Joi` of this package; a named pattern built by hand is not recognised.
+ * `Joi` of this package; a named pattern built by hand is not recognised. `_nbetween` is two exclusive bounds ORed
+ * as alternatives, so a value inside the range fails as `alternatives.match` and the two bounds are read back out
+ * of the wrapped `less` / `greater` details.
  *
  * @param validationErrorItem - One entry of `ValidationError.details`.
  * @param path - Keys leading to the validated object, prepended to the item's own path for nested payloads.
@@ -221,7 +223,23 @@ export const joiValidationErrorItemToErrorExtensions = (
 		extensions.type = 'required';
 	}
 
-	// 10. Array forms of the substring rules: no item contained the substring, or an item contained the forbidden one.
+	// 10. `_nbetween` is two exclusive bounds ORed as alternatives, so a value inside the range fails both and Joi
+	//     wraps the pair as `alternatives.match`. The bounds come back out of the wrapped details — the low bound
+	//     from the `.less` failure, the high bound from `.greater` — normalised like the single-bound ranges above.
+	//     A pair of any other shape is not `_nbetween` and stays unknown, so it fails loudly below
+	if (joiType === 'alternatives.match') {
+		const details = (validationErrorItem.context?.['details'] ?? []) as ValidationErrorItem[];
+
+		const less = details.find((detail) => detail.type.endsWith('.less'));
+		const greater = details.find((detail) => detail.type.endsWith('.greater'));
+
+		if (details.length === 2 && less !== undefined && greater !== undefined) {
+			extensions.type = 'nbetween';
+			extensions.valid = [rangeLimit(less.context?.['limit']), rangeLimit(greater.context?.['limit'])];
+		}
+	}
+
+	// 11. Array forms of the substring rules: no item contained the substring, or an item contained the forbidden one.
 	//     Joi does not hand the substring back from these rules, so only the operator is reported
 	if (joiType === 'array.includesRequiredUnknowns') {
 		extensions.type = 'contains';
@@ -231,20 +249,20 @@ export const joiValidationErrorItemToErrorExtensions = (
 		extensions.type = 'ncontains';
 	}
 
-	// 11. A bare pattern is the `_regex` rule; the pattern is reported, so the client can show what the value had to
+	// 12. A bare pattern is the `_regex` rule; the pattern is reported, so the client can show what the value had to
 	//     match — the same `invalid` meaning the zod converter gives a regex failure
 	if (joiType.endsWith('.pattern.base')) {
 		extensions.type = 'regex';
 		extensions.invalid = String(validationErrorItem.context?.['regex']);
 	}
 
-	// 12. Outside the safe integer range, or infinite: neither is a number the client can act on, and Joi rejects
+	// 13. Outside the safe integer range, or infinite: neither is a number the client can act on, and Joi rejects
 	//     `Infinity` with a rule of its own before any range check runs
 	if (joiType === 'number.unsafe' || joiType === 'number.infinity') {
 		extensions.type = 'unsafe';
 	}
 
-	// 13. Anything else is a rule `generateJoi` never emits; failing loudly beats a message without a type
+	// 14. Anything else is a rule `generateJoi` never emits; failing loudly beats a message without a type
 	if (!extensions.type) {
 		throw new Error(`Couldn't extract validation error type from Joi validation error item`);
 	}

@@ -118,6 +118,24 @@ describe('constructor', () => {
 		// 1. The binary event, not `message`: a gzipped payload must not go through a string
 		expect(bus['sub'].on).toHaveBeenCalledWith('messageBuffer', expect.any(Function));
 	});
+
+	test('Listens for errors on the subscribing connection', () => {
+		// 1. The duplicate is the driver's own connection, and an `error` event with no listener is fatal to the host
+		//    process — a flapping Redis emits errors as a matter of course, so the listener must be there
+		expect(bus['sub'].on).toHaveBeenCalledWith('error', expect.any(Function));
+	});
+
+	test('Logs an error of the subscribing connection through the logger', () => {
+		// 1. The listener the constructor registered reports the failure the way every other failure of the bus is
+		//    reported: through `useLogger`, so the application's registered logger sees it
+		const listener = vi.mocked(mockSubRedis.on).mock.calls.find(([event]) => event === 'error')![1] as (
+			error: Error,
+		) => void;
+
+		listener(new Error('connection lost'));
+
+		expect(mockWarn).toHaveBeenCalledWith(expect.any(Error), 'The Redis subscriber connection of the bus failed');
+	});
 });
 
 describe('publish', () => {
@@ -372,6 +390,20 @@ describe('unsubscribe', () => {
 		expect(bus['handlers'].get(mockNamespacedChannel)).toBeUndefined();
 		expect(bus['sub'].unsubscribe).toHaveBeenCalledWith(mockNamespacedChannel);
 	});
+
+	test('Returns without asking Redis once the bus is closed', async () => {
+		// 1. Cleanup code running after — or racing — the close must not queue an UNSUBSCRIBE on a connection that is
+		//    gone or going: on a never-ready one the command waits in ioredis' offline queue forever and the caller
+		//    hangs on a promise that never settles
+		await bus.close();
+
+		// 2. A handler set still present after the close — the state a caller racing the quit can meet
+		bus['handlers'].set(mockNamespacedChannel, new Set([mockHandler]));
+
+		await bus.unsubscribe(mockChannel, mockHandler);
+
+		expect(bus['sub'].unsubscribe).not.toHaveBeenCalled();
+	});
 });
 
 describe('close', () => {
@@ -478,8 +510,10 @@ describe('#messageBufferHandler', () => {
 		expect(mockHandler).toHaveBeenCalledWith(mockMessage);
 	});
 
-	test('Skips decompression if compression is disabled', async () => {
-		// 1. With compression off, bytes that look gzipped are still taken as they are
+	test('Decompresses a compressed payload even when compression is disabled here', async () => {
+		// 1. Compression is decided per payload on publish, so the header alone decides: a payload gzipped by a
+		//    publisher with compression on must reach the subscribers of a bus with compression off, not be dropped as
+		//    unreadable. The mocked header says gzipped
 		bus = new BusDriverRedis({
 			redis: mockRedis,
 			namespace: 'test-namespace',
@@ -490,7 +524,9 @@ describe('#messageBufferHandler', () => {
 
 		await bus['messageBufferHandler'](mockNamespacedChannelBuffer, mockBuffer);
 
-		expect(decompress).not.toHaveBeenCalled();
+		expect(decompress).toHaveBeenCalledWith(mockUint8Array);
+		expect(deserialize).toHaveBeenCalledWith(mockDecompressedUint8Array);
+		expect(mockHandler).toHaveBeenCalledWith(mockMessage);
 	});
 
 	test('Decompresses binary if value is compressed and compression is enabled', async () => {

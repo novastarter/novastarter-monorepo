@@ -1,7 +1,9 @@
 import { AuthProviderFailedError } from '@novastarter/auth';
+import { toProviderCallError } from '@novastarter/errors';
 import { API_VERSION, EMAILS_URL, PROVIDER, USER_AGENT, USER_URL } from './constants.js';
 import { describeRefusal } from './describe-refusal.js';
 import { pickEmail } from './pick-email.js';
+import { githubRateLimitWait } from './rate-limit.js';
 import { request, type RequestContext } from './request.js';
 
 /**
@@ -35,12 +37,14 @@ export interface GithubProfile {
  *
  * Both requests go out at once. The profile is required: without it there is no id. The addresses are not: without
  * the `user:email` scope GitHub answers them with 403 or 404, and the identity then carries no address rather than
- * failing the sign-in; any other refusal of them fails it, since an outage should not pass for "no address".
+ * failing the sign-in; a spent rate limit answers 403 too, and that fails the sign-in with GitHub's wait, so it reads
+ * as the retryable limit it is; any other refusal of them fails it, since an outage should not pass for "no address".
  *
  * @param context - The fetch and the deadline.
  * @param accessToken - The token of the code exchange.
  * @returns The profile and the primary verified address.
  * @throws AuthProviderFailedError when a request fails, is refused, or the profile has no numeric id.
+ * @throws HitRateLimitError when GitHub refuses the addresses for a spent rate limit, reset at GitHub's wait.
  * @example
  * ```ts
  * const { user, email } = await fetchProfile(context, accessToken);
@@ -78,7 +82,24 @@ export const fetchProfile = async (context: RequestContext, accessToken: string)
 		);
 	}
 
-	// 3. A scope not granted reads as no address; anything else refused is a failure worth reporting
+	// 3. GitHub spends its rate limit with a 403 as well, and that is not "no address": the refusal fails the sign-in
+	//    with the wait GitHub names, so the caller can retry instead of signing in an email-less identity
+	if (!emails.ok) {
+		const wait = githubRateLimitWait(emails.status, emails.headers, emails.body);
+
+		if (wait !== undefined) {
+			throw toProviderCallError({
+				provider: PROVIDER,
+				method: 'GET /user/emails',
+				status: 429,
+				body: emails.body,
+				headers: emails.headers,
+				retryAfter: wait,
+			});
+		}
+	}
+
+	// 4. A scope not granted reads as no address; anything else refused is a failure worth reporting
 	if (!emails.ok && emails.status !== 403 && emails.status !== 404) {
 		throw new AuthProviderFailedError(
 			{ provider: PROVIDER, reason: describeRefusal('the emails endpoint', emails) },

@@ -182,6 +182,21 @@ describe('get', () => {
 		expect(deserialize).toHaveBeenCalledWith(mockUint8Array);
 		expect(result).toBe(mockValue);
 	});
+
+	test('Decompresses a compressed value even when compression is disabled here', async () => {
+		// 1. Compression is decided per value on write, so the header alone decides: a value gzipped by another process
+		//    under the same namespace must read back fine for a store with compression off. The default store has it off
+		vi.mocked(kv['redis'].getBuffer).mockResolvedValue(mockBuffer);
+
+		vi.mocked(isCompressed).mockReturnValue(true);
+
+		const result = await kv.get(mockKey);
+
+		expect(bufferToUint8Array).toHaveBeenCalledWith(mockBuffer);
+		expect(decompress).toHaveBeenCalledWith(mockUint8Array);
+		expect(deserialize).toHaveBeenCalledWith(mockDecompressedUint8Array);
+		expect(result).toBe(mockValue);
+	});
 });
 
 describe('set', () => {

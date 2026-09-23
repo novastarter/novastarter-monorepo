@@ -142,6 +142,16 @@ describe('createLogger', () => {
 		]);
 	});
 
+	test('Throws on an unknown logsStream level instead of building a logger that writes nothing', () => {
+		// 1. pino's multistream resolves an unknown level name to `undefined` and then drops every line, the console
+		//    stream included, so the factory must fail at start-up, as loud as pino's own `unknown level` error
+		expect(() => createLogger({ logsStream: { stream: {} as LogsStream, level: 'nope' } })).toThrow(
+			'unknown level nope',
+		);
+
+		expect(pino).not.toHaveBeenCalled();
+	});
+
 	test('Keeps the built-in redaction when the caller passes its own redact paths', () => {
 		// 1. lodash merges arrays index by index; the caller's list must add to the credentials, not overwrite them
 		createLogger({ pino: { redact: { paths: ['password'] } } });

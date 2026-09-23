@@ -23,6 +23,9 @@ export declare class SmsDriver {
 	 * @param message - Message with its recipient normalised to E.164.
 	 * @returns What the provider answered.
 	 * @throws When the provider refuses the message or cannot be reached; `sendSms()` moves on to the next location.
+	 * The one exception: an error carrying the code `SMS_PARTIAL_DELIVERY` of `@novastarter/sms` — a partial delivery,
+	 * some parts accepted and billed — which `sendSms()` rethrows as-is, since the next location would send the
+	 * delivered parts again.
 	 */
 	send(message: SmsMessage): Promise<SmsResult>;
 

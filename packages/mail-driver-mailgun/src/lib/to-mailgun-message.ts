@@ -27,6 +27,42 @@ export const MAILGUN_TAG_LENGTH = 128;
 export const MAILGUN_TAG_COUNT = 3;
 
 /**
+ * Characters that end a header line or have no printable form.
+ *
+ * A header value holding one would, once Mailgun rebuilds the `h:` field into a raw header, break the line and let
+ * the remainder forge a header of its own; a tab is deliberately allowed, as it only folds the line.
+ */
+// eslint-disable-next-line no-control-regex -- matching the control characters is exactly the point of the guard
+const HEADER_VALUE_UNSAFE_CHARACTERS = /[\x00-\x08\x0a-\x1f\x7f]/;
+
+/**
+ * A header name the way RFC 7230 defines a token: the only characters Mailgun's `h:` field can take in a name for it
+ * to name one header.
+ */
+const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
+/**
+ * A custom header the way Mailgun takes it: an `h:<name>` form field.
+ *
+ * The name has to be a single RFC 7230 token and the value a single line — Mailgun copies both verbatim into a raw
+ * header of the message, so a name with a colon or a value with a line break in it would forge or break a header.
+ *
+ * @param name - Header name.
+ * @param value - Header value.
+ * @returns The `h:` field name and value.
+ * @throws Error when the name is no token or the value holds CR, LF or another control character.
+ */
+export const toMailgunHeader = (name: string, value: string): { field: string; value: string } => {
+	// 1. A name that is not one token would not name a single header, and a line break or control character in the
+	//    value would reach the raw header verbatim — refuse either before the request goes out
+	if (!HEADER_NAME_PATTERN.test(name) || HEADER_VALUE_UNSAFE_CHARACTERS.test(value)) {
+		throw new Error(`Mailgun: the "${name}" header cannot be sent: the name must be a token and the value one line`);
+	}
+
+	return { field: `h:${name}`, value };
+};
+
+/**
  * The category and the tags as Mailgun takes them: every label brought into Mailgun's character set and cut to its
  * length limit, the ones left empty dropped, the list capped at its count limit — so a label past a limit trims the
  * analytics instead of failing the send.
@@ -75,7 +111,8 @@ export const toMailgunFile = async (attachment: MailAttachment): Promise<Mailgun
  * @param message - Ours, with `from` set (`sendMail()` fills it in).
  * @param testMode - Turn Mailgun's test mode on for this message.
  * @returns Mailgun's.
- * @throws Error when `from` is missing — Mailgun requires it.
+ * @throws Error when `from` is missing — Mailgun requires it; Error when a custom header name is no token or a
+ * value holds CR, LF or another control character — either would forge a raw header on Mailgun's side.
  */
 export const toMailgunMessage = async (message: MailMessage, testMode = false): Promise<MailgunMessageData> => {
 	// 1. The API refuses a message without a sender; say so before the request goes out
@@ -97,9 +134,12 @@ export const toMailgunMessage = async (message: MailMessage, testMode = false): 
 		...(testMode ? { 'o:testmode': true } : {}),
 	} as MailgunMessageData;
 
-	// 3. Any custom header is an `h:` field on Mailgun
+	// 3. Any custom header is an `h:` field on Mailgun; a name or value that would not survive being rebuilt into a
+	//    raw header is refused here, before the request goes out
 	for (const [name, value] of Object.entries(message.headers ?? {})) {
-		data[`h:${name}`] = value;
+		const header = toMailgunHeader(name, value);
+
+		data[header.field] = header.value;
 	}
 
 	// 4. Inline files (content id) apart from regular attachments

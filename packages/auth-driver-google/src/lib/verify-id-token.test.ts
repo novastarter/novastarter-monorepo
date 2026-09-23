@@ -25,12 +25,13 @@ beforeAll(async () => {
  * Sign an ID token the way Google does, with overrides for the claim under test.
  *
  * @param claims - Claims to add or replace.
- * @param options - Another issuer, audience, subject, expiry or signing key.
+ * @param options - Another issuer, audience, subject, expiry or signing key; the expiry is a `jose` span (`5m`) or
+ * epoch seconds.
  * @returns The compact JWT.
  */
 const sign = async (
 	claims: JWTPayload = {},
-	options: { issuer?: string; audience?: string; subject?: string; expires?: string; key?: CryptoKey } = {},
+	options: { issuer?: string; audience?: string; subject?: string; expires?: string | number; key?: CryptoKey } = {},
 ): Promise<string> => {
 	// 1. A token that passes every check unless an override breaks one
 	const jwt = new SignJWT({ nonce: 'nonce-1', email: 'ada@example.com', ...claims })
@@ -94,6 +95,24 @@ describe('verifyIdToken', () => {
 		// 2. Without a subject there is nothing to link the account by
 		await expect(verifyIdToken(await sign({}, { subject: '' }), options)).rejects.toThrow(
 			'the ID token has no subject',
+		);
+	});
+
+	test('Forgives a verifying clock a little ahead of Google, and nothing more', async () => {
+		const options = { jwks, audience: 'client-1', nonce: 'nonce-1' };
+
+		// 1. A token a few seconds expired still verifies: within the tolerance, the skew is forgiven
+		const recent = Math.floor(Date.now() / 1000) - 5;
+
+		await expect(verifyIdToken(await sign({}, { expires: recent }), options)).resolves.toMatchObject({
+			sub: '1234567890',
+		});
+
+		// 2. A token expired past the tolerance is still refused — the forgiveness is about skew, not validity
+		const stale = Math.floor(Date.now() / 1000) - 120;
+
+		await expect(verifyIdToken(await sign({}, { expires: stale }), options)).rejects.toThrow(
+			'the ID token did not verify',
 		);
 	});
 });

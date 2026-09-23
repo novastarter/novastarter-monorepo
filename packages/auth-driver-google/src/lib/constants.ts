@@ -49,6 +49,14 @@ export const DEFAULT_SCOPES: readonly string[] = ['openid', 'email', 'profile'];
 export const DEFAULT_TIMEOUT = 10_000;
 
 /**
+ * How far the verifying clock may run ahead of Google's, in seconds, before an ID token's time claims are refused: a
+ * token in the last moments of its validity still verifies, instead of failing on a server a few seconds fast.
+ *
+ * @defaultValue 30 seconds.
+ */
+export const CLOCK_TOLERANCE = 30;
+
+/**
  * The root of Google's APIs, which the path of a `call()` method is joined to.
  *
  * @defaultValue `https://www.googleapis.com`

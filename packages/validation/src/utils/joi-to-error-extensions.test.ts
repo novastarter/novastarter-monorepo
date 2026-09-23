@@ -234,6 +234,49 @@ describe('other rules', () => {
 		).toBe('required');
 	});
 
+	test('maps the _nbetween alternatives pair to nbetween with the two bounds', () => {
+		// 1. A value inside the range fails both alternatives; Joi wraps the pair as `alternatives.match` and the
+		//    bounds come back out of the wrapped `less` / `greater` details, low bound first like the caller's array
+		const result = joiValidationErrorItemToErrorExtensions(
+			item('alternatives.match', {
+				details: [item('number.less', { limit: 1 }), item('number.greater', { limit: 3 })],
+			}),
+		);
+
+		expect(result).toStrictEqual({ field: 'field', path: [], type: 'nbetween', valid: [1, 3] });
+	});
+
+	test('normalises the date bounds of the _nbetween alternatives pair to ISO strings', () => {
+		// 1. Date bounds arrive as `Date` objects, exactly like the single-bound date rules, and normalise the same way
+		const low = new Date('2024-01-01T00:00:00.000Z');
+		const high = new Date('2024-01-03T00:00:00.000Z');
+
+		const result = joiValidationErrorItemToErrorExtensions(
+			item('alternatives.match', {
+				details: [item('date.less', { limit: low }), item('date.greater', { limit: high })],
+			}),
+		);
+
+		expect(result).toStrictEqual({
+			field: 'field',
+			path: [],
+			type: 'nbetween',
+			valid: ['2024-01-01T00:00:00.000Z', '2024-01-03T00:00:00.000Z'],
+		});
+	});
+
+	test('still throws on an alternatives pair it cannot describe', () => {
+		// 1. An `alternatives.match` whose wrapped details are no `less` / `greater` pair is not `_nbetween`; it must
+		//    fail loudly like any other unknown rule instead of guessing an operator
+		expect(() =>
+			joiValidationErrorItemToErrorExtensions(
+				item('alternatives.match', {
+					details: [item('number.min', { limit: 1 }), item('number.max', { limit: 3 })],
+				}),
+			),
+		).toThrowError("Couldn't extract validation error type from Joi validation error item");
+	});
+
 	test('maps an empty string rejected by a stock string schema to nempty', () => {
 		// 1. A caller's own `Joi.string()` rejects `''` before any rule; that is "must not be empty" to the client and
 		//    must not escape as a throw

@@ -1,6 +1,7 @@
 /**
  * Tests of `mail/lib/format-address`: the address forms the vendor drivers hand to their APIs.
  */
+import { InvalidPayloadError } from '@novastarter/errors';
 import { describe, expect, test } from 'vitest';
 import { bareMailAddress, formatMailAddress, parseMailAddress, toMailAddressList } from './format-address.js';
 
@@ -51,6 +52,28 @@ describe('formatMailAddress', () => {
 
 		// 2. Surrounding whitespace of a real name is trimmed, not carried into the line
 		expect(formatMailAddress({ name: '  Ada  ', address: 'ada@example.com' })).toBe('Ada <ada@example.com>');
+	});
+
+	test('Refuses CR, LF and control characters in the name, the address and a pre-formatted string', () => {
+		// 1. CR or LF in the address would end the header line and start a forged one on the vendor APIs, so the
+		//    address is refused instead of being interpolated verbatim
+		expect(() => formatMailAddress({ name: 'Acme', address: 'a@b.com>\r\nBcc: attacker@evil.com <x' })).toThrow(
+			/address must not contain CR, LF or control characters/,
+		);
+
+		// 2. The same goes for the name, quoted or not, and for a pre-formatted string handed on as given
+		expect(() => formatMailAddress({ name: 'A\r\nBcc: attacker@evil.com', address: 'a@b.com' })).toThrow(
+			/name must not contain CR, LF or control characters/,
+		);
+
+		expect(() => formatMailAddress('a@b.com>\r\nBcc: attacker@evil.com <x')).toThrow(
+			/address string must not contain CR, LF or control characters/,
+		);
+
+		// 3. Other control characters — a NUL, an ESC — are refused just the same; a tab is not a line break and stays
+		expect(() => formatMailAddress({ name: 'A\x00B', address: 'a@b.com' })).toThrow(InvalidPayloadError);
+		expect(() => formatMailAddress({ name: 'A\x1bB', address: 'a@b.com' })).toThrow(InvalidPayloadError);
+		expect(formatMailAddress({ name: 'A\tB', address: 'a@b.com' })).toBe('"A\tB" <a@b.com>');
 	});
 });
 

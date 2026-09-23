@@ -115,6 +115,26 @@ describe('AiManager', () => {
 		expect(() => manager.registerProvider('a:b', provider())).toThrow('must not contain ":"');
 	});
 
+	test('Refuses the name __proto__, which the plain records object could not hold', () => {
+		const manager = new AiManager();
+
+		// 1. `providers` and `apis` are plain object literals: `records['__proto__'] = …` invokes the Object.prototype
+		//    setter and swaps the records' prototype instead of storing the provider, so nothing is registered
+		expect(() => manager.registerProvider('__proto__', provider())).toThrow('must not be "__proto__"');
+
+		expect(() =>
+			manager.registerProvider('__proto__', provider(), { api: { baseURL: 'https://api.example.com' } }),
+		).toThrow('must not be "__proto__"');
+
+		// 2. Nothing was stored and no prototype was touched: the provider is absent from every lookup
+		const records = (manager as unknown as { providers: object }).providers;
+
+		expect(Object.getPrototypeOf(records)).toBe(Object.prototype);
+		expect(manager.hasProvider('__proto__')).toBe(false);
+		expect(manager.providerNames()).toStrictEqual([]);
+		expect(() => manager.languageModel('__proto__:small')).toThrow(AiModelNotFoundError);
+	});
+
 	test('Rebuilds the registry after a provider is registered', () => {
 		const first = answering('first');
 		const second = answering('second');

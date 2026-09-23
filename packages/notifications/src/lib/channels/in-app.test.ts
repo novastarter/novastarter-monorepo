@@ -75,4 +75,30 @@ describe('inAppChannel', () => {
 
 		expect(publish).not.toHaveBeenCalled();
 	});
+
+	test('Uses the notification’s id, so a retried job saves the same record instead of a duplicate', async () => {
+		const saved: InAppRecord[] = [];
+		const delivery = { ...DELIVERY, notification: { ...DELIVERY.notification, id: 'event-1042' } };
+
+		// 1. The same notification delivered twice: what a job retry after `save()` succeeded but the publish failed
+		//    looks like
+		await inAppChannel({ save: async (record) => void saved.push(record) }).send(delivery);
+		await inAppChannel({ save: async (record) => void saved.push(record) }).send(delivery);
+
+		// 2. The record's id is the notification's, so the application's save can upsert on it
+		expect(saved.map((record) => record.id)).toStrictEqual(['event-1042', 'event-1042']);
+	});
+
+	test('Gives a record without a notification id a fresh one, so a plain re-send still works', async () => {
+		const saved: InAppRecord[] = [];
+
+		// 1. A notification that carries no id: two deliveries are two records, each with its own id
+		await inAppChannel({ save: async (record) => void saved.push(record) }).send(DELIVERY);
+		await inAppChannel({ save: async (record) => void saved.push(record) }).send(DELIVERY);
+
+		// 2. The ids differ, and they are the uuid shape the inbox test above pins down
+		expect(saved[0]?.id).toMatch(/^[0-9a-f-]{36}$/);
+		expect(saved[1]?.id).toMatch(/^[0-9a-f-]{36}$/);
+		expect(saved[0]?.id).not.toBe(saved[1]?.id);
+	});
 });

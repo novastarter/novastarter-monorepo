@@ -1,4 +1,30 @@
+import { InvalidPayloadError } from '@novastarter/errors';
 import type { MailAddress } from '../types.js';
+
+/**
+ * Control characters that may never appear in a formatted address.
+ *
+ * CR and LF end the header line a formatted address becomes part of, so a value holding one would let the remainder
+ * start a header of the attacker's choosing behind the real one; the other C0 controls and DEL are not printable
+ * either. A tab is deliberately allowed — it only folds the line, which a quoted-string display name survives.
+ */
+// eslint-disable-next-line no-control-regex -- matching the control characters is exactly the point of the guard
+const HEADER_UNSAFE_CHARACTERS = /[\x00-\x08\x0a-\x1f\x7f]/;
+
+/**
+ * Refuse an address part that would break the header line it is formatted into.
+ *
+ * @param value - The address or name to check.
+ * @param what - Which part the value is, for the error message.
+ * @throws InvalidPayloadError when the value holds CR, LF or another control character.
+ */
+const assertHeaderSafe = (value: string, what: string): void => {
+	// 1. CR or LF would end the header line and turn the rest into a header of its own; the other control characters
+	//    are not printable either — none of them belongs in an address
+	if (HEADER_UNSAFE_CHARACTERS.test(value)) {
+		throw new InvalidPayloadError({ reason: `${what} must not contain CR, LF or control characters` });
+	}
+};
 
 /**
  * A `MailAddress` as one RFC 5322 string, the form most vendor APIs take.
@@ -8,8 +34,13 @@ import type { MailAddress } from '../types.js';
  * so an unquoted comma in a name would split one recipient into two broken ones. The name is trimmed first; one that
  * is empty afterwards — `''` or whitespace only — is dropped, so no stray space stands in front of the address.
  *
+ * A CR, LF or other control character in the name, the address, or a pre-formatted string is refused with an
+ * {@link InvalidPayloadError}: the result is one line of a header on the vendor APIs, and a line break inside it
+ * would let the rest of the value forge a header of its own.
+ *
  * @param address - Ours.
  * @returns `Name <address>`, `"Quoted, name" <address>`, or the bare address.
+ * @throws InvalidPayloadError when a part holds CR, LF or another control character.
  * @example
  * ```ts
  * formatMailAddress({ name: 'Ada', address: 'ada@example.com' });
@@ -20,16 +51,26 @@ import type { MailAddress } from '../types.js';
  * ```
  */
 export const formatMailAddress = (address: MailAddress): string => {
-	// 1. A string is handed on as given: the caller already formatted it
-	if (typeof address === 'string') return address;
+	// 1. A string is handed on as given — but only within one header line: a line break or control character in it
+	//    would reach the provider's header verbatim, so it is refused before the string goes anywhere
+	if (typeof address === 'string') {
+		assertHeaderSafe(address, 'An address string');
 
-	// 2. A name of nothing but whitespace formats as nothing at all; the bare address keeps the stray space out of
+		return address;
+	}
+
+	// 2. Both parts are interpolated into one header line; CR or LF in either would end the line and let the rest
+	//    forge a header
+	assertHeaderSafe(address.name, 'A mail address name');
+	assertHeaderSafe(address.address, 'A mail address');
+
+	// 3. A name of nothing but whitespace formats as nothing at all; the bare address keeps the stray space out of
 	//    the line
 	const trimmed = address.name.trim();
 
 	if (trimmed === '') return address.address;
 
-	// 3. Only a name of plain characters may stand bare; RFC 5322 specials (`,` `<` `"` `@` and the like) and
+	// 4. Only a name of plain characters may stand bare; RFC 5322 specials (`,` `<` `"` `@` and the like) and
 	//    anything non-ASCII go inside a quoted-string, where only the quote and the backslash need escaping
 	const name = /[^\w .'-]/.test(trimmed) ? `"${trimmed.replace(/["\\]/g, '\\$&')}"` : trimmed;
 

@@ -91,6 +91,69 @@ describe('QueueDriverLocal', () => {
 		expect(handler).toHaveBeenCalledTimes(1);
 	});
 
+	test('Collapses a second enqueue of the same id into the running job, answering the first identity', async () => {
+		// 1. A handler held on a gate, so the first job is still running when the duplicate lands; without a delay the
+		//    handler runs inline, so it has been called by the time `enqueue()` returns its promise
+		let release!: () => void;
+
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+
+		const handler = vi.fn(async () => {
+			await gate;
+		});
+
+		registerJobHandlers({ 'test.echo': handler } as any);
+
+		const firstRun = queue.enqueue(contract, { value: 'x' }, contract.options, 'job-1');
+		expect(handler).toHaveBeenCalledTimes(1);
+
+		// 2. The duplicate lands while the first is still running; the gate opens only after both enqueues were accepted,
+		//    so a driver without deduplication runs the handler a second time and fails the count below instead of
+		//    blocking on the gate
+		const secondRun = queue.enqueue(contract, { value: 'y' }, contract.options, 'job-1');
+		release();
+
+		const [first, second] = await Promise.all([firstRun, secondRun]);
+
+		expect(second).toStrictEqual(first);
+		expect(handler).toHaveBeenCalledTimes(1);
+
+		// 3. Once the run settles, the id is free again and the same work runs a second time
+		await queue.enqueue(contract, { value: 'z' }, contract.options, 'job-1');
+		expect(handler).toHaveBeenCalledTimes(2);
+	});
+
+	test('Collapses a second enqueue of the same id while the first waits on its delay, and frees the id once it ran', async () => {
+		vi.useFakeTimers();
+
+		const handler = vi.fn(async () => {});
+		registerJobHandlers({ 'test.echo': handler } as any);
+
+		// 1. The delayed job holds its id until its timer fires; the duplicate collapses into it instead of arming a
+		//    timer of its own
+		const first = await queue.enqueue(contract, { value: 'later' }, { ...contract.options, delay: 1_000 }, 'job-1');
+		const second = await queue.enqueue(contract, { value: 'never' }, { ...contract.options, delay: 5_000 }, 'job-1');
+
+		expect(second).toStrictEqual(first);
+		expect(handler).not.toHaveBeenCalled();
+
+		// 2. The delayed job runs once the wait passed; advancing past the duplicate's own delay runs nothing more,
+		//    since the duplicate armed no timer
+		await vi.advanceTimersByTimeAsync(1_000);
+		expect(handler).toHaveBeenCalledTimes(1);
+
+		await vi.advanceTimersByTimeAsync(5_000);
+		expect(handler).toHaveBeenCalledTimes(1);
+
+		// 3. Settled means the id can be used again
+		const third = await queue.enqueue(contract, { value: 'again' }, contract.options, 'job-1');
+
+		expect(third).toStrictEqual(first);
+		expect(handler).toHaveBeenCalledTimes(2);
+	});
+
 	test('Honours a delay longer than one timer can hold instead of running the job after 1 ms', async () => {
 		vi.useFakeTimers();
 

@@ -15,6 +15,12 @@ export interface Notification {
 	type: string;
 	/** The user to tell. */
 	userId: string;
+	/**
+	 * A stable id of the event, when the application has one: it survives the queue and the schema, so a retried job
+	 * delivers the same id and an in-app inbox can upsert on it instead of duplicating the row. Given none, the in-app
+	 * channel gives the record a fresh one.
+	 */
+	id?: string | undefined;
 	/** The channels to use; every registered one unless given. The user's preferences still apply. */
 	channels?: string[] | undefined;
 	/** What the templates need: the invoice number, the comment's author. Plain JSON, since it goes through a queue. */
@@ -27,6 +33,7 @@ export interface Notification {
 export const notificationSchema: z.ZodType<Notification> = z.object({
 	type: z.string().min(1),
 	userId: z.string().min(1),
+	id: z.string().min(1).optional(),
 	channels: z.array(z.string().min(1)).optional(),
 	data: z.record(z.string(), z.unknown()).optional(),
 });
@@ -92,7 +99,10 @@ export interface InAppContent {
  * An in-app notification as the application stores it and the bus announces it.
  */
 export interface InAppRecord extends InAppContent {
-	/** A fresh id, for the inbox's key. */
+	/**
+	 * The notification's {@link Notification.id} when it carried one — the inbox's key, so the application's `save`
+	 * upserts a retried job's delivery instead of inserting a duplicate; a fresh one otherwise.
+	 */
 	id: string;
 	/** The user it is for. */
 	userId: string;

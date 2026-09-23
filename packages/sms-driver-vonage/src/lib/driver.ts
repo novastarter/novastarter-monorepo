@@ -125,6 +125,8 @@ export class SmsDriverVonage implements SmsDriver {
 	 * @param message - Message with its recipient in E.164.
 	 * @returns The id of the first part, the status Vonage accepted it with, and how many parts the text became.
 	 * @throws Error naming Vonage's status and wording when it refuses the message, the SDK's error as the cause.
+	 * @throws SmsPartialDeliveryError when Vonage accepts some parts of a long text and refuses the rest — the
+	 * delivered parts already went out and are billed, so the message is not to be re-sent through a fallback.
 	 */
 	async send(message: SmsMessage): Promise<SmsResult> {
 		// 1. Vonage answers `200` even for a refusal, and the SDK turns a refused part into a throw; `describeError`
@@ -210,5 +212,9 @@ export class SmsDriverVonage implements SmsDriver {
 		if (!response.ok) {
 			throw new Error(`Vonage: ${response.status}: ${response.statusText || 'the account could not be read'}`);
 		}
+
+		// 3. The balance answer is not read further; an unconsumed body would hold the socket out of `fetch`'s
+		//    connection pool until GC, so it is drained before the driver moves on
+		await response.arrayBuffer();
 	}
 }

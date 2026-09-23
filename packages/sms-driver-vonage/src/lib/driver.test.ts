@@ -4,9 +4,9 @@
  */
 import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
-import { MessageSendAllFailure } from '@vonage/sms';
+import { MessageSendAllFailure, MessageSendPartialFailure } from '@vonage/sms';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import defaultExport, { SmsPartialDeliveryError } from '../index.js';
 import { BALANCE_URL } from './constants.js';
 import { SmsDriverVonage } from './driver.js';
 
@@ -86,13 +86,44 @@ describe('SmsDriverVonage', () => {
 		);
 	});
 
+	test('Reports a partially delivered message as the non-retryable SmsPartialDeliveryError', async () => {
+		// 1. A long text becomes parts, one entry each in Vonage's answer; the SDK throws MessageSendPartialFailure
+		//    when it took some parts and refused the rest — the accepted parts already went out and are billed, so the
+		//    driver must not report this as a refusal a fallback would re-send
+		send.mockRejectedValueOnce(
+			new MessageSendPartialFailure({
+				messageCount: 2,
+				messages: [
+					{ status: '0', messageId: 'm-1' },
+					{ status: '9', errorText: 'Partner quota violation' },
+				],
+			} as never),
+		);
+
+		const driver = new SmsDriverVonage({ apiKey: 'key', apiSecret: 'secret' });
+
+		const error = (await driver
+			.send({ to: '+14155550123', from: 'Acme', text: 'Hi' })
+			.catch((thrown: unknown) => thrown)) as Error;
+
+		// 2. The dedicated error names how much went out and why the rest refused; the SDK's answer stays on the cause
+		expect(error).toBeInstanceOf(SmsPartialDeliveryError);
+
+		expect(error).toMatchObject({
+			code: 'SMS_PARTIAL_DELIVERY',
+			extensions: { delivered: 1, parts: 2, reason: '9: Partner quota violation' },
+		});
+
+		expect(error.cause).toBeInstanceOf(MessageSendPartialFailure);
+	});
+
 	test('Refuses an incomplete credential by the option name', () => {
 		expect(() => new SmsDriverVonage({ apiKey: '', apiSecret: 'secret' })).toThrow(/"apiKey"/);
 		expect(() => new SmsDriverVonage({ apiKey: 'key', apiSecret: '' })).toThrow(/"apiSecret"/);
 	});
 
 	test('Verifies the credentials by reading the account balance', async () => {
-		const fetch = vi.fn(async () => ({ ok: true, status: 200, statusText: 'OK' }));
+		const fetch = vi.fn(async () => new Response('{"value":10.5,"autoReload":false}'));
 
 		vi.stubGlobal('fetch', fetch);
 
@@ -107,7 +138,7 @@ describe('SmsDriverVonage', () => {
 		});
 
 		// 2. Bad credentials answer 401, which is reported with the status
-		fetch.mockResolvedValueOnce({ ok: false, status: 401, statusText: 'Unauthorized' });
+		fetch.mockResolvedValueOnce(new Response('Unauthorized', { status: 401, statusText: 'Unauthorized' }));
 		await expect(driver.verify()).rejects.toThrow('Vonage: 401: Unauthorized');
 
 		// 3. A network failure never reached the API and is described as it is
@@ -115,8 +146,26 @@ describe('SmsDriverVonage', () => {
 		await expect(driver.verify()).rejects.toThrow('Vonage: ENOTFOUND');
 	});
 
+	test('Drains the balance response body, so the socket returns to the pool', async () => {
+		// 1. The balance answer is not read further, but an unconsumed body would hold the socket out of `fetch`'s
+		//    connection pool until GC — `verify()` consumes and drops it
+		const response = new Response('{"value":10.5,"autoReload":false}');
+		const drain = vi.spyOn(response, 'arrayBuffer');
+
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => response),
+		);
+
+		const driver = new SmsDriverVonage({ apiKey: 'key', apiSecret: 'secret' });
+
+		await expect(driver.verify()).resolves.toBeUndefined();
+
+		expect(drain).toHaveBeenCalledTimes(1);
+	});
+
 	test('Bounds the balance read with the configured timeout', async () => {
-		const fetch = vi.fn(async () => ({ ok: true, status: 200, statusText: 'OK' }));
+		const fetch = vi.fn(async () => new Response('{"value":10.5,"autoReload":false}'));
 
 		vi.stubGlobal('fetch', fetch);
 

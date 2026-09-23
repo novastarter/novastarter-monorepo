@@ -109,6 +109,9 @@ export class PushDriverWebPush implements PushDriver {
 	 * @param config - Keys, subject and defaults.
 	 * @throws Error without a public key, a private key or a subject, or with a subject that is neither `mailto:`
 	 * nor `https:` — the push services refuse such a VAPID token.
+	 * @throws Error when a key is not URL-safe base64 of the right length (65 bytes decoded for the public key, 32
+	 * for the private one) — a malformed key must fail here, at registration, not on every send with the library's
+	 * raw error.
 	 */
 	constructor(config: PushDriverWebPushConfig) {
 		// 1. Missing keys are a configuration error; reported by the options' names, with the command that makes a pair
@@ -121,6 +124,24 @@ export class PushDriverWebPush implements PushDriver {
 		// 2. The subject is what a push service contacts about abuse; it takes exactly two forms
 		if (!config.subject || !/^(mailto:|https:\/\/)/.test(config.subject)) {
 			throw new Error('The webpush push driver needs a "subject" that is a mailto: address or an https: URL');
+		}
+
+		// 3. The library's own decode-and-length check, exactly as `verify()` runs it: a key truncated or padded in
+		//    copy-paste built fine so far and failed every send with the library's raw error — the pair match of
+		//    `verify()` still needs a signature, this does not
+		try {
+			webpush.getVapidHeaders(
+				VERIFY_AUDIENCE,
+				config.subject,
+				config.publicKey,
+				config.privateKey,
+				config.contentEncoding ?? 'aes128gcm',
+			);
+		} catch (error) {
+			throw new Error(
+				`The webpush push driver got a "publicKey" or a "privateKey" that is not valid URL-safe base64 of the right length: ${toErrorMessage(error)}`,
+				{ cause: error },
+			);
 		}
 
 		this.config = config;

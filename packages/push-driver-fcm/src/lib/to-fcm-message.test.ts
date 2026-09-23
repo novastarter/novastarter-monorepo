@@ -46,6 +46,17 @@ describe('toFcmMessage', () => {
 			},
 			webpush: {
 				headers: { Urgency: 'high', TTL: '60' },
+				data: {
+					payload: JSON.stringify({
+						title: 'Paid',
+						body: 'Invoice #1',
+						icon: '/icon.png',
+						image: 'https://app.example/big.png',
+						badge: '/badge.png',
+						tag: 'invoice-1',
+						data: { invoiceId: '1', url: 'https://app.example/billing' },
+					}),
+				},
 				notification: {
 					icon: '/icon.png',
 					badge: '/badge.png',
@@ -94,6 +105,31 @@ describe('toFcmMessage', () => {
 	test('Refuses a message without a token', () => {
 		// 1. A subscription is the webpush driver's business; the mapper throws for a direct caller without a token
 		expect(() => toFcmMessage({ title: 'Hi' })).toThrow(/needs a token/);
+	});
+
+	test('Sends the stringified Web Push payload along in the webpush data for contract service workers', () => {
+		// 1. FCM relays the webpush block in its own envelope, so a service worker written against the kit's payload
+		//    contract reads `data.payload` back with one JSON.parse — FCM data values are strings, hence the stringify
+		const message = toFcmMessage(
+			{ token: 'tok', title: 'Paid', body: 'Invoice #1', url: '/billing', icon: '/icon.png', data: { invoiceId: '1' } },
+			{},
+			now,
+		);
+
+		expect(message.webpush?.data).toStrictEqual({
+			payload: JSON.stringify({
+				title: 'Paid',
+				body: 'Invoice #1',
+				icon: '/icon.png',
+				data: { invoiceId: '1', url: '/billing' },
+			}),
+		});
+
+		// 2. The Firebase-SDK notification block stays, so its default worker keeps showing the notification
+		expect(message.webpush?.notification).toMatchObject({
+			icon: '/icon.png',
+			data: { invoiceId: '1', url: '/billing' },
+		});
 	});
 
 	test('Maps a ttl of 0 to "now or never" on every platform', () => {

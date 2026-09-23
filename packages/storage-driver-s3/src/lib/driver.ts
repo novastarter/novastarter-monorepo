@@ -28,6 +28,7 @@ import {
 	HeadObjectCommand,
 	ListObjectsV2Command,
 	ListPartsCommand,
+	PutObjectCommand,
 	S3Client,
 	S3ServiceException,
 	ServerSideEncryption,
@@ -880,13 +881,18 @@ export class StorageDriverS3 implements TusDriver {
 	/**
 	 * Complete the multipart upload once every part has arrived.
 	 *
+	 * A zero-length upload produces no parts, and S3 refuses `CompleteMultipartUpload` with an empty `Parts` list
+	 * (400 MalformedXML), so its multipart upload is aborted and the empty object is written with a plain
+	 * `PutObjectCommand` instead.
+	 *
 	 * @param filepath - Final object path relative to the root.
 	 * @param context - Context carrying the multipart `upload-id` and the total `size`.
 	 * @throws Error when the context carries no upload id or no size, meaning the upload was never created by
 	 * {@link StorageDriverS3.createChunkedUpload}.
 	 * @throws An object with `status_code: 500` when the parts S3 lists still do not add up to the upload size after
 	 * three retries, in the shape the TUS server turns into an HTTP response.
-	 * @throws The SDK error when the listing or the completion request fails.
+	 * @throws The SDK error when the abort or the empty-object write of a zero-length upload, the listing, or the
+	 * completion request fails.
 	 */
 	async finishChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<void> {
 		const key = this.fullPath(filepath);
@@ -906,7 +912,56 @@ export class StorageDriverS3 implements TusDriver {
 			throw new Error(`Cannot finish the chunked upload of "${filepath}": the context has no upload size`);
 		}
 
-		// 2. The listing may not yet show the last parts; poll with growing pauses (0.5 s, 1 s, 1.5 s) before giving up.
+		// 2. A zero-length upload produces no parts, and S3 refuses `CompleteMultipartUpload` with an empty `Parts`
+		//    list (400 MalformedXML): the multipart upload is aborted and the empty object is written directly,
+		//    restating the headers the create request carried
+		if (size === 0) {
+			// 1. The multipart upload is abandoned before the object exists, so no part can land in it afterwards and
+			//    S3 stops holding (and billing for) stored parts
+			await this.client.send(
+				new AbortMultipartUploadCommand({
+					Bucket: this.config.bucket,
+					Key: key,
+					UploadId: uploadId,
+				}),
+			);
+
+			const params: PutObjectCommandInput = {
+				Bucket: this.config.bucket,
+				Key: key,
+				Body: Buffer.alloc(0),
+			};
+
+			// 2. The client-sent headers travel with the create request on the multipart path, so they are copied out
+			//    of the context here; a key sent without a value is `null` and is skipped, like `createChunkedUpload`
+			//    skips it
+			const contentType = context.metadata?.['contentType'];
+
+			if (contentType) {
+				params.ContentType = contentType;
+			}
+
+			const cacheControl = context.metadata?.['cacheControl'];
+
+			if (cacheControl) {
+				params.CacheControl = cacheControl;
+			}
+
+			// 3. Same encryption rules as `createChunkedUpload`: the KMS key id is only valid for the KMS modes
+			if (this.config.serverSideEncryption) {
+				params.ServerSideEncryption = this.config.serverSideEncryption;
+
+				if (KMS_KEY_ID_MODES.includes(this.config.serverSideEncryption) && this.config.serverSideEncryptionKmsKeyId) {
+					params.SSEKMSKeyId = this.config.serverSideEncryptionKmsKeyId;
+				}
+			}
+
+			await this.client.send(new PutObjectCommand(params));
+
+			return;
+		}
+
+		// 3. The listing may not yet show the last parts; poll with growing pauses (0.5 s, 1 s, 1.5 s) before giving up.
 		//    Only a listing that does not add up is retried: a failing `ListParts` call is a real error and goes out at
 		//    once
 		let parts: Part[];
@@ -932,7 +987,7 @@ export class StorageDriverS3 implements TusDriver {
 				},
 			);
 		} catch (error) {
-			// 3. Completing with a part missing would produce a truncated object, so refuse in the shape the TUS server
+			// 4. Completing with a part missing would produce a truncated object, so refuse in the shape the TUS server
 			//    turns into an HTTP response and let the client retry
 			if (error instanceof PartsMismatchError) {
 				throw {
@@ -944,7 +999,7 @@ export class StorageDriverS3 implements TusDriver {
 			throw error;
 		}
 
-		// 4. Every byte is accounted for, so S3 can assemble the object from the parts in the order of the listing
+		// 5. Every byte is accounted for, so S3 can assemble the object from the parts in the order of the listing
 		await this.finishMultipartUpload(key, uploadId, parts);
 	}
 
@@ -1149,6 +1204,13 @@ export class StorageDriverS3 implements TusDriver {
 				});
 
 				promises.push(deferred);
+
+				// 6. Handle a rejection the moment it happens instead of leaving the promise bare until `Promise.all`
+				//    subscribes in the `finally` below: the chunk can keep streaming for many event-loop turns before
+				//    the pipeline settles, and Node's default `unhandledRejection: 'throw'` would crash the process on
+				//    the first part-upload failure long before that. This catch only marks the rejection as handled on
+				//    its own chain — `Promise.all` still rethrows the error to the caller once every upload has settled
+				deferred.catch(() => {});
 			})
 			.on('chunkError', () => {
 				// 1. A splitter failure never reaches `chunkFinished`, so the permit taken for the part being written is

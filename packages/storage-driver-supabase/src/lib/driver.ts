@@ -71,7 +71,7 @@ export type StorageDriverSupabaseConfig = {
 	/** Resumable-upload tuning. */
 	tus?:
 		| {
-				/** Chunk size in bytes sent per TUS PATCH request. @defaultValue {@link DEFAULT_CHUNK_SIZE} */
+				/** Chunk size in bytes sent per TUS PATCH request; must be positive. @defaultValue {@link DEFAULT_CHUNK_SIZE} */
 				chunkSize?: number | undefined;
 		  }
 		| undefined;
@@ -156,7 +156,8 @@ export class StorageDriverSupabase implements TusDriver {
 	 * Create a driver together with its client and bucket handle.
 	 *
 	 * @param config - Connection and behaviour options.
-	 * @throws Error when neither `projectId` nor `endpoint` is given, or when `serviceRole` or `bucket` is missing.
+	 * @throws Error when neither `projectId` nor `endpoint` is given, when `serviceRole` or `bucket` is missing, or
+	 * when `tus.chunkSize` is not a positive number.
 	 */
 	constructor(config: StorageDriverSupabaseConfig) {
 		// 1. Normalise the root once without a leading slash: Supabase object names are not paths, and a leading `/`
@@ -166,14 +167,21 @@ export class StorageDriverSupabase implements TusDriver {
 			root: confinePath(config.root ?? ''),
 		};
 
+		// 2. A zero, negative or NaN chunk size would be kept as the per-chunk bound and refuse every arriving chunk
+		//    with a misleading "exceeds the chunk size limit" error; the check is written as `!(size > 0)`, the
+		//    NaN-safe form the S3 and Azure drivers use, since comparisons never catch NaN
+		if (this.config.tus?.chunkSize !== undefined && !(this.config.tus.chunkSize > 0)) {
+			throw new Error('The supabase storage driver got a "tus.chunkSize" below 1 byte');
+		}
+
 		this.preferredChunkSize = this.config.tus?.chunkSize ?? DEFAULT_CHUNK_SIZE;
 
-		// 2. Build the client and bucket up front, so configuration mistakes fail at construction instead of on the
+		// 3. Build the client and bucket up front, so configuration mistakes fail at construction instead of on the
 		//    first request
 		this.client = this.getClient();
 		this.bucket = this.getBucket();
 
-		// 3. The API of `call()`, from the options the client and bucket just checked
+		// 4. The API of `call()`, from the options the client and bucket just checked
 		this.api = {
 			provider: 'supabase',
 			baseUrl: this.endpoint,
@@ -692,6 +700,8 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @param context - Context carrying the total `size`, the client metadata and, after the first chunk, the
 	 * `upload-url` to resume from.
 	 * @returns The new upload offset: `offset` plus the bytes Supabase acknowledged.
+	 * @throws Error when the total size is unknown because the client defers the length: each chunk becomes its own
+	 * TUS upload, which `tus-js-client` cannot create without a known size.
 	 * @throws Error when the chunk exceeds the size configured as `tus.chunkSize`.
 	 * @throws The `tus-js-client` error when the chunk is rejected.
 	 */
@@ -717,10 +727,24 @@ export class StorageDriverSupabase implements TusDriver {
 			cacheControl: '3600',
 		};
 
+		// 3. Refuse a deferred length up front: `tus-js-client` needs `uploadSize` or `uploadLengthDeferred`, and the
+		//    latter makes the one-shot source report itself as done after the first slice, so every chunk's PATCH would
+		//    carry an `Upload-Length` claiming that chunk completes the upload and Supabase would finalise the object
+		//    after the first chunk of a multi-chunk upload. A named error beats the library's cryptic pre-request
+		//    rejection, and the driver never advertises `creation-defer-length` in `tusExtensions` either. The known
+		//    size is captured in a local because the narrowing does not reach into the callbacks below
+		if (context.size === undefined) {
+			throw new Error(
+				`Cannot write a chunk of "${filepath}": the supabase storage driver does not support deferred-length uploads`,
+			);
+		}
+
+		const totalSize = context.size;
+
 		const chunks: Buffer[] = [];
 		let chunkSize = 0;
 
-		// 3. Buffer the chunk as it streams in, counting bytes on the way: the one-shot source handed to
+		// 4. Buffer the chunk as it streams in, counting bytes on the way: the one-shot source handed to
 		//    `tus-js-client` below serves exactly one slice, so a chunk larger than the configured size would be
 		//    truncated to the first request and crash the library's upload loop. The bound is checked on the running
 		//    total, so an oversized chunk is refused while it is still arriving rather than after the whole of it has
@@ -731,7 +755,7 @@ export class StorageDriverSupabase implements TusDriver {
 			chunkSize += chunk.length;
 			chunks.push(chunk);
 
-			// 4. The TUS server agreed to send at most the configured size per request; the wording mirrors the other
+			// 5. The TUS server agreed to send at most the configured size per request; the wording mirrors the other
 			//    drivers, so a caller sees the same error whatever backend serves the location
 			if (chunkSize > this.preferredChunkSize) {
 				throw new Error(
@@ -740,13 +764,19 @@ export class StorageDriverSupabase implements TusDriver {
 			}
 		}
 
-		// 5. `tus-js-client` reports through callbacks, so the one chunk is wrapped in a promise the callbacks settle
+		// 6. Skip the upload for an empty chunk, the way the Azure and Cloudinary drivers do: a zero-length one-shot
+		//    source is rejected by `tus-js-client` with a size-mismatch error, and the offset is unchanged either way
+		if (chunkSize === 0) {
+			return bytesUploaded;
+		}
+
+		// 7. `tus-js-client` reports through callbacks, so the one chunk is wrapped in a promise the callbacks settle
 		await new Promise((resolve, reject) => {
 			// 1. The custom file reader feeds `tus-js-client` the buffered chunk as a one-shot source, so the library
 			//    sends exactly this chunk instead of trying to read the whole file. `x-upsert` lets a re-upload
 			//    replace the object; retries are disabled because the TUS server in front of this driver already
-			//    retries. The size is only passed when known: an explicit `undefined` is not an absent key to the
-			//    library's option types
+			//    retries. The deferred-length refusal above guarantees a known size here, so `uploadSize` is always
+			//    set — an explicit `undefined` would not be an absent key to the library's option types
 			const upload = new tus.Upload(Readable.from(chunks, { objectMode: false }), {
 				endpoint: this.getResumableUrl(),
 				fileReader: new FileReader(),
@@ -756,7 +786,7 @@ export class StorageDriverSupabase implements TusDriver {
 				},
 				metadata,
 				chunkSize: this.preferredChunkSize,
-				...(context.size === undefined ? {} : { uploadSize: context.size }),
+				uploadSize: totalSize,
 				retryDelays: null,
 				onError(error) {
 					reject(error);
@@ -785,11 +815,10 @@ export class StorageDriverSupabase implements TusDriver {
 
 			// 2. On every chunk after the first, resume the existing upload instead of creating a new one; the literal
 			//    is the tus-js-client previous-upload contract, with an empty storage key and no parallel URLs because
-			//    this driver never stores uploads in a urlStorage and uploads a single stream. The size is `null` when
-			//    the client still defers the length, which is the contract's own marker for an unknown total
+			//    this driver never stores uploads in a urlStorage and uploads a single stream
 			if (contextMetadata['upload-url']) {
 				const previousUpload: tus.PreviousUpload = {
-					size: context.size ?? null,
+					size: totalSize,
 					creationTime: contextMetadata['creation_date'] as string,
 					metadata,
 					uploadUrl: contextMetadata['upload-url'],

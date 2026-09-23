@@ -3,6 +3,7 @@
  * sign-in.
  */
 import { AuthProviderFailedError } from '@novastarter/auth';
+import { HitRateLimitError } from '@novastarter/errors';
 import { describe, expect, test, vi } from 'vitest';
 import { API_VERSION, EMAILS_URL, USER_AGENT, USER_URL } from './constants.js';
 import { fetchProfile } from './fetch-profile.js';
@@ -57,6 +58,30 @@ describe('fetchProfile', () => {
 
 			expect(await fetchProfile({ fetch, timeout: 1_000 }, 'gho_1')).toStrictEqual({ user });
 		}
+	});
+
+	test('Fails on a spent rate limit of the addresses instead of answering no address', async () => {
+		// 1. GitHub spends its primary limit with a 403 and `x-ratelimit-remaining: 0`; that is the rate limit it is,
+		//    not a missing scope, and the error carries GitHub's reset so the caller can retry
+		const reset = Math.floor(Date.now() / 1000) + 120;
+
+		const fetch = vi.fn<AuthFetch>(async (url) =>
+			url === USER_URL
+				? { status: 200, ok: true, text: async () => JSON.stringify(user) }
+				: new Response(JSON.stringify({ message: 'API rate limit exceeded for user ID 1.' }), {
+						status: 403,
+						headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) },
+					}),
+		);
+
+		const error = (await fetchProfile({ fetch, timeout: 1_000 }, 'gho_1').catch(
+			(thrown: unknown) => thrown,
+		)) as InstanceType<typeof HitRateLimitError>;
+
+		expect(error).toBeInstanceOf(HitRateLimitError);
+		expect(error.message).toMatch(/^Too many requests, retry after /);
+		expect(error.extensions.reset.getTime()).toBeGreaterThanOrEqual(reset * 1000 - 2_000);
+		expect(error.extensions.reset.getTime()).toBeLessThanOrEqual(reset * 1000 + 2_000);
 	});
 
 	test('Fails on a refused profile, a profile without an id, and an addresses outage', async () => {

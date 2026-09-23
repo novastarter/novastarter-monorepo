@@ -116,3 +116,40 @@ export const toHttpCallFetch =
 			text: () => response.text(),
 		} as unknown as Response;
 	};
+
+/**
+ * Adapt the driver's {@link AuthFetch} to the fetch `createRemoteJWKSet` of `jose` reads the key set with, for its
+ * `customFetch` option.
+ *
+ * Without this, `jose` sends the key request with the global `fetch`, and a location behind an egress proxy — which
+ * injects its fetch so every request leaves through it — would read the key set around the proxy, or not at all. The
+ * request goes out whole — `jose` asks for `redirect: 'manual'` — though {@link AuthFetch} names neither that nor the
+ * `Headers` object jose builds. A fake that answers without a body reader gets one, since jose reads the JSON of it.
+ *
+ * @param fetcher - The driver's fetch: the platform's, or one a test hands in.
+ * @returns The fetch for the `customFetch` option of `createRemoteJWKSet`.
+ * @example
+ * ```ts
+ * createRemoteJWKSet(new URL(JWKS_URL), { [customFetch]: toJwksFetch(context.fetch) });
+ * ```
+ */
+export const toJwksFetch =
+	(fetcher: AuthFetch) =>
+	async (
+		url: string,
+		init: { headers: Headers; method: 'GET'; redirect: 'manual'; signal: AbortSignal },
+	): Promise<Response> => {
+		// 1. The request whole — `redirect: 'manual'` included — though the driver's type hides it, as `httpCall()`'s
+		//    adapter forwards it too: the key set must be fetched by the fetch the location configured, never around it
+		const response = await fetcher(url, init as unknown as Parameters<AuthFetch>[1]);
+
+		// 2. The platform's answer is a `Response` already; a fake's is completed with what jose reads of it — the
+		//    status and the JSON body
+		if (response instanceof Response) return response;
+
+		return {
+			status: response.status,
+			ok: response.ok,
+			json: async () => JSON.parse(await response.text()) as unknown,
+		} as unknown as Response;
+	};

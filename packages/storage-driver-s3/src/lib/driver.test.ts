@@ -17,6 +17,7 @@ import {
 	ListObjectsV2Command,
 	ListPartsCommand,
 	PutBucketVersioningCommand,
+	PutObjectCommand,
 	S3Client,
 	S3ServiceException,
 	ServerSideEncryption,
@@ -1513,6 +1514,54 @@ describe('#finishChunkedUpload', () => {
 		expect(ListPartsCommand).toHaveBeenCalledTimes(1);
 		expect(CompleteMultipartUploadCommand).not.toHaveBeenCalled();
 	});
+
+	test('Writes an empty object directly when the upload has a zero size', async () => {
+		// 1. A zero-length upload produces no parts, and S3 refuses `CompleteMultipartUpload` with an empty `Parts`
+		//    list; the multipart upload is aborted and the empty object is written with a plain PutObject instead
+		vi.mocked(driver['client'].send).mockResolvedValue({} as unknown as void);
+
+		await driver.finishChunkedUpload(sample.path.input, { metadata: { 'upload-id': uploadId }, size: 0 });
+
+		// 2. The completion is never attempted with an empty parts list, and no listing is polled for nothing
+		expect(ListPartsCommand).not.toHaveBeenCalled();
+		expect(CompleteMultipartUploadCommand).not.toHaveBeenCalled();
+
+		expect(AbortMultipartUploadCommand).toHaveBeenCalledWith({
+			Bucket: sample.config.bucket,
+			Key: sample.path.inputFull,
+			UploadId: uploadId,
+		});
+
+		expect(PutObjectCommand).toHaveBeenCalledWith({
+			Bucket: sample.config.bucket,
+			Key: sample.path.inputFull,
+			Body: Buffer.alloc(0),
+		});
+	});
+
+	test('Restates the content headers and encryption on the empty object', async () => {
+		// 1. The client-sent headers and the encryption settings only travel with the create request on the multipart
+		//    path, so the empty write must carry them again for the object to come out as configured
+		driver['config'].serverSideEncryption = ServerSideEncryption.aws_kms;
+		driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId!;
+
+		vi.mocked(driver['client'].send).mockResolvedValue({} as unknown as void);
+
+		await driver.finishChunkedUpload(sample.path.input, {
+			metadata: { 'upload-id': uploadId, contentType: sample.file.type, cacheControl: 'max-age=60' },
+			size: 0,
+		});
+
+		expect(PutObjectCommand).toHaveBeenCalledWith({
+			Bucket: sample.config.bucket,
+			Key: sample.path.inputFull,
+			Body: Buffer.alloc(0),
+			ContentType: sample.file.type,
+			CacheControl: 'max-age=60',
+			ServerSideEncryption: ServerSideEncryption.aws_kms,
+			SSEKMSKeyId: sample.config.serverSideEncryptionKmsKeyId,
+		});
+	});
 });
 
 describe('#writeChunk', () => {
@@ -1644,6 +1693,44 @@ describe('#uploadParts', () => {
 		const readable = vi.mocked(driver['uploadPart']).mock.calls[0]![2] as fs.ReadStream;
 
 		expect(readable.destroyed).toBe(true);
+	});
+
+	test('Handles a part-upload failure that lands while the chunk is still streaming', async () => {
+		// 1. Fifteen bytes cut at ten: the first part's upload rejects at once, while the rest of the chunk is still
+		//    open on disk — with the rejection unhandled until the pipeline settles, Node's default
+		//    `unhandledRejection: 'throw'` would crash the process before the error could reach the caller
+		const failure = new Error('SlowDown');
+
+		vi.mocked(driver['uploadPart']).mockRejectedValueOnce(failure).mockResolvedValue('etag');
+
+		const source = new PassThrough();
+
+		const unhandled: unknown[] = [];
+		const onUnhandled = (reason: unknown) => unhandled.push(reason);
+		process.on('unhandledRejection', onUnhandled);
+
+		try {
+			const run = driver['uploadParts'](key, uploadId, 100, source, 1, 0);
+
+			// 2. The first ten bytes finalize the first part; its upload fails while the pipeline is still waiting
+			//    for the rest of the chunk
+			source.write(Buffer.alloc(15, 'a'));
+
+			await vi.waitFor(() => expect(driver['uploadPart']).toHaveBeenCalledTimes(1));
+
+			// 3. Give a rejection nobody handles every chance to surface before the chunk completes
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			expect(unhandled).toStrictEqual([]);
+
+			source.end();
+
+			// 4. The part failure still reaches the caller unchanged once the pipeline settles
+			await expect(run).rejects.toBe(failure);
+			expect(unhandled).toStrictEqual([]);
+		} finally {
+			process.off('unhandledRejection', onUnhandled);
+		}
 	});
 
 	test('Refuses a chunk that finished with every byte unsent', async () => {

@@ -119,4 +119,41 @@ describe('enqueue', () => {
 		expect(derived.id).toMatch(/^reports\.build_/);
 		_contracts.delete('reports.build');
 	});
+
+	test('Collapses a second enqueue of the same unique work while the first is still running', async () => {
+		registerJob(
+			defineJob({ name: 'reports.build', schema: z.object({ customer: z.string() }), options: { unique: true } }),
+		);
+
+		// 1. A handler held on a gate, so the first job is still running when the duplicate lands
+		let release!: () => void;
+
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+
+		const handler = vi.fn(async () => {
+			await gate;
+		});
+
+		registerJobHandlers({ 'reports.build': handler } as never);
+
+		const firstRun = enqueue('reports.build' as never, { customer: 'c1' } as never);
+		const secondRun = enqueue('reports.build' as never, { customer: 'c1' } as never);
+
+		// 2. The duplicate answers the first job's identity and the handler runs only once; the gate opens only after
+		//    both enqueues were accepted, so a driver without deduplication runs the handler a second time and fails the
+		//    count below instead of blocking on the gate
+		release();
+		const [first, second] = await Promise.all([firstRun, secondRun]);
+
+		expect(second).toStrictEqual(first);
+		expect(handler).toHaveBeenCalledTimes(1);
+
+		// 3. Once the run settled, the same work can be enqueued again
+		await enqueue('reports.build' as never, { customer: 'c1' } as never);
+		expect(handler).toHaveBeenCalledTimes(2);
+
+		_contracts.delete('reports.build');
+	});
 });

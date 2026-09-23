@@ -16,12 +16,18 @@ test('Sends one message without any registration', async () => {
 
 	// 2. The bot's options and the message's are split: the token goes into the URL, the rest into the body
 	await expect(
-		sendTelegram({ token: 'T', apiUrl: 'http://bot-api.local', chatId: '-100', text: 'Deploy finished', silent: true }),
+		sendTelegram({
+			token: '123:abc',
+			apiUrl: 'http://bot-api.local',
+			chatId: '-100',
+			text: 'Deploy finished',
+			silent: true,
+		}),
 	).resolves.toMatchObject({ messageId: '3' });
 
 	const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
 
-	expect(url).toBe('http://bot-api.local/botT/sendMessage');
+	expect(url).toBe('http://bot-api.local/bot123:abc/sendMessage');
 
 	expect(JSON.parse(init.body as string)).toStrictEqual({
 		chat_id: '-100',

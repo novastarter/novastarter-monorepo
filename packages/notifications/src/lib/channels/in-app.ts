@@ -26,8 +26,9 @@ export interface InAppChannelOptions {
 /**
  * The in-app channel: the notification saved to the application's inbox and announced on the bus.
  *
- * Every user is reachable: the inbox needs no address. The record gets a fresh id, so a retried job saves it again —
- * the application's `save` ignores a record it already has when that matters.
+ * Every user is reachable: the inbox needs no address. The record takes the notification's {@link Notification.id}
+ * when it carries one, so a retried job saves under the same id and the application's `save` can upsert; given none,
+ * the record gets a fresh one.
  *
  * @param options - Where to save, and the bus location.
  * @returns The channel, named `in-app`.
@@ -63,10 +64,12 @@ export const inAppChannel = (options: InAppChannelOptions): NotificationChannel<
 	 * @throws What `save` or the bus throws.
 	 */
 	async send({ notification, content }: NotificationDelivery<InAppContent>): Promise<void> {
-		// 1. The record: the rendered text plus what a client needs to render its own way
+		// 1. The record: the rendered text plus what a client needs to render its own way. The id is the notification's
+		//    own when it carries one — the same id on a retried job makes the application's save an upsert, not a
+		//    duplicate row — and fresh otherwise
 		const record: InAppRecord = {
 			...content,
-			id: randomUUID(),
+			id: notification.id ?? randomUUID(),
 			userId: notification.userId,
 			type: notification.type,
 			...(notification.data ? { data: notification.data } : {}),
