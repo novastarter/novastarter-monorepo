@@ -1578,6 +1578,71 @@ importers:
         specifier: 'catalog:'
         version: 3.2.7(@types/node@24.13.6)(jiti@2.7.0)(supports-color@10.2.2)(tsx@4.23.15)(yaml@2.9.1)
 
+  packages/messenger:
+    dependencies:
+      '@novastarter/emitter':
+        specifier: workspace:*
+        version: link:../emitter
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
+      '@novastarter/logger':
+        specifier: workspace:*
+        version: link:../logger
+      '@novastarter/utils':
+        specifier: workspace:*
+        version: link:../utils
+    devDependencies:
+      '@novastarter/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.6
+      '@vitest/coverage-v8':
+        specifier: 'catalog:'
+        version: 3.2.7(supports-color@10.2.2)(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(supports-color@10.2.2)(tsx@4.23.15)(yaml@2.9.1))
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.15.11(@emnapi/core@1.10.0)(@emnapi/runtime@1.11.3)(supports-color@10.2.2)(typescript@5.9.3)
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 3.2.7(@types/node@24.13.6)(jiti@2.7.0)(supports-color@10.2.2)(tsx@4.23.15)(yaml@2.9.1)
+
+  packages/messenger-driver-telegram:
+    dependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
+      '@novastarter/messenger':
+        specifier: workspace:*
+        version: link:../messenger
+      '@novastarter/utils':
+        specifier: workspace:*
+        version: link:../utils
+    devDependencies:
+      '@novastarter/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.6
+      '@vitest/coverage-v8':
+        specifier: 'catalog:'
+        version: 3.2.7(supports-color@10.2.2)(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(supports-color@10.2.2)(tsx@4.23.15)(yaml@2.9.1))
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.15.11(@emnapi/core@1.10.0)(@emnapi/runtime@1.11.3)(supports-color@10.2.2)(typescript@5.9.3)
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 3.2.7(@types/node@24.13.6)(jiti@2.7.0)(supports-color@10.2.2)(tsx@4.23.15)(yaml@2.9.1)
+
   packages/notifications:
     dependencies:
       '@novastarter/emitter':
@@ -1589,6 +1654,9 @@ importers:
       '@novastarter/memory':
         specifier: workspace:*
         version: link:../memory
+      '@novastarter/messenger':
+        specifier: workspace:*
+        version: link:../messenger
       '@novastarter/push':
         specifier: workspace:*
         version: link:../push

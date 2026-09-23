@@ -1,7 +1,7 @@
 # `@novastarter/notifications`
 
-Notifications for Novastarter: one notification to a user over mail, SMS, push and an in-app inbox, with their
-preferences.
+Notifications for Novastarter: one notification to a user over mail, SMS, push, messengers and an in-app inbox, with
+their preferences.
 
 ## Installation
 
@@ -9,8 +9,8 @@ preferences.
 pnpm add @novastarter/notifications
 ```
 
-The channels send through `@novastarter/mail`, `@novastarter/sms`, `@novastarter/push` and the bus of
-`@novastarter/memory`; register the locations of those the application uses.
+The channels send through `@novastarter/mail`, `@novastarter/sms`, `@novastarter/push`, `@novastarter/messenger` and the
+bus of `@novastarter/memory`; register the locations of those the application uses.
 
 ## Usage
 
@@ -71,12 +71,13 @@ retries.
 
 ## Channels
 
-| Channel  | Factory                       | Sends                                                                          |
-| -------- | ----------------------------- | ------------------------------------------------------------------------------ |
-| `mail`   | `mailChannel({ location })`   | `sendMail()` to `recipient.email`.                                             |
-| `sms`    | `smsChannel({ location })`    | `sendSms()` to `recipient.phone`.                                              |
-| `push`   | `pushChannel({ onGone })`     | `sendPush()` to every `recipient.pushTargets`; a gone device goes to `onGone`. |
-| `in-app` | `inAppChannel({ save, bus })` | `save(record)`, then publishes it on the bus channel `notifications:<userId>`. |
+| Channel                          | Factory                                  | Sends                                                                                |
+| -------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------ |
+| `mail`                           | `mailChannel({ location })`              | `sendMail()` to `recipient.email`.                                                   |
+| `sms`                            | `smsChannel({ location })`               | `sendSms()` to `recipient.phone`.                                                    |
+| `push`                           | `pushChannel({ onGone })`                | `sendPush()` to every `recipient.pushTargets`; a gone device goes to `onGone`.       |
+| `telegram` (the location's name) | `messengerChannel({ location, onGone })` | `sendMessage()` to `recipient.messengers[location]`; a blocked bot goes to `onGone`. |
+| `in-app`                         | `inAppChannel({ save, bus })`            | `save(record)`, then publishes it on the bus channel `notifications:<userId>`.       |
 
 The push channel tries every device before it throws, so a retry sends again to the devices that got it: give the push a
 `tag`, and a repeat replaces the shown notification instead of stacking. The in-app record has a fresh id each time;

@@ -41,8 +41,8 @@ export interface NotificationsOptions {
 	findRecipient: (userId: string) => Promise<NotificationRecipient | null>;
 	/**
 	 * The content of a notification for a channel, from the application's templates: `MailContent` for `mail`,
-	 * `SmsContent` for `sms`, `PushContent` for `push`, `InAppContent` for `in-app`. `null` when the type has nothing to
-	 * say on the channel.
+	 * `SmsContent` for `sms`, `PushContent` for `push`, `MessengerContent` for a messenger, `InAppContent` for
+	 * `in-app`. `null` when the type has nothing to say on the channel.
 	 */
 	render: (notification: Notification, channel: string, recipient: NotificationRecipient) => Promise<unknown>;
 	/**
