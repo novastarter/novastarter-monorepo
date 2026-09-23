@@ -1,10 +1,8 @@
 import {
 	checkToken,
-	type CheckTokenOptions,
 	type CreatedToken,
 	createToken,
 	type CreateTokenOptions,
-	oneTimeTokenId,
 	type TokenRecord,
 } from '@novastarter/auth';
 import { and, eq } from 'drizzle-orm';
@@ -81,15 +79,22 @@ export const issueToken = async (options: CreateTokenOptions): Promise<CreatedTo
 };
 
 /**
+ * Per-call options of {@link spendToken}.
+ */
+export interface SpendTokenOptions {
+	/** The user, for a numeric code: the code is looked up by the pair, and the attempt is charged to the `code` limiter. */
+	userId?: string | undefined;
+}
+
+/**
  * Spend a one-time token: it works exactly once, whatever the verdict.
  *
  * One atomic `DELETE … RETURNING` takes the token out before it is judged, so of two requests with the same token only
- * one gets the row, and an expired or mistyped-purpose token is gone as well.
+ * one gets the row, and an expired token is gone as well.
  *
  * @param purpose - What the token must have been made for.
  * @param token - The token as the client sent it.
- * @param options - The user, for a numeric code: the code is looked up by the pair, and the attempt is charged to the
- * `code` limiter.
+ * @param options - The user, for a numeric code.
  * @returns The record: its user and data.
  * @throws AuthInvalidTokenError when there was no such token, or it expired.
  * @throws HitRateLimitError when a code's user tried too many codes.
@@ -101,16 +106,23 @@ export const issueToken = async (options: CreateTokenOptions): Promise<CreatedTo
 export const spendToken = async (
 	purpose: string,
 	token: string,
-	options: CheckTokenOptions = {},
+	options: SpendTokenOptions = {},
 ): Promise<TokenRecord> => {
-	// 1. The purpose is part of the key: a token of another purpose matches nothing and stays for its own use
-	const [row] = await useDb()
-		.delete(authTokens)
-		.where(and(eq(authTokens.id, oneTimeTokenId(token, options.userId)), eq(authTokens.purpose, purpose)))
-		.returning();
+	// 1. The package computes the id, charges a code attempt and judges; the purpose is part of the delete's key, so a
+	//    token of another purpose matches nothing and stays for its own use
+	return checkToken({
+		purpose,
+		token,
+		userId: options.userId,
+		spend: async (id, tokenPurpose) => {
+			const [row] = await useDb()
+				.delete(authTokens)
+				.where(and(eq(authTokens.id, id), eq(authTokens.purpose, tokenPurpose)))
+				.returning();
 
-	// 2. The package judges what came back — found or not — and charges a code attempt either way
-	return checkToken(purpose, row ? toRecord(row) : null, options);
+			return row ? toRecord(row) : null;
+		},
+	});
 };
 
 /**

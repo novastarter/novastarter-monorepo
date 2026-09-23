@@ -34,7 +34,7 @@ describe('enrollTotp', () => {
 
 		// 3. The stored form is not the secret, and opens back to it with the key
 		expect(encryptedSecret).not.toContain(secret);
-		expect(decrypt(encryptedSecret, KEY)).toBe(secret);
+		expect(decrypt(encryptedSecret, [KEY], 'totp-secret').plaintext).toBe(secret);
 	});
 
 	test('Names the issuer Novastarter when the settings do not', () => {

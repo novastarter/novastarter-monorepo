@@ -18,3 +18,26 @@ export const requireSecret = (secret: string | undefined, setting: string): stri
 
 	return secret;
 };
+
+/**
+ * A rotatable secret of the settings — one string, or several with the current one first — each held to the bar of
+ * {@link requireSecret}.
+ *
+ * @param secrets - The value from the settings.
+ * @param setting - Its path in the settings, for the error message.
+ * @returns The secrets, current first.
+ * @throws Error when there is none, or any of them is shorter than {@link MIN_SECRET_LENGTH}: an old secret kept for
+ * rotation still opens stored values, so it has to be as strong as the current one.
+ * @internal
+ */
+export const requireSecrets = (secrets: string | readonly string[] | undefined, setting: string): string[] => {
+	// 1. One string is the common case, a list with no rotation in progress; an empty list is a missing secret
+	const list = typeof secrets === 'string' ? [secrets] : [...(secrets ?? [])];
+
+	if (list.length === 0) {
+		return [requireSecret(undefined, setting)];
+	}
+
+	// 2. Every one checked, the old ones too
+	return list.map((secret) => requireSecret(secret, setting));
+};

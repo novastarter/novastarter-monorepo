@@ -94,9 +94,9 @@ jar.delete('oauth');
 ```
 
 `startOAuth()` makes the state, a PKCE verifier and a nonce, and seals them with the location and a deadline into a
-cookie encrypted with `oauth.secret` (AES-256-GCM): nothing is kept on the server, and the browser can neither read nor
-change it. `finishOAuth()` opens it, checks the deadline, the location and the state, and lets the driver exchange the
-code.
+cookie encrypted with `oauth.secret` (AES-256-GCM, key derived with HKDF): nothing is kept on the server, and the
+browser can neither read nor change it. `finishOAuth()` opens it, checks the deadline, the location and the state, and
+lets the driver exchange the code.
 
 Every sign-in passes the `auth.sign-in` filter — a handler returning `null` refuses it with `InvalidCredentialsError` —
 then emits `auth.signed-in` with the identity under `payload`; a failure emits `auth.sign-in-failed` with a `reason`.
@@ -127,19 +127,23 @@ normalised to NFKC and limited to 1024 characters; a stored hash asking for more
 ## One-time tokens
 
 ```ts
-import { checkToken, createToken, oneTimeTokenId } from '@novastarter/auth';
+import { checkToken, createToken } from '@novastarter/auth';
 
 const { token, record } = createToken({ purpose: 'password-reset', userId: user.id });
 // store `record`; send `token`
 
-const spent = await deleteTokenReturning(oneTimeTokenId(token), 'password-reset');
-const { userId } = await checkToken('password-reset', spent);
+const { userId } = await checkToken({
+	purpose: 'password-reset',
+	token,
+	spend: (id, purpose) => deleteTokenReturning(id, purpose),
+});
 ```
 
 A `link` token is 256 random bits. `format: 'code'` makes six digits for typing in: its id is bound to the user —
-`oneTimeTokenId(code, userId)`, `checkToken(purpose, record, { userId })` — every attempt costs a point of the `code`
-limiter, and the application deletes the user's other tokens of the purpose before storing it. A token lives
-`tokens.ttl` (1 hour) or `tokens.codeTtl` (10 minutes); spending it with an atomic delete makes it work once.
+`oneTimeTokenId(code, userId)`, `checkToken({ purpose, token, userId, spend })` — every attempt costs a point of the
+`code` limiter and a right one clears it, and the application deletes the user's other tokens of the purpose before
+storing it. A token lives `tokens.ttl` (1 hour) or `tokens.codeTtl` (10 minutes); `spend` takes it out with one atomic
+`DELETE … RETURNING`, so it works once.
 
 ## JWT tokens
 
@@ -153,15 +157,20 @@ const { pair, refresh } = await issueTokenPair(user.id, { claims: { role: 'admin
 
 const { userId, claims } = await verifyAccessToken(bearer);
 
-const outcome = await refreshTokenPair(await findRefresh(hashToken(pair.refreshToken)));
-// 'reused': delete the family; 'rotated': store `outcome.next`, then mark the old one used only if still unused —
-// if that update matched nothing, another request rotated it first: delete the family as for 'reused'
+const next = await refreshTokenPair({
+	token: pair.refreshToken,
+	find: (id) => findRefresh(id),
+	// store `next`, then mark `current` used only if still unused; `false` when the mark matched nothing
+	rotate: (current, next) => storeAndMarkUsed(current, next),
+	revokeFamily: (familyId) => deleteFamily(familyId),
+});
 ```
 
 The access token is a JWT (`typ: at+jwt`, `sub`, `exp`, `iat`, `jti`, `iss` and `aud` when configured) signed with
 `HS256` and `jwt.secret`, or with `ES256` / `EdDSA` and a PEM key pair. It is checked without any lookup and cannot be
 revoked, so it lives 15 minutes by default. The refresh token is opaque; each one works once. Used ones stay stored
-until they expire: a used one presented again means two parties hold it, and the application deletes the whole family.
+until they expire: a used one presented again, or a rotation lost to a concurrent one, means two parties hold it, and
+`refreshTokenPair()` revokes the whole family through `revokeFamily`.
 
 ## TOTP
 
@@ -187,14 +196,19 @@ success; `isTotpCode(code)` tells which of the two a typed code is.
 | ---------------------------------------------------- | ---------------- | ------------------------------------------------------ |
 | `session.ttl` / `session.idleTtl`                    | 30 days / none   | Hard and idle session lifetime, milliseconds.          |
 | `tokens.ttl` / `tokens.codeTtl`                      | 1 hour / 10 min  | One-time link and code lifetime.                       |
-| `oauth.secret`                                       | —                | Required for OAuth: encrypts the OAuth cookie.         |
+| `oauth.secret`                                       | —                | Required for OAuth: encrypts the OAuth cookie.¹        |
 | `oauth.stateTtl`                                     | 10 minutes       | How long the browser has to come back.                 |
 | `jwt.secret` or `jwt.privateKey` + `publicKey`       | —                | Required for JWTs. `jwt.algorithm` picks the key type. |
 | `jwt.issuer` / `jwt.audience`                        | —                | Set on issue, checked on verify.                       |
 | `jwt.accessTtl` / `jwt.refreshTtl`                   | 15 min / 30 days | Token lifetimes.                                       |
-| `mfa.encryptionKey`                                  | —                | Required for TOTP.                                     |
+| `mfa.encryptionKey`                                  | —                | Required for TOTP: encrypts the stored secrets.¹       |
 | `mfa.issuer`                                         | `Novastarter`    | The name authenticator apps show.                      |
 | `limiters.signIn` / `limiters.mfa` / `limiters.code` | none             | `LimiterDriver`s of `@novastarter/memory`.             |
+
+¹ A list rotates the secret: the first encrypts, every one decrypts. Put the new secret first and keep the old one
+behind it — for `oauth.secret` until `stateTtl` has passed, for `mfa.encryptionKey` until every stored secret went
+through `reencryptTotpSecret(encryptedSecret)`, which returns it under the new key, or `null` when it already is. Each
+setting derives a key of its own with HKDF, so one secret shared by both never gives the same key twice.
 
 ## Errors
 

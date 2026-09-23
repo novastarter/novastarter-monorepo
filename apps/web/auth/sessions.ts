@@ -1,4 +1,7 @@
 import { checkSession, type CreatedSession, createSession, hashToken, type SessionRecord } from '@novastarter/auth';
+import { useLogger } from '@novastarter/logger';
+import { useCache } from '@novastarter/memory';
+import { toError } from '@novastarter/utils';
 import { and, desc, eq, gt } from 'drizzle-orm';
 import { useDb } from '../db';
 import { authSessions } from '../db/schema';
@@ -9,6 +12,76 @@ import { authSessions } from '../db/schema';
  * @internal
  */
 type SessionRow = typeof authSessions.$inferSelect;
+
+/**
+ * The cache key of a session, by its id.
+ *
+ * @param id - The session id: the token's hash.
+ * @returns The key.
+ * @internal
+ */
+const cacheKey = (id: string): string => `auth-session:${id}`;
+
+/**
+ * Sessions in front of `auth_sessions`: the `default` cache location — Redis when the app has one, in-process otherwise
+ * — whose ttl (60 s) bounds how long a copy may outlive its row.
+ *
+ * Postgres stays the source of truth: every change goes to the table first and to the cache second, so a lost or
+ * flushed cache only costs one query per session. A cache that fails is logged and skipped rather than failing the
+ * request — reading the table is always an answer. Two cases leave a copy readable until the cache's ttl runs out: a row
+ * deleted behind these functions' back (by hand, from another tool), and a sign-out that lands between a cache miss's
+ * read of the row and its write to the cache — a window of one query.
+ *
+ * @internal
+ */
+const cache = {
+	/**
+	 * Read a cached session.
+	 *
+	 * @param id - The session id.
+	 * @returns The session; `undefined` when not cached or when the cache failed.
+	 */
+	async get(id: string): Promise<SessionRecord | undefined> {
+		// 1. A failing cache is a miss: the table answers instead
+		try {
+			return await useCache().location().get<SessionRecord>(cacheKey(id));
+		} catch (error) {
+			useLogger().warn(toError(error), 'Session cache read failed; reading the table');
+
+			return undefined;
+		}
+	},
+
+	/**
+	 * Cache a session.
+	 *
+	 * @param session - The session, as stored in the table.
+	 * @returns Once it is cached, or the failure logged.
+	 */
+	async set(session: SessionRecord): Promise<void> {
+		// 1. A copy that could not be written only means the next read goes to the table
+		try {
+			await useCache().location().set(cacheKey(session.id), session);
+		} catch (error) {
+			useLogger().warn(toError(error), 'Session cache write failed');
+		}
+	},
+
+	/**
+	 * Drop cached sessions.
+	 *
+	 * @param ids - The session ids.
+	 * @returns Once they are dropped, or the failure logged.
+	 */
+	async delete(ids: string[]): Promise<void> {
+		// 1. A drop that failed leaves a copy readable until the cache's ttl — logged, since sign-out is then late
+		try {
+			await Promise.all(ids.map((id) => useCache().location().delete(cacheKey(id))));
+		} catch (error) {
+			useLogger().error(toError(error), 'Session cache delete failed; the session stays readable until the cache ttl');
+		}
+	},
+};
 
 /**
  * Turn a row into the record `@novastarter/auth` judges: dates become epoch milliseconds, an empty metadata column
@@ -59,6 +132,9 @@ export const startSession = async (userId: string, metadata?: Record<string, unk
 			metadata: session.metadata ?? null,
 		});
 
+	// 2. Cached right away: the request after sign-in reads it without a query
+	await cache.set(session);
+
 	return created;
 };
 
@@ -70,31 +146,52 @@ export const startSession = async (userId: string, metadata?: Record<string, unk
  */
 export const readSession = async (token: string): Promise<SessionRecord | null> => {
 	const db = useDb();
+	const id = hashToken(token);
 
-	// 1. Looked up by the token's hash: the table never holds a token that signs anybody in
-	const [row] = await db
-		.select()
-		.from(authSessions)
-		.where(eq(authSessions.id, hashToken(token)))
-		.limit(1);
+	// 1. The cache first — this runs on every request; the table, keyed by the token's hash, on a miss
+	let found = await cache.get(id);
+	let cached = found !== undefined;
 
-	const check = checkSession(row ? toRecord(row) : null);
+	if (!found) {
+		const [row] = await db.select().from(authSessions).where(eq(authSessions.id, id)).limit(1);
 
-	// 2. An expired session is deleted on sight, so the table does not wait for the purge to forget it
+		found = row ? toRecord(row) : undefined;
+	}
+
+	const check = checkSession(found);
+
+	// 2. An expired session is deleted on sight, from the table and the cache, so neither waits for the purge
 	if (check.status === 'invalid') {
-		if (row) {
-			await db.delete(authSessions).where(eq(authSessions.id, row.id));
+		if (found) {
+			await db.delete(authSessions).where(eq(authSessions.id, found.id));
+			await cache.delete([found.id]);
 		}
 
 		return null;
 	}
 
-	// 3. A moved idle deadline is written back; the package moves it at most once per half idle lifetime
+	// 3. A moved idle deadline is written back to the table, then to the cache; the package moves it at most once per
+	//    half idle lifetime, so this stays rare. An update that matched no row means the session was ended meanwhile
+	//    — caching it again would bring it back, so it is dropped instead
 	if (check.extended) {
-		await db
+		const updated = await db
 			.update(authSessions)
 			.set({ expiresAt: new Date(check.session.expiresAt) })
-			.where(eq(authSessions.id, check.session.id));
+			.where(eq(authSessions.id, check.session.id))
+			.returning({ id: authSessions.id });
+
+		if (updated.length === 0) {
+			await cache.delete([check.session.id]);
+
+			return null;
+		}
+
+		cached = false;
+	}
+
+	// 4. A session read from the table, or one whose deadline moved, is (re)cached for the next request
+	if (!cached) {
+		await cache.set(check.session);
 	}
 
 	return check.session;
@@ -107,10 +204,12 @@ export const readSession = async (token: string): Promise<SessionRecord | null> 
  * @returns Once the session, if there was one, is gone.
  */
 export const endSession = async (token: string): Promise<void> => {
-	// 1. By the token's hash; a token that matches nothing is already signed out
-	await useDb()
-		.delete(authSessions)
-		.where(eq(authSessions.id, hashToken(token)));
+	const id = hashToken(token);
+
+	// 1. By the token's hash, from the table and then the cache, so the sign-out holds on the very next request; a
+	//    token that matches nothing is already signed out
+	await useDb().delete(authSessions).where(eq(authSessions.id, id));
+	await cache.delete([id]);
 };
 
 /**
@@ -127,6 +226,9 @@ export const endSessionById = async (userId: string, id: string): Promise<boolea
 		.where(and(eq(authSessions.id, id), eq(authSessions.userId, userId)))
 		.returning({ id: authSessions.id });
 
+	// 2. Only a session that was really the user's leaves the cache; another id is left alone
+	await cache.delete(deleted.map((row) => row.id));
+
 	return deleted.length > 0;
 };
 
@@ -142,6 +244,9 @@ export const endAllSessions = async (userId: string): Promise<number> => {
 		.delete(authSessions)
 		.where(eq(authSessions.userId, userId))
 		.returning({ id: authSessions.id });
+
+	// 2. The deleted ids come back from the table, which is how the cache — keyed by session, not by user — is cleared
+	await cache.delete(deleted.map((row) => row.id));
 
 	return deleted.length;
 };

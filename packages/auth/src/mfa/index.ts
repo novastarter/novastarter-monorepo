@@ -4,5 +4,6 @@
  */
 export * from './enroll-totp.js';
 export * from './recovery-codes.js';
+export * from './reencrypt-totp-secret.js';
 export { TOTP_DIGITS, TOTP_PERIOD, TOTP_WINDOW } from './totp.js';
 export * from './verify-totp.js';

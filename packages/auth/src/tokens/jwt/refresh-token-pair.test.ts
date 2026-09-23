@@ -1,12 +1,14 @@
 /**
  * Tests of `auth/tokens/jwt/refresh-token-pair`.
+ *
+ * Storage is a map of records, with the conditional mark and the family delete an application would run.
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { useAuth } from '../../lib/use-auth.js';
 import type { RefreshRecord } from '../../types.js';
 import { hashToken } from '../../utils/index.js';
 import { issueTokenPair } from './issue-token-pair.js';
-import { refreshTokenPair } from './refresh-token-pair.js';
+import { refreshTokenPair, type RefreshTokenPairOptions } from './refresh-token-pair.js';
 import { verifyAccessToken } from './verify-access-token.js';
 
 /**
@@ -15,14 +17,51 @@ import { verifyAccessToken } from './verify-access-token.js';
 const NOW = Date.UTC(2026, 0, 1);
 
 /**
- * An HMAC secret long enough to be accepted.
+ * A JWT secret long enough to be accepted.
  */
 const SECRET = 'test-jwt-secret-of-at-least-32-characters';
 
 /**
- * The error every refused refresh comes as.
+ * The error every refused token comes as.
  */
 const INVALID = { code: 'AUTH_INVALID_TOKEN' };
+
+/**
+ * Storage the way an application keeps refresh tokens, with the three callbacks of {@link refreshTokenPair}.
+ *
+ * @returns The map and the storage callbacks.
+ */
+const storage = (): { records: Map<string, RefreshRecord> } & Omit<RefreshTokenPairOptions, 'token' | 'claims'> => {
+	const records = new Map<string, RefreshRecord>();
+
+	return {
+		records,
+		// 1. By the token's hash
+		find: async (id) => records.get(id) ?? null,
+		// 2. The successor first, then the mark only while the current one is unused
+		rotate: async (current, next) => {
+			records.set(next.id, next);
+
+			const stored = records.get(current.id);
+
+			if (!stored || stored.usedAt !== null) {
+				return false;
+			}
+
+			records.set(current.id, { ...stored, usedAt: Date.now() });
+
+			return true;
+		},
+		// 3. Every token of the family
+		revokeFamily: async (familyId) => {
+			for (const [id, record] of records) {
+				if (record.familyId === familyId) {
+					records.delete(id);
+				}
+			}
+		},
+	};
+};
 
 beforeEach(() => {
 	vi.useFakeTimers({ toFake: ['Date'] });
@@ -36,47 +75,33 @@ afterEach(() => {
 });
 
 describe('refreshTokenPair', () => {
-	test('Refuses a missing record and an expired one', async () => {
-		const { refresh } = await issueTokenPair('user-1');
+	test('Refuses an unknown token and an expired one', async () => {
+		const store = storage();
+		const { pair, refresh } = await issueTokenPair('user-1');
 
-		// 1. Nothing found by the hash
-		await expect(refreshTokenPair(undefined)).rejects.toMatchObject(INVALID);
-		await expect(refreshTokenPair(null)).rejects.toMatchObject(INVALID);
+		// 1. Nothing stored under the hash
+		await expect(refreshTokenPair({ ...store, token: pair.refreshToken })).rejects.toMatchObject(INVALID);
 
-		// 2. At its deadline the token refreshes nothing
+		// 2. Stored, but at its deadline
+		store.records.set(refresh.id, refresh);
 		vi.setSystemTime(NOW + 60_000);
-		await expect(refreshTokenPair(refresh)).rejects.toMatchObject(INVALID);
-	});
-
-	test('Reports a used token as reused, with the family to delete', async () => {
-		const { refresh } = await issueTokenPair('user-1');
-		const used: RefreshRecord = { ...refresh, usedAt: NOW };
-
-		// 1. A replay: no new pair, only the family to revoke
-		await expect(refreshTokenPair(used)).resolves.toStrictEqual({
-			status: 'reused',
-			userId: 'user-1',
-			familyId: refresh.familyId,
-		});
+		await expect(refreshTokenPair({ ...store, token: pair.refreshToken })).rejects.toMatchObject(INVALID);
 	});
 
 	test('Rotates an unused token into the next one of the same family', async () => {
-		const { refresh } = await issueTokenPair('user-1');
+		const store = storage();
+		const { pair, refresh } = await issueTokenPair('user-1');
 
+		store.records.set(refresh.id, refresh);
 		vi.setSystemTime(NOW + 1_000);
 
-		const outcome = await refreshTokenPair(refresh, { claims: { role: 'admin' } });
+		const refreshed = await refreshTokenPair({ ...store, token: pair.refreshToken, claims: { role: 'admin' } });
 
-		// 1. Only a rotation carries a pair; anything else fails the test right here
-		if (outcome.status !== 'rotated') {
-			throw new Error(`Expected a rotation, got ${outcome.status}`);
-		}
+		// 1. The presented token is marked used, and its successor is stored in the family
+		expect(store.records.get(refresh.id)?.usedAt).toBe(NOW + 1_000);
 
-		// 2. The successor stays in the family, under a new id, unused, with a fresh lifetime
-		expect(outcome.userId).toBe('user-1');
-
-		expect(outcome.next).toStrictEqual({
-			id: hashToken(outcome.pair.refreshToken),
+		expect(store.records.get(hashToken(refreshed.pair.refreshToken))).toStrictEqual({
+			id: hashToken(refreshed.pair.refreshToken),
 			familyId: refresh.familyId,
 			userId: 'user-1',
 			createdAt: NOW + 1_000,
@@ -84,12 +109,41 @@ describe('refreshTokenPair', () => {
 			usedAt: null,
 		});
 
-		expect(outcome.next.id).not.toBe(refresh.id);
+		// 2. The new access token carries the claims read afresh
+		expect(refreshed.userId).toBe('user-1');
 
-		// 3. The new access token checks out and carries the claims read afresh
-		await expect(verifyAccessToken(outcome.pair.accessToken)).resolves.toMatchObject({
+		await expect(verifyAccessToken(refreshed.pair.accessToken)).resolves.toMatchObject({
 			userId: 'user-1',
 			claims: { role: 'admin' },
 		});
+	});
+
+	test('Revokes the whole family when a used token comes back', async () => {
+		const store = storage();
+		const { pair, refresh } = await issueTokenPair('user-1');
+
+		store.records.set(refresh.id, refresh);
+
+		const refreshed = await refreshTokenPair({ ...store, token: pair.refreshToken });
+
+		// 1. The first token again: a replay, refused, and the successor the client holds is gone too
+		await expect(refreshTokenPair({ ...store, token: pair.refreshToken })).rejects.toMatchObject(INVALID);
+		expect(store.records.size).toBe(0);
+		await expect(refreshTokenPair({ ...store, token: refreshed.pair.refreshToken })).rejects.toMatchObject(INVALID);
+	});
+
+	test('Revokes the family when another request rotated the same token first', async () => {
+		const store = storage();
+		const { pair, refresh } = await issueTokenPair('user-1');
+		const revokeFamily = vi.spyOn(store, 'revokeFamily');
+
+		store.records.set(refresh.id, refresh);
+
+		// 1. The mark moves nothing, as when a concurrent request won the race
+		await expect(
+			refreshTokenPair({ ...store, token: pair.refreshToken, rotate: async () => false }),
+		).rejects.toMatchObject(INVALID);
+
+		expect(revokeFamily).toHaveBeenCalledWith(refresh.familyId);
 	});
 });

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { AuthInvalidTokenError } from '../../errors/index.js';
-import { requireSecret } from '../../lib/require-secret.js';
+import { requireSecrets } from '../../lib/require-secret.js';
 import { authSettings } from '../../lib/settings-access.js';
 import { DEFAULT_OAUTH_STATE_TTL } from '../../lib/settings.js';
 import { useAuth } from '../../lib/use-auth.js';
@@ -102,7 +102,7 @@ export const startOAuth = async (location: string, options: StartOAuthOptions): 
 	}
 
 	const settings = authSettings().oauth ?? {};
-	const secret = requireSecret(settings.secret, 'oauth.secret');
+	const secret = requireSecrets(settings.secret, 'oauth.secret')[0]!;
 
 	// 2. Three secrets and the S256 challenge of the verifier — the only PKCE method worth sending
 	const state = randomToken();
@@ -130,7 +130,7 @@ export const startOAuth = async (location: string, options: StartOAuthOptions): 
 		...(options.scopes ? { scopes: options.scopes } : {}),
 	});
 
-	return { url, cookie: encrypt(JSON.stringify(sealed), secret), expiresAt };
+	return { url, cookie: encrypt(JSON.stringify(sealed), secret, 'oauth-cookie'), expiresAt };
 };
 
 /**
@@ -166,11 +166,11 @@ export const finishOAuth = async (location: string, params: FinishOAuthParams): 
 		throw new Error(`Auth location "${location}" does not sign in with OAuth`);
 	}
 
-	const secret = requireSecret(authSettings().oauth?.secret, 'oauth.secret');
+	const secrets = requireSecrets(authSettings().oauth?.secret, 'oauth.secret');
 
-	// 2. The cookie must open with the secret, be current, belong to this location and carry the callback's state;
+	// 2. The cookie must open with one of the secrets, be current, belong to this location and carry the callback's state;
 	//    every failure is the same error, and the state is compared in constant time
-	const sealed = open(params.cookie, secret);
+	const sealed = open(params.cookie, secrets);
 
 	if (
 		!sealed ||
@@ -203,18 +203,18 @@ export const finishOAuth = async (location: string, params: FinishOAuthParams): 
  * Open an OAuth cookie.
  *
  * @param cookie - The cookie's value.
- * @param secret - The `oauth.secret`.
- * @returns What it carries; `null` when it is missing, tampered with or sealed with another secret.
+ * @param secrets - The `oauth.secret` list, current first; a secret being rotated out still opens a cookie it sealed.
+ * @returns What it carries; `null` when it is missing, tampered with or sealed with none of the secrets.
  * @internal
  */
-const open = (cookie: string | undefined, secret: string): OAuthCookie | null => {
+const open = (cookie: string | undefined, secrets: readonly string[]): OAuthCookie | null => {
 	// 1. GCM refuses a changed byte or another key; either is just an unusable cookie here
 	if (typeof cookie !== 'string' || cookie.length === 0) {
 		return null;
 	}
 
 	try {
-		return JSON.parse(decrypt(cookie, secret)) as OAuthCookie;
+		return JSON.parse(decrypt(cookie, secrets, 'oauth-cookie').plaintext) as OAuthCookie;
 	} catch {
 		return null;
 	}
