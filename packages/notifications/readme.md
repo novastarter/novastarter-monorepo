@@ -80,9 +80,10 @@ retries.
 | `in-app`                         | `inAppChannel({ save, bus })`            | `save(record)`, then publishes it on the bus channel `notifications:<userId>`.       |
 
 The push channel tries every device before it throws, so a retry sends again to the devices that got it: give the push a
-`tag`, and a repeat replaces the shown notification instead of stacking. The in-app record has a fresh id each time;
-`save` ignores a duplicate when that matters. A page follows the inbox live by subscribing to the bus channel of the
-signed-in user from a server-sent events route.
+`tag`, and a repeat replaces the shown notification instead of stacking. The in-app record's id is `<userId>:<id>` when
+the notification carries an `id`, so `save` can upsert on it and a retry does not duplicate the row; without an `id` the
+record has a fresh id each time. A page follows the inbox live by subscribing to the bus channel of the signed-in user
+from a server-sent events route.
 
 Another channel — Slack, a webhook — is an object with a `name`, `reaches(recipient)` and
 `send({ notification, recipient, content })`, passed in `channels` like the others.

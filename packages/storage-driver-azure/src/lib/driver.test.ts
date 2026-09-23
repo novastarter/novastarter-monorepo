@@ -69,6 +69,30 @@ let sample: {
  */
 let driver: StorageDriverAzure;
 
+/**
+ * Metadata key the driver keeps a resumable upload's staging id under.
+ */
+const STAGING_ID_KEY = 'azure-staging-id';
+
+/**
+ * Staging id of the resumable uploads the tests address.
+ */
+const stagingId = '0123456789ab';
+
+/**
+ * Build a resumable-upload context carrying {@link stagingId}.
+ *
+ * @returns A fresh context for `sample.path.input`.
+ */
+const stagedContext = () => ({ size: sample.file.size, metadata: { [STAGING_ID_KEY]: stagingId } });
+
+/**
+ * Staging blob name the driver derives from `sample.path.input` and {@link stagingId}.
+ *
+ * @returns The staging blob name inside the container.
+ */
+const stagingFull = () => `${sample.path.inputFull}.${stagingId}.tmp`;
+
 beforeEach(() => {
 	// 1. Fresh random values per test; falso keeps them realistic enough to catch accidental string handling
 	sample = {
@@ -725,6 +749,20 @@ describe('#list', () => {
 		expect(output).toStrictEqual([mockFile]);
 	});
 
+	test('Skips the staging blobs of resumable uploads in flight', async () => {
+		// 1. A `<name>.<id>.tmp` blob holds a partial upload, not an object a caller stored
+		const mockFile = randFilePath();
+		mockListBlobsFlat.mockReturnValue([{ name: `${mockFile}.0123456789ab.tmp` }, { name: mockFile }]);
+
+		const output = [];
+
+		for await (const filepath of driver.list()) {
+			output.push(filepath);
+		}
+
+		expect(output).toStrictEqual([mockFile]);
+	});
+
 	test('Skips folder placeholder blobs ending in a slash', async () => {
 		// 1. ADLS Gen2 and several upload tools create zero-byte `folder/` markers; a caller that pipes `list()` into
 		//    `read()` breaks on them, so they are left out like on the S3 and GCS drivers
@@ -755,15 +793,16 @@ describe('#writeChunk', () => {
 		});
 	});
 
-	test('Appends the buffered chunk at the resolved blob name', async () => {
+	test('Appends the buffered chunk to the staging blob, not the target', async () => {
 		const result = await driver.writeChunk(sample.path.input, Readable.from([Buffer.from(sample.text)]), 0, {
 			size: sample.file.size,
-			metadata: {},
+			metadata: { [STAGING_ID_KEY]: stagingId },
 		});
 
-		// 1. The chunk lands as one block under the resolved name, and the offset advances by the bytes appended
+		// 1. The chunk lands as one block in the staging blob, and the offset advances by the bytes appended
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
-		expect(driver.client.getAppendBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
+		expect(driver.client.getAppendBlobClient).toHaveBeenCalledOnce();
+		expect(driver.client.getAppendBlobClient).toHaveBeenCalledWith(stagingFull());
 
 		expect(mockAppendBlock).toHaveBeenCalledWith(Buffer.from(sample.text), Buffer.byteLength(sample.text), {
 			conditions: { appendPosition: 0 },
@@ -777,12 +816,26 @@ describe('#writeChunk', () => {
 		//    with 412 instead of appending its bytes a second time and corrupting the upload
 		await driver.writeChunk(sample.path.input, Readable.from([Buffer.from(sample.text)]), 42, {
 			size: sample.file.size,
-			metadata: {},
+			metadata: { [STAGING_ID_KEY]: stagingId },
 		});
 
 		expect(mockAppendBlock).toHaveBeenCalledWith(Buffer.from(sample.text), Buffer.byteLength(sample.text), {
 			conditions: { appendPosition: 42 },
 		});
+	});
+
+	test('Refuses a context without a valid staging id before any request', async () => {
+		// 1. A context that lost its id, or carries a crafted one, must not address the target or another blob
+		for (const metadata of [{}, { [STAGING_ID_KEY]: '../x' }]) {
+			await expect(
+				driver.writeChunk(sample.path.input, Readable.from([Buffer.from(sample.text)]), 0, {
+					size: sample.file.size,
+					metadata,
+				}),
+			).rejects.toBeInstanceOf(StorageFileNotFoundError);
+		}
+
+		expect(mockAppendBlock).not.toHaveBeenCalled();
 	});
 
 	test('Refuses a chunk above the configured size', async () => {
@@ -801,7 +854,7 @@ describe('#writeChunk', () => {
 		await expect(
 			tusDriver.writeChunk(sample.path.input, Readable.from([Buffer.from(sample.text)]), 0, {
 				size: sample.file.size,
-				metadata: {},
+				metadata: { [STAGING_ID_KEY]: stagingId },
 			}),
 		).rejects.toThrow(`The chunk of ${Buffer.byteLength(sample.text)} bytes exceeds the chunk size limit of 1 bytes`);
 
@@ -835,7 +888,7 @@ describe('#writeChunk', () => {
 		await expect(
 			tusDriver.writeChunk(sample.path.input, endless, 0, {
 				size: sample.file.size,
-				metadata: {},
+				metadata: { [STAGING_ID_KEY]: stagingId },
 			}),
 		).rejects.toThrow('exceeds the chunk size limit of 1 bytes');
 
@@ -1070,66 +1123,195 @@ describe('#tusExtensions', () => {
 });
 
 describe('#createChunkedUpload', () => {
-	let mockCreateIfNotExists: Mock;
+	let mockCreate: Mock;
 
 	beforeEach(() => {
-		// 1. The append blob is the whole upload state, so creation is one `createIfNotExists` on the resolved name
-		mockCreateIfNotExists = vi.fn().mockResolvedValue(undefined);
+		// 1. Creation is one `create` of the staging append blob, recorded so its name can be asserted
+		mockCreate = vi.fn().mockResolvedValue(undefined);
 
 		Object.assign(driver, {
 			client: {
-				getAppendBlobClient: vi.fn().mockReturnValue({ createIfNotExists: mockCreateIfNotExists }),
+				getAppendBlobClient: vi.fn().mockReturnValue({ create: mockCreate }),
 			} as unknown as ContainerClient,
 		});
 	});
 
-	test('Creates an empty append blob under the final name', async () => {
-		const context = { size: sample.file.size, metadata: {} };
+	test('Creates an empty staging append blob and keeps its id in the context', async () => {
+		const context = { size: sample.file.size, metadata: { [STAGING_ID_KEY]: 'client-sent' } };
 
 		const result = await driver.createChunkedUpload(sample.path.input, context);
 
-		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
-		expect(driver.client.getAppendBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
-		expect(mockCreateIfNotExists).toHaveBeenCalledOnce();
+		// 1. The id is a fresh random one, replacing whatever the client sent under the key
+		const id = result.metadata?.[STAGING_ID_KEY];
+
+		expect(id).toMatch(/^[0-9a-f]{12}$/);
 		expect(result).toBe(context);
+
+		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
+		expect(driver.client.getAppendBlobClient).toHaveBeenCalledOnce();
+		expect(driver.client.getAppendBlobClient).toHaveBeenCalledWith(`${sample.path.inputFull}.${id}.tmp`);
+		expect(mockCreate).toHaveBeenCalledOnce();
 	});
 
-	test('Keeps blocks already appended when creation is retried', async () => {
-		// 1. `createIfNotExists` rather than `create` is what makes a retried creation leave an upload that already has
-		//    blocks alone; the assertion above pins the call, here the driver simply must not fail the retry
-		mockCreateIfNotExists.mockRejectedValue(Object.assign(new Error('already exists'), { statusCode: 409 }));
+	test('Leaves a blob already at the path untouched', async () => {
+		// 1. Only the staging blob is created, so an existing target keeps its content while the upload runs and after
+		//    it is abandoned
+		await driver.createChunkedUpload(sample.path.input, { size: sample.file.size, metadata: undefined });
 
-		await expect(
-			driver.createChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} }),
-		).rejects.toBeDefined();
+		expect(driver.client.getAppendBlobClient).not.toHaveBeenCalledWith(sample.path.inputFull);
+	});
+
+	test('Gives each upload of the same path its own staging blob', async () => {
+		// 1. Two concurrent uploads must never append to one blob
+		const first = await driver.createChunkedUpload(sample.path.input, { size: sample.file.size, metadata: undefined });
+		const second = await driver.createChunkedUpload(sample.path.input, { size: sample.file.size, metadata: undefined });
+
+		expect(first.metadata?.[STAGING_ID_KEY]).not.toBe(second.metadata?.[STAGING_ID_KEY]);
 	});
 });
 
 describe('#finishChunkedUpload', () => {
-	test('Resolves without a request', async () => {
-		// 1. The append blob already holds every chunk under the final name, so there is nothing to assemble
+	let mockBeginCopyFromUrl: Mock;
+	let mockPollUntilDone: Mock;
+	let mockTargetDeleteIfExists: Mock;
+	let mockStagingDeleteIfExists: Mock;
+	let mockUrl: string;
+
+	beforeEach(() => {
+		// 1. The staging blob only has its URL read and is deleted at the end; the copy is started on the target
+		mockPollUntilDone = vi.fn().mockResolvedValue(undefined);
+		mockBeginCopyFromUrl = vi.fn().mockResolvedValue({ pollUntilDone: mockPollUntilDone });
+		mockTargetDeleteIfExists = vi.fn().mockResolvedValue(undefined);
+		mockStagingDeleteIfExists = vi.fn().mockResolvedValue(undefined);
+		mockUrl = randUrl();
+
+		Object.assign(driver, {
+			client: {
+				getAppendBlobClient: vi.fn().mockReturnValue({ url: mockUrl, deleteIfExists: mockStagingDeleteIfExists }),
+				getBlobClient: vi
+					.fn()
+					.mockReturnValue({ beginCopyFromURL: mockBeginCopyFromUrl, deleteIfExists: mockTargetDeleteIfExists }),
+			} as unknown as ContainerClient,
+		});
+	});
+
+	test('Copies the staging blob over the target, waits for the copy, then removes the staging blob', async () => {
+		// 1. A target of the same type accepts the copy on the first try
+		await driver.finishChunkedUpload(sample.path.input, stagedContext());
+
+		// 2. The staging blob is addressed by the id in the context, the target by the plain path
+		expect(driver.client.getAppendBlobClient).toHaveBeenCalledWith(stagingFull());
+		expect(driver.client.getBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
+
+		// 3. One server-side copy from the staging URL, awaited to completion, and no deletion of the target
+		expect(mockBeginCopyFromUrl).toHaveBeenCalledOnce();
+		expect(mockBeginCopyFromUrl).toHaveBeenCalledWith(mockUrl);
+		expect(mockPollUntilDone).toHaveBeenCalledOnce();
+		expect(mockTargetDeleteIfExists).not.toHaveBeenCalled();
+		expect(mockStagingDeleteIfExists).toHaveBeenCalledOnce();
+
+		// 4. The staging blob goes only after the copy is done, or the copy would lose its source
+		expect(mockPollUntilDone.mock.invocationCallOrder[0]).toBeLessThan(
+			mockStagingDeleteIfExists.mock.invocationCallOrder[0] as number,
+		);
+	});
+
+	test('Removes a target of another blob type and copies again', async () => {
+		// 1. Azure copies onto an existing blob only of the source's type; a block blob from `write()` is refused
+		mockBeginCopyFromUrl.mockRejectedValueOnce(
+			Object.assign(new Error('invalid blob type'), { statusCode: 409, code: 'InvalidBlobType' }),
+		);
+
+		await driver.finishChunkedUpload(sample.path.input, stagedContext());
+
+		expect(mockTargetDeleteIfExists).toHaveBeenCalledOnce();
+		expect(mockBeginCopyFromUrl).toHaveBeenCalledTimes(2);
+		expect(mockStagingDeleteIfExists).toHaveBeenCalledOnce();
+	});
+
+	test('Keeps the staging blob and rethrows when the copy after removing the target fails', async () => {
+		// 1. The first copy is refused for the blob type, and the second one fails after the target is deleted
+		const error = Object.assign(new Error('copy failed'), { statusCode: 500, code: 'InternalError' });
+
+		mockBeginCopyFromUrl
+			.mockRejectedValueOnce(
+				Object.assign(new Error('invalid blob type'), { statusCode: 409, code: 'InvalidBlobType' }),
+			)
+			.mockRejectedValueOnce(error);
+
+		await expect(driver.finishChunkedUpload(sample.path.input, stagedContext())).rejects.toBe(error);
+
+		// 2. The old target is gone, but the staging blob survives so a retried finish can still complete the upload
+		expect(mockTargetDeleteIfExists).toHaveBeenCalledOnce();
+		expect(mockBeginCopyFromUrl).toHaveBeenCalledTimes(2);
+		expect(mockStagingDeleteIfExists).not.toHaveBeenCalled();
+	});
+
+	test('Rethrows any other conflict without touching the target or the staging blob', async () => {
+		// 1. A conflict other than `InvalidBlobType`, such as a copy still pending on the target, is not recoverable here
+		const error = Object.assign(new Error('pending copy'), { statusCode: 409, code: 'PendingCopyOperation' });
+		mockBeginCopyFromUrl.mockRejectedValueOnce(error);
+
+		await expect(driver.finishChunkedUpload(sample.path.input, stagedContext())).rejects.toBe(error);
+
+		// 2. Neither blob is deleted, so the target is not lost and the finish can be retried
+		expect(mockTargetDeleteIfExists).not.toHaveBeenCalled();
+		expect(mockStagingDeleteIfExists).not.toHaveBeenCalled();
+	});
+
+	test('Throws StorageFileNotFoundError when the staging blob is gone', async () => {
+		// 1. A 404 on the copy means the source is missing: the upload is unknown or was already finished
+		mockBeginCopyFromUrl.mockRejectedValueOnce(Object.assign(new Error('not found'), { statusCode: 404 }));
+
+		await expect(driver.finishChunkedUpload(sample.path.input, stagedContext())).rejects.toBeInstanceOf(
+			StorageFileNotFoundError,
+		);
+	});
+
+	test('Throws StorageFileNotFoundError for a context without a staging id', async () => {
+		// 1. Without an id there is no staging blob to name, so the driver fails before any request
 		await expect(
 			driver.finishChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} }),
-		).resolves.toBeUndefined();
+		).rejects.toBeInstanceOf(StorageFileNotFoundError);
+
+		expect(mockBeginCopyFromUrl).not.toHaveBeenCalled();
 	});
 });
 
 describe('#deleteChunkedUpload', () => {
-	test('Deletes the append blob under the final name', async () => {
-		// 1. Termination is a plain delete of the blob under the final name; `deleteIfExists` keeps a termination for an
-		//    upload that never got a chunk from rejecting
-		const mockDeleteIfExists = vi.fn().mockResolvedValue(undefined);
+	let mockStagingDeleteIfExists: Mock;
+	let mockTargetDeleteIfExists: Mock;
+
+	beforeEach(() => {
+		// 1. Both kinds of client are mocked, so a test can prove the target is never deleted
+		mockStagingDeleteIfExists = vi.fn().mockResolvedValue(undefined);
+		mockTargetDeleteIfExists = vi.fn().mockResolvedValue(undefined);
 
 		Object.assign(driver, {
 			client: {
-				getBlockBlobClient: vi.fn().mockReturnValue({ deleteIfExists: mockDeleteIfExists }),
+				getAppendBlobClient: vi.fn().mockReturnValue({ deleteIfExists: mockStagingDeleteIfExists }),
+				getBlobClient: vi.fn().mockReturnValue({ deleteIfExists: mockTargetDeleteIfExists }),
+				getBlockBlobClient: vi.fn().mockReturnValue({ deleteIfExists: mockTargetDeleteIfExists }),
 			} as unknown as ContainerClient,
 		});
+	});
 
-		await driver.deleteChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} });
+	test('Deletes only the staging blob and leaves the target alone', async () => {
+		// 1. An aborted upload never wrote the target, so a file stored there before survives the termination
+		await driver.deleteChunkedUpload(sample.path.input, stagedContext());
 
-		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
-		expect(driver.client.getBlockBlobClient).toHaveBeenCalledWith(sample.path.inputFull);
-		expect(mockDeleteIfExists).toHaveBeenCalledOnce();
+		expect(driver.client.getAppendBlobClient).toHaveBeenCalledWith(stagingFull());
+		expect(mockStagingDeleteIfExists).toHaveBeenCalledOnce();
+		expect(mockTargetDeleteIfExists).not.toHaveBeenCalled();
+	});
+
+	test('Throws StorageFileNotFoundError for a context without a staging id', async () => {
+		// 1. Without an id there is no staging blob to name, and the target must never be deleted in its place
+		await expect(
+			driver.deleteChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} }),
+		).rejects.toBeInstanceOf(StorageFileNotFoundError);
+
+		expect(mockStagingDeleteIfExists).not.toHaveBeenCalled();
+		expect(mockTargetDeleteIfExists).not.toHaveBeenCalled();
 	});
 });

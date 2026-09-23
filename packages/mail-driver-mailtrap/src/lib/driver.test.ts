@@ -50,13 +50,6 @@ const fetched = (index = 0): { url: string; init: RequestInit & { headers: Recor
 const send = vi.fn();
 
 /**
- * Spy standing in for `MailtrapClient.general.accounts.getAllAccounts()`, the call `verify()` makes.
- *
- * @internal
- */
-const getAllAccounts = vi.fn();
-
-/**
  * Spy recording the options every `MailtrapClient` was built with, so a test can check the host flags.
  *
  * @internal
@@ -76,11 +69,15 @@ vi.mock('mailtrap', () => ({
 		send = send;
 
 		/**
-		 * The accounts API the driver verifies through, routed to the shared spy.
+		 * The general API, which throws without an account id the way the SDK's getter does, so a `verify()` that
+		 * went through it would fail here as it fails against Mailtrap.
 		 *
 		 * @internal
 		 */
-		general = { accounts: { getAllAccounts } };
+		get general(): never {
+			// 1. The driver never passes an account id, so the SDK's check always refuses
+			throw new Error('accountId is missing, some features of testing API may not work properly.');
+		}
 
 		/**
 		 * Record the client options instead of opening a connection.
@@ -184,20 +181,23 @@ describe('MailDriverMailtrap', () => {
 		expect(send).not.toHaveBeenCalled();
 	});
 
-	test('Verifies by listing the accounts of the token', async () => {
-		const driver = new MailDriverMailtrap({ token: 't' });
+	test('Verifies by listing the accounts of the token through the API, not the SDK', async () => {
+		const driver = new MailDriverMailtrap({ token: 'TOKEN' });
 
-		// 1. At least one account means the token can send
-		getAllAccounts.mockResolvedValueOnce([{ id: 1, name: 'Acme' }]);
+		// 1. At least one account means the token can send; the list is asked of the general API with the token
+		answer([{ id: 1, name: 'Acme' }]);
 		await expect(driver.verify()).resolves.toBeUndefined();
+		expect(fetched().url).toBe('https://mailtrap.io/api/accounts');
+		expect(fetched().init.method).toBe('GET');
+		expect(fetched().init.headers['authorization']).toBe('Bearer TOKEN');
 
 		// 2. None means it cannot, even though Mailtrap answered
-		getAllAccounts.mockResolvedValueOnce([]);
+		answer([]);
 		await expect(driver.verify()).rejects.toThrow('no account');
 
-		// 3. A refusal is wrapped with the provider's name, the SDK's error as the cause
-		getAllAccounts.mockRejectedValueOnce(new Error('Unauthorized'));
-		await expect(driver.verify()).rejects.toThrow('Mailtrap: Unauthorized');
+		// 3. A refusal of the token surfaces as the kit's provider error, naming Mailtrap
+		answer({ error: 'Incorrect API token' }, 401);
+		await expect(driver.verify()).rejects.toBeInstanceOf(ProviderCallError);
 	});
 });
 

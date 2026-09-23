@@ -6,11 +6,27 @@ import { describe, expect, test } from 'vitest';
 import {
 	MAILGUN_TAG_COUNT,
 	MAILGUN_TAG_LENGTH,
+	type MailgunFile,
 	toMailgunFile,
 	toMailgunHeader,
 	toMailgunMessage,
 	toMailgunTags,
 } from './to-mailgun-message.js';
+
+/**
+ * A file with its `Blob` read back into bytes and type, so a test can compare it by value.
+ *
+ * @param file - What the mapper built.
+ * @returns The filename, the bytes, the `Blob` type and the content type, if any.
+ */
+const readFile = async (
+	file: MailgunFile,
+): Promise<{ filename: string; data: Buffer; type: string; contentType?: string }> => ({
+	...file,
+	// 1. A `Blob` has no own properties to compare, so its bytes and type are taken out
+	data: Buffer.from(await file.data.arrayBuffer()),
+	type: file.data.type,
+});
 
 describe('toMailgunTags', () => {
 	test('Cuts every label to the length limit, drops an empty one and caps the count, the category first', () => {
@@ -73,10 +89,32 @@ describe('toMailgunHeader', () => {
 describe('toMailgunFile', () => {
 	test('Keeps inline content and takes the content id as the filename', async () => {
 		// 1. Mailgun matches `cid:` references by filename, so the content id stands in for it
-		expect(await toMailgunFile({ filename: 'logo.png', content: Buffer.from('png'), cid: 'logo' })).toStrictEqual({
-			filename: 'logo',
-			data: Buffer.from('png'),
+		expect(
+			await readFile(await toMailgunFile({ filename: 'logo.png', content: Buffer.from('png'), cid: 'logo' })),
+		).toStrictEqual({ filename: 'logo', data: Buffer.from('png'), type: '' });
+	});
+
+	test('Carries the content type into the multipart part the SDK builds', async () => {
+		// 1. The file the way the mapper builds an inline image named by a bare content id, so the filename gives
+		//    Mailgun no type to guess
+		const file = await toMailgunFile({
+			filename: 'logo.png',
+			content: Buffer.from('png'),
+			contentType: 'image/png',
+			cid: 'logo',
 		});
+
+		// 2. Append it the way mailgun.js does with Node's own FormData — a `Blob` goes in unchanged with the filename —
+		//    and serialise the form to see the part's headers
+		const form = new FormData();
+
+		form.append('inline', file.data, file.filename);
+
+		const body = await new Response(form).text();
+
+		// 3. The part names the content id and carries the content type
+		expect(body).toContain('filename="logo"');
+		expect(body).toContain('Content-Type: image/png');
 	});
 
 	test('Reads a path', async () => {
@@ -84,7 +122,8 @@ describe('toMailgunFile', () => {
 		const file = await toMailgunFile({ filename: 'self.ts', path: new URL(import.meta.url).pathname });
 
 		expect(file.filename).toBe('self.ts');
-		expect(Buffer.isBuffer(file.data)).toBe(true);
+		expect(file.data).toBeInstanceOf(Blob);
+		expect(file.data.size).toBeGreaterThan(0);
 	});
 
 	test('Throws without content or path', async () => {
@@ -95,29 +134,32 @@ describe('toMailgunFile', () => {
 
 describe('toMailgunMessage', () => {
 	test('Maps the message into Mailgun form fields, inline files apart', async () => {
-		// 1. Headers become `h:` fields, tags `o:tag`; text content is read into a Buffer like every attachment
-		expect(
-			await toMailgunMessage(
-				{
-					to: [{ name: 'Ada', address: 'ada@example.com' }],
-					cc: ['cc@example.com'],
-					bcc: ['bcc@example.com'],
-					from: { name: 'Acme', address: 'no-reply@acme.test' },
-					replyTo: 'Support <support@acme.test>',
-					subject: 'Hi',
-					html: '<p>Hi</p>',
-					text: 'Hi',
-					headers: { 'X-Campaign': 'welcome' },
-					attachments: [
-						{ filename: 'a.txt', content: 'hello', contentType: 'text/plain' },
-						{ filename: 'logo.png', content: Buffer.from('png'), contentType: 'image/png', cid: 'logo' },
-					],
-					category: 'marketing',
-					tags: ['welcome', 'v2'],
-				},
-				true,
-			),
-		).toStrictEqual({
+		// 1. Headers become `h:` fields, tags `o:tag`; text content is read into bytes like every attachment
+		const data = await toMailgunMessage(
+			{
+				to: [{ name: 'Ada', address: 'ada@example.com' }],
+				cc: ['cc@example.com'],
+				bcc: ['bcc@example.com'],
+				from: { name: 'Acme', address: 'no-reply@acme.test' },
+				replyTo: 'Support <support@acme.test>',
+				subject: 'Hi',
+				html: '<p>Hi</p>',
+				text: 'Hi',
+				headers: { 'X-Campaign': 'welcome' },
+				attachments: [
+					{ filename: 'a.txt', content: 'hello', contentType: 'text/plain' },
+					{ filename: 'logo.png', content: Buffer.from('png'), contentType: 'image/png', cid: 'logo' },
+				],
+				category: 'marketing',
+				tags: ['welcome', 'v2'],
+			},
+			true,
+		);
+
+		// 2. The files are typed `Blob`s, read back into bytes to compare the whole payload by value
+		const { attachment, inline, ...fields } = data;
+
+		expect(fields).toStrictEqual({
 			from: 'Acme <no-reply@acme.test>',
 			to: ['Ada <ada@example.com>'],
 			cc: ['cc@example.com'],
@@ -129,9 +171,15 @@ describe('toMailgunMessage', () => {
 			'o:testmode': true,
 			'h:Reply-To': 'Support <support@acme.test>',
 			'h:X-Campaign': 'welcome',
-			attachment: [{ filename: 'a.txt', data: Buffer.from('hello'), contentType: 'text/plain' }],
-			inline: [{ filename: 'logo', data: Buffer.from('png'), contentType: 'image/png' }],
 		});
+
+		expect(await Promise.all((attachment as MailgunFile[]).map(readFile))).toStrictEqual([
+			{ filename: 'a.txt', data: Buffer.from('hello'), type: 'text/plain', contentType: 'text/plain' },
+		]);
+
+		expect(await Promise.all((inline as MailgunFile[]).map(readFile))).toStrictEqual([
+			{ filename: 'logo', data: Buffer.from('png'), type: 'image/png', contentType: 'image/png' },
+		]);
 	});
 
 	test('Defaults the tag to the transactional category and leaves the optional fields out', async () => {

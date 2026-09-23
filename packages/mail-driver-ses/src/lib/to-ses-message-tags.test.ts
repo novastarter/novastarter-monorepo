@@ -49,6 +49,22 @@ describe('toSesMessageTags', () => {
 		]);
 	});
 
+	test('Drops a tag whose sanitised name is already on the list', () => {
+		// 1. SES refuses two tags of one name; tags the sanitiser folds together, a repeated tag and a tag named
+		//    `category` each keep only the first name, so the message still goes out
+		expect(
+			toSesMessageTags({
+				to: 'ada@example.com',
+				subject: 'Hi',
+				tags: ['welcome flow', 'welcome_flow', 'v2.1', 'v2_1', 'category', 'v2_1'],
+			}),
+		).toStrictEqual([
+			{ Name: 'category', Value: 'transactional' },
+			{ Name: 'welcome_flow', Value: '1' },
+			{ Name: 'v2_1', Value: '1' },
+		]);
+	});
+
 	test('Caps the list at the tag count, the category taking one slot', () => {
 		// 1. SES refuses a message past its tag count, so the tail past the cap is left off rather than failing the send
 		const tags = Array.from({ length: SES_MESSAGE_TAG_COUNT + 5 }, (_, index) => `tag_${index}`);

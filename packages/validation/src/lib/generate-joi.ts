@@ -2,6 +2,7 @@ import type { FieldFilter } from '@novastarter/types';
 import type {
 	AnySchema,
 	StringSchema as BaseStringSchema,
+	CustomValidator,
 	DateSchema,
 	ExtensionRule,
 	NumberSchema,
@@ -215,17 +216,52 @@ const isDatePair = (compareValue: unknown): boolean =>
 	);
 
 /**
+ * Custom Joi check behind {@link never}: reject whatever value reaches it.
+ *
+ * Kept at module level, so every schema {@link never} builds shares the same function and two of them compare equal
+ * through `describe()`.
+ *
+ * @param _value - Value under validation; ignored, since every value fails.
+ * @param helpers - Joi custom helpers, used to report the error.
+ * @returns A Joi `any.only` error report with an empty allow list.
+ * @internal
+ */
+const rejectEvery: CustomValidator = (_value, helpers) =>
+	// 1. `any.only` with no allowed values is what the error converter reads as "one of nothing", so the failure
+	//    stays a structured `in` error instead of an unmapped Joi type
+	helpers.error('any.only', { valids: [] });
+
+/**
+ * Build the schema a malformed rule degrades to: one that no present value passes.
+ *
+ * A filter rule that cannot describe any value the payload could satisfy (an empty `_in` list, a non-string
+ * substring, an unparseable range bound, a regex that does not compile) must fail the field rather than throw at
+ * schema-build time or let the field through. An allow list such as `equal(true)` is not enough, since the one value
+ * it names would pass; a custom check that always reports rejects `true`, `false`, `null` and everything else alike. A
+ * missing field is still skipped unless `requireAll` is set, like every other rule.
+ *
+ * @returns A schema failing every present value with `any.only` and an empty allow list.
+ * @internal
+ */
+export const never = (): AnySchema =>
+	// 1. Joi runs custom checks on every present value, including `null` and booleans, so nothing slips past
+	Joi.any().custom(rejectEvery, 'never');
+
+/**
  * Build a Joi schema from one field filter.
  *
- * The filter holds a single field key whose value is either an operator object (`{ _gte: 18 }`) or another field
- * filter for a nested object. Logical `_and` / `_or` groups are not handled here; `validatePayload` splits them
- * first. Every schema is an object schema that allows unknown keys, so a payload may carry fields the filter never
+ * The filter holds a single field key whose value is either an operator object with a single operator
+ * (`{ _gte: 18 }`) or another field filter for a nested object. Logical `_and` / `_or` groups are not handled here;
+ * `validatePayload` splits them first, and several fields or several operators on one field are written as an
+ * `_and`. Every schema is an object schema that allows unknown keys, so a payload may carry fields the filter never
  * mentions.
  *
  * @param filter - Field filter with exactly one field key; `null` is treated as an empty filter.
  * @param options - Schema options merged over {@link defaults}.
  * @returns Object schema with a rule for the filter's field.
- * @throws Plain `Error` when the filter has no field key or the field has no rule.
+ * @throws Plain `Error` when the filter has no field key or more than one, when the field's rule is not a non-empty
+ * object (a bare value such as `{ status: 'published' }`, an array, `{}`), or when an operator object holds more
+ * than one key; the same checks apply at every nesting level.
  * @example
  * ```ts
  * const schema = generateJoi({ age: { _gte: 18 } });
@@ -241,28 +277,48 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 
 	const schema: Record<string, AnySchema> = {};
 
-	// 2. A filter describes exactly one field; anything else is a caller bug worth failing on
+	// 2. A filter describes exactly one field; anything else is a caller bug worth failing on. Only the first key is
+	//    ever turned into a rule, so a second one would be dropped without a trace; failing loudly keeps a
+	//    multi-field filter from passing payloads it was meant to reject
 	const key = Object.keys(filter)[0];
 
 	if (!key) {
 		throw new Error(`[generateJoi] Filter doesn't contain field key. Passed filter: ${JSON.stringify(filter)}`);
 	}
 
-	const value = Object.values(filter)[0];
+	if (Object.keys(filter).length > 1) {
+		throw new Error(
+			`[generateJoi] Filter contains more than one field key; combine them with "_and". Passed filter: ${JSON.stringify(filter)}`,
+		);
+	}
 
-	if (!value) {
+	const value: unknown = Object.values(filter)[0];
+
+	// 3. The rule must be a non-empty plain object (an operator object or a nested filter). A bare value such as
+	//    `{ status: 'published' }` is not shorthand equality here: a string would otherwise be walked as a nested
+	//    filter of its characters and recurse forever, and a number, boolean, array or `{}` would leave the field
+	//    unconstrained without a word
+	if (typeof value !== 'object' || value === null || Array.isArray(value) || Object.keys(value).length === 0) {
 		throw new Error(`[generateJoi] Filter doesn't contain filter rule. Passed filter: ${JSON.stringify(filter)}`);
 	}
 
-	// 3. A value whose first key is not an operator is a nested field filter: recurse and nest the schema
-	if (Object.keys(value)[0]?.startsWith('_') === false) {
+	// 4. A value whose first key is not an operator is a nested field filter: recurse and nest the schema; the
+	//    recursive call applies the same one-key checks to it
+	if (!Object.keys(value)[0]!.startsWith('_')) {
 		schema[key] = generateJoi(value as FieldFilter, options);
 	} else {
-		// 4. Otherwise the value is an operator object; only its first operator is applied
+		// 5. Otherwise the value is an operator object. Only one operator is applied per field, so a second one (or a
+		//    field key mixed in with the operator) would be skipped silently; that is a caller bug worth failing on
+		if (Object.keys(value).length > 1) {
+			throw new Error(
+				`[generateJoi] Filter contains more than one operator for field "${key}"; combine them with "_and". Passed filter: ${JSON.stringify(filter)}`,
+			);
+		}
+
 		const operator = Object.keys(value)[0];
 		const compareValue = Object.values(value)[0];
 
-		// 5. Lazily pick the base schema for the operator at hand. The schema map is built fresh on every call and only
+		// 6. Lazily pick the base schema for the operator at hand. The schema map is built fresh on every call and only
 		//    the first operator of the value applies, so `schema[key]` is always unset here; each operator composes its
 		//    own schema for the key from the typed base. The string base gets `min(0)`, because Joi's stock string
 		//    rejects `''` with `string.empty` before any rule runs; a form field left blank must reach the substring
@@ -272,7 +328,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 		const getNumberSchema = () => (schema[key] ?? Joi.number()) as NumberSchema;
 		const getDateSchema = () => (schema[key] ?? Joi.date()) as DateSchema;
 
-		// 6. `_eq`: accept the value and its numeric / string twin, so `5` matches `'5'` and vice versa; values
+		// 7. `_eq`: accept the value and its numeric / string twin, so `5` matches `'5'` and vice versa; values
 		//    without a numeric twin (null, empty string, booleans) are compared as they are
 		if (operator === '_eq') {
 			let typecastedValue: string | number;
@@ -290,7 +346,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			}
 		}
 
-		// 7. `_neq`: the same twin logic, forbidding both forms
+		// 8. `_neq`: the same twin logic, forbidding both forms
 		if (operator === '_neq') {
 			let typecastedValue: string | number;
 
@@ -307,12 +363,12 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			}
 		}
 
-		// 8. Substring operators: a non-string compare value cannot match anything, so the rule becomes
-		//    `equal(true)`, which fails for any real value; a string is checked on the value itself or on any item of
+		// 9. Substring operators: a non-string compare value cannot match anything, so the rule becomes
+		//    {@link never}, which fails for any present value; a string is checked on the value itself or on any item of
 		//    an array value
 		if (operator === '_contains') {
 			if (compareValue === null || compareValue === undefined || typeof compareValue !== 'string') {
-				schema[key] = Joi.any().equal(true);
+				schema[key] = never();
 			} else {
 				schema[key] = Joi.alternatives().try(
 					getStringSchema().contains(compareValue),
@@ -323,7 +379,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 
 		if (operator === '_icontains') {
 			if (compareValue === null || compareValue === undefined || typeof compareValue !== 'string') {
-				schema[key] = Joi.any().equal(true);
+				schema[key] = never();
 			} else {
 				schema[key] = Joi.alternatives().try(
 					getStringSchema().icontains(compareValue),
@@ -334,7 +390,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 
 		if (operator === '_ncontains') {
 			if (compareValue === null || compareValue === undefined || typeof compareValue !== 'string') {
-				schema[key] = Joi.any().equal(true);
+				schema[key] = never();
 			} else {
 				schema[key] = Joi.alternatives().try(
 					getStringSchema().ncontains(compareValue),
@@ -343,11 +399,11 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			}
 		}
 
-		// 9. Prefix / suffix operators are rules of the extended Joi named after the operator, so the error carries the
-		//    operator and the original substring; a non-string compare value cannot match anything, as in step 8
+		// 10. Prefix / suffix operators are rules of the extended Joi named after the operator, so the error carries the
+		//     operator and the original substring; a non-string compare value cannot match anything, as in step 9
 		if (operator === '_starts_with') {
 			if (compareValue === null || compareValue === undefined || typeof compareValue !== 'string') {
-				schema[key] = Joi.any().equal(true);
+				schema[key] = never();
 			} else {
 				schema[key] = getStringSchema().starts_with(compareValue);
 			}
@@ -355,7 +411,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 
 		if (operator === '_nstarts_with') {
 			if (compareValue === null || compareValue === undefined || typeof compareValue !== 'string') {
-				schema[key] = Joi.any().equal(true);
+				schema[key] = never();
 			} else {
 				schema[key] = getStringSchema().nstarts_with(compareValue);
 			}
@@ -363,7 +419,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 
 		if (operator === '_istarts_with') {
 			if (compareValue === null || compareValue === undefined || typeof compareValue !== 'string') {
-				schema[key] = Joi.any().equal(true);
+				schema[key] = never();
 			} else {
 				schema[key] = getStringSchema().istarts_with(compareValue);
 			}
@@ -371,7 +427,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 
 		if (operator === '_nistarts_with') {
 			if (compareValue === null || compareValue === undefined || typeof compareValue !== 'string') {
-				schema[key] = Joi.any().equal(true);
+				schema[key] = never();
 			} else {
 				schema[key] = getStringSchema().nistarts_with(compareValue);
 			}
@@ -379,7 +435,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 
 		if (operator === '_ends_with') {
 			if (compareValue === null || compareValue === undefined || typeof compareValue !== 'string') {
-				schema[key] = Joi.any().equal(true);
+				schema[key] = never();
 			} else {
 				schema[key] = getStringSchema().ends_with(compareValue);
 			}
@@ -387,7 +443,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 
 		if (operator === '_nends_with') {
 			if (compareValue === null || compareValue === undefined || typeof compareValue !== 'string') {
-				schema[key] = Joi.any().equal(true);
+				schema[key] = never();
 			} else {
 				schema[key] = getStringSchema().nends_with(compareValue);
 			}
@@ -395,7 +451,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 
 		if (operator === '_iends_with') {
 			if (compareValue === null || compareValue === undefined || typeof compareValue !== 'string') {
-				schema[key] = Joi.any().equal(true);
+				schema[key] = never();
 			} else {
 				schema[key] = getStringSchema().iends_with(compareValue);
 			}
@@ -403,23 +459,23 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 
 		if (operator === '_niends_with') {
 			if (compareValue === null || compareValue === undefined || typeof compareValue !== 'string') {
-				schema[key] = Joi.any().equal(true);
+				schema[key] = never();
 			} else {
 				schema[key] = getStringSchema().niends_with(compareValue);
 			}
 		}
 
-		// 10. List membership maps straight onto Joi's allow / deny lists. A string compare value is spread into
+		// 11. List membership maps straight onto Joi's allow / deny lists. A string compare value is spread into
 		//     single characters and a non-empty array into its entries — the string spread is intentional,
 		//     documented behaviour. Anything that is neither (an empty list, a number, `null`, …) cannot hold compare
-		//     values: `_in` becomes the never-validating rule `equal(true)`, since a list of nothing allows nothing,
+		//     values: `_in` becomes the never-validating rule {@link never}, since a list of nothing allows nothing,
 		//     and `_nin` becomes a no-op `any`, since forbidding nothing passes everything — the vacuous truth, stated
 		//     here so it reads on purpose
 		if (operator === '_in') {
 			schema[key] =
 				typeof compareValue === 'string' || (Array.isArray(compareValue) && compareValue.length > 0)
 					? getAnySchema().equal(...(compareValue as (string | number)[]))
-					: Joi.any().equal(true);
+					: never();
 		}
 
 		if (operator === '_nin') {
@@ -429,7 +485,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 					: Joi.any();
 		}
 
-		// 11. Range operators: a value that is a `Date` or does not parse as a number is compared as a date, so
+		// 12. Range operators: a value that is a `Date` or does not parse as a number is compared as a date, so
 		//     `'2024-01-01'` and `'18'` both work without the caller declaring the type. A string bound that is
 		//     neither numeric nor a valid date can never be reached by a real value, so the rule degrades to the
 		//     never-validating schema the malformed compare values get, instead of Joi throwing an assert at
@@ -438,7 +494,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			const isDate = compareValue instanceof Date || Number.isNaN(Number(compareValue));
 
 			if (isDate && typeof compareValue === 'string' && Number.isNaN(Date.parse(compareValue))) {
-				schema[key] = Joi.any().equal(true);
+				schema[key] = never();
 			} else if (isDate) {
 				schema[key] = getDateSchema().greater(compareValue as string | Date);
 			} else {
@@ -450,7 +506,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			const isDate = compareValue instanceof Date || Number.isNaN(Number(compareValue));
 
 			if (isDate && typeof compareValue === 'string' && Number.isNaN(Date.parse(compareValue))) {
-				schema[key] = Joi.any().equal(true);
+				schema[key] = never();
 			} else if (isDate) {
 				schema[key] = getDateSchema().min(compareValue as string | Date);
 			} else {
@@ -462,7 +518,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			const isDate = compareValue instanceof Date || Number.isNaN(Number(compareValue));
 
 			if (isDate && typeof compareValue === 'string' && Number.isNaN(Date.parse(compareValue))) {
-				schema[key] = Joi.any().equal(true);
+				schema[key] = never();
 			} else if (isDate) {
 				schema[key] = getDateSchema().less(compareValue as string | Date);
 			} else {
@@ -474,7 +530,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			const isDate = compareValue instanceof Date || Number.isNaN(Number(compareValue));
 
 			if (isDate && typeof compareValue === 'string' && Number.isNaN(Date.parse(compareValue))) {
-				schema[key] = Joi.any().equal(true);
+				schema[key] = never();
 			} else if (isDate) {
 				schema[key] = getDateSchema().max(compareValue as string | Date);
 			} else {
@@ -482,7 +538,7 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			}
 		}
 
-		// 12. Null and empty checks are allow / deny lists with a single entry
+		// 13. Null and empty checks are allow / deny lists with a single entry
 		if (operator === '_null') {
 			schema[key] = getAnySchema().valid(null);
 		}
@@ -499,10 +555,10 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 			schema[key] = getAnySchema().invalid('');
 		}
 
-		// 13. `_between` needs exactly two bounds: a pair of safe numbers builds the numeric range, a pair of dates
+		// 14. `_between` needs exactly two bounds: a pair of safe numbers builds the numeric range, a pair of dates
 		//     the date range. Anything else — a non-array, fewer or more bounds, unsafe numbers, unparseable strings —
-		//     cannot describe a range the payload could satisfy, so the rule becomes `equal(true)`, which fails for
-		//     any real value, as with the malformed compare values above
+		//     cannot describe a range the payload could satisfy, so the rule becomes {@link never}, which fails for
+		//     any present value, as with the malformed compare values above
 		if (operator === '_between') {
 			if (isSafeNumberPair(compareValue)) {
 				const values = compareValue as [number, number];
@@ -513,11 +569,11 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 
 				schema[key] = getDateSchema().min(values[0]).max(values[1]);
 			} else {
-				schema[key] = Joi.any().equal(true);
+				schema[key] = never();
 			}
 		}
 
-		// 14. `_nbetween` is the complement of the range: below the low bound or above the high bound. Joi ANDs the
+		// 15. `_nbetween` is the complement of the range: below the low bound or above the high bound. Joi ANDs the
 		//     rules of one schema, so "or" needs two alternatives; the bounds classify exactly like `_between` above
 		//     and anything that is not a usable pair degrades the same way
 		if (operator === '_nbetween') {
@@ -533,26 +589,26 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 
 				schema[key] = Joi.alternatives().try(getDateSchema().less(values[0]), getDateSchema().greater(values[1]));
 			} else {
-				schema[key] = Joi.any().equal(true);
+				schema[key] = never();
 			}
 		}
 
-		// 15. `_submitted` only asks for the field to be present, whatever its value
+		// 16. `_submitted` only asks for the field to be present, whatever its value
 		if (operator === '_submitted') {
 			schema[key] = getAnySchema().required();
 		}
 
-		// 16. `_regex` accepts the pattern bare or wrapped in slashes; the string base of step 5 already lets an empty
+		// 17. `_regex` accepts the pattern bare or wrapped in slashes; the string base of step 6 already lets an empty
 		//     string reach the pattern
 		if (operator === '_regex') {
 			if (compareValue === null || compareValue === undefined) {
-				schema[key] = Joi.any().equal(true);
+				schema[key] = never();
 			} else {
 				const wrapped =
 					typeof compareValue === 'string' ? compareValue.startsWith('/') && compareValue.endsWith('/') : false;
 
-				// 17. A pattern that does not compile can never be matched by a real value, so the rule degrades to
-				//     `equal(true)` — which fails for any real value, like the malformed compare values above — instead
+				// 18. A pattern that does not compile can never be matched by a real value, so the rule degrades to
+				//     {@link never} — which fails for any present value, like the malformed compare values above — instead
 				//     of throwing a `SyntaxError` out of schema building: the payload under validation is not at fault
 				//     for a bad filter
 				let pattern: RegExp | null;
@@ -564,15 +620,15 @@ export function generateJoi(filter: FieldFilter | null, options?: JoiOptions): A
 					pattern = null;
 				}
 
-				schema[key] = pattern !== null ? getStringSchema().regex(pattern) : Joi.any().equal(true);
+				schema[key] = pattern !== null ? getStringSchema().regex(pattern) : never();
 			}
 		}
 	}
 
-	// 18. An operator this function does not know leaves the field unconstrained rather than failing the payload
+	// 19. An operator this function does not know leaves the field unconstrained rather than failing the payload
 	schema[key] = schema[key] ?? Joi.any();
 
-	// 19. Presence is opt-in, so a filter can describe a partial update without every field being sent
+	// 20. Presence is opt-in, so a filter can describe a partial update without every field being sent
 	if (options.requireAll) {
 		schema[key] = schema[key]!.required();
 	}

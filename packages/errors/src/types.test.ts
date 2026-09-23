@@ -5,6 +5,7 @@ import { expectTypeOf, test } from 'vitest';
 import { ErrorCode } from './codes.js';
 import type { HitRateLimitErrorExtensions } from './errors/hit-rate-limit.js';
 import type { InvalidPayloadErrorExtensions } from './errors/invalid-payload.js';
+import type { ProviderCallErrorExtensions } from './errors/provider-call.js';
 import type { ExtensionsMap } from './types.js';
 
 test('Maps codes with extensions to their extensions type', () => {
@@ -12,6 +13,7 @@ test('Maps codes with extensions to their extensions type', () => {
 	//    the extensions to `never` and reading a field would fail to compile
 	expectTypeOf<ExtensionsMap[ErrorCode.InvalidPayload]>().toEqualTypeOf<InvalidPayloadErrorExtensions>();
 	expectTypeOf<ExtensionsMap[ErrorCode.RequestsExceeded]>().toEqualTypeOf<HitRateLimitErrorExtensions>();
+	expectTypeOf<ExtensionsMap[ErrorCode.ProviderCallFailed]>().toEqualTypeOf<ProviderCallErrorExtensions>();
 });
 
 test('Maps codes without extensions to never', () => {

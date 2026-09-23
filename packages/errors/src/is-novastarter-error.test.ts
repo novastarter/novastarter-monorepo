@@ -6,6 +6,7 @@ import { ErrorCode } from './codes.js';
 import { createError } from './create-error.js';
 import { HitRateLimitError, type HitRateLimitErrorExtensions } from './errors/hit-rate-limit.js';
 import { InvalidPayloadError, type InvalidPayloadErrorExtensions } from './errors/invalid-payload.js';
+import { ProviderCallError, type ProviderCallErrorExtensions } from './errors/provider-call.js';
 import { isNovastarterError } from './is-novastarter-error.js';
 
 let sample: {
@@ -66,12 +67,19 @@ test('Check against optional error code', () => {
 });
 
 test('Narrows the extensions of every kit code that carries details', () => {
-	// 1. Both errors are typed `unknown`, the way they arrive in a `catch`, so only the guard can narrow them
+	// 1. All errors are typed `unknown`, the way they arrive in a `catch`, so only the guard can narrow them
 	const payload: unknown = new InvalidPayloadError({ reason: 'Field "email" is required' });
 	const rateLimit: unknown = new HitRateLimitError({ limit: 10, reset: new Date(Date.now() + 5_000) });
 
+	const providerCall: unknown = new ProviderCallError({
+		provider: 'stripe',
+		method: 'POST /v1/refunds',
+		status: 404,
+		body: { error: { message: 'No such charge' } },
+	});
+
 	// 2. Every branch below must run, or a guard returning `false` would pass the test without checking a type
-	expect.assertions(4);
+	expect.assertions(6);
 
 	// 3. A kit code missing from the extensions map narrows to `never`, and reading a field then fails to compile,
 	//    so the field access is the regression check here, not only the type assertion
@@ -85,6 +93,12 @@ test('Narrows the extensions of every kit code that carries details', () => {
 		expectTypeOf(rateLimit.extensions).toEqualTypeOf<HitRateLimitErrorExtensions>();
 		expect(rateLimit.extensions.limit).toBe(10);
 		expect(rateLimit.status).toBe(429);
+	}
+
+	if (isNovastarterError(providerCall, ErrorCode.ProviderCallFailed)) {
+		expectTypeOf(providerCall.extensions).toEqualTypeOf<ProviderCallErrorExtensions>();
+		expect(providerCall.extensions.status).toBe(404);
+		expect(providerCall.status).toBe(502);
 	}
 });
 

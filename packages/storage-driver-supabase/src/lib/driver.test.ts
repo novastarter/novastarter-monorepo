@@ -1084,6 +1084,45 @@ describe('#list', () => {
 		expect(output).toStrictEqual(sampleFilesFull);
 	});
 
+	test('Skips entries the search matched only case-insensitively or through a wildcard', async () => {
+		// 1. Supabase answers `report` with `Report.pdf` and `a_b` style fragments with any character in place of `_`;
+		//    only the exact-prefix file and folder belong to the prefix, the others must be neither yielded nor listed
+		driver['bucket'] = {
+			list: vi.fn(async (path, options): Promise<any> => {
+				// 1. The root is searched for the fragment and answers with exact and false matches alike
+				if (path === '' && options?.search === 'rep_rt')
+					return {
+						data: [
+							{ name: 'rep_rt.pdf', id: randUnique() },
+							{ name: 'Rep_rt.pdf', id: randUnique() },
+							{ name: 'repxrt.pdf', id: randUnique() },
+							{ name: 'rep_rts', id: null },
+							{ name: 'REP_RTS', id: null },
+						],
+						error: null,
+					};
+
+				// 2. Only the exact-prefix folder may be descended into
+				if (path === 'rep_rts/' && options?.search === '')
+					return { data: [{ name: 'x.txt', id: randUnique() }], error: null };
+
+				throw Error();
+			}),
+		} as any;
+
+		driver['config'].root = '';
+
+		// 2. Drain the generator, since a listing is only observable through what it yields
+		const output: string[] = [];
+
+		for await (const filepath of driver.list('rep_rt')) {
+			output.push(filepath);
+		}
+
+		expect(output).toStrictEqual(['rep_rt.pdf', 'rep_rts/x.txt']);
+		expect(driver['bucket'].list).toHaveBeenCalledTimes(2);
+	});
+
 	test('Recursively fetches all nested directories and yields only the files', async () => {
 		// 1. Fixture layout: the prefix folder holds one file and one folder with a nested file, so the listing has to
 		//    descend exactly once and yield two files
@@ -1147,8 +1186,13 @@ describe('#list', () => {
 
 	test('Continuously fetches until all pages are returned', async () => {
 		// 1. A full page of 1000 must trigger a second request; the short second page ends the loop
-		const firstContents = Array.from({ length: 1000 }, () => ({ name: randFilePath() }));
-		const secondContents = Array.from({ length: 256 }, () => ({ name: randFilePath() }));
+		const firstContents = Array.from({ length: 1000 }, () => ({
+			name: `${basename(sample.path.input)}-${randUnique()}`,
+		}));
+
+		const secondContents = Array.from({ length: 256 }, () => ({
+			name: `${basename(sample.path.input)}-${randUnique()}`,
+		}));
 
 		// 2. The bucket handle is replaced inline with a `list` that answers the two pages in order
 		driver['bucket'] = {
@@ -1203,7 +1247,10 @@ describe('#list', () => {
 	test('Throws when a later page fails instead of ending the listing early', async () => {
 		// 1. A full first page followed by a failed second one: what was yielded stays yielded, the failure must still
 		//    reach the caller rather than pass for the end of the listing
-		const firstContents = Array.from({ length: 1000 }, () => ({ name: randFilePath() }));
+		const firstContents = Array.from({ length: 1000 }, () => ({
+			name: `${basename(sample.path.input)}-${randUnique()}`,
+		}));
+
 		const cause = new Error('Service unavailable');
 
 		driver['bucket'] = {

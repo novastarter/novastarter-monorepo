@@ -46,7 +46,9 @@ Vonage does not detect the encoding itself, so the driver does: a text made only
 A refusal is answered with HTTP `200` and a status per part of the message; the SDK turns that into an `SMSFailure`,
 which the driver reports as a throw naming Vonage's status — `4` for bad credentials, `15` for a sender the destination
 does not allow — and its wording, with the SDK error as the `cause`, so `sendSms()` falls back to the next location and
-the whole answer stays reachable.
+the whole answer stays reachable. When some parts of a long text went out before the rest was refused, the driver throws
+the non-retryable `SmsPartialDeliveryError` instead, so no fallback sends those parts again; which case it is comes from
+the parts in Vonage's answer, not from the SDK's error class.
 
 `verify()` reads the account balance over `rest.nexmo.com`: nothing is created, and no second SDK is needed for it.
 

@@ -157,6 +157,28 @@ describe('toSendgridMail', () => {
 		});
 	});
 
+	test('Sends an address repeated across to, cc and bcc once, in the first list it appears in', async () => {
+		// 1. SendGrid refuses a personalization that repeats an address, so repeats drop out case-insensitively; a list
+		//    left empty is not sent at all
+		expect(
+			await toSendgridMail({
+				to: ['Ada <ada@example.com>', 'ADA@example.com'],
+				cc: ['ada@EXAMPLE.com', 'audit@acme.test'],
+				bcc: ['Audit@acme.test', 'ada@example.com'],
+				from: 'x@y.z',
+				subject: 'x',
+				text: 'x',
+			}),
+		).toStrictEqual({
+			to: [{ email: 'ada@example.com', name: 'Ada' }],
+			cc: [{ email: 'audit@acme.test' }],
+			from: { email: 'x@y.z' },
+			subject: 'x',
+			text: 'x',
+			categories: ['transactional'],
+		});
+	});
+
 	test('Throws without a sender', async () => {
 		// 1. SendGrid requires `from`; the mapper refuses the message by name before any request goes out
 		await expect(toSendgridMail({ to: 'a@b.c', subject: 'x', text: 'x' })).rejects.toThrow(/"from"/);

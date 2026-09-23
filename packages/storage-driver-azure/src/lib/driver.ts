@@ -1,6 +1,8 @@
+import { randomBytes } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import {
 	AccountSASPermissions,
+	type BlobClient,
 	type BlobGetPropertiesResponse,
 	BlobServiceClient,
 	ContainerClient,
@@ -51,6 +53,28 @@ const MAXIMUM_CHUNK_SIZE = 104_857_600;
 const CALL_SAS_LIFETIME = 5 * 60_000;
 
 /**
+ * Metadata key under which a resumable upload's context carries the id of its staging blob.
+ *
+ * @defaultValue `'azure-staging-id'`
+ * @internal
+ */
+const STAGING_ID_KEY = 'azure-staging-id';
+
+/**
+ * Shape of a staging id: 12 lowercase hex characters, the random suffix of a `<name>.<id>.tmp` staging blob.
+ *
+ * @internal
+ */
+const STAGING_ID_PATTERN = /^[0-9a-f]{12}$/;
+
+/**
+ * Name suffix of a staging blob, which `list()` leaves out; the same shape the local driver gives its staging files.
+ *
+ * @internal
+ */
+const STAGING_SUFFIX_PATTERN = /\.[0-9a-f]{12}\.tmp$/;
+
+/**
  * Options accepted by {@link StorageDriverAzure}.
  *
  * Authentication is by shared key only: `accountName` and `accountKey` are turned into a
@@ -95,9 +119,11 @@ declare module '@novastarter/storage' {
 /**
  * Storage driver backed by Azure Blob Storage.
  *
- * Plain files are stored as block blobs through `@azure/storage-blob`. Resumable (TUS) uploads use an append blob
- * under the final blob name: each incoming chunk becomes one `Append Block` request, so no part bookkeeping is needed
- * and the blob is complete as soon as the last chunk lands.
+ * Plain files are stored as block blobs through `@azure/storage-blob`. Resumable (TUS) uploads are staged in a
+ * separate append blob, `<name>.<id>.tmp`: each incoming chunk becomes one `Append Block` request, so no part
+ * bookkeeping is needed, and finishing the upload copies the staging blob over the final name server-side. The final
+ * blob of such an upload is an append blob, and its size is bounded by the service's 50,000 appended blocks, one per
+ * chunk.
  *
  * @example
  * ```ts
@@ -408,6 +434,10 @@ export class StorageDriverAzure implements TusDriver {
 		for await (const blob of blobs) {
 			if ((blob.name as string).endsWith('/')) continue;
 
+			// 3. A resumable upload in flight stages its bytes in a `<name>.<id>.tmp` blob; it is not an object a caller
+			//    stored, so it is left out the way the local driver leaves out its staging files
+			if (STAGING_SUFFIX_PATTERN.test(blob.name as string)) continue;
+
 			yield toRelativePath(this.root, blob.name as string);
 		}
 	}
@@ -426,28 +456,67 @@ export class StorageDriverAzure implements TusDriver {
 	}
 
 	/**
-	 * Start a resumable upload by creating an empty append blob under the final name.
+	 * Resolve the staging blob a resumable upload writes its chunks to.
+	 *
+	 * The staging blob is a `<name>.<id>.tmp` sibling of the target, so `list()` hides it; the id lives in the context
+	 * under {@link STAGING_ID_KEY}.
+	 *
+	 * @param filepath - Final blob path relative to the root.
+	 * @param context - Context returned by {@link StorageDriverAzure.createChunkedUpload}.
+	 * @returns The staging blob name inside the container.
+	 * @throws StorageFileNotFoundError when the context carries no valid staging id, meaning the upload was never
+	 * created by this driver.
+	 * @internal
+	 */
+	private stagingPath(filepath: string, context: ChunkedUploadContext) {
+		const stagingId = context.metadata?.[STAGING_ID_KEY];
+
+		// 1. The id is checked against the exact shape `createChunkedUpload` generates, so a context that lost it, or
+		//    one carrying a crafted value, can never point the upload at another blob
+		if (typeof stagingId !== 'string' || !STAGING_ID_PATTERN.test(stagingId)) {
+			throw new StorageFileNotFoundError({ filepath });
+		}
+
+		return `${this.fullPath(filepath)}.${stagingId}.tmp`;
+	}
+
+	/**
+	 * Start a resumable upload by creating an empty staging append blob next to the target.
+	 *
+	 * The target itself is not touched until {@link StorageDriverAzure.finishChunkedUpload}, so a blob already stored
+	 * under the path keeps its content while chunks are uploaded and survives an upload that is abandoned, terminated
+	 * or expired. Finishing is what replaces it, and that step is not atomic.
 	 *
 	 * @param filepath - Final blob path relative to the root.
 	 * @param context - Client-supplied size and metadata.
-	 * @returns The context unchanged; the append blob itself carries all the upload state.
+	 * @returns The same context with the staging id stored in its metadata under {@link STAGING_ID_KEY}; the metadata
+	 * map is created when the context has none.
 	 */
 	async createChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<ChunkedUploadContext> {
-		// 1. An append blob must exist before blocks can be appended; `createIfNotExists` keeps a retried creation from
-		//    wiping blocks already appended
-		await this.client.getAppendBlobClient(this.fullPath(filepath)).createIfNotExists();
+		// 1. The context is what the TUS server hands back on every later call, so the staging id goes into its
+		//    metadata and the driver keeps no state; a POST without `Upload-Metadata` arrives with no map at all
+		const metadata = (context.metadata ??= {});
+
+		// 2. A random id per upload keeps two concurrent uploads of the same path from sharing one staging blob; it
+		//    overwrites any client-sent value under the same key
+		metadata[STAGING_ID_KEY] = randomBytes(6).toString('hex');
+
+		// 3. An append blob must exist before blocks can be appended. The name is new, so `create` never meets an old
+		//    blob whose length would make the first append at position 0 fail
+		await this.client.getAppendBlobClient(this.stagingPath(filepath, context)).create();
 
 		return context;
 	}
 
 	/**
-	 * Append one TUS chunk to the upload's append blob.
+	 * Append one TUS chunk to the upload's staging append blob.
 	 *
 	 * @param filepath - Final blob path relative to the root.
 	 * @param content - Chunk data as sent by the client.
 	 * @param offset - Byte offset within the whole upload where this chunk starts.
-	 * @param _context - Upload context; unused, the append blob tracks its own length.
+	 * @param context - Context carrying the staging id.
 	 * @returns The new upload offset: `offset` plus the bytes appended.
+	 * @throws StorageFileNotFoundError when the context carries no valid staging id.
 	 * @throws Error when the chunk exceeds the size configured as `tus.chunkSize`, or the append-block limit when no
 	 * size was configured.
 	 */
@@ -455,16 +524,18 @@ export class StorageDriverAzure implements TusDriver {
 		filepath: string,
 		content: Readable,
 		offset: number,
-		_context: ChunkedUploadContext,
+		context: ChunkedUploadContext,
 	): Promise<number> {
-		const client = this.client.getAppendBlobClient(this.fullPath(filepath));
+		// 1. Chunks go to the staging blob, never to the target, which keeps its previous content until
+		//    `finishChunkedUpload` starts copying the staging blob over it
+		const client = this.client.getAppendBlobClient(this.stagingPath(filepath, context));
 
 		let bytesUploaded = offset || 0;
 		let chunkSize = 0;
 
 		const chunks: Buffer[] = [];
 
-		// 1. Buffer the chunk as it streams in, counting bytes on the way: `appendBlock` needs the exact byte length
+		// 2. Buffer the chunk as it streams in, counting bytes on the way: `appendBlock` needs the exact byte length
 		//    up front, which a stream cannot give; the moment the incoming chunk crosses the bound the stream is
 		//    destroyed and the error thrown, so an oversized chunk is refused while it is still arriving rather than
 		//    after the whole of it has been buffered
@@ -475,7 +546,7 @@ export class StorageDriverAzure implements TusDriver {
 			bytesUploaded += chunk.length;
 			chunks.push(chunk);
 
-			// 2. One TUS chunk becomes one `Append Block` request, so a chunk above the bound is refused here, with the
+			// 3. One TUS chunk becomes one `Append Block` request, so a chunk above the bound is refused here, with the
 			//    size named, instead of as a service error mid-upload
 			if (chunkSize > this.maximumChunkSize) {
 				throw new Error(
@@ -486,9 +557,9 @@ export class StorageDriverAzure implements TusDriver {
 
 		const chunk = Buffer.concat(chunks);
 
-		// 3. Skip the request for an empty chunk; the service rejects a zero-length append
+		// 4. Skip the request for an empty chunk; the service rejects a zero-length append
 		if (chunk.length > 0) {
-			// 4. The append position is pinned to the offset the chunk claims to start at: append blobs always append
+			// 5. The append position is pinned to the offset the chunk claims to start at: append blobs always append
 			//    at the current end, so a PATCH whose response was lost and which the TUS client resends at the same
 			//    offset would otherwise append the same bytes a second time, silently growing the blob past its
 			//    declared size. With the condition the service answers 412 instead of corrupting the upload
@@ -579,25 +650,81 @@ export class StorageDriverAzure implements TusDriver {
 	}
 
 	/**
-	 * Complete a resumable upload.
+	 * Complete a resumable upload by copying its staging blob over the target, then removing the staging blob.
 	 *
-	 * The append blob already holds every chunk under the final name, so there is nothing to assemble.
+	 * The copy runs server-side within the account (`Copy Blob`), so no byte passes through the process and the size is
+	 * bounded only by the append blob limit of 50,000 appended blocks, one per chunk. The finished blob is an append
+	 * blob, the type of its source. Azure copies onto an existing blob only when it has the same type, so a block blob
+	 * already under the path, such as one `write()` stored, is deleted just before the copy; an append blob from an
+	 * earlier upload is copied over in place.
 	 *
-	 * @param _filepath - Final blob path relative to the root; unused.
-	 * @param _context - Upload context; unused.
-	 */
-	async finishChunkedUpload(_filepath: string, _context: ChunkedUploadContext): Promise<void> {}
-
-	/**
-	 * Abort a resumable upload by removing its append blob.
+	 * The copy is not atomic. While it is pending the target can be a committed blob of zero length, and a copy that
+	 * fails leaves it empty; when the target was deleted for the second copy, a failed finish leaves the path without
+	 * a blob. The previous content is therefore not guaranteed to survive a failed finish. The staging blob is removed
+	 * only after the copy succeeds, so on any failure it stays in place and calling this method again with the same
+	 * context retries the finish.
 	 *
 	 * @param filepath - Final blob path relative to the root.
-	 * @param _context - Upload context; unused.
+	 * @param context - Context carrying the staging id.
+	 * @throws StorageFileNotFoundError when the context carries no valid staging id, or the staging blob is gone.
+	 * @throws The SDK error for any other failure of the copy or of removing the staging blob; the staging blob is kept
+	 * then, but the target may be empty or missing.
+	 * @see https://learn.microsoft.com/en-us/rest/api/storageservices/copy-blob
 	 */
-	async deleteChunkedUpload(filepath: string, _context: ChunkedUploadContext): Promise<void> {
-		// 1. The append blob lives under the final name, so a plain delete is all it takes to discard the upload
-		await this.delete(filepath);
+	async finishChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<void> {
+		const staging = this.client.getAppendBlobClient(this.stagingPath(filepath, context));
+		const target = this.client.getBlobClient(this.fullPath(filepath));
+
+		// 1. Copy over the target. The copy is not atomic: while it is pending the target may read as empty, and a
+		//    failed copy leaves it empty. A missing staging blob means the upload is unknown or already finished
+		try {
+			await copyBlob(target, staging.url);
+		} catch (error) {
+			const { statusCode, code } = (error ?? {}) as { statusCode?: number; code?: string };
+
+			if (statusCode === 404) throw new StorageFileNotFoundError({ filepath }, { cause: error });
+
+			// 2. The service refuses to copy onto a blob of another type with 409 `InvalidBlobType`; the target is a
+			//    block blob then, and it is removed so the copy can create the path afresh. If this second copy fails,
+			//    the old target is already gone and the path stays empty; the error propagates before step 3, so the
+			//    staging blob survives and a retried finish copies it onto the now free path
+			if (statusCode !== 409 || code !== 'InvalidBlobType') throw error;
+
+			await target.deleteIfExists();
+			await copyBlob(target, staging.url);
+		}
+
+		// 3. The staging blob is removed only now that the target holds its bytes, so every failure above keeps it for
+		//    a retry
+		await staging.deleteIfExists();
 	}
+
+	/**
+	 * Abort a resumable upload by removing its staging blob.
+	 *
+	 * @param filepath - Final blob path relative to the root.
+	 * @param context - Context carrying the staging id.
+	 * @throws StorageFileNotFoundError when the context carries no valid staging id.
+	 */
+	async deleteChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<void> {
+		// 1. Only the staging blob is removed: the target was never written by this upload, so whatever it held before
+		//    stays in place. `deleteIfExists` keeps a termination of an upload whose blob is already gone from failing
+		await this.client.getAppendBlobClient(this.stagingPath(filepath, context)).deleteIfExists();
+	}
+}
+
+/**
+ * Copy a blob of the same account onto a target and wait until the service reports the copy done.
+ *
+ * @param target - Blob the copy is written to.
+ * @param sourceUrl - URL of the source blob; the shared-key credential of the driver authorises it within the account.
+ * @throws The SDK error when the copy cannot start or fails.
+ * @internal
+ */
+async function copyBlob(target: BlobClient, sourceUrl: string): Promise<void> {
+	// 1. `Copy Blob` may finish asynchronously, so the poller is awaited instead of returning while it is pending
+	const poller = await target.beginCopyFromURL(sourceUrl);
+	await poller.pollUntilDone();
 }
 
 /**

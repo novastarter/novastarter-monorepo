@@ -39,6 +39,10 @@ describe('getLoggerLevelValue', () => {
 	test('Falls back to info for an unknown level', () => {
 		expect(getLoggerLevelValue('nope')).toBe(30);
 	});
+
+	test('Resolves a custom level passed next to the name', () => {
+		expect(getLoggerLevelValue('notice', { notice: 35 })).toBe(35);
+	});
 });
 
 describe('buildRedactOptions', () => {
@@ -150,6 +154,26 @@ describe('createLogger', () => {
 		);
 
 		expect(pino).not.toHaveBeenCalled();
+	});
+
+	test('Hands the multistream the custom levels, so it does not drop every line of a custom level', () => {
+		// 1. Without `levels` the multistream resolves `notice` to `undefined` and writes nothing, not even errors
+		createLogger({ level: 'notice', pino: { customLevels: { notice: 35 } } });
+
+		expect(pino.multistream).toHaveBeenCalledWith([{ level: 'notice', stream: process.stdout }], {
+			levels: expect.objectContaining({ notice: 35, info: 30 }),
+		});
+	});
+
+	test('Accepts a custom logsStream level and lowers the logger level to match it', () => {
+		const stream = {} as LogsStream;
+
+		createLogger({ logsStream: { stream, level: 'verbose' }, pino: { customLevels: { verbose: 25 } } });
+
+		expect(pino).toHaveBeenCalledWith(expect.objectContaining({ level: 'verbose' }), [
+			{ level: 'info', stream: process.stdout },
+			{ level: 'verbose', stream },
+		]);
 	});
 
 	test('Keeps the built-in redaction when the caller passes its own redact paths', () => {

@@ -34,7 +34,9 @@ Anywhere later: `sendMail(message)` routes through the location, or `useMail().l
 routes.
 
 Through the official `@sendgrid/mail` SDK on a client of the location's own, so two keys never share state; the category
-and the tags become SendGrid categories, attachments go base64-encoded, inline when they carry a content id.
+and the tags become SendGrid categories, attachments go base64-encoded, inline when they carry a content id. An address
+repeated across `to`, `cc` and `bcc` is sent once, in the first list it appears in — SendGrid refuses the whole message
+otherwise.
 
 ## Any other request
 

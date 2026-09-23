@@ -17,8 +17,9 @@ export interface Notification {
 	userId: string;
 	/**
 	 * A stable id of the event, when the application has one: it survives the queue and the schema, so a retried job
-	 * delivers the same id and an in-app inbox can upsert on it instead of duplicating the row. Given none, the in-app
-	 * channel gives the record a fresh one.
+	 * delivers the same id and an in-app inbox can upsert on it instead of duplicating the row. The in-app record's id is
+	 * `<userId>:<id>`, so one event sent to several users with the same id still makes one row per user. Given none,
+	 * the in-app channel gives the record a fresh one.
 	 */
 	id?: string | undefined;
 	/** The channels to use; every registered one unless given. The user's preferences still apply. */
@@ -100,8 +101,9 @@ export interface InAppContent {
  */
 export interface InAppRecord extends InAppContent {
 	/**
-	 * The notification's {@link Notification.id} when it carried one — the inbox's key, so the application's `save`
-	 * upserts a retried job's delivery instead of inserting a duplicate; a fresh one otherwise.
+	 * `<userId>:<id>` when the notification carried a {@link Notification.id} — the inbox's key, so the application's
+	 * `save` upserts a retried job's delivery instead of inserting a duplicate, and each recipient of one event keeps
+	 * its own row; a fresh one otherwise.
 	 */
 	id: string;
 	/** The user it is for. */

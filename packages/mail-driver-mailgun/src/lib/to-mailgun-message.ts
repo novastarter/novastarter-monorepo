@@ -9,8 +9,12 @@ import type { MailgunMessageData } from 'mailgun.js/definitions';
 
 /**
  * A file the way Mailgun's `attachment` / `inline` form fields take it.
+ *
+ * The bytes travel as a `Blob` typed with the attachment's content type: with Node's own `FormData` the SDK appends a
+ * `Blob` as is, while a `Buffer` it wraps in an untyped one and drops `contentType`, leaving Mailgun to guess the type
+ * from the filename.
  */
-export type MailgunFile = { filename: string; data: Buffer; contentType?: string };
+export type MailgunFile = { filename: string; data: Blob; contentType?: string };
 
 /**
  * Longest tag name Mailgun accepts; a longer one fails the request.
@@ -83,7 +87,8 @@ export const toMailgunTags = (message: MailMessage): string[] =>
  * An attachment the way Mailgun takes it: the bytes and a filename.
  *
  * An inline image is referenced from the html as `cid:<filename>` on Mailgun, so the content id becomes the
- * filename of the `inline` entry.
+ * filename of the `inline` entry. The bytes go as a `Blob` typed with the content type, so the multipart part carries
+ * it even when the content id has no extension to guess one from.
  *
  * @param attachment - Ours.
  * @returns Mailgun's file.
@@ -93,10 +98,11 @@ export const toMailgunFile = async (attachment: MailAttachment): Promise<Mailgun
 	// 1. Mailgun takes the bytes in the multipart body; a path is read here rather than streamed, like the siblings do
 	const data = await readAttachment(attachment);
 
-	// 2. The content id stands in for the filename, which is how Mailgun matches `cid:` references
+	// 2. The content id stands in for the filename, which is how Mailgun matches `cid:` references; the bytes are a
+	//    typed `Blob` because the SDK sends a `Buffer` untyped, and a bare content id gives Mailgun no type to guess
 	return {
 		filename: attachment.cid ?? attachment.filename,
-		data,
+		data: new Blob([data], attachment.contentType !== undefined ? { type: attachment.contentType } : {}),
 		...(attachment.contentType !== undefined ? { contentType: attachment.contentType } : {}),
 	};
 };

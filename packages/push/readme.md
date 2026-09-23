@@ -108,8 +108,10 @@ drivers built so far — the FCM app, the APNs HTTP/2 sessions — for a clean s
    pair it was created for, a token only with its Firebase project or its Apple app, so a second location could not take
    a target the first one refused.
 4. Sends. `push.sent` is emitted with the result; a `PushTargetGoneError` from the driver is emitted as `push.gone` (a
-   listener deletes the stored subscription) and passed on; any other failure is emitted as `push.failed` and thrown as
-   an `Error` with the driver's error as `cause`.
+   listener deletes the stored subscription) and passed on — unless a `push.send` handler redirected the message to
+   another target, in which case it becomes the `cause` of a plain `Error`, so a caller deleting its own subscription on
+   `PushTargetGoneError` never deletes one that was not contacted; any other failure is emitted as `push.failed` and
+   thrown as an `Error` with the driver's error as `cause`.
 
 The routes name the location of each platform:
 

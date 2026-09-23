@@ -48,6 +48,13 @@ describe('Valid value (list)', () => {
 	});
 });
 
+describe('Valid value (empty list)', () => {
+	test('says that no value is allowed', () => {
+		// 1. An empty `in` list comes from a malformed rule; "one of ." would read as a typo, so it gets its own words
+		expect(messageConstructor({ field, type: 'in', valid: [], path })).toMatch(/ No value is allowed\.$/);
+	});
+});
+
 describe('Invalid value (primitive)', () => {
 	const types: FilterOperator[] = ['neq'];
 

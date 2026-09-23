@@ -121,4 +121,6 @@ TUS uploads are built on S3 multipart uploads, and S3 accepts no part under 5 Mi
 below that is refused at construction, and every PATCH request but the last has to carry at least 5 MiB —
 tus-js-client's default `chunkSize: Infinity` does. Bytes past the last full part of a request are dropped and resent by
 the client with its next request, so a request size that is a multiple of `tus.chunkSize` avoids resending; a request
-whose bytes could not be stored at all is answered with `400`.
+whose bytes could not be stored at all is answered with `400`. A request that fails half-way keeps the upload offset
+where it was, and the resent bytes overwrite the parts that did reach S3. Terminating an upload that is still open only
+aborts it: an object already under the key is kept, and is removed only when the upload was completed before.

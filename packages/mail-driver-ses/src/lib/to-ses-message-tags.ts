@@ -33,8 +33,9 @@ export const toSesMessageTag = (value: string): string =>
  *
  * SES matches every name and value against `^[a-zA-Z0-9_-]{1,256}$` and refuses the whole message over one miss, so
  * a tag that every other provider takes as given must not fail the send here: names and values are sanitised with
- * {@link toSesMessageTag}, a tag left with no name is dropped, and the list is capped at
- * {@link SES_MESSAGE_TAG_COUNT} with the category taking one slot.
+ * {@link toSesMessageTag}, a tag left with no name is dropped, a tag whose sanitised name is already on the list
+ * (`category` included) is dropped, and the list is capped at {@link SES_MESSAGE_TAG_COUNT} with the category taking
+ * one slot.
  *
  * @param message - Ours.
  * @returns SES's `EmailTags`.
@@ -43,13 +44,20 @@ export const toSesMessageTags = (message: MailMessage): MessageTag[] => {
 	// 1. The category is always recorded; its value goes through the sanitiser too, since at runtime it is any string
 	const tags: MessageTag[] = [{ Name: 'category', Value: toSesMessageTag(message.category ?? 'transactional') }];
 
-	// 2. A tag that sanitises to nothing has no name SES would take; dropping it keeps the rest of the message
-	//    sending. SES caps a message at its tag count — the category takes one slot — so the loop stops at the cap
-	//    instead of letting a longer list fail the whole request, the way the other drivers cap their label lists
+	// 2. SES refuses a message with two tags of one name, and the sanitiser itself folds distinct tags together
+	//    (`welcome flow` and `welcome_flow`), so the names already emitted are kept to skip a repeat; `category` is
+	//    seeded since the category above already holds it
+	const names = new Set<string>(['category']);
+
+	// 3. A tag that sanitises to nothing has no name SES would take, and one already emitted would fail the request;
+	//    dropping either keeps the rest of the message sending. SES caps a message at its tag count — the category
+	//    takes one slot — so the loop stops at the cap instead of letting a longer list fail the whole request, the
+	//    way the other drivers cap their label lists
 	for (const tag of message.tags ?? []) {
 		const name = toSesMessageTag(tag);
 
-		if (name) {
+		if (name && !names.has(name)) {
+			names.add(name);
 			tags.push({ Name: name, Value: '1' });
 		}
 

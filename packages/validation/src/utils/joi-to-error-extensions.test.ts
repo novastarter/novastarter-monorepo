@@ -49,6 +49,15 @@ describe('any.only', () => {
 		});
 	});
 
+	test('maps an empty allow list to in with no values', () => {
+		// 1. The never-validating fallback of a malformed rule allows nothing; that is `in` over an empty list, not an
+		//    `eq` against `undefined`
+		expect(joiValidationErrorItemToErrorExtensions(item('any.only', { valids: [] }))).toMatchObject({
+			type: 'in',
+			valid: [],
+		});
+	});
+
 	test('maps a number and its string twin to eq with the first entry', () => {
 		// 1. `generateJoi` builds `_eq: 18` as `[18, '18']`; that is still one value, in the caller's form
 		expect(joiValidationErrorItemToErrorExtensions(item('any.only', { valids: [18, '18'] }))).toMatchObject({

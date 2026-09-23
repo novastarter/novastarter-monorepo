@@ -3,7 +3,7 @@
  */
 import { PassThrough } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { Bucket, Storage } from '@google-cloud/storage';
+import { Bucket, CRC32C, Storage } from '@google-cloud/storage';
 import {
 	randGitBranch as randBucket,
 	randDirectoryPath,
@@ -28,6 +28,8 @@ import { StorageDriverGcs } from './driver.js';
 vi.mock('@novastarter/utils');
 vi.mock('@google-cloud/storage');
 vi.mock('node:stream/promises');
+
+const { CRC32C: CRC32CActual } = await vi.importActual<typeof import('@google-cloud/storage')>('@google-cloud/storage');
 
 const { withTimeout: withTimeoutActual } =
 	await vi.importActual<typeof import('@novastarter/utils')>('@novastarter/utils');
@@ -758,9 +760,18 @@ describe('#writeChunk', () => {
 		// 1. Session state a previous call would have left in the context, and a recording write stream in place of the
 		//    SDK's, so the options the session is continued with can be asserted without any request
 		uri = randUrl();
-		hash = randUnique();
 		offset = randNumber();
 		mockWriteStream = new PassThrough();
+
+		// 2. `CRC32C` is automocked with the rest of the SDK; the driver checksums the bytes itself, so the real class is
+		//    put back and the hashes below are real CRC32C values it can resume from
+		vi.mocked(CRC32C).mockImplementation((initialValue) => new CRC32CActual(initialValue) as CRC32C);
+		vi.mocked(CRC32C.from).mockImplementation((value) => CRC32CActual.from(value) as CRC32C);
+
+		const seed = new CRC32CActual();
+
+		seed.update(Buffer.from(randText()));
+		hash = seed.toString();
 
 		mockFile = {
 			createWriteStream: vi.fn().mockReturnValue(mockWriteStream),
@@ -827,14 +838,99 @@ describe('#writeChunk', () => {
 		expect(await pending).toBe(offset + Buffer.byteLength(sample.text));
 	});
 
-	test('Keeps the running CRC32C in the context for the next chunk', async () => {
-		const context: ChunkedUploadContext = { size: sample.file.size, metadata: { uri } };
+	test('Keeps the CRC32C of the whole chunk in the context for the next chunk', async () => {
+		// 1. The mocked `pipeline` drains the chunk, and no 308 comes back, so the session holds every byte read
+		vi.mocked(pipeline).mockImplementation(
+			(source) => new Promise<void>((resolve) => (source as PassThrough).on('end', () => resolve())),
+		);
 
-		await driver.writeChunk(sample.path.input, sample.stream, offset, context);
+		const context: ChunkedUploadContext = { size: sample.file.size, metadata: { uri, hash } };
+		const pending = driver.writeChunk(sample.path.input, sample.stream, offset, context);
 
-		// 1. The hash the SDK emits is what seeds `resumeCRC32C` on the next call, so it has to reach the persisted map
-		mockWriteStream.emit('crc32c', hash);
+		sample.stream.end(Buffer.from(sample.text));
+		await pending;
 
+		// 2. The hash seeds `resumeCRC32C` on the next call, so it has to continue the previous one over this chunk
+		const expected = CRC32CActual.from(hash);
+
+		expected.update(Buffer.from(sample.text));
+
+		expect(context.metadata).toStrictEqual({ uri, hash: expected.toString() });
+	});
+
+	test('Returns the offset GCS reports and the hash of the bytes it kept when a 308 stops short of the chunk end', async () => {
+		// 1. A 300,000-byte chunk that does not finish the object: GCS keeps only the first 256 KiB and says so in
+		//    `Range`, while the SDK finishes the stream without an error
+		const body = Buffer.alloc(300_000, 7);
+
+		vi.mocked(pipeline).mockImplementation(
+			(source) =>
+				new Promise<void>((resolve) =>
+					(source as PassThrough).on('end', () => {
+						mockWriteStream.emit('response', { status: 308, headers: { range: 'bytes=0-262143' } });
+						resolve();
+					}),
+				),
+		);
+
+		const context: ChunkedUploadContext = { size: undefined, metadata: { uri } };
+		const pending = driver.writeChunk(sample.path.input, sample.stream, 0, context);
+
+		sample.stream.end(body);
+
+		// 2. The offset is the server's, so the TUS client resends the tail, and the hash covers exactly the kept bytes
+		const expected = new CRC32CActual();
+
+		expected.update(body.subarray(0, 262_144));
+
+		expect(await pending).toBe(262_144);
+		expect(context.metadata).toStrictEqual({ uri, hash: expected.toString() });
+	});
+
+	test('Keeps the offset and the hash when a 308 reports nothing kept', async () => {
+		// 1. A chunk shorter than 256 KiB that does not finish the object: GCS keeps none of it and sends no `Range`
+		vi.mocked(pipeline).mockImplementation(
+			(source) =>
+				new Promise<void>((resolve) =>
+					(source as PassThrough).on('end', () => {
+						mockWriteStream.emit('response', { status: 308, headers: {} });
+						resolve();
+					}),
+				),
+		);
+
+		const context: ChunkedUploadContext = { size: undefined, metadata: { uri, hash } };
+		const pending = driver.writeChunk(sample.path.input, sample.stream, 0, context);
+
+		sample.stream.end(Buffer.from(sample.text));
+
+		// 2. Nothing advanced: the client resends the whole chunk, resumed from the unchanged hash
+		expect(await pending).toBe(0);
+		expect(context.metadata).toStrictEqual({ uri, hash });
+	});
+
+	test('Refuses an offset reported by GCS that is not a point the driver can checksum', async () => {
+		// 1. A session that stops inside the chunk and off a 256 KiB boundary leaves no snapshot to resume from
+		vi.mocked(pipeline).mockImplementation(
+			(source) =>
+				new Promise<void>((resolve) =>
+					(source as PassThrough).on('end', () => {
+						mockWriteStream.emit('response', { status: 308, headers: { range: 'bytes=0-99' } });
+						resolve();
+					}),
+				),
+		);
+
+		const context: ChunkedUploadContext = { size: undefined, metadata: { uri, hash } };
+		const pending = driver.writeChunk(sample.path.input, sample.stream, 0, context);
+
+		sample.stream.end(Buffer.alloc(300_000, 7));
+
+		await expect(pending).rejects.toThrowError(
+			`Cannot write a chunk of "${sample.path.input}": the upload session holds 100 bytes, which is not a point the driver can checksum`,
+		);
+
+		// 2. The stored hash is left alone rather than replaced with one GCS would not agree with
 		expect(context.metadata).toStrictEqual({ uri, hash });
 	});
 

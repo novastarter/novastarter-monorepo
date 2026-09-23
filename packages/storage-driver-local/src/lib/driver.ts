@@ -15,6 +15,21 @@ import {
 import { normalizePath } from '@novastarter/utils';
 
 /**
+ * Metadata key under which a resumable upload's context carries the id of its staging file.
+ *
+ * @defaultValue `'local-staging-id'`
+ * @internal
+ */
+const STAGING_ID_KEY = 'local-staging-id';
+
+/**
+ * Shape of a staging id: 12 lowercase hex characters, the same random suffix `write()` gives its temporary files.
+ *
+ * @internal
+ */
+const STAGING_ID_PATTERN = /^[0-9a-f]{12}$/;
+
+/**
  * Options accepted by {@link StorageDriverLocal}.
  */
 export type StorageDriverLocalConfig = {
@@ -36,8 +51,9 @@ declare module '@novastarter/storage' {
  * Storage driver backed by the local filesystem.
  *
  * Every operation maps onto a `node:fs` call under the configured root. Caller paths are pinned inside that root, so
- * `..` segments cannot reach outside it. Resumable (TUS) uploads write chunks straight into the final file at the
- * given offset, which is why no assembly step is needed at the end.
+ * `..` segments cannot reach outside it. Resumable (TUS) uploads write chunks at their offset into a staging sibling
+ * of the target and rename it over the target when the upload finishes, so the previous content stays readable, and
+ * survives, until then.
  *
  * @example
  * ```ts
@@ -399,57 +415,120 @@ export class StorageDriverLocal implements TusDriver {
 	}
 
 	/**
-	 * Start a resumable upload by creating the empty target file.
+	 * Resolve the staging file a resumable upload writes its chunks into.
+	 *
+	 * The staging file is a `<path>.<id>.tmp` sibling of the target, the same shape `write()` uses, so `list()` hides
+	 * it and the final `rename` stays on one filesystem. The id lives in the context under {@link STAGING_ID_KEY}.
+	 *
+	 * @param filepath - Final file path relative to the root.
+	 * @param context - Context returned by {@link StorageDriverLocal.createChunkedUpload}.
+	 * @returns The absolute staging path and the absolute final path.
+	 * @throws StorageFileNotFoundError when the context carries no valid staging id, meaning the upload was never
+	 * created by this driver.
+	 * @internal
+	 */
+	private chunkedUploadPaths(filepath: string, context: ChunkedUploadContext) {
+		const stagingId = context.metadata?.[STAGING_ID_KEY];
+
+		// 1. The id is checked against the exact shape `createChunkedUpload` generates, so a context that lost it, or
+		//    one carrying a crafted value such as `../x`, can never point the write outside the target's directory
+		if (typeof stagingId !== 'string' || !STAGING_ID_PATTERN.test(stagingId)) {
+			throw new StorageFileNotFoundError({ filepath });
+		}
+
+		// 2. The staging file sits next to the target, so publishing it is a same-filesystem `rename`
+		const fullPath = this.fullPath(filepath);
+
+		return { stagingPath: `${fullPath}.${stagingId}.tmp`, fullPath };
+	}
+
+	/**
+	 * Start a resumable upload by creating an empty staging file next to the target.
+	 *
+	 * The target itself is not touched until {@link StorageDriverLocal.finishChunkedUpload}, so a file already stored
+	 * under the path keeps its content for the whole upload and survives an upload that is abandoned, terminated or
+	 * expired.
 	 *
 	 * @param filepath - Final file path relative to the root.
 	 * @param context - Client-supplied size and metadata.
-	 * @returns The context unchanged; the driver keeps no state of its own between calls.
+	 * @returns The same context with the staging id stored in its metadata under {@link STAGING_ID_KEY}; the metadata
+	 * map is created when the context has none.
 	 */
 	async createChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<ChunkedUploadContext> {
-		const fullPath = this.fullPath(filepath);
+		// 1. A POST without `Upload-Metadata` arrives with no map at all; it is created so the staging id has a place
+		//    to go. The context is what the TUS server hands back on every later call, so the driver keeps no state
+		const metadata = (context.metadata ??= {});
 
-		// 1. `writeFile` does not create parent directories, so the destination folder is made first
-		await this.ensureDir(dirname(fullPath));
+		// 2. A random id per upload keeps two concurrent uploads of the same path from sharing one staging file; it
+		//    overwrites any client-sent value under the same key
+		metadata[STAGING_ID_KEY] = randomBytes(6).toString('hex');
 
-		// 2. The file must exist before the first chunk arrives: `writeChunk` opens it in `r+` mode, which fails on a
-		//    missing file
-		await writeFile(fullPath, '');
+		const { stagingPath } = this.chunkedUploadPaths(filepath, context);
+
+		// 3. `writeFile` does not create parent directories, so the destination folder is made first
+		await this.ensureDir(dirname(stagingPath));
+
+		// 4. The staging file must exist before the first chunk arrives: `writeChunk` opens it in `r+` mode, which
+		//    fails on a missing file
+		await writeFile(stagingPath, '');
 
 		return context;
 	}
 
 	/**
-	 * Abort a resumable upload by removing the partially written file.
+	 * Abort a resumable upload by removing its staging file.
 	 *
 	 * @param filepath - Final file path relative to the root.
-	 * @param _context - Unused; the file path is all this driver needs.
+	 * @param context - Context carrying the staging id.
+	 * @throws StorageFileNotFoundError when the context carries no valid staging id.
+	 * @throws The `node:fs` error when the staging file cannot be removed, a missing one included.
 	 */
-	async deleteChunkedUpload(filepath: string, _context: ChunkedUploadContext): Promise<void> {
-		// 1. Chunks are written straight into the final file, so removing that file discards the whole upload
-		await this.delete(filepath);
+	async deleteChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<void> {
+		// 1. Only the staging file is removed: the target was never written by this upload, so whatever it held before
+		//    stays in place
+		const { stagingPath } = this.chunkedUploadPaths(filepath, context);
+
+		await unlink(stagingPath);
 	}
 
 	/**
-	 * Complete a resumable upload.
+	 * Complete a resumable upload by renaming its staging file over the target.
 	 *
-	 * Nothing to do: every chunk was written in place at its offset, so the file is already complete once the last
-	 * chunk lands.
-	 *
-	 * @param _filepath - Unused.
-	 * @param _context - Unused.
+	 * @param filepath - Final file path relative to the root.
+	 * @param context - Context carrying the staging id.
+	 * @throws StorageFileNotFoundError when the context carries no valid staging id, or the staging file is gone.
+	 * @throws The `node:fs` error for any other rename failure.
 	 */
-	async finishChunkedUpload(_filepath: string, _context: ChunkedUploadContext): Promise<void> {}
+	async finishChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<void> {
+		const { stagingPath, fullPath } = this.chunkedUploadPaths(filepath, context);
+
+		// 1. `rename` replaces the target in one step, so a concurrent reader sees either the old content or the
+		//    finished upload, never a partial file. A missing staging file means the upload is unknown or already
+		//    finished, and is reported the way `writeChunk` reports it
+		try {
+			await rename(stagingPath, fullPath);
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException)?.code;
+
+			if (code === 'ENOENT' || code === 'ENOTDIR') {
+				throw new StorageFileNotFoundError({ filepath }, { cause: error });
+			}
+
+			throw error;
+		}
+	}
 
 	/**
-	 * Write one chunk into the target file at the given offset.
+	 * Write one chunk into the upload's staging file at the given offset.
 	 *
 	 * @param filepath - Final file path relative to the root.
 	 * @param content - Chunk data as sent by the client.
 	 * @param offset - Byte offset within the file where this chunk starts.
-	 * @param _context - Unused; the offset is all this driver needs.
+	 * @param context - Context carrying the staging id.
 	 * @returns The new upload offset: `offset` plus the bytes written.
-	 * @throws StorageFileNotFoundError when the file does not exist, meaning the upload was never created here or its
-	 * file is gone; the file system's error is kept as the cause.
+	 * @throws StorageFileNotFoundError when the context carries no valid staging id or the staging file does not
+	 * exist, meaning the upload was never created here or its file is gone; the file system's error is kept as the
+	 * cause.
 	 * @throws Error naming the file and offset when the pipeline fails; the failure that caused it is logged as a
 	 * warning and carried as the error's `cause`.
 	 */
@@ -457,19 +536,21 @@ export class StorageDriverLocal implements TusDriver {
 		filepath: string,
 		content: Readable,
 		offset: number,
-		_context: ChunkedUploadContext,
+		context: ChunkedUploadContext,
 	): Promise<number> {
-		const fullPath = this.fullPath(filepath);
+		// 1. Chunks go to the staging file, never to the target: the target keeps its previous content until
+		//    `finishChunkedUpload` renames the staging file over it
+		const { stagingPath } = this.chunkedUploadPaths(filepath, context);
 
 		let fileHandle: Awaited<ReturnType<typeof open>>;
 
-		// 1. `r+` opens for writing without truncating, so the bytes before the chunk's offset stay intact. A missing
+		// 2. `r+` opens for writing without truncating, so the bytes before the chunk's offset stay intact. A missing
 		//    file means the upload was never created here or its file is gone; only the errors that prove the path
 		//    cannot exist become the kit's "not found" — ENOENT is the plain case, ENOTDIR means a parent of the path
 		//    is a file — the way `read` and `stat` translate the same errors, so a chunk for an unknown upload fails
 		//    like a stat on it would
 		try {
-			fileHandle = await open(fullPath, 'r+');
+			fileHandle = await open(stagingPath, 'r+');
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException)?.code;
 
@@ -480,14 +561,14 @@ export class StorageDriverLocal implements TusDriver {
 			throw error;
 		}
 
-		// 2. `start` positions the stream, so the chunk lands at its offset while the bytes before it stay intact
+		// 3. `start` positions the stream, so the chunk lands at its offset while the bytes before it stay intact
 		const writeable = fileHandle.createWriteStream({
 			start: offset,
 		});
 
 		let bytesReceived = 0;
 
-		// 3. A pass-through transform counts the bytes as they flow, because neither the readable nor the write
+		// 4. A pass-through transform counts the bytes as they flow, because neither the readable nor the write
 		//    stream reports how much actually went through
 		const transform = new stream.Transform({
 			transform(chunk, _, callback) {
@@ -497,7 +578,7 @@ export class StorageDriverLocal implements TusDriver {
 			},
 		});
 
-		// 4. The callback form of `pipeline` is used so the byte count can be read once every stream has finished
+		// 5. The callback form of `pipeline` is used so the byte count can be read once every stream has finished
 		return new Promise<number>((resolve, reject) => {
 			stream.pipeline(content, transform, writeable, (err) => {
 				// 1. The rejection carries a real error naming the file and offset: the TUS server maps any rejection

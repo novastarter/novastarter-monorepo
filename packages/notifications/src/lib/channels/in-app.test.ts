@@ -85,8 +85,21 @@ describe('inAppChannel', () => {
 		await inAppChannel({ save: async (record) => void saved.push(record) }).send(delivery);
 		await inAppChannel({ save: async (record) => void saved.push(record) }).send(delivery);
 
-		// 2. The record's id is the notification's, so the application's save can upsert on it
-		expect(saved.map((record) => record.id)).toStrictEqual(['event-1042', 'event-1042']);
+		// 2. The record's id is the notification's, scoped to the user, so the application's save can upsert on it
+		expect(saved.map((record) => record.id)).toStrictEqual(['u1:event-1042', 'u1:event-1042']);
+	});
+
+	test('Gives each recipient of one event its own record id, so an upsert does not overwrite another user’s row', async () => {
+		const saved: InAppRecord[] = [];
+
+		// 1. One event, one notification per user, both carrying the event's id
+		for (const userId of ['u1', 'u2']) {
+			const delivery = { ...DELIVERY, notification: { ...DELIVERY.notification, userId, id: 'comment-77' } };
+			await inAppChannel({ save: async (record) => void saved.push(record) }).send(delivery);
+		}
+
+		// 2. The ids differ per user, so an inbox keyed on the id keeps both rows
+		expect(saved.map((record) => record.id)).toStrictEqual(['u1:comment-77', 'u2:comment-77']);
 	});
 
 	test('Gives a record without a notification id a fresh one, so a plain re-send still works', async () => {

@@ -12,8 +12,8 @@ export type DatabaseDriverSupabaseConfig<Schema extends Record<string, unknown> 
 	DatabaseDriverCommonConfig<Schema> & {
 		/**
 		 * The connection string from the project's dashboard: the direct host, the session pooler (port 5432) or the
-		 * transaction pooler (port 6543). Without TLS parameters (`sslmode`, `sslcert`, `sslkey`, `sslrootcert`,
-		 * `sslnegotiation`) — node-postgres lets the URL override the `ssl` option, so TLS is set with `ssl` and `ca`
+		 * transaction pooler (port 6543). Without TLS parameters (`ssl`, `sslmode`, `sslcert`, `sslkey`,
+		 * `sslrootcert`, `sslnegotiation`) — node-postgres lets the URL override the `ssl` option, so TLS is set with `ssl` and `ca`
 		 * here instead, and a `url` carrying one is refused.
 		 */
 		url: string;
@@ -70,8 +70,8 @@ const resolveSsl = (ssl: boolean | ConnectionOptions = true, ca?: string): boole
  * @typeParam Schema - The Drizzle schema the database is typed with.
  * @param config - The Supabase options.
  * @returns The Postgres driver's options.
- * @throws Error when `url` is missing, is not a valid URL, or carries a TLS parameter (`sslmode`, `sslcert`,
- * `sslkey`, `sslrootcert`, `sslnegotiation`).
+ * @throws Error when `url` is missing, is not a valid URL, or carries a TLS parameter (`ssl`, `sslmode`,
+ * `sslcert`, `sslkey`, `sslrootcert`, `sslnegotiation`).
  * @example
  * ```ts
  * super(toPostgresConfig(config));
@@ -98,12 +98,12 @@ export const toPostgresConfig = <Schema extends Record<string, unknown>>(
 
 	// 3. Refuse a URL carrying TLS parameters node-postgres reads out of the connection string: pg parses them over
 	//    the `ssl` option, so any of them would silently defeat the TLS set here — the misconfiguration that fails
-	//    open instead of refusing
-	const urlTlsParams = ['sslmode', 'sslcert', 'sslkey', 'sslrootcert', 'sslnegotiation'] as const;
+	//    open instead of refusing. `ssl` itself is among them: `ssl=0` turns TLS off and `ssl=1` replaces the `ca`
+	const urlTlsParams = ['ssl', 'sslmode', 'sslcert', 'sslkey', 'sslrootcert', 'sslnegotiation'] as const;
 
 	if (urlTlsParams.some((param) => parsed.searchParams.has(param))) {
 		throw new Error(
-			'The supabase database driver needs a "url" without TLS parameters ("sslmode", "sslcert", "sslkey", "sslrootcert", "sslnegotiation"): set TLS with "ssl" and "ca" instead',
+			'The supabase database driver needs a "url" without TLS parameters ("ssl", "sslmode", "sslcert", "sslkey", "sslrootcert", "sslnegotiation"): set TLS with "ssl" and "ca" instead',
 		);
 	}
 

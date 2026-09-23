@@ -23,7 +23,8 @@ export interface LogStreamTarget {
  */
 export interface CreateLoggerOptions {
 	/**
-	 * Lowest level written: `fatal`, `error`, `warn`, `info`, `debug`, `trace`.
+	 * Lowest level written: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or a level declared in
+	 * `pino.customLevels`.
 	 *
 	 * @defaultValue `info`
 	 */
@@ -63,14 +64,30 @@ export const REDACTED_PATHS: readonly string[] = [
 ];
 
 /**
+ * Map of every level name the logger knows to its numeric value: pino's built-in levels plus the caller's custom ones.
+ *
+ * pino's multistream and the checks in {@link createLogger} both resolve level names through this map, so a level
+ * declared in `pino.customLevels` is honoured everywhere pino itself accepts it.
+ *
+ * @param customLevels - The caller's `pino.customLevels`, or nothing.
+ * @returns Level names mapped to their numeric values.
+ * @internal
+ */
+const buildLevelValues = (customLevels: Record<string, number> | undefined): Record<string, number> => {
+	// 1. Custom levels are spread last, so one that reuses a built-in name wins, as it does in pino
+	return { ...pino.levels.values, ...customLevels };
+};
+
+/**
  * Numeric value of a pino level name, falling back to `info` for unknown names.
  *
  * @param level - Level name such as `debug`.
+ * @param customLevels - The caller's `pino.customLevels`, looked up next to pino's built-in levels.
  * @returns The pino numeric level.
  */
-export const getLoggerLevelValue = (level: string): number => {
+export const getLoggerLevelValue = (level: string, customLevels?: Record<string, number>): number => {
 	// 1. An unknown name falls back to info rather than `undefined`, so a typo in a level can never disable logging
-	return pino.levels.values[level] || pino.levels.values['info']!;
+	return buildLevelValues(customLevels)[level] || pino.levels.values['info']!;
 };
 
 /**
@@ -155,7 +172,11 @@ export const createLogger = (options: CreateLoggerOptions = {}): Logger<never> =
 
 	const streams = [];
 
-	// 3. Console: pretty for humans, raw JSON lines for log collectors — raw unless asked, since a collector chokes
+	// 3. Every level name resolves against pino's built-in levels plus the caller's custom ones: without them the
+	//    multistream maps a custom level to `undefined` and silently drops every line
+	const levelValues = buildLevelValues(mergedOptions.customLevels);
+
+	// 4. Console: pretty for humans, raw JSON lines for log collectors — raw unless asked, since a collector chokes
 	//    on a pretty line while a person merely reads JSON
 	if (options.style === 'pretty') {
 		streams.push({
@@ -169,20 +190,23 @@ export const createLogger = (options: CreateLoggerOptions = {}): Logger<never> =
 		streams.push({ level: mergedOptions.level!, stream: process.stdout });
 	}
 
-	// 4. An extra stream may ask for a lower level than the console; the logger level has to drop to satisfy it
+	// 5. An extra stream may ask for a lower level than the console; the logger level has to drop to satisfy it
 	if (options.logsStream) {
 		const streamLevel = options.logsStream.level ?? mergedOptions.level!;
 
-		// 5. pino's multistream resolves an unknown level name to `undefined` and then writes nothing anywhere, the
+		// 6. pino's multistream resolves an unknown level name to `undefined` and then writes nothing anywhere, the
 		//    console stream included, so a typo in the configured level must fail at start-up, as loud as pino's own
 		//    `unknown level` error for a bad top-level level
-		if (pino.levels.values[streamLevel] === undefined) {
+		if (levelValues[streamLevel] === undefined) {
 			throw new Error(`unknown level ${streamLevel}`);
 		}
 
-		// 6. The comparison still goes through the numeric values: the logger level drops only when the stream really
+		// 7. The comparison still goes through the numeric values: the logger level drops only when the stream really
 		//    asks for a lower one
-		if (getLoggerLevelValue(streamLevel) < getLoggerLevelValue(mergedOptions.level!)) {
+		if (
+			getLoggerLevelValue(streamLevel, mergedOptions.customLevels) <
+			getLoggerLevelValue(mergedOptions.level!, mergedOptions.customLevels)
+		) {
 			mergedOptions.level = streamLevel;
 		}
 
@@ -192,5 +216,6 @@ export const createLogger = (options: CreateLoggerOptions = {}): Logger<never> =
 		});
 	}
 
-	return pino(mergedOptions, pino.multistream(streams));
+	// 8. The multistream gets the same level map, so it routes lines of a custom level instead of dropping them
+	return pino(mergedOptions, pino.multistream(streams, { levels: levelValues }));
 };

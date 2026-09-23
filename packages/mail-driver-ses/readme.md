@@ -38,8 +38,8 @@ routes.
 
 Through nodemailer's SES transport on `@aws-sdk/client-sesv2`; the category and the tags become SES message tags, which
 show up in the sending events. SES takes only ASCII letters, digits, `_` and `-` in a tag, at most 256 of them, so every
-tag is sanitised on the way (`welcome flow` becomes `welcome_flow`) and one left with no name is dropped, rather than
-failing the whole send.
+tag is sanitised on the way (`welcome flow` becomes `welcome_flow`), and one left with no name or with a name already
+taken (`welcome flow` next to `welcome_flow`, or `category`) is dropped, rather than failing the whole send.
 
 ## Options
 

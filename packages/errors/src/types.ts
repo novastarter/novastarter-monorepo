@@ -1,6 +1,7 @@
 import { ErrorCode } from './codes.js';
 import type { HitRateLimitErrorExtensions } from './errors/hit-rate-limit.js';
 import type { InvalidPayloadErrorExtensions } from './errors/invalid-payload.js';
+import type { ProviderCallErrorExtensions } from './errors/provider-call.js';
 
 /**
  * Extensions of the error classes that carry details, keyed by their code.
@@ -11,6 +12,7 @@ import type { InvalidPayloadErrorExtensions } from './errors/invalid-payload.js'
 type Map = {
 	[ErrorCode.InvalidPayload]: InvalidPayloadErrorExtensions;
 	[ErrorCode.RequestsExceeded]: HitRateLimitErrorExtensions;
+	[ErrorCode.ProviderCallFailed]: ProviderCallErrorExtensions;
 };
 
 /**

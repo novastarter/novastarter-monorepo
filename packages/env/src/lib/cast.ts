@@ -1,4 +1,4 @@
-import { toArray, toBoolean, toNumber, tryParseJSON } from '@novastarter/utils';
+import { toArray, toNumber, tryParseJSON } from '@novastarter/utils';
 import { getCastFlag } from '../utils/has-cast-prefix.js';
 
 /**
@@ -7,16 +7,18 @@ import { getCastFlag } from '../utils/has-cast-prefix.js';
  * Only an explicit prefix converts: `number:1` becomes `1`, `boolean:true` becomes `true`, `regex:^a` becomes a
  * `RegExp`, `array:a,b` becomes `['a', 'b']` with its members cast one by one (`array:string:a,number:1` yields
  * `['a', 1]`; an empty member, from a trailing comma, is dropped), `json:` parses the payload and keeps it as it is
- * when it is not JSON. A payload the prefix cannot read — `number:80O0`, `regex:(` — is refused with an error naming
- * the value: the prefix says what the value must be, so a typo is a broken configuration to fix at start-up, not a
- * missing variable a schema default would quietly paper over. A value without a prefix is returned as it is — a
+ * when it is not JSON. `boolean:` takes only `true`, `1`, `false` and `0`. A payload the prefix cannot read —
+ * `number:80O0`, `boolean:yes`, `regex:(` — is refused with an error naming the value: the prefix says what the value
+ * must be, so a typo is a broken configuration to fix at start-up, not a missing variable a schema default would
+ * quietly paper over. A value without a prefix is returned as it is — a
  * string from the environment, whatever type a config file gave it — and the application's schema decides what it
  * becomes. Nothing is guessed from the look of a value, so `0123` and `true` stay strings until a schema says
  * otherwise.
  *
  * @param value - Raw value, possibly carrying a cast prefix.
  * @returns The converted value, or the value untouched.
- * @throws Error when a `number:` payload is not a finite number or a `regex:` payload is not a valid pattern.
+ * @throws Error when a `number:` payload is not a finite number, a `boolean:` payload is not `true`, `1`, `false` or
+ * `0`, or a `regex:` payload is not a valid pattern.
  * @example
  * ```ts
  * cast('number:8055');
@@ -43,8 +45,9 @@ export const cast = (value: unknown): unknown => {
 	const payload = value.substring(castFlag.length + 1);
 
 	// 4. Apply the conversion. A payload the prefix cannot read — `number:` with no number, `regex:` with a broken
-	//    pattern — is refused: cast to `undefined`, it would take a schema default and boot the wrong way with
-	//    nothing logged, where a typo should stop the start-up and name itself. Array members recurse: they carry
+	//    pattern, `boolean:` with anything but `true`/`1`/`false`/`0` — is refused: cast to `undefined` or `false`,
+	//    it would take a schema default or switch a feature off and boot the wrong way with nothing logged, where a
+	//    typo should stop the start-up and name itself. Array members recurse: they carry
 	//    their own prefixes or stay strings, and an empty member (a trailing comma) is dropped. A `json:` payload
 	//    that is not JSON — a plain word such as `production` — is kept as the string it is
 	switch (castFlag) {
@@ -53,7 +56,7 @@ export const cast = (value: unknown): unknown => {
 		case 'number':
 			return toCastNumber(value, payload);
 		case 'boolean':
-			return toBoolean(payload);
+			return toCastBoolean(value, payload);
 		case 'regex':
 			return toRegExp(value, payload);
 		case 'array':
@@ -83,6 +86,32 @@ const toCastNumber = (value: string, payload: string): number => {
 	}
 
 	return number;
+};
+
+/**
+ * Read a `boolean:` payload, or refuse it.
+ *
+ * Only `true`, `1`, `false` and `0` are accepted, matched exactly. Anything else — `TRUE`, `yes`, a typo such as
+ * `ture` — would otherwise read as `false` and switch a feature off with nothing logged.
+ *
+ * @param value - The whole value, prefix included, for the message.
+ * @param payload - The text after the prefix.
+ * @returns The boolean.
+ * @throws Error when the payload is not one of the four accepted spellings.
+ * @internal
+ */
+const toCastBoolean = (value: string, payload: string): boolean => {
+	// 1. Match the accepted spellings explicitly, so an unknown one is an error rather than a silent `false`
+	if (payload === 'true' || payload === '1') {
+		return true;
+	}
+
+	if (payload === 'false' || payload === '0') {
+		return false;
+	}
+
+	// 2. Anything else is a broken value; name it so the log line says which variable to fix
+	throw new Error(`Cannot cast "${value}" to a boolean`);
 };
 
 /**
