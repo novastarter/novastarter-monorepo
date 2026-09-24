@@ -8,7 +8,6 @@ describe('toIdentity', () => {
 	test('Maps the numeric id, the verified address, the name and the avatar', () => {
 		const user = { id: 583231, login: 'octocat', name: 'The Octocat', avatar_url: 'https://a.test/1' };
 
-		// 1. The id as a string subject; the profile itself travels as `raw`
 		expect(toIdentity({ user, email: 'octo@example.com' })).toStrictEqual({
 			provider: 'github',
 			subject: '583231',
@@ -21,7 +20,6 @@ describe('toIdentity', () => {
 	});
 
 	test('Falls back to the login for the name and leaves out what is missing', () => {
-		// 1. No display name, no avatar, no verified address: the login names the person, nothing else is claimed
 		const user = { id: 1, login: 'octocat', name: null, avatar_url: '' };
 
 		expect(toIdentity({ user })).toStrictEqual({ provider: 'github', subject: '1', name: 'octocat', raw: user });

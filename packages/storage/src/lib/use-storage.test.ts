@@ -18,7 +18,7 @@ afterEach(() => {
 
 describe('useStorage', () => {
 	test('Returns the same empty manager on every call', () => {
-		// 1. Nothing is built until asked, and every later call returns the cached instance
+		// Nothing is built until asked, and every later call returns the cached instance
 		const first = useStorage();
 
 		expect(first).toBeInstanceOf(StorageManager);
@@ -26,7 +26,7 @@ describe('useStorage', () => {
 	});
 
 	test('Shares the registrations with every later caller', () => {
-		// 1. Registrations made at start-up are visible everywhere, and a location is built once
+		// Registrations made at start-up are visible everywhere, and a location is built once
 		const mockDriver = vi.fn();
 
 		useStorage().registerDriver('test-driver', mockDriver);

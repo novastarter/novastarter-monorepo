@@ -11,7 +11,7 @@ import { toPostgresConfig } from './to-postgres-config.js';
 let sample: { url: string; ca: string };
 
 beforeEach(() => {
-	// 1. The URL has the shape of the dashboard's transaction-pooler string
+	// The URL has the shape of the dashboard's transaction-pooler string
 	sample = {
 		url: `postgresql://postgres.${randWord()}:${randPassword()}@pooler.${randDomainName()}:6543/postgres`,
 		ca: `-----BEGIN CERTIFICATE-----\n${randPassword()}\n-----END CERTIFICATE-----`,
@@ -21,19 +21,19 @@ beforeEach(() => {
 describe('toPostgresConfig', () => {
 	test('Throws when the url is missing', () => {
 		expect(() => toPostgresConfig({ url: '' })).toThrowErrorMatchingInlineSnapshot(
-			`[Error: The supabase database driver needs a "url"]`,
+			`[NovastarterError: Invalid config. The supabase database driver needs a "url".]`,
 		);
 	});
 
 	test('Throws when the url is not a valid URL', () => {
-		// 1. `new URL` would raise a bare `TypeError: Invalid URL` — the driver names the option at fault instead
+		// `new URL` would raise a bare `TypeError: Invalid URL` — the driver names the option at fault instead
 		expect(() => toPostgresConfig({ url: 'not-a-url' })).toThrowErrorMatchingInlineSnapshot(
-			`[Error: The supabase database driver needs a "url" that is a valid URL]`,
+			`[NovastarterError: Invalid config. The supabase database driver needs a "url" that is a valid URL.]`,
 		);
 	});
 
 	test('Turns the url into a pool on TLS by default', () => {
-		// 1. `toStrictEqual`: no key of the driver's own may leak through, and nothing undefined may be added
+		// `toStrictEqual`: no key of the driver's own may leak through, and nothing undefined may be added
 		expect(toPostgresConfig({ url: sample.url })).toStrictEqual({
 			connection: { connectionString: sample.url, ssl: true },
 		});
@@ -44,7 +44,6 @@ describe('toPostgresConfig', () => {
 			connection: { connectionString: sample.url, ssl: { ca: sample.ca } },
 		});
 
-		// 1. Given TLS options keep what they carry, the certificate joins them
 		expect(toPostgresConfig({ url: sample.url, ssl: { servername: 'db' }, ca: sample.ca }).connection).toStrictEqual({
 			connectionString: sample.url,
 			ssl: { servername: 'db', ca: sample.ca },
@@ -52,37 +51,37 @@ describe('toPostgresConfig', () => {
 	});
 
 	test('Treats a blank certificate as absent', () => {
-		// 1. An empty string would otherwise replace Node's default root store and verify against nothing — the shape
-		//    an env var that exists but is blank produces
+		// An empty string would otherwise replace Node's default root store and verify against nothing — the shape
+		// an env var that exists but is blank produces
 		expect(toPostgresConfig({ url: sample.url, ca: '' })).toStrictEqual({
 			connection: { connectionString: sample.url, ssl: true },
 		});
 
-		// 2. Whitespace-only is blank too: it would replace Node's root store just the same and fail every connection
+		// Whitespace-only is blank too: it would replace Node's root store just the same and fail every connection
 		expect(toPostgresConfig({ url: sample.url, ca: ' \n\t ' })).toStrictEqual({
 			connection: { connectionString: sample.url, ssl: true },
 		});
 	});
 
 	test('Trims whitespace around the certificate', () => {
-		// 1. A PEM copied with surrounding whitespace is used as given, trimmed — not passed on to replace Node's root
-		//    store with a value that is not a certificate
+		// A PEM copied with surrounding whitespace is used as given, trimmed — not passed on to replace Node's root
+		// store with a value that is not a certificate
 		expect(toPostgresConfig({ url: sample.url, ca: ` \n${sample.ca}\n ` })).toStrictEqual({
 			connection: { connectionString: sample.url, ssl: { ca: sample.ca } },
 		});
 	});
 
 	test('Throws when the url carries an sslmode parameter', () => {
-		// 1. node-postgres lets the URL override the `ssl` option, so an sslmode there would silently defeat the TLS
-		//    set here — refused up front, in the words of this driver
+		// node-postgres lets the URL override the `ssl` option, so an sslmode there would silently defeat the TLS
+		// set here — refused up front, in the words of this driver
 		expect(() => toPostgresConfig({ url: `${sample.url}?sslmode=disable` })).toThrowErrorMatchingInlineSnapshot(
-			`[Error: The supabase database driver needs a "url" without TLS parameters ("ssl", "sslmode", "sslcert", "sslkey", "sslrootcert", "sslnegotiation"): set TLS with "ssl" and "ca" instead]`,
+			`[NovastarterError: Invalid config. The supabase database driver needs a "url" without TLS parameters ("ssl", "sslmode", "sslcert", "sslkey", "sslrootcert", "sslnegotiation"): set TLS with "ssl" and "ca" instead.]`,
 		);
 	});
 
 	test.each(['ssl=0', 'ssl=1', 'ssl=true'] as const)('Throws when the url carries %s', (param) => {
-		// 1. pg turns `ssl=0` into `ssl: false` and `ssl=1`/`ssl=true` into `ssl: true` over the `ssl` option, so the
-		//    first would connect in plain text and the others would drop the `ca` — refused like sslmode
+		// pg turns `ssl=0` into `ssl: false` and `ssl=1`/`ssl=true` into `ssl: true` over the `ssl` option, so the
+		// first would connect in plain text and the others would drop the `ca` — refused like sslmode
 		expect(() => toPostgresConfig({ url: `${sample.url}?${param}`, ca: sample.ca })).toThrow(
 			'The supabase database driver needs a "url" without TLS parameters',
 		);
@@ -91,8 +90,8 @@ describe('toPostgresConfig', () => {
 	test.each(['sslcert', 'sslkey', 'sslrootcert', 'sslnegotiation'] as const)(
 		'Throws when the url carries a %s parameter',
 		(param) => {
-			// 1. pg parses these out of the connection string over the `ssl` option, so any of them would silently
-			//    defeat the TLS set here — refused like sslmode
+			// pg parses these out of the connection string over the `ssl` option, so any of them would silently
+			// defeat the TLS set here — refused like sslmode
 			expect(() => toPostgresConfig({ url: `${sample.url}?${param}=x` })).toThrow(
 				'The supabase database driver needs a "url" without TLS parameters',
 			);
@@ -105,7 +104,7 @@ describe('toPostgresConfig', () => {
 			ssl: { rejectUnauthorized: false },
 		});
 
-		// 1. Off stays off even with a certificate: the local CLI stack has no TLS to verify against it
+		// Off stays off even with a certificate: the local CLI stack has no TLS to verify against it
 		expect(toPostgresConfig({ url: sample.url, ssl: false, ca: sample.ca }).connection).toStrictEqual({
 			connectionString: sample.url,
 			ssl: false,

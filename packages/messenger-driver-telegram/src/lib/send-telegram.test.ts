@@ -9,12 +9,10 @@ afterEach(() => {
 });
 
 test('Sends one message without any registration', async () => {
-	// 1. A stub that accepts the message
 	const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, result: { message_id: 3 } })));
 
 	vi.stubGlobal('fetch', fetchMock);
 
-	// 2. The bot's options and the message's are split: the token goes into the URL, the rest into the body
 	await expect(
 		sendTelegram({
 			token: '123:abc',

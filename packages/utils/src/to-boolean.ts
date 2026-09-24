@@ -16,6 +16,6 @@
  * ```
  */
 export function toBoolean(value: unknown): boolean {
-	// 1. Compare against the accepted spellings explicitly instead of coercing, so `'false'` cannot come out truthy
+	// Compare against the accepted spellings explicitly instead of coercing, so `'false'` cannot come out truthy
 	return value === 'true' || value === true || value === '1' || value === 1;
 }

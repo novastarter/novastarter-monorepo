@@ -38,12 +38,12 @@ export const DatabaseUnavailableError: NovastarterErrorConstructor<DatabaseUnava
  * @internal
  */
 const unwrapQueryError = (error: unknown): unknown => {
-	// 1. Only Drizzle's wrapper carries the query text as its message and the real failure as its cause
+	// Only Drizzle's wrapper carries the query text as its message and the real failure as its cause
 	if (error instanceof Error && error.message.startsWith('Failed query:') && error.cause !== undefined) {
 		return error.cause;
 	}
 
-	// 2. Anything else already is the connection's own error
+	// Anything else already is the connection's own error
 	return error;
 };
 
@@ -60,8 +60,8 @@ const unwrapQueryError = (error: unknown): unknown => {
  * @internal
  */
 const describeError = (error: unknown): string => {
-	// 1. An `AggregateError` without a message of its own is described by what failed inside it: every attempted
-	//    address, or the error code when the list is empty
+	// An `AggregateError` without a message of its own is described by what failed inside it: every attempted
+	// address, or the error code when the list is empty
 	if (error instanceof AggregateError && error.message === '') {
 		const inner = (error.errors as unknown[]).map((item) => toErrorMessage(item)).join('; ');
 		const code: unknown = (error as { code?: unknown }).code;
@@ -75,7 +75,6 @@ const describeError = (error: unknown): string => {
 		}
 	}
 
-	// 2. Any other error already says what went wrong in its message
 	return toErrorMessage(error);
 };
 
@@ -101,10 +100,9 @@ export const toUnavailableError = (
 	error: unknown,
 	database?: string,
 ): NovastarterError<DatabaseUnavailableErrorExtensions> => {
-	// 1. Look past Drizzle's query wrapper, whose message is only the query text and says nothing of the failure
+	// Drizzle's query wrapper carries only the query text as its message, which says nothing of the failure
 	const source = unwrapQueryError(error);
 
-	// 2. The backend's message becomes the reason, so the line reads on its own; the backend's error stays as `cause`
-	//    for whoever needs its code or its stack
+	// The reason lets the line read on its own; the cause keeps the backend's code and stack for whoever needs them
 	return new DatabaseUnavailableError({ database, reason: describeError(source) }, { cause: source });
 };

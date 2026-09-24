@@ -19,7 +19,7 @@ const fetchMock = vi.fn<HttpCallFetch>();
  * @returns The URL and the init.
  */
 const sent = (index = 0): [string, Parameters<HttpCallFetch>[1]] => {
-	// 1. As `fetch(url, init)` was called
+	// As `fetch(url, init)` was called
 	return fetchMock.mock.calls[index] as [string, Parameters<HttpCallFetch>[1]];
 };
 
@@ -33,7 +33,7 @@ describe('http', () => {
 			new Response('{"id":1}', { status: 200, headers: { 'content-type': 'application/json', 'X-Trace': 't' } }),
 		);
 
-		// 1. `{owner}` and `{repo}` from the parameters, `state` in the query
+		// `{owner}` and `{repo}` from the parameters, `state` in the query
 		await expect(
 			http(
 				'GET https://api.github.com/repos/{owner}/{repo}/issues',
@@ -51,7 +51,7 @@ describe('http', () => {
 	test('Sends the parameters of a POST as JSON with the caller’s headers', async () => {
 		fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
 
-		// 1. An empty answer is nothing
+		// An empty answer is nothing
 		await expect(
 			http(
 				'POST https://api.polar.sh/v1/refunds',
@@ -68,7 +68,7 @@ describe('http', () => {
 	});
 
 	test('Refuses a path without a host and an unfilled placeholder, before any request', async () => {
-		// 1. There is no base to put a path under, and `{id}` has nothing to fill it
+		// There is no base to put a path under, and `{id}` has nothing to fill it
 		await expect(http('GET /v1/products', {}, { fetch: fetchMock })).rejects.toThrow('http() needs a full URL');
 
 		await expect(http('GET https://api.polar.sh/v1/products/{id}', {}, { fetch: fetchMock })).rejects.toThrow(
@@ -86,7 +86,7 @@ describe('http', () => {
 			}),
 		);
 
-		// 1. A key in the query and one in a header stay out of the error
+		// A key in the query and one in a header stay out of the error
 		const error = (await http(
 			'GET https://api.example.com/v1/me?api_key=SECRET',
 			{},
@@ -105,12 +105,12 @@ describe('http', () => {
 	test('Maps a 429 to HitRateLimitError and a slow answer to TimeoutError', async () => {
 		fetchMock.mockResolvedValueOnce(new Response('', { status: 429, headers: { 'retry-after': '2' } }));
 
-		// 1. The provider asks to slow down
+		// The provider asks to slow down
 		await expect(http('GET https://api.example.com/x', {}, { fetch: fetchMock })).rejects.toBeInstanceOf(
 			HitRateLimitError,
 		);
 
-		// 2. An answer that never comes ends at the deadline
+		// An answer that never comes ends at the deadline
 		fetchMock.mockImplementationOnce(
 			(_url, init) =>
 				new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason))),
@@ -124,7 +124,7 @@ describe('http', () => {
 	test('Keeps a path as it is: a colon in a segment and a trailing slash', async () => {
 		fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
 
-		// 1. `messages:send` of Google's APIs and Polar's trailing slash reach the provider untouched
+		// `messages:send` of Google's APIs and Polar's trailing slash reach the provider untouched
 		await http(
 			'POST https://fcm.googleapis.com/v1/projects/{id}/messages:send',
 			{ id: 'p1', message: {} },
@@ -140,7 +140,7 @@ describe('http', () => {
 	});
 
 	test('Reads the answer itself: big numbers stay numbers, repeated headers stay, a broken body throws', async () => {
-		// 1. A JSON error with a big number still becomes the kit's error, its body a plain number
+		// A JSON error with a big number still becomes the kit's error, its body a plain number
 		fetchMock.mockResolvedValueOnce(
 			new Response('{"error":{"id":9007199254740993}}', {
 				status: 422,
@@ -155,7 +155,7 @@ describe('http', () => {
 		expect(error).toBeInstanceOf(ProviderCallError);
 		expect(typeof (error.extensions.body as { error: { id: unknown } }).error.id).toBe('number');
 
-		// 2. Two `set-cookie` headers are both there
+		// Two `set-cookie` headers are both there
 		const headers = new Headers();
 
 		headers.append('set-cookie', 'a=1');
@@ -166,7 +166,7 @@ describe('http', () => {
 			headers: { 'set-cookie': 'a=1, b=2' },
 		});
 
-		// 3. A body cut off halfway is an error, not an empty success
+		// A body cut off halfway is an error, not an empty success
 		const broken = new ReadableStream({
 			start(controller) {
 				controller.enqueue(new TextEncoder().encode('{"a":'));
@@ -185,7 +185,7 @@ describe('http', () => {
 	});
 
 	test('Throws what the fetch threw as it is: the abort reason untouched, a HEAD refused like any other', async () => {
-		// 1. Octokit would mark an `AbortError` with `status = 500`; the caller's reason stays as it was
+		// Octokit would mark an `AbortError` with `status = 500`; the caller's reason stays as it was
 		const controller = new AbortController();
 		const reason = Object.freeze(new DOMException('stop', 'AbortError'));
 
@@ -201,14 +201,14 @@ describe('http', () => {
 		await expect(pending).rejects.toBe(reason);
 		expect(reason).not.toHaveProperty('status');
 
-		// 2. An unreachable host is the fetch's own error, not Octokit's
+		// An unreachable host is the fetch's own error, not Octokit's
 		const unreachable = new TypeError('fetch failed');
 
 		fetchMock.mockRejectedValueOnce(unreachable);
 
 		await expect(http('GET https://api.example.com/x', {}, { fetch: fetchMock })).rejects.toBe(unreachable);
 
-		// 3. A `HEAD` answered 404 is judged like any other verb
+		// A `HEAD` answered 404 is judged like any other verb
 		fetchMock.mockResolvedValueOnce(new Response(null, { status: 404 }));
 
 		await expect(http('HEAD https://api.example.com/x', {}, { fetch: fetchMock })).rejects.toBeInstanceOf(
@@ -224,7 +224,7 @@ describe('http', () => {
 		fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
 		fetchMock.mockResolvedValueOnce(new Response('', { status: 429, headers: { 'retry-after': '2' } }));
 
-		// 1. A success: the request first, then its answer with the status and how long it took
+		// A success: the request first, then its answer with the status and how long it took
 		await http(
 			'GET https://api.example.com/v1/{id}?api_key=SECRET',
 			{ id: 'a1' },
@@ -238,7 +238,7 @@ describe('http', () => {
 		expect(onResponse.mock.calls[0]?.[0].duration).toBeGreaterThanOrEqual(0);
 		expect(JSON.stringify([onRequest.mock.calls, onResponse.mock.calls])).not.toContain('SECRET');
 
-		// 2. An error status is an answer too, told before the kit's error is thrown
+		// An error status is an answer too, told before the kit's error is thrown
 		await expect(
 			http('GET https://api.example.com/x', {}, { fetch: fetchMock, hooks: { onResponse, onError } }),
 		).rejects.toBeInstanceOf(HitRateLimitError);
@@ -252,7 +252,7 @@ describe('http', () => {
 		const onError = vi.fn();
 		const unreachable = new TypeError('fetch failed');
 
-		// 1. The host cannot be reached
+		// The host cannot be reached
 		fetchMock.mockRejectedValueOnce(unreachable);
 
 		await expect(
@@ -263,7 +263,7 @@ describe('http', () => {
 			expect.objectContaining({ url: 'https://api.example.com/x', error: unreachable }),
 		);
 
-		// 2. The answer never comes
+		// The answer never comes
 		fetchMock.mockImplementationOnce(
 			(_url, init) =>
 				new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason))),
@@ -280,7 +280,7 @@ describe('http', () => {
 	test('Never lets a failing hook break the request', async () => {
 		fetchMock.mockResolvedValueOnce(new Response('{"id":1}', { status: 200 }));
 
-		// 1. One hook throws, the other rejects
+		// One hook throws, the other rejects
 		await expect(
 			http(
 				'GET https://api.example.com/x',
@@ -303,7 +303,7 @@ describe('http', () => {
 	test('Keeps what a hook changes in its event out of the error', async () => {
 		fetchMock.mockResolvedValueOnce(new Response('', { status: 500 }));
 
-		// 1. A hook rewrites the provider it was told of; the error still names the real one
+		// A hook rewrites the provider it was told of; the error still names the real one
 		const error = await http(
 			'GET https://api.example.com/x',
 			{},

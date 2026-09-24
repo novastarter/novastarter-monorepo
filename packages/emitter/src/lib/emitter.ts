@@ -67,9 +67,9 @@ export class Emitter {
 	 * Create the three channels with identical settings.
 	 */
 	constructor() {
-		// 1. One set of options for every channel: dotted names with wildcards, so a single subscription covers a whole
-		//    family of events, and `ignoreErrors`, because event names come from application modules and one named
-		//    `error` with no listener would otherwise make eventemitter2 throw "Uncaught, unspecified 'error' event"
+		// One set of options for every channel: dotted names with wildcards, so a single subscription covers a whole
+		// family of events, and `ignoreErrors`, because event names come from application modules and one named
+		// `error` with no listener would otherwise make eventemitter2 throw "Uncaught, unspecified 'error' event"
 		const emitterOptions = {
 			wildcard: true,
 			verboseMemoryLeak: true,
@@ -77,8 +77,8 @@ export class Emitter {
 			ignoreErrors: true,
 		};
 
-		// 2. Three separate channels rather than one with prefixed names, so a filter and an action of the same event
-		//    never fire each other and a wildcard subscription cannot cross from one kind of hook into another
+		// Three separate channels rather than one with prefixed names, so a filter and an action of the same event
+		// never fire each other and a wildcard subscription cannot cross from one kind of hook into another
 		this.filterEmitter = new ee2.EventEmitter2(emitterOptions);
 		this.actionEmitter = new ee2.EventEmitter2(emitterOptions);
 		this.initEmitter = new ee2.EventEmitter2(emitterOptions);
@@ -94,7 +94,7 @@ export class Emitter {
 	 * @internal
 	 */
 	private getDefaultContext(): EventContext {
-		// 1. A fresh object per call, so a handler that mutates its context cannot leak the change into the next emit
+		// A fresh object per call, so a handler that mutates its context cannot leak the change into the next emit
 		return {
 			accountability: null,
 		};
@@ -119,10 +119,9 @@ export class Emitter {
 		meta: Record<string, unknown>,
 		context: EventContext | null = null,
 	): Promise<T> {
-		// 1. One name or several are normalised into a list up front, so the rest of the run treats both alike
 		const events = Array.isArray(event) ? event : [event];
 
-		// 2. Listeners are resolved up front, so a handler registering another one mid-run does not join this run
+		// Listeners are resolved up front, so a handler registering another one mid-run does not join this run
 		const eventListeners = events.map((event) => ({
 			event,
 			listeners: this.filterEmitter.listeners(event) as FilterHandler<T>[],
@@ -130,7 +129,7 @@ export class Emitter {
 
 		let updatedPayload = payload;
 
-		// 3. Sequential on purpose: every filter sees the result of the previous one
+		// Sequential on purpose: every filter sees the result of the previous one
 		for (const { event, listeners } of eventListeners) {
 			for (const listener of listeners) {
 				const result = await listener(updatedPayload, { ...meta, event }, context ?? this.getDefaultContext());
@@ -158,14 +157,14 @@ export class Emitter {
 		meta: Record<string, unknown>,
 		context: EventContext | null = null,
 	): void {
-		// 1. One name or several are handled alike; the logger is read per call, so a `registerLogger` after start-up
-		//    is honoured
+		// One name or several are handled alike; the logger is read per call, so a `registerLogger` after start-up
+		// is honoured
 		const logger = useLogger();
 		const events = Array.isArray(event) ? event : [event];
 
-		// 2. Fire and forget: nothing is awaited and nothing reaches the caller. Every handler logs its own failure
-		//    inside the wrapper `onAction` gave it, so two failing handlers make two lines where `emitAsync`, a
-		//    `Promise.all`, would surface only the first; what is caught here is eventemitter2's own trouble
+		// Fire and forget: nothing is awaited and nothing reaches the caller. Every handler logs its own failure
+		// inside the wrapper `onAction` gave it, so two failing handlers make two lines where `emitAsync`, a
+		// `Promise.all`, would surface only the first; what is caught here is eventemitter2's own trouble
 		for (const event of events) {
 			this.actionEmitter.emitAsync(event, { ...meta, event }, context ?? this.getDefaultContext()).catch((error) => {
 				logger.warn(toError(error), `An error was thrown while emitting action "${event}"`);
@@ -182,12 +181,12 @@ export class Emitter {
 	 * @param meta - What the stage exposes to the hooks, merged under the event name, which wins over a meta `event` key.
 	 */
 	public async emitInit(event: string, meta: Record<string, unknown>): Promise<void> {
-		// 1. The logger is read per call, so a `registerLogger` after start-up is honoured
+		// The logger is read per call, so a `registerLogger` after start-up is honoured
 		const logger = useLogger();
 
-		// 2. Awaited, but a failure is logged rather than thrown, so one broken hook cannot stop the start-up. Every
-		//    handler logs its own failure inside the wrapper `onInit` gave it; what is caught here is eventemitter2's
-		//    own trouble
+		// Awaited, but a failure is logged rather than thrown, so one broken hook cannot stop the start-up. Every
+		// handler logs its own failure inside the wrapper `onInit` gave it; what is caught here is eventemitter2's
+		// own trouble
 		try {
 			await this.initEmitter.emitAsync(event, { ...meta, event });
 		} catch (error) {
@@ -203,8 +202,8 @@ export class Emitter {
 	 * @param handler - Handler that may replace the payload.
 	 */
 	public onFilter<T = unknown>(event: string, handler: FilterHandler<T>): void {
-		// 1. Registered as is, unlike action and init handlers: a filter's failure must reach the emitting code, since
-		//    the operation cannot go on with a payload the filter did not finish, so there is nothing to wrap
+		// Registered as is, unlike action and init handlers: a filter's failure must reach the emitting code, since
+		// the operation cannot go on with a payload the filter did not finish, so there is nothing to wrap
 		this.filterEmitter.on(event, handler);
 	}
 
@@ -218,17 +217,17 @@ export class Emitter {
 	 * @param handler - Handler run after the operation.
 	 */
 	public onAction(event: string, handler: ActionHandler): void {
-		// 1. eventemitter2 calls the handlers in a plain loop and only collects their promises into a `Promise.all`:
-		//    one throwing before its first `await` would stop the loop, and of two rejecting only the first would be
-		//    seen. The wrapper catches and logs its own handler's failure, so neither happens. One wrapper per handler,
-		//    whatever the event: `offAction` finds it by the handler, and a handler registered on two events is
-		//    removed from either
+		// eventemitter2 calls the handlers in a plain loop and only collects their promises into a `Promise.all`:
+		// one throwing before its first `await` would stop the loop, and of two rejecting only the first would be
+		// seen. The wrapper catches and logs its own handler's failure, so neither happens. One wrapper per handler,
+		// whatever the event: `offAction` finds it by the handler, and a handler registered on two events is
+		// removed from either
 		let wrapper = this.actionWrappers.get(handler);
 
 		if (!wrapper) {
 			wrapper = async (meta, context) => {
-				// 1. The handler's own failure, sync or async, ends here: logged with the event it failed on, which
-				//    `emitAction` puts into the meta, and never passed on to the other handlers or the emitting code
+				// The handler's own failure, sync or async, ends here: logged with the event it failed on, which
+				// `emitAction` puts into the meta, and never passed on to the other handlers or the emitting code
 				try {
 					await handler(meta, context);
 				} catch (error) {
@@ -239,7 +238,6 @@ export class Emitter {
 			this.actionWrappers.set(handler, wrapper);
 		}
 
-		// 2. The wrapper is what eventemitter2 knows; the handler itself never reaches it
 		this.actionEmitter.on(event, wrapper);
 	}
 
@@ -250,13 +248,13 @@ export class Emitter {
 	 * @param handler - Handler run at that stage of start-up.
 	 */
 	public onInit(event: string, handler: InitHandler): void {
-		// 1. The same isolation as for action handlers: each logs its own failure, so one broken hook neither stops
-		//    the others nor hides a second failure behind the first
+		// The same isolation as for action handlers: each logs its own failure, so one broken hook neither stops
+		// the others nor hides a second failure behind the first
 		let wrapper = this.initWrappers.get(handler);
 
 		if (!wrapper) {
 			wrapper = async (meta) => {
-				// 1. The hook's own failure ends here, logged with the stage it failed at, so the start-up goes on
+				// The hook's own failure ends here, logged with the stage it failed at, so the start-up goes on
 				try {
 					await handler(meta);
 				} catch (error) {
@@ -267,7 +265,6 @@ export class Emitter {
 			this.initWrappers.set(handler, wrapper);
 		}
 
-		// 2. The wrapper is what eventemitter2 knows; the handler itself never reaches it
 		this.initEmitter.on(event, wrapper);
 	}
 
@@ -278,7 +275,7 @@ export class Emitter {
 	 * @returns Number of registered filters matching the given event.
 	 */
 	public countFilterListeners(event: string): number {
-		// 1. Only the filter channel is asked, so a hook of another kind on the same name is not counted
+		// Only the filter channel is asked, so a hook of another kind on the same name is not counted
 		return this.filterEmitter.listenerCount(event);
 	}
 
@@ -289,7 +286,7 @@ export class Emitter {
 	 * @returns Number of registered action handlers matching the given event.
 	 */
 	public countActionListeners(event: string): number {
-		// 1. Only the action channel is asked, so a hook of another kind on the same name is not counted
+		// Only the action channel is asked, so a hook of another kind on the same name is not counted
 		return this.actionEmitter.listenerCount(event);
 	}
 
@@ -300,7 +297,7 @@ export class Emitter {
 	 * @returns Number of registered init handlers matching the given event.
 	 */
 	public countInitListeners(event: string): number {
-		// 1. Only the init channel is asked, so a hook of another kind on the same name is not counted
+		// Only the init channel is asked, so a hook of another kind on the same name is not counted
 		return this.initEmitter.listenerCount(event);
 	}
 
@@ -312,7 +309,7 @@ export class Emitter {
 	 * @param handler - The very function that was registered.
 	 */
 	public offFilter<T = unknown>(event: string, handler: FilterHandler<T>): void {
-		// 1. Filters are registered unwrapped, so the handler itself is what eventemitter2 removes; no lookup needed
+		// Filters are registered unwrapped, so the handler itself is what eventemitter2 removes; no lookup needed
 		this.filterEmitter.off(event, handler);
 	}
 
@@ -323,8 +320,8 @@ export class Emitter {
 	 * @param handler - The very function that was registered.
 	 */
 	public offAction(event: string, handler: ActionHandler): void {
-		// 1. What was registered is the wrapper, not the handler; a handler never registered has none and nothing to
-		//    remove
+		// What was registered is the wrapper, not the handler; a handler never registered has none and nothing to
+		// remove
 		const wrapper = this.actionWrappers.get(handler);
 
 		if (wrapper) {
@@ -339,8 +336,8 @@ export class Emitter {
 	 * @param handler - The very function that was registered.
 	 */
 	public offInit(event: string, handler: InitHandler): void {
-		// 1. What was registered is the wrapper, not the handler; a handler never registered has none and nothing to
-		//    remove
+		// What was registered is the wrapper, not the handler; a handler never registered has none and nothing to
+		// remove
 		const wrapper = this.initWrappers.get(handler);
 
 		if (wrapper) {
@@ -354,8 +351,8 @@ export class Emitter {
 	 * Used when hooks are reloaded, so the old generation does not keep running next to the new one.
 	 */
 	public offAll(): void {
-		// 1. Every channel is cleared, not only one, because hooks of one generation register on all three; the wrapper
-		//    maps are weak and need no clearing, a handler nobody holds any more is collected together with its wrapper
+		// Every channel is cleared, not only one, because hooks of one generation register on all three; the wrapper
+		// maps are weak and need no clearing, a handler nobody holds any more is collected together with its wrapper
 		this.filterEmitter.removeAllListeners();
 		this.actionEmitter.removeAllListeners();
 		this.initEmitter.removeAllListeners();

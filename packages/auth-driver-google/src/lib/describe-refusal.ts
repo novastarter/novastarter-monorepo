@@ -16,18 +16,16 @@ import type { ProviderResponse } from './request.js';
  * ```
  */
 export const describeRefusal = (what: string, response: ProviderResponse): string => {
-	// 1. Only a JSON object can carry the OAuth fields; anything else falls through to the status
+	// Only a JSON object can carry the OAuth fields
 	const body =
 		typeof response.body === 'object' && response.body !== null ? (response.body as Record<string, unknown>) : {};
 
 	const error = body['error'];
 	const description = body['error_description'];
 
-	// 2. The error code first, the prose after it, when Google sent both
 	if (typeof error === 'string' && error) {
 		return typeof description === 'string' && description ? `${error}: ${description}` : error;
 	}
 
-	// 3. No OAuth error: the status is all there is to report
 	return `${what} answered ${response.status}`;
 };

@@ -29,12 +29,12 @@ export interface GithubEmail {
  * ```
  */
 export const pickEmail = (emails: unknown): string | undefined => {
-	// 1. A body that is not a list — a scope not granted, a malformed answer — has no address to offer
+	// A scope not granted or a malformed answer gives a body that is not a list
 	if (!Array.isArray(emails)) {
 		return undefined;
 	}
 
-	// 2. Strict booleans only: a truthy string must not pass as verification
+	// Strict booleans only: a truthy string must not pass as verification
 	const primary = (emails as Partial<GithubEmail>[]).find(
 		(entry) =>
 			typeof entry === 'object' &&

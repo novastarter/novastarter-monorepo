@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { InvalidConfigError, InvalidPayloadError } from '@novastarter/errors';
 import { type CallOptions, type CallResponse, type HttpApi, request } from '@novastarter/http';
 import type { PushDriver, PushMessage, PushPlatform, PushResult } from '@novastarter/push';
 import { toErrorMessage, withTimeout } from '@novastarter/utils';
@@ -119,39 +120,39 @@ export class PushDriverFcm implements PushDriver {
 	 * Create a driver on a service account, with a Firebase app of its own.
 	 *
 	 * @param config - Service account and defaults.
-	 * @throws Error without a project id, a client email or a private key, or with a private key that is not a PEM
-	 * — `cert()` checks the key parses.
+	 * @throws InvalidConfigError without a project id, a client email or a private key, or with `serviceAccount` text
+	 * that is not JSON.
+	 * @throws Error with a private key that is not a PEM — `cert()` checks the key parses.
 	 */
 	constructor(config: PushDriverFcmConfig) {
-		// 1. Missing credentials are a configuration error; reported by the options' names
 		const account = readServiceAccount(config);
 
 		if (!account.projectId || !account.clientEmail || !account.privateKey) {
-			throw new Error(
-				'The fcm push driver needs a service account: "serviceAccount", or "projectId", "clientEmail" and "privateKey"',
-			);
+			throw new InvalidConfigError({
+				reason:
+					'The fcm push driver needs a service account: "serviceAccount", or "projectId", "clientEmail" and "privateKey"',
+			});
 		}
 
 		this.config = config;
 
-		// 2. `cert()` validates the fields and parses the key, so a broken secret fails at startup
+		// `cert()` validates the fields and parses the key, so a broken secret fails at startup
 		this.credential = cert({
 			projectId: account.projectId,
 			clientEmail: account.clientEmail,
 			privateKey: account.privateKey,
 		});
 
-		// 3. Its own Firebase app: the SDK keeps apps in a global registry by name, and the default name would clash
-		//    with a second location or with the app's own Firebase use. The project id is validated above, so it is
-		//    passed unconditionally
+		// Its own Firebase app: the SDK keeps apps in a global registry by name, and the default name would clash with a
+		// second location or with the app's own Firebase use. The project id is validated above, so it is passed
+		// unconditionally
 		this.app = initializeApp(
 			{ credential: this.credential, projectId: account.projectId },
 			`novastarter-push-${randomUUID()}`,
 		);
 
-		// 4. The messaging client comes from the new app; when that fails, the app is already in the SDK's global
-		//    registry holding live agents, unreachable and never deleted — so it is deleted, best-effort, before the
-		//    error propagates
+		// When this fails, the app is already in the SDK's global registry holding live agents, unreachable and never
+		// deleted, so it is deleted, best-effort, before the error propagates
 		try {
 			this.messaging = getMessaging(this.app);
 		} catch (error) {
@@ -159,9 +160,9 @@ export class PushDriverFcm implements PushDriver {
 			throw error;
 		}
 
-		// 5. `call()` takes a fresh token per request — the credential caches it until it nears expiry, so this costs
-		//    nothing most of the time — under the call's deadline; `request()` replaces a refusal with an error of its
-		//    own, so the SDK's error, which may carry the request it made, never reaches the caller
+		// `call()` takes a fresh token per request (the credential caches it until it nears expiry, so this costs nothing
+		// most of the time) under the call's deadline; `request()` replaces a refusal with an error of its own, so the
+		// SDK's error, which may carry the request it made, never reaches the caller
 		this.api = {
 			provider: 'fcm',
 			baseUrl: FCM_API_URL,
@@ -181,21 +182,24 @@ export class PushDriverFcm implements PushDriver {
 	 *
 	 * @param message - The message, with its `token`.
 	 * @returns FCM's message name (`projects/<id>/messages/<id>`) as the id.
+	 * @throws InvalidPayloadError when the message carries a subscription instead of a token.
 	 * @throws PushTargetGoneError for a token FCM no longer knows.
 	 * @throws Error carrying FCM's error code for any other refusal, or the network error.
 	 * @throws Error naming the deadline when `timeout` passes before FCM answers, the `TimeoutError` of
 	 * `@novastarter/utils` as the cause; the request itself runs on, since the SDK call cannot be told to stop.
 	 */
 	async send(message: PushMessage): Promise<PushResult> {
-		// 1. A subscription cannot be delivered here; `sendPush()` routes by platform, but a direct caller may not
+		// `sendPush()` routes by platform, but a direct caller may not
 		if (!message.token) {
-			throw new Error('The fcm push driver needs a token; a subscription belongs to the webpush driver');
+			throw new InvalidPayloadError({
+				reason: 'The fcm push driver needs a token; a subscription belongs to the webpush driver',
+			});
 		}
 
-		// 2. The SDK answers the message name on success and throws a coded error otherwise. It takes no timeout, so
-		//    the deadline is raced here: a stalled request would otherwise sit out the HTTP client's minutes-long
-		//    limits, and a queue job around the send with it. The request itself runs on past the deadline — the SDK
-		//    call cannot be told to stop
+		// The SDK answers the message name on success and throws a coded error otherwise. It takes no timeout, so the
+		// deadline is raced here: a stalled request would otherwise sit out the HTTP client's minutes-long limits, and a
+		// queue job around the send with it. The request itself runs on past the deadline, as the SDK call cannot be told
+		// to stop
 		try {
 			const request = this.messaging.send(toFcmMessage(message, this.config));
 
@@ -213,7 +217,7 @@ export class PushDriverFcm implements PushDriver {
 	 * @throws Error when Google refuses the service account.
 	 */
 	async verify(): Promise<void> {
-		// 1. The token request is what every send does first; refused here means refused on every push
+		// The token request is what every send does first; refused here means refused on every push
 		try {
 			await this.credential.getAccessToken();
 		} catch (error) {
@@ -260,8 +264,7 @@ export class PushDriverFcm implements PushDriver {
 		params?: Record<string, unknown>,
 		options?: CallOptions,
 	): Promise<CallResponse<T>> {
-		// 1. The shared request does it all: placeholders, the host check before a token is fetched — so a refused URL
-		//    never uses the credentials — the token and the request under one deadline, and the kit's errors
+		// The host check runs before a token is fetched, so a refused URL never uses the credentials
 		return request<T>(this.api, method, params, options);
 	}
 
@@ -269,7 +272,7 @@ export class PushDriverFcm implements PushDriver {
 	 * Release the Firebase app — its HTTP agents keep the process alive otherwise.
 	 */
 	async close(): Promise<void> {
-		// 1. The app is always ours; deleting it releases its agents
+		// The app is always ours; deleting it releases its agents
 		await deleteApp(this.app);
 	}
 }

@@ -35,20 +35,20 @@ export const getDependencyReleaseLine: ChangelogFunctions['getDependencyReleaseL
 // deployment inputs are read here, once, and passed into `run` as plain arguments
 process.on('beforeExit', async () => {
 	try {
-		// 1. The event loop only drains once `changesets` has written every version, so the notes are complete now
+		// The event loop only drains once `changesets` has written every version, so the notes are complete now
 		await run(changesets, {
 			githubOutput: process.env['GITHUB_OUTPUT'],
 			forcedVersion: process.env['NOVASTARTER_VERSION'],
 			workspaceRoot: process.cwd(),
 		});
 	} catch (error) {
-		// 2. A rejection inside `beforeExit` is unhandled and would kill the process without a useful message, so
-		//    the error is printed and remembered as the exit code
+		// A rejection inside `beforeExit` is unhandled and would kill the process without a useful message, so
+		// the error is printed and remembered as the exit code
 		// eslint-disable-next-line no-console
 		console.error(error);
 		process.exitCode = 1;
 	} finally {
-		// 3. The work above queued new tasks, so Node would emit `beforeExit` again and print the notes twice
+		// The work above queued new tasks, so Node would emit `beforeExit` again and print the notes twice
 		process.exit();
 	}
 });
@@ -95,22 +95,19 @@ export interface RunOptions {
  * ```
  */
 export async function run(changesets: Changesets, options: RunOptions): Promise<void> {
-	// 1. Read the versions `changesets` wrote and clean up its changelog files
 	const { mainVersion, isPrerelease, prereleaseId, packageVersions } = await processPackages({
 		forcedVersion: options.forcedVersion,
 		workspaceRoot: options.workspaceRoot,
 	});
 
-	// 2. Group the collected changesets into release notes sections
 	const { types, untypedPackages, notices } = await getInfo(changesets);
 
-	// 3. Warn instead of failing, so an empty release still prints its notes and the workflow carries on
+	// Warn instead of failing, so an empty release still prints its notes and the workflow carries on
 	if (types.length === 0 && untypedPackages.length === 0 && packageVersions.length === 0) {
 		// eslint-disable-next-line no-console
 		console.warn('WARN: No processable changesets found');
 	}
 
-	// 4. Print the notes with a headline; the version is left out when no main version is known
 	const markdown = generateMarkdown(notices, types, untypedPackages, packageVersions);
 
 	const divider = '==============================================================';
@@ -118,13 +115,13 @@ export async function run(changesets: Changesets, options: RunOptions): Promise<
 	// eslint-disable-next-line no-console
 	console.log(`${divider}\n${headline}\n${divider}\n${markdown}\n${divider}`);
 
-	// 5. Inside a GitHub workflow, expose the results as step outputs; the notes span lines, hence the heredoc form
+	// The notes span several lines, so the step outputs use the heredoc form
 	if (options.githubOutput) {
-		// 6. Summaries are arbitrary contributor markdown and a line equal to the delimiter would end the heredoc
-		//    early, spilling the rest into step outputs, so the delimiter is random per run and cannot be forged in
-		//    advance. Nothing is percent-escaped: GitHub only unescapes `%0A`/`%0D`/`%25` for single-line values,
-		//    so escaping would corrupt the notes, and the single-line values are semver-validated and hold no
-		//    characters that need escaping
+		// Summaries are arbitrary contributor markdown and a line equal to the delimiter would end the heredoc
+		// early, spilling the rest into step outputs, so the delimiter is random per run and cannot be forged in
+		// advance. Nothing is percent-escaped: GitHub only unescapes `%0A`/`%0D`/`%25` for single-line values,
+		// so escaping would corrupt the notes, and the single-line values are semver-validated and hold no
+		// characters that need escaping
 		const delimiter = `EOF_RELEASE_NOTES_${randomBytes(8).toString('hex')}`;
 
 		const outputs = [

@@ -13,7 +13,7 @@
  * ```
  */
 export const isPhoneNumber = (value: string): boolean => {
-	// 1. E.164 caps a number at 15 digits including the country code, which never starts with 0
+	// E.164 caps a number at 15 digits including the country code, which never starts with 0.
 	return /^\+[1-9]\d{1,14}$/.test(value);
 };
 
@@ -36,9 +36,9 @@ export const isPhoneNumber = (value: string): boolean => {
  * ```
  */
 export const normalizePhoneNumber = (value: string): string => {
-	// 1. Separators carry no information; only the digits and a leading `+` do
+	// Separators carry no information.
 	const compact = value.trim().replace(/[\s().-]/g, '');
 
-	// 2. `00` is the international prefix of most countries; `+` is what E.164 and every provider expect instead
+	// `00` is the international prefix of most countries; `+` is what E.164 and every provider expect instead.
 	return compact.startsWith('00') ? `+${compact.slice(2)}` : compact;
 };

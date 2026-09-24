@@ -8,18 +8,18 @@
  * edge runtime, which boots nothing.
  */
 export const register = async (): Promise<void> => {
-	// 1. The hook is called for every runtime Next.js builds; the kit belongs to the Node.js one alone
+	// The hook is called for every runtime Next.js builds; the kit belongs to the Node.js one alone
 	if (process.env['NEXT_RUNTIME'] !== 'nodejs') {
 		return;
 	}
 
-	// 2. Load and run the bootstrap only now, keeping the import out of the edge and client bundles
+	// Load and run the bootstrap only now, keeping the import out of the edge and client bundles
 	// eslint-disable-next-line no-restricted-syntax -- keeps Node-only code out of the edge bundle
 	const { bootstrap } = await import('./bootstrap');
 	const env = bootstrap();
 
-	// 3. With `DATABASE_MIGRATE` the pending migrations run before the first request; a failure fails the start. The
-	//    import stays dynamic for the same reason as above
+	// With `DATABASE_MIGRATE` the pending migrations run before the first request; a failure fails the start. The
+	// import stays dynamic for the same reason as above
 	if (env.DATABASE_MIGRATE) {
 		// eslint-disable-next-line no-restricted-syntax -- keeps Node-only code out of the edge bundle
 		const { migrateDatabase } = await import('./db/migrate');

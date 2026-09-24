@@ -13,7 +13,7 @@ import { useDb, users } from '../db';
  * no such account.
  */
 export const findUser: AuthDriverCredentialsConfig['findUser'] = async (identifier) => {
-	// 1. One row by the unique address; the driver spends the same time on a miss, so no timing tells them apart
+	// One row by the unique address; the driver spends the same time on a miss, so no timing tells them apart
 	const [user] = await useDb()
 		.select({ id: users.id, passwordHash: users.passwordHash })
 		.from(users)
@@ -31,7 +31,7 @@ export const findUser: AuthDriverCredentialsConfig['findUser'] = async (identifi
  * @returns Once it is stored.
  */
 export const saveRehash: NonNullable<AuthDriverCredentialsConfig['onRehash']> = async (id, hash) => {
-	// 1. The id travels as a string through the auth package; the column is an integer
+	// The id travels as a string through the auth package; the column is an integer
 	await useDb()
 		.update(users)
 		.set({ passwordHash: hash })

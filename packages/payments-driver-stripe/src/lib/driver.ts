@@ -1,4 +1,9 @@
-import { InvalidCredentialsError, InvalidPayloadError, toProviderCallError } from '@novastarter/errors';
+import {
+	InvalidConfigError,
+	InvalidCredentialsError,
+	InvalidPayloadError,
+	toProviderCallError,
+} from '@novastarter/errors';
 import {
 	type CallOptions,
 	type CallResponse,
@@ -154,20 +159,20 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 * Create a driver from its location options.
 	 *
 	 * @param config - Secret key and webhook secret.
-	 * @throws Error without either — a deployment that cannot verify webhooks would drift from Stripe silently.
+	 * @throws InvalidConfigError without either — a deployment that cannot verify webhooks would drift from Stripe silently.
 	 */
 	constructor(config: PaymentsDriverStripeConfig) {
-		// 1. Fail at registration for the two values nothing works without, rather than on the first request
+		// Fail at registration for the two values nothing works without, rather than on the first request.
 		if (!config.secretKey) {
-			throw new Error('The stripe payments driver needs a "secretKey"');
+			throw new InvalidConfigError({ reason: 'The stripe payments driver needs a "secretKey"' });
 		}
 
 		if (!config.webhookSecret) {
-			throw new Error('The stripe payments driver needs a "webhookSecret"');
+			throw new InvalidConfigError({ reason: 'The stripe payments driver needs a "webhookSecret"' });
 		}
 
-		// 2. The SDK pins the API version it was built for; the application's `appInfo`, when given, shows up in
-		//    Stripe's request logs
+		// The SDK pins the API version it was built for; the application's `appInfo`, when given, shows up in Stripe's
+		// request logs.
 		this.client =
 			config.client ??
 			new Stripe(config.secretKey, { ...(config.appInfo !== undefined ? { appInfo: config.appInfo } : {}) });
@@ -184,14 +189,14 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 * @throws Stripe's `StripeError` when the request is refused or Stripe cannot be reached.
 	 */
 	async createCustomer(input: CreateCustomerInput): Promise<PaymentsCustomer> {
-		// 1. Optional fields are only sent when given, so Stripe keeps its defaults otherwise
+		// Optional fields are only sent when given, so Stripe keeps its defaults otherwise.
 		const customer = await this.client.customers.create({
 			email: input.email,
 			...(input.name !== undefined ? { name: input.name } : {}),
 			...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
 		});
 
-		// 2. Stripe may answer without an email for a customer made by another channel; the input's stands in
+		// Stripe may answer without an email for a customer made by another channel; the input's stands in.
 		return {
 			id: customer.id,
 			email: customer.email ?? input.email,
@@ -213,7 +218,6 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 * @throws Error when Stripe answers a session without a URL — a session made for an embedded UI, not a redirect.
 	 */
 	async createCheckoutSession(input: CreateCheckoutSessionInput): Promise<CheckoutSession> {
-		// 1. Subscription mode with one line item: the plan's price, times its seats
 		const session = await this.client.checkout.sessions.create({
 			mode: 'subscription',
 			customer: input.customerId,
@@ -228,7 +232,7 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 			},
 		});
 
-		// 2. A session without a URL cannot be redirected to; the kit only does hosted checkouts
+		// A session without a URL cannot be redirected to, and the kit only does hosted checkouts.
 		if (!session.url) {
 			throw new Error(`Stripe checkout session "${session.id}" has no URL to redirect to`);
 		}
@@ -244,7 +248,6 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 * @throws Stripe's `StripeError` when the request is refused — an unknown customer — or Stripe cannot be reached.
 	 */
 	async createPortalSession(input: CreatePortalSessionInput): Promise<PortalSession> {
-		// 1. A portal session is short-lived; the URL is all the caller needs
 		const session = await this.client.billingPortal.sessions.create({
 			customer: input.customerId,
 			return_url: input.returnUrl,
@@ -261,7 +264,7 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 * @throws Stripe's `StripeError` when there is no such subscription or Stripe cannot be reached.
 	 */
 	async getSubscription(subscriptionId: string): Promise<Subscription> {
-		// 1. The default expansion carries the items with their prices, which is all the mapping reads
+		// The default expansion carries the items with their prices, which is all the mapping reads.
 		return toSubscription(await this.client.subscriptions.retrieve(subscriptionId));
 	}
 
@@ -277,21 +280,20 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 *
 	 * @param input - Subscription, new price and/or seats, proration.
 	 * @returns The subscription after the change.
-	 * @throws Error when neither a price nor a seat count is given.
+	 * @throws InvalidPayloadError when neither a price nor a seat count is given.
 	 * @throws Error when the change's payment failed and the change waits in Stripe's `pending_update`.
 	 * @throws Stripe's `StripeError` when the request is refused — no such subscription, an unknown price — or Stripe
 	 * cannot be reached.
 	 * @throws Error for a subscription without items.
 	 */
 	async updateSubscription(input: UpdateSubscriptionInput): Promise<Subscription> {
-		// 1. An update with nothing to change is a caller's mistake, not a request to send
 		if (input.priceId === undefined && input.quantity === undefined) {
-			throw new Error(
-				`Nothing to update on Stripe subscription "${input.subscriptionId}": give a priceId or a quantity`,
-			);
+			throw new InvalidPayloadError({
+				reason: `Nothing to update on Stripe subscription "${input.subscriptionId}": give a priceId or a quantity`,
+			});
 		}
 
-		// 2. The item is what carries price and quantity; there is one per subscription in the kit's model
+		// The item is what carries price and quantity; there is one per subscription in the kit's model.
 		const current = await this.client.subscriptions.retrieve(input.subscriptionId);
 		const item = current.items.data[0];
 
@@ -299,9 +301,8 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 			throw new Error(`Stripe subscription "${input.subscriptionId}" has no items`);
 		}
 
-		// 3. One update carries both changes; Stripe prorates the way the caller chose, `prorate` unless told. A change
-		//    that needs a payment waits in `pending_update` until it is paid, so a declined card never leaves the
-		//    subscription on a price nobody paid for
+		// A change that needs a payment waits in `pending_update` until it is paid, so a declined card never leaves the
+		// subscription on a price nobody paid for.
 		const updated = await this.client.subscriptions.update(input.subscriptionId, {
 			items: [
 				{
@@ -314,8 +315,8 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 			payment_behavior: 'pending_if_incomplete',
 		});
 
-		// 4. A pending update means the payment failed and nothing changed; answering the old subscription would read
-		//    as success, so the caller is told, with the invoice that would still apply the change once paid
+		// A pending update means the payment failed and nothing changed. Answering the old subscription would read as
+		// success, so the caller is told, with the invoice that would still apply the change once paid.
 		if (updated.pending_update) {
 			const invoiceId = idOf(updated.latest_invoice);
 
@@ -325,7 +326,6 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 			);
 		}
 
-		// 5. Without a pending update the change is applied, and the answer is the subscription after it
 		return toSubscription(updated);
 	}
 
@@ -337,10 +337,9 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 * @throws Stripe's `StripeError` when there is no such subscription or Stripe cannot be reached.
 	 */
 	async cancelSubscription(input: CancelSubscriptionInput): Promise<Subscription> {
-		// 1. The reason is recorded on Stripe's side either way, as the cancellation's comment
+		// The reason is recorded on Stripe's side either way, as the cancellation's comment.
 		const details = input.reason !== undefined ? { cancellation_details: { comment: input.reason } } : {};
 
-		// 2. Right away is a `cancel`; at period end is an update that flags the subscription
 		const subscription = input.immediately
 			? await this.client.subscriptions.cancel(input.subscriptionId, details)
 			: await this.client.subscriptions.update(input.subscriptionId, { cancel_at_period_end: true, ...details });
@@ -356,11 +355,11 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 * @throws Stripe's `StripeError` when the request is refused or Stripe cannot be reached.
 	 */
 	async listInvoices(input: ListInvoicesInput): Promise<Invoice[]> {
-		// 1. Twenty invoices are asked for unless the caller names a limit: the kit's default across providers, where
-		//    leaving it to Stripe would silently page at its own default of ten
+		// Twenty is the kit's default across providers; leaving it to Stripe would silently page at its own default of
+		// ten.
 		const limit = input.limit ?? 20;
 
-		// 2. Stripe lists most recent first already; the limit is passed on every call
+		// Stripe lists most recent first already.
 		const invoices = await this.client.invoices.list({
 			customer: input.customerId,
 			limit,
@@ -380,15 +379,15 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 * @throws InvalidCredentialsError when the signature does not verify, or the timestamp is outside the tolerance.
 	 */
 	async parseWebhook(rawBody: string, headers: WebhookHeaders): Promise<PaymentsEvent | null> {
-		// 1. Without a signature header there is nothing to verify against; the delivery is malformed, not forged
+		// Without a signature header there is nothing to verify against; the delivery is malformed, not forged.
 		const signature = headers[SIGNATURE_HEADER];
 
 		if (!signature) {
 			throw new InvalidPayloadError({ reason: `The delivery carries no ${SIGNATURE_HEADER} header` });
 		}
 
-		// 2. The SDK verifies the signature and the timestamp, then parses the body — in that order. It types the result
-		//    as an event but checks no shape, so it is held as unknown until the shape is checked here
+		// The SDK verifies the signature and the timestamp, then parses the body. It types the result as an event but
+		// checks no shape, so it is held as unknown until the shape is checked here.
 		let event: unknown;
 
 		try {
@@ -399,8 +398,8 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 				this.webhookTolerance,
 			);
 		} catch (error) {
-			// 3. A signature that does not match, or a stale timestamp, is a credentials problem; anything else is
-			//    Stripe failing to read the body
+			// A signature that does not match, or a stale timestamp, is a credentials problem; anything else is Stripe
+			// failing to read the body.
 			if (error instanceof Stripe.errors.StripeSignatureVerificationError) {
 				throw new InvalidCredentialsError();
 			}
@@ -408,13 +407,12 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 			throw new InvalidPayloadError({ reason: error instanceof Error ? error.message : 'Unreadable Stripe event' });
 		}
 
-		// 4. A signed body that parses but is not an event is the sender's problem: refused as such, rather than
-		//    dropped as an event of no interest, which would acknowledge it and log nothing
+		// A signed body that parses but is not an event is refused rather than dropped as an event of no interest,
+		// which would acknowledge it and log nothing.
 		if (!isStripeEvent(event)) {
 			throw new InvalidPayloadError({ reason: 'The body is not a Stripe event' });
 		}
 
-		// 5. The mapping decides which Stripe events the kit acts on
 		return toEvent(event);
 	}
 
@@ -456,13 +454,12 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 		params?: Record<string, unknown>,
 		options: CallOptions = {},
 	): Promise<CallResponse<T>> {
-		// 1. The verb and the target, its `{name}` placeholders filled from the parameters, which are then not sent
-		//    again; a full URL only on Stripe's own hosts, so the key never travels anywhere else
+		// A full URL is allowed only on Stripe's own hosts, so the key never travels anywhere else.
 		const { verb, target, params: rest } = parseCallMethod(method, params);
 		const { path, apiBase } = toStripeTarget(target);
 
-		// 2. Stripe takes a body on POST only, and the raw request sends no multipart one: both refused here, with the
-		//    reason, rather than as the SDK's hint or as a file sent as the text `[object File]`
+		// Stripe takes a body on POST only, and the raw request sends no multipart one: both are refused here, with the
+		// reason, rather than as the SDK's hint or as a file sent as the text `[object File]`.
 		const defined = Object.fromEntries(Object.entries(rest).filter(([, value]) => value !== undefined));
 		const hasParams = Object.keys(defined).length > 0;
 
@@ -474,15 +471,14 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 			throw new Error('Stripe call() sends no file; upload it with the client: `client.files.create()`');
 		}
 
-		// 3. The other verbs carry their parameters in the path's query, in the notation Stripe reads
 		const inQuery = verb !== 'POST';
 		const query = inQuery && hasParams ? toStripeQuery(defined) : '';
 		const fullPath = query ? `${path}${path.includes('?') ? '&' : '?'}${query}` : path;
 
-		// 4. The SDK's own timeout closes the socket; the deadline around it and the caller's signal make sure the
-		//    caller gets a TimeoutError or the abort reason — and an already aborted signal sends nothing. The SDK's
-		//    network retries are off: one would outlive the deadline and could apply a POST after the caller was
-		//    told it failed. Neither the deadline nor the signal cancels a request Stripe already has
+		// The SDK's own timeout closes the socket; the deadline around it and the caller's signal make sure the caller
+		// gets a TimeoutError or the abort reason, and an already aborted signal sends nothing. The SDK's network
+		// retries are off: one would outlive the deadline and could apply a POST after the caller was told it failed.
+		// Neither the deadline nor the signal cancels a request Stripe already has.
 		const timeout = options.timeout ?? DEFAULT_REQUEST_TIMEOUT;
 
 		const requestOptions: Stripe.RawRequestOptions = {
@@ -499,8 +495,8 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 				options.signal ? { signal: options.signal } : {},
 			);
 
-			// 5. The SDK hangs the raw response on the answer, out of its enumerable keys: `statusCode` and a record
-			//    from Node's client, `status` and `Headers` from the fetch one
+			// The SDK hangs the raw response on the answer, out of its enumerable keys: `statusCode` and a record from
+			// Node's client, `status` and `Headers` from the fetch one.
 			const last = (answer as { lastResponse?: StripeRawResponse } | null)?.lastResponse;
 
 			return {
@@ -509,8 +505,8 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 				data: answer as T,
 			};
 		} catch (error) {
-			// 6. An answer with a status is Stripe refusing: the kit's error, Stripe's own as the cause. No status —
-			//    a connection failure, a timeout — goes on as it is
+			// An answer with a status is Stripe refusing. Without a status (a connection failure, a timeout) the error
+			// goes on as it is.
 			if (error instanceof Stripe.errors.StripeError && typeof error.statusCode === 'number') {
 				throw toProviderCallError({
 					provider: 'stripe',
@@ -532,7 +528,7 @@ export class PaymentsDriverStripe implements PaymentsDriver {
 	 * @throws Stripe's authentication error when it does not.
 	 */
 	async verify(): Promise<void> {
-		// 1. One customer is the smallest authenticated read; an invalid key fails here with Stripe's own error
+		// The smallest authenticated read; an invalid key fails here with Stripe's own error.
 		await this.client.customers.list({ limit: 1 });
 	}
 }
@@ -563,24 +559,23 @@ interface StripeRawResponse {
  * @internal
  */
 const toStripeTarget = (target: string): { path: string; apiBase?: Stripe.RawRequestOptions['apiBase'] } => {
-	// 1. A placeholder no parameter filled would reach Stripe as `%7Bname%7D`: refused before any request
+	// A placeholder no parameter filled would reach Stripe as `%7Bname%7D`.
 	const unfilled = /\{([A-Za-z_][\w-]*)\}/.exec(target);
 
 	if (unfilled) {
-		throw new Error(`The call path needs a "${unfilled[1]}" parameter for its {${unfilled[1]}} placeholder`);
+		throw new Error(`The Stripe call path needs a "${unfilled[1]}" parameter for its {${unfilled[1]}} placeholder`);
 	}
 
-	// 2. A path goes to the client's host as it is
 	if (target.startsWith('/')) {
 		return { path: target };
 	}
 
-	// 3. A full URL only over https and on a host the SDK knows a base for; the key would leak to any other
+	// The key would leak to any host the SDK knows no base for.
 	const url = new URL(target);
 	const apiBase = Object.hasOwn(STRIPE_CALL_HOSTS, url.host) ? STRIPE_CALL_HOSTS[url.host] : undefined;
 
 	if (url.protocol !== 'https:' || apiBase === undefined) {
-		throw new Error(`The call URL is not on a host of this provider: ${url.host}`);
+		throw new Error(`The Stripe call URL is not on a Stripe host: ${url.host}`);
 	}
 
 	return { path: `${url.pathname}${url.search}`, apiBase };
@@ -595,7 +590,6 @@ const toStripeTarget = (target: string): { path: string; apiBase?: Stripe.RawReq
  * @internal
  */
 const hasFile = (params: Record<string, unknown>): boolean => {
-	// 1. A parameter itself, or an item of a list
 	return Object.values(params).some(
 		(value) => value instanceof Blob || (Array.isArray(value) && value.some((item) => item instanceof Blob)),
 	);
@@ -621,7 +615,7 @@ const toStripeQuery = (params: Record<string, unknown>): string => {
 	 * @param value - The value under it.
 	 */
 	const append = (key: string, value: unknown): void => {
-		// 1. Nothing for a value that was not given; a list by index and an object by key, the way the SDK does
+		// A list goes by index and an object by key, the way the SDK does.
 		if (value === undefined || value === null) return;
 
 		if (Array.isArray(value)) {
@@ -635,7 +629,7 @@ const toStripeQuery = (params: Record<string, unknown>): string => {
 		}
 	};
 
-	// 1. Every top-level parameter, then brackets kept readable, as Stripe accepts both forms
+	// Brackets are kept readable, as Stripe accepts both forms.
 	for (const [key, value] of Object.entries(params)) append(key, value);
 
 	return search.toString().replace(/%5B/g, '[').replace(/%5D/g, ']');
@@ -649,7 +643,7 @@ const toStripeQuery = (params: Record<string, unknown>): string => {
  * @internal
  */
 const toStripeErrorBody = (raw: unknown): unknown => {
-	// 1. The SDK copies the response's headers, status and request id onto the error; they are not Stripe's answer
+	// The SDK copies the response's headers, status and request id onto the error; they are not Stripe's answer.
 	if (typeof raw !== 'object' || raw === null) return raw;
 
 	const {
@@ -673,10 +667,10 @@ const toStripeErrorBody = (raw: unknown): unknown => {
  * @returns `true` for an event-shaped value.
  */
 const isStripeEvent = (event: unknown): event is Stripe.Event => {
-	// 1. JSON parses to any value; only an object can be an event
+	// JSON parses to any value; only an object can be an event.
 	if (typeof event !== 'object' || event === null) return false;
 
-	// 2. The id keys the idempotency guard, the type picks the mapping, the object is what the mapping reads
+	// The id keys the idempotency guard, the type picks the mapping, the object is what the mapping reads.
 	const { id, type, data } = event as { id?: unknown; type?: unknown; data?: { object?: unknown } | null };
 
 	return (

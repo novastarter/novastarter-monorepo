@@ -10,6 +10,6 @@
 export const toMetadata = (
 	metadata: Record<string, string | number | boolean> | null | undefined,
 ): Record<string, string> => {
-	// 1. Polar answers `null` for no metadata; an empty object keeps the kit's shapes free of nullable metadata
+	// Polar answers `null` for no metadata; an empty object keeps the kit's shapes free of nullable metadata
 	return Object.fromEntries(Object.entries(metadata ?? {}).map(([key, value]) => [key, String(value)]));
 };

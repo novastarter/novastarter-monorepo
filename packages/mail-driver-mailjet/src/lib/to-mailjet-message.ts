@@ -1,3 +1,4 @@
+import { InvalidPayloadError } from '@novastarter/errors';
 import {
 	type MailAddress,
 	type MailAttachment,
@@ -27,7 +28,7 @@ export const MAILJET_CUSTOM_ID_MAX_LENGTH = 255;
  * @returns `{ Email, Name? }`.
  */
 export const toMailjetAddress = (address: MailAddress): { Email: string; Name?: string } => {
-	// 1. The object APIs take name and address apart, so a display-name string is parsed, not flattened to the address
+	// The object APIs take name and address apart, so a display-name string is parsed, not flattened to the address
 	const parsed = parseMailAddress(address);
 
 	return { Email: parsed.address, ...(parsed.name !== undefined ? { Name: parsed.name } : {}) };
@@ -38,13 +39,13 @@ export const toMailjetAddress = (address: MailAddress): { Email: string; Name?: 
  *
  * @param attachment - Ours.
  * @returns Mailjet's, with `ContentID` when inline.
- * @throws Error when the attachment has neither content nor a path to read.
+ * @throws InvalidPayloadError when the attachment has neither content nor a path to read.
  */
 export const toMailjetAttachment = async (attachment: MailAttachment): Promise<MailjetAttachment> => {
-	// 1. Mailjet wants base64 in the request and a content type on every attachment
+	// Mailjet wants base64 in the request and a content type on every attachment
 	const content = await readAttachment(attachment);
 
-	// 2. The content id marks the attachment as inline; `toMailjetMessage` sorts on it
+	// The content id marks the attachment as inline; `toMailjetMessage` sorts on it
 	return {
 		ContentType: attachment.contentType ?? 'application/octet-stream',
 		Filename: attachment.filename,
@@ -61,24 +62,24 @@ export const toMailjetAttachment = async (attachment: MailAttachment): Promise<M
  *
  * @param message - Ours, with `from` set (`sendMail()` fills it in).
  * @returns Mailjet's.
- * @throws Error when `from` is missing — Mailjet requires it.
+ * @throws InvalidPayloadError when `from` is missing — Mailjet requires it.
  */
 export const toMailjetMessage = async (message: MailMessage): Promise<SendEmailV3_1.Message> => {
-	// 1. The API refuses a message without a sender; say so before the request goes out
+	// The API refuses a message without a sender, so it is refused before the request goes out
 	if (!message.from) {
-		throw new Error('Mailjet needs a "from" address');
+		throw new InvalidPayloadError({ reason: 'Mailjet needs a "from" address' });
 	}
 
-	// 2. Attachments are read in parallel, then inline ones (with a content id) go to their own list on Mailjet
+	// Mailjet keeps inline attachments (those with a content id) in a list of their own
 	const attachments = await Promise.all((message.attachments ?? []).map(toMailjetAttachment));
 	const inline = attachments.filter((attachment) => attachment.ContentID !== undefined);
 	const regular = attachments.filter((attachment) => attachment.ContentID === undefined);
 
-	// 3. The tags ride in `CustomID` for Mailjet's statistics, cut to the limit — a longer value would fail the whole
-	//    request, and a tag must never be the reason a send fails
+	// `CustomID` is cut to the limit: a longer value would fail the whole request, and a tag must never be the reason a
+	// send fails
 	const customId = (message.tags ?? []).join(',').slice(0, MAILJET_CUSTOM_ID_MAX_LENGTH);
 
-	// 4. Optional fields are only set when present, so the request carries no `undefined` keys
+	// Optional fields are only set when present, so the request carries no `undefined` keys
 	return {
 		From: toMailjetAddress(message.from),
 		To: toMailAddressList(message.to).map(toMailjetAddress),

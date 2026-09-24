@@ -54,15 +54,15 @@ export class LimiterDriverRedis implements LimiterDriver {
 	 * Create the limiter on top of an existing Redis connection.
 	 *
 	 * @param config - Redis configuration.
-	 * @throws `RangeError` when `duration` is not a whole number of seconds of at least 1, or `points` is not a whole
+	 * @throws `InvalidConfigError` when `duration` is not a whole number of seconds of at least 1, or `points` is not a whole
 	 * number of at least 0.
 	 */
 	constructor(config: LimiterDriverRedisConfig) {
-		// 1. The library floors the window to whole seconds for Redis' `EX`, and a window of zero seconds sets no expiry
-		//    at all: a key would stay over budget for good. Refused here, before the first key is written
+		// The library floors the window to whole seconds for Redis' `EX`, and a window of zero seconds sets no expiry
+		// at all: a key would stay over budget for good. Refused here, before the first key is written
 		assertBudget('LimiterDriverRedis', config);
 
-		// 2. The namespace becomes the library's key prefix, keeping limiter keys apart from other data in Redis
+		// The namespace becomes the library's key prefix, keeping limiter keys apart from other data in Redis
 		this.limiter = new RateLimiterRedis({
 			storeClient: config.redis,
 			keyPrefix: config.namespace,
@@ -80,7 +80,7 @@ export class LimiterDriverRedis implements LimiterDriver {
 	 * @throws `HitRateLimitError` when the key has no points left in the current window.
 	 */
 	async consume(key: string): Promise<void> {
-		// 1. The shared handler translates the library's rejection into a `HitRateLimitError`
+		// The shared handler translates the library's rejection into a `HitRateLimitError`
 		return await consume(this.limiter, key, this.points);
 	}
 
@@ -90,7 +90,7 @@ export class LimiterDriverRedis implements LimiterDriver {
 	 * @param key - IP address, URL path or any other string identifying the caller.
 	 */
 	async delete(key: string): Promise<void> {
-		// 1. The key lives under the library's prefix in Redis, so only the library can address it
+		// The key lives under the library's prefix in Redis, so only the library can address it
 		await this.limiter.delete(key);
 	}
 }

@@ -12,7 +12,7 @@ import { uint8ArrayToString } from './uint8array-to-string.js';
  * @returns UTF-8 bytes of the JSON text.
  */
 export const serialize = (val: unknown): Uint8Array => {
-	// 1. JSON keeps the stored form portable between local memory, Redis and other processes
+	// JSON keeps the stored form portable between local memory, Redis and other processes
 	const valueString = JSON.stringify(val);
 
 	return stringToUint8Array(valueString);
@@ -27,13 +27,13 @@ export const serialize = (val: unknown): Uint8Array => {
  * @throws `SyntaxError` when the bytes are not valid JSON.
  */
 export const deserialize = <T = unknown>(val: Uint8Array): T => {
-	// 1. Treat an empty payload as "no value": Redis can hand back an empty reply during disconnects or shutdowns,
-	//    and throwing on it would turn a race into a crash
+	// Redis can hand back an empty reply during disconnects or shutdowns, and throwing on it would turn a race into a
+	// crash
 	if (val.length === 0) {
 		return undefined as T;
 	}
 
-	// 2. Parse with the prototype-safe parser, since the bytes may come from a shared Redis instance
+	// The bytes may come from a shared Redis instance, hence the prototype-safe parser
 	const valueString = uint8ArrayToString(val);
 
 	return <T>parseJSON(valueString);

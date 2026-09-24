@@ -12,6 +12,6 @@ import { extname } from 'node:path';
  * ```
  */
 export const getFileExtension = (path: string): string => {
-	// 1. Lowercase so `.JSON` and `.json` pick the same reader; drop the dot `extname` keeps
+	// Lower-cased so `.JSON` and `.json` pick the same reader; `extname` keeps the dot, so it is dropped
 	return extname(path).toLowerCase().substring(1);
 };

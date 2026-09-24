@@ -21,13 +21,13 @@ describe('DatabaseDriverSqlite in memory', () => {
 	beforeAll(async () => {
 		driver = new DatabaseDriverSqlite({ file: MEMORY_FILE, logger: logger as never });
 
-		// 1. The fixture table the statements below write is made here, not by the migration: every test must pass run
-		//    alone, under `vitest -t` as well as whole-file
+		// The fixture table the statements below write is made here, not by the migration: every test must pass run
+		// alone, under `vitest -t` as well as whole-file
 		driver.db.run(
 			sql`CREATE TABLE IF NOT EXISTS notes ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "text" text NOT NULL)`,
 		);
 
-		// 2. A drizzle-kit folder of one migration, in the layout `drizzle-kit generate` writes
+		// A drizzle-kit folder of one migration, in the layout `drizzle-kit generate` writes
 		migrationsFolder = await mkdtemp(join(tmpdir(), 'novastarter-migrations-'));
 		await mkdir(join(migrationsFolder, 'meta'));
 
@@ -40,7 +40,7 @@ describe('DatabaseDriverSqlite in memory', () => {
 			}),
 		);
 
-		// 3. The migration itself: a probe table nothing reads — the migrator running it and journaling it is the point
+		// A probe table nothing reads: the migrator running it and journaling it is the point
 		await writeFile(
 			join(migrationsFolder, '0000_init.sql'),
 			'CREATE TABLE "probe" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL);',
@@ -48,8 +48,8 @@ describe('DatabaseDriverSqlite in memory', () => {
 	});
 
 	afterAll(async () => {
-		// 1. A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
-		//    real failure stays the one reported
+		// A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
+		// real failure stays the one reported
 		if (driver) {
 			await driver.close();
 		}
@@ -64,7 +64,7 @@ describe('DatabaseDriverSqlite in memory', () => {
 	});
 
 	test('The pragmas took: foreign keys on, no WAL in memory', () => {
-		// 1. Read back through the handle Drizzle exposes, the way an application would
+		// Read back through the handle Drizzle exposes, the way an application would
 		expect(driver.db.$client.pragma('foreign_keys', { simple: true })).toBe(1);
 		expect(driver.db.$client.pragma('journal_mode', { simple: true })).toBe('memory');
 	});
@@ -74,7 +74,7 @@ describe('DatabaseDriverSqlite in memory', () => {
 
 		expect(driver.db.all(sql`SELECT count(*) AS count FROM __drizzle_migrations`)).toStrictEqual([{ count: 1 }]);
 
-		// 1. A second run finds nothing pending: the same migration is not applied again
+		// A second run finds nothing pending: the same migration is not applied again
 		await driver.migrate({ migrationsFolder });
 
 		expect(driver.db.all(sql`SELECT count(*) AS count FROM __drizzle_migrations`)).toStrictEqual([{ count: 1 }]);
@@ -93,8 +93,8 @@ describe('DatabaseDriverSqlite on a read-only file', () => {
 	let file: string;
 
 	beforeAll(async () => {
-		// 1. A real file, then opened readonly: better-sqlite3 refuses WAL there with SQLITE_READONLY, the case the
-		//    default must not trigger
+		// A real file, then opened readonly: better-sqlite3 refuses WAL there with SQLITE_READONLY, the case the
+		// default must not trigger
 		directory = await mkdtemp(join(tmpdir(), 'novastarter-sqlite-'));
 		file = join(directory, 'readonly.db');
 
@@ -108,7 +108,6 @@ describe('DatabaseDriverSqlite on a read-only file', () => {
 	test('Opens a read-only file without WAL', async () => {
 		const driver = new DatabaseDriverSqlite({ file, options: { readonly: true }, logger: logger as never });
 
-		// 1. Read back through the handle Drizzle exposes: the journal is SQLite's default, not WAL
 		expect(driver.db.$client.pragma('journal_mode', { simple: true })).toBe('delete');
 		await expect(driver.ping()).resolves.toBeUndefined();
 
@@ -116,8 +115,8 @@ describe('DatabaseDriverSqlite on a read-only file', () => {
 	});
 
 	test("An explicit WAL on a read-only file raises SQLite's own error", () => {
-		// 1. The driver does what it is told, and SQLite refuses; the handle is closed, so the failure leaves nothing
-		//    behind. The error is better-sqlite3's own — the code is SQLite's, the message human-readable
+		// The driver does what it is told, and SQLite refuses; the handle is closed, so the failure leaves nothing
+		// behind. The error is better-sqlite3's own — the code is SQLite's, the message human-readable
 		let thrown: unknown;
 
 		try {

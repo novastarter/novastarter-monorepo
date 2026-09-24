@@ -37,7 +37,6 @@ describe('exchangeCode', () => {
 			tokens: { accessToken: 'at', tokenType: 'Bearer' },
 		});
 
-		// 1. Every field of an authorization-code grant with PKCE, form-encoded
 		const [url, init] = fetch.mock.calls[0]!;
 
 		expect(url).toBe(TOKEN_URL);
@@ -58,7 +57,7 @@ describe('exchangeCode', () => {
 		vi.useFakeTimers({ toFake: ['Date'] });
 		vi.setSystemTime(1_000_000);
 
-		// 1. Offline access adds the refresh token; the scopes come space-separated
+		// Offline access adds the refresh token; the scopes come space-separated
 		const fetch = answer(200, {
 			access_token: 'ya29.at',
 			refresh_token: '1//rt',
@@ -81,14 +80,12 @@ describe('exchangeCode', () => {
 
 		vi.useRealTimers();
 
-		// 2. An answer with no access token has no tokens to hand on
 		expect(
 			await exchangeCode({ fetch: answer(200, { id_token: 'id.token.2' }), timeout: 1_000 }, params),
 		).toStrictEqual({ idToken: 'id.token.2' });
 	});
 
 	test('Throws a provider failure naming the OAuth error of a refusal', async () => {
-		// 1. A spent or forged code is `invalid_grant`, which the reason carries
 		const fetch = answer(400, { error: 'invalid_grant', error_description: 'Bad Request' });
 		const error = await exchangeCode({ fetch, timeout: 1_000 }, params).catch((thrown: unknown) => thrown);
 
@@ -97,7 +94,7 @@ describe('exchangeCode', () => {
 	});
 
 	test('Throws a provider failure for an answer without an ID token', async () => {
-		// 1. Without `openid` Google sends an access token alone; the identity cannot be read from it
+		// Without `openid` Google sends an access token alone, and the identity cannot be read from it
 		await expect(exchangeCode({ fetch: answer(200, { access_token: 'at' }), timeout: 1_000 }, params)).rejects.toThrow(
 			'The google sign-in failed: the token response carried no id_token',
 		);

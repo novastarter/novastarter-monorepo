@@ -64,18 +64,16 @@ export interface DefineJobOptions<Name extends string, Schema extends z.ZodType>
 export const defineJob = <Name extends string, Schema extends z.ZodType>(
 	definition: DefineJobOptions<Name, Schema>,
 ): JobContract<Name, Schema> => {
-	// 1. Both are needed on their own below — the name for the validation, the schema for the returned contract
 	const { name, schema } = definition;
 
-	// 2. The name is an identifier that ends up in Redis keys, log lines and URLs, so it is kept strict
+	// The name is an identifier that ends up in Redis keys, log lines and URLs, so it is kept strict
 	if (!JOB_NAME_PATTERN.test(name)) {
 		throw new TypeError(`Job name "${name}" must look like <queue>.<action>: lower-case words, one dot`);
 	}
 
-	// 3. The caller's options win over the defaults; a timeout no timer can hold is refused now, since the worker
-	//    would otherwise fail every run of the job with a `RangeError` and retry it for nothing. The contract keeps
-	//    them as `JobOptions` of an unknown payload: `enqueue()` hands `unique` the payload this schema parsed, so the
-	//    typed function never sees anything else
+	// A timeout no timer can hold is refused now, since the worker would otherwise fail every run of the job with a
+	// `RangeError` and retry it for nothing. The contract keeps them as `JobOptions` of an unknown payload: `enqueue()`
+	// hands `unique` the payload this schema parsed, so the typed function never sees anything else
 	const options = { ...DEFAULT_JOB_OPTIONS, ...definition.options } as JobOptions;
 
 	if (options.timeout !== undefined && !(options.timeout >= 0 && options.timeout <= MAX_TIMER_DELAY)) {
@@ -84,7 +82,7 @@ export const defineJob = <Name extends string, Schema extends z.ZodType>(
 		);
 	}
 
-	// 4. The queue is everything before the dot, the action the rest; the pattern guaranteed exactly one dot
+	// The name pattern guarantees exactly one dot
 	const [queue, action] = name.split('.') as [string, string];
 
 	return {
@@ -94,14 +92,14 @@ export const defineJob = <Name extends string, Schema extends z.ZodType>(
 		schema,
 		options,
 		parse: (payload) => {
-			// 1. `safeParse` rather than `parse`, so the issues are reported in the package's own error, not zod's
+			// `safeParse` rather than `parse`, so the issues are reported in the package's own error, not zod's
 			const result = schema.safeParse(payload);
 
 			if (result.success) return result.data;
 
-			// 2. Every issue is reported at once, so a caller fixes the payload in one round. The reason quotes zod's own
-			//    messages — a refinement's text survives, unlike in the `FailedValidationError` extensions of
-			//    `@novastarter/validation`, which ride along as `cause` for a handler that wants to answer the way an API does
+			// Every issue is reported at once, so a caller fixes the payload in one round. The reason quotes zod's own
+			// messages — a refinement's text survives, unlike in the `FailedValidationError` extensions of
+			// `@novastarter/validation`, which ride along as `cause` for a handler that wants to answer the way an API does
 			const error = result.error as z.ZodError;
 			const reasons = error.issues.map((issue) => `${issue.path.map(String).join('.') || '(root)'}: ${issue.message}`);
 

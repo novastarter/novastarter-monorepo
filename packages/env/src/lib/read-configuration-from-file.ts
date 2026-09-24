@@ -16,12 +16,12 @@ import { readConfigurationFromYaml } from '../utils/read-configuration-from-yaml
  * @returns The variables from the file, or `null` when the file does not exist.
  */
 export const readConfigurationFromFile = (path: string): Record<string, unknown> | null => {
-	// 1. No file means "nothing to merge", not a failure
+	// No file means "nothing to merge", not a failure
 	if (existsSync(path) === false) {
 		return null;
 	}
 
-	// 2. Dispatch on the extension; JS, JSON and YAML each need their own parser
+	// JS, JSON and YAML each need their own parser
 	const ext = getFileExtension(path);
 
 	if (isIn(ext, JAVASCRIPT_FILE_EXTS)) {
@@ -36,6 +36,6 @@ export const readConfigurationFromFile = (path: string): Record<string, unknown>
 		return readConfigurationFromYaml(path);
 	}
 
-	// 3. Anything else, including the extension-less `.env`, is dotenv syntax
+	// Anything else, including the extension-less `.env`, is dotenv syntax
 	return readConfigurationFromDotEnv(path);
 };

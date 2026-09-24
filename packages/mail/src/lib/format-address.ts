@@ -28,8 +28,8 @@ const ADDRESS_LIST_CHARACTERS = /[\s,;<>"()]/;
  * @throws InvalidPayloadError when the value holds CR, LF or another control character.
  */
 const assertHeaderSafe = (value: string, what: string): void => {
-	// 1. CR or LF would end the header line and turn the rest into a header of its own; the other control characters
-	//    are not printable either — none of them belongs in an address
+	// CR or LF would end the header line and turn the rest into a header of its own; the other control characters are
+	// not printable either — none of them belongs in an address
 	if (HEADER_UNSAFE_CHARACTERS.test(value)) {
 		throw new InvalidPayloadError({ reason: `${what} must not contain CR, LF or control characters` });
 	}
@@ -62,35 +62,35 @@ const assertHeaderSafe = (value: string, what: string): void => {
  * ```
  */
 export const formatMailAddress = (address: MailAddress): string => {
-	// 1. A string is handed on as given — but only within one header line: a line break or control character in it
-	//    would reach the provider's header verbatim, so it is refused before the string goes anywhere
+	// A string is handed on as given — but only within one header line: a line break or control character in it would
+	// reach the provider's header verbatim, so it is refused before the string goes anywhere
 	if (typeof address === 'string') {
 		assertHeaderSafe(address, 'An address string');
 
 		return address;
 	}
 
-	// 2. Both parts are interpolated into one header line; CR or LF in either would end the line and let the rest
-	//    forge a header
+	// Both parts are interpolated into one header line; CR or LF in either would end the line and let the rest forge a
+	// header
 	assertHeaderSafe(address.name, 'A mail address name');
 	assertHeaderSafe(address.address, 'A mail address');
 
-	// 3. The address goes into the angle brackets unquoted, so a comma, bracket or the like in it would let one object
-	//    turn into several recipients on the vendors that parse an address list; a single addr-spec never holds them
+	// The address goes into the angle brackets unquoted, so a comma, bracket or the like in it would let one object
+	// turn into several recipients on the vendors that parse an address list; a single addr-spec never holds them
 	if (ADDRESS_LIST_CHARACTERS.test(address.address)) {
 		throw new InvalidPayloadError({
 			reason: 'A mail address must be a single addr-spec, without whitespace or , ; < > " ( )',
 		});
 	}
 
-	// 4. A name of nothing but whitespace formats as nothing at all; the bare address keeps the stray space out of
-	//    the line
+	// A name of nothing but whitespace formats as nothing at all; the bare address keeps the stray space out of the
+	// line
 	const trimmed = address.name.trim();
 
 	if (trimmed === '') return address.address;
 
-	// 5. Only a name of plain characters may stand bare; RFC 5322 specials (`,` `<` `"` `@` and the like) and
-	//    anything non-ASCII go inside a quoted-string, where only the quote and the backslash need escaping
+	// Only a name of plain characters may stand bare; RFC 5322 specials (`,` `<` `"` `@` and the like) and anything
+	// non-ASCII go inside a quoted-string, where only the quote and the backslash need escaping
 	const name = /[^\w .'-]/.test(trimmed) ? `"${trimmed.replace(/["\\]/g, '\\$&')}"` : trimmed;
 
 	return `${name} <${address.address}>`;
@@ -111,10 +111,9 @@ export const formatMailAddress = (address: MailAddress): string => {
  * ```
  */
 export const bareMailAddress = (address: MailAddress): string => {
-	// 1. An object already keeps the parts apart
 	if (typeof address !== 'string') return address.address;
 
-	// 2. A string may be a display-name form; the address is what the angle brackets hold
+	// A string may be a display-name form; the address is what the angle brackets hold
 	const match = /<([^>]+)>\s*$/.exec(address);
 
 	return match ? match[1]! : address;
@@ -140,13 +139,12 @@ export const bareMailAddress = (address: MailAddress): string => {
  * ```
  */
 export const parseMailAddress = (address: MailAddress): { name?: string | undefined; address: string } => {
-	// 1. An object already keeps the parts apart
 	if (typeof address !== 'string') {
 		return { name: address.name, address: address.address };
 	}
 
-	// 2. A display-name form splits at the angle brackets; a quoted name loses its quotes, with only `"` and `\`
-	//    unescaped, the characters RFC 5322 allows to be escaped there
+	// A display-name form splits at the angle brackets; a quoted name loses its quotes, with only `"` and `\`
+	// unescaped, the characters RFC 5322 allows to be escaped there
 	const match = /^\s*(?:"((?:[^"\\]|\\.)*)"|([^<>]*?))\s*<([^<>\s]+)>\s*$/.exec(address);
 
 	if (match) {
@@ -155,7 +153,6 @@ export const parseMailAddress = (address: MailAddress): { name?: string | undefi
 		return { ...(name !== '' ? { name } : {}), address: match[3]! };
 	}
 
-	// 3. A bare string is its own address, with no name to carry
 	return { address };
 };
 
@@ -173,5 +170,5 @@ export const parseMailAddress = (address: MailAddress): { name?: string | undefi
  * ```
  */
 export const toMailAddressList = (to: MailAddress | MailAddress[]): MailAddress[] =>
-	// 1. A single recipient is the common case; the list form spares every driver the same branch
+	// A single recipient is the common case; the list form spares every driver the same branch
 	Array.isArray(to) ? to : [to];

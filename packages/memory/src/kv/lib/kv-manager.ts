@@ -45,8 +45,8 @@ export class KvManager extends DriverManager<KvDriver, KvDrivers> {
 	constructor() {
 		super();
 
-		// 1. The drivers of the package are known up front; registering them here spares every application the same
-		//    lines, and a replacement under the same name still wins
+		// Registering the package's drivers here spares every application the same lines, and a replacement under the
+		// same name still wins
 		this.registerDriver('local', KvDriverLocal);
 		this.registerDriver('redis', KvDriverRedis);
 	}

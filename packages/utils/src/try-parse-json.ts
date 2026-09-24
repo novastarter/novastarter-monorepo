@@ -38,11 +38,11 @@ export function tryParseJSON<T = unknown>(input: string): T | undefined;
  */
 export function tryParseJSON<T = unknown, F = T>(input: string, fallback: F): T | F;
 export function tryParseJSON(input: string, fallback?: unknown): unknown {
-	// 1. Failure is the expected outcome for ordinary text, so it is caught rather than surfaced
+	// Failure is the expected outcome for ordinary text, so it is caught rather than surfaced
 	try {
 		return parseJSON(input) as unknown;
 	} catch (error) {
-		// 2. Only "not JSON" maps to the fallback; anything else is a real fault the caller has to see
+		// Only "not JSON" maps to the fallback; anything else is a real fault the caller has to see
 		if (error instanceof SyntaxError) {
 			return fallback;
 		}

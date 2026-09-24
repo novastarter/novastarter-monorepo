@@ -27,7 +27,7 @@ afterEach(() => {
  * @returns The `ignore` hook, `undefined` when no paths were given, and the serializer map.
  */
 const lastOptions = () => {
-	// 1. pino-http is a mock, so the options it received are the only observable result of the factory
+	// pino-http is a mock, so the options it received are the only observable result of the factory.
 	const options = vi.mocked(pinoHttp).mock.calls.at(-1)![0] as Options;
 
 	return {
@@ -65,7 +65,7 @@ test('Ignores the given paths by pathname and redacts tokens in the request URL'
 });
 
 test('Logs rather than throws on a request target that is no valid URL', () => {
-	// 1. Node's parser lets `//` through and pino-http calls the hook unprotected, so a throw would end the server
+	// Node's parser lets `//` through and pino-http calls the hook unprotected, so a throw would end the server.
 	createHttpLogger({ logger, ignorePaths: ['/health'] });
 
 	const { ignore } = lastOptions();
@@ -76,8 +76,8 @@ test('Logs rather than throws on a request target that is no valid URL', () => {
 });
 
 test('Layers the built ignore over the caller autoLogging instead of dropping it', () => {
-	// 1. With both `ignorePaths` and a caller `autoLogging`, the caller's object must be merged under the built
-	//    `ignore` rather than replaced wholesale, so `ignorePaths` is honored
+	// With both `ignorePaths` and a caller `autoLogging`, the caller's object must be merged under the built `ignore`
+	// rather than replaced wholesale, so `ignorePaths` is honored.
 	const callerIgnore = vi.fn(() => true);
 
 	createHttpLogger({
@@ -93,8 +93,8 @@ test('Layers the built ignore over the caller autoLogging instead of dropping it
 });
 
 test('Keeps autoLogging off when the caller disabled it, even with ignorePaths', () => {
-	// 1. pino-http gates completion logging on `autoLogging !== false`; an `ignore` object built here would replace
-	//    the boolean and silently re-enable the logging the caller turned off
+	// pino-http gates completion logging on `autoLogging !== false`; an `ignore` object built here would replace the
+	// boolean and silently re-enable the logging the caller turned off.
 	createHttpLogger({ logger, ignorePaths: ['/server/ping'], http: { autoLogging: false } });
 
 	const options = vi.mocked(pinoHttp).mock.calls.at(-1)![0] as Options;
@@ -104,7 +104,7 @@ test('Keeps autoLogging off when the caller disabled it, even with ignorePaths',
 });
 
 test('Merges the serializers of the caller and redacts after its req serializer ran', () => {
-	// 1. A `res` serializer of the caller's must survive next to the `req` built here
+	// A `res` serializer of the caller's must survive next to the `req` built here.
 	const res = vi.fn((response: { statusCode: number }) => ({ status: response.statusCode }));
 	const req = vi.fn((request: SerializedRequest) => ({ ...request, url: `${request.url}&from=caller` }));
 
@@ -114,7 +114,6 @@ test('Merges the serializers of the caller and redacts after its req serializer 
 
 	expect(serializers['res']).toBe(res);
 
-	// 2. The caller's `req` sees the request pino-http hands over, and the token is removed from what it returned
 	const input = { method: 'GET', url: '/items?access_token=secret', headers: {} } as unknown as SerializedRequest;
 	const output = serializers['req']!(input);
 
@@ -124,7 +123,7 @@ test('Merges the serializers of the caller and redacts after its req serializer 
 });
 
 test('Keeps a request pino-http already serialised as is, apart from the redacted URL', () => {
-	// 1. pino-http wraps the serializer by default: serialising again would drop the remote address
+	// pino-http wraps the serializer by default: serialising again would drop the remote address.
 	createHttpLogger({ logger });
 
 	const { serializers } = lastOptions();

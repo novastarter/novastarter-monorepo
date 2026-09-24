@@ -13,21 +13,20 @@ afterEach(() => {
 
 describe('useAi', () => {
 	test('Creates a manager on first use and hands the same one out afterwards', () => {
-		// 1. Every later call returns the cached instance, so registrations made at start-up are visible everywhere
+		// Every later call returns the cached instance, so registrations made at start-up are visible everywhere
 		const first = useAi();
 		const second = useAi();
 
 		expect(first).toBeInstanceOf(AiManager);
 		expect(second).toBe(first);
 
-		// 2. A provider registered through one handle is visible through the other
 		first.registerProvider('mock', new MockProviderV4() as ProviderV4);
 
 		expect(second.hasProvider('mock')).toBe(true);
 	});
 
 	test('Starts over once the cache is reset', () => {
-		// 1. Tests reset the cache in place; the next call builds a fresh manager without the old providers
+		// Tests reset the cache in place; the next call builds a fresh manager without the old providers
 		const manager = useAi();
 
 		manager.registerProvider('mock', new MockProviderV4() as ProviderV4);

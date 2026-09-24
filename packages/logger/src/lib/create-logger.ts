@@ -1,4 +1,5 @@
 import { REDACTED_TEXT } from '@novastarter/constants';
+import { InvalidConfigError } from '@novastarter/errors';
 import { merge } from 'lodash-es';
 import { type Logger, type LoggerOptions, pino, type redactOptions } from 'pino';
 import { build as pinoPretty } from 'pino-pretty';
@@ -74,7 +75,7 @@ export const REDACTED_PATHS: readonly string[] = [
  * @internal
  */
 const buildLevelValues = (customLevels: Record<string, number> | undefined): Record<string, number> => {
-	// 1. Custom levels are spread last, so one that reuses a built-in name wins, as it does in pino
+	// Custom levels are spread last, so one that reuses a built-in name wins, as it does in pino.
 	return { ...pino.levels.values, ...customLevels };
 };
 
@@ -86,7 +87,7 @@ const buildLevelValues = (customLevels: Record<string, number> | undefined): Rec
  * @returns The pino numeric level.
  */
 export const getLoggerLevelValue = (level: string, customLevels?: Record<string, number>): number => {
-	// 1. An unknown name falls back to info rather than `undefined`, so a typo in a level can never disable logging
+	// An unknown name falls back to info rather than `undefined`, so a typo in a level can never disable logging.
 	return buildLevelValues(customLevels)[level] || pino.levels.values['info']!;
 };
 
@@ -100,11 +101,11 @@ export const getLoggerLevelValue = (level: string, customLevels?: Record<string,
  * @returns The redact options handed to pino.
  */
 export const buildRedactOptions = (redact: LoggerOptions['redact']): redactOptions => {
-	// 1. Both forms pino accepts are brought to the object form, so one merge covers them
+	// Both forms pino accepts are brought to the object form, so one merge covers them.
 	const caller = Array.isArray(redact) ? { paths: redact } : redact;
 
-	// 2. The built-in paths come first and duplicates are dropped, so a caller repeating one costs nothing; the
-	//    caller's censor wins, since it applies to the whole list in pino anyway
+	// Duplicates are dropped, so a caller repeating a built-in path costs nothing; the caller's censor wins, since it
+	// applies to the whole list in pino anyway.
 	return {
 		...caller,
 		paths: [...new Set([...REDACTED_PATHS, ...(caller?.paths ?? [])])],
@@ -121,16 +122,15 @@ export const buildRedactOptions = (redact: LoggerOptions['redact']): redactOptio
 export const buildLevelFormatters = (
 	levels: Record<string, string> | undefined,
 ): LoggerOptions['formatters'] | undefined => {
-	// 1. Nothing to map: pino's own numeric level stays
 	if (!levels) {
 		return undefined;
 	}
 
-	// 2. The formatter adds `severity` next to the numeric level rather than replacing it, so collectors that read
-	//    either field keep working
+	// `severity` goes next to the numeric level rather than replacing it, so collectors that read either field keep
+	// working.
 	return {
 		level(label: string, number: number) {
-			// 1. Unmapped labels get `info` rather than `undefined`, so a collector never sees a line without severity
+			// Unmapped labels get `info`, so a collector never sees a line without severity.
 			return {
 				severity: levels[label] || 'info',
 				level: number,
@@ -148,10 +148,10 @@ export const buildLevelFormatters = (
  *
  * @param options - Level, style, pino options and extra destinations.
  * @returns A configured pino logger.
+ * @throws InvalidConfigError when `logsStream.level` is not a level of the logger.
  */
 export const createLogger = (options: CreateLoggerOptions = {}): Logger<never> => {
-	// 1. The level and the formatter built from the custom level names come first, so the caller's pino options
-	//    are merged over them and win
+	// These come first, so the caller's pino options are merged over them and win.
 	const pinoOptions: LoggerOptions = {
 		level: options.level || 'info',
 	};
@@ -164,20 +164,18 @@ export const createLogger = (options: CreateLoggerOptions = {}): Logger<never> =
 
 	const mergedOptions = merge(pinoOptions, options.pino ?? {});
 
-	// 2. Secrets are redacted before any stream sees the line: the credentials of a request, the session cookie of
-	//    a response and a token in the query string — the request logger is a child of this logger, so its lines go
-	//    through the same list. Set after the merge on purpose: lodash merges arrays index by index, so a caller's
-	//    `redact.paths` would otherwise overwrite the built-in credentials one by one
+	// The request logger is a child of this logger, so its lines go through the same list. Set after the merge on
+	// purpose: lodash merges arrays index by index, so a caller's `redact.paths` would otherwise overwrite the built-in
+	// credentials one by one.
 	mergedOptions.redact = buildRedactOptions(options.pino?.redact);
 
 	const streams = [];
 
-	// 3. Every level name resolves against pino's built-in levels plus the caller's custom ones: without them the
-	//    multistream maps a custom level to `undefined` and silently drops every line
+	// Without the caller's custom levels the multistream maps a custom level to `undefined` and silently drops every
+	// line.
 	const levelValues = buildLevelValues(mergedOptions.customLevels);
 
-	// 4. Console: pretty for humans, raw JSON lines for log collectors — raw unless asked, since a collector chokes
-	//    on a pretty line while a person merely reads JSON
+	// Raw unless asked, since a collector chokes on a pretty line while a person merely reads JSON.
 	if (options.style === 'pretty') {
 		streams.push({
 			level: mergedOptions.level!,
@@ -190,19 +188,21 @@ export const createLogger = (options: CreateLoggerOptions = {}): Logger<never> =
 		streams.push({ level: mergedOptions.level!, stream: process.stdout });
 	}
 
-	// 5. An extra stream may ask for a lower level than the console; the logger level has to drop to satisfy it
+	// An extra stream may ask for a lower level than the console; the logger level has to drop to satisfy it.
 	if (options.logsStream) {
 		const streamLevel = options.logsStream.level ?? mergedOptions.level!;
 
-		// 6. pino's multistream resolves an unknown level name to `undefined` and then writes nothing anywhere, the
-		//    console stream included, so a typo in the configured level must fail at start-up, as loud as pino's own
-		//    `unknown level` error for a bad top-level level
+		// pino's multistream resolves an unknown level name to `undefined` and then writes nothing anywhere, the
+		// console stream included, so a typo in the configured level must fail at start-up, as loud as pino's own
+		// `unknown level` error for a bad top-level level.
 		if (levelValues[streamLevel] === undefined) {
-			throw new Error(`unknown level ${streamLevel}`);
+			throw new InvalidConfigError({
+				reason: `The logger logsStream has an unknown level "${streamLevel}"; use one of the logger's levels`,
+			});
 		}
 
-		// 7. The comparison still goes through the numeric values: the logger level drops only when the stream really
-		//    asks for a lower one
+		// Compared through the numeric values, so the logger level drops only when the stream really asks for a lower
+		// one.
 		if (
 			getLoggerLevelValue(streamLevel, mergedOptions.customLevels) <
 			getLoggerLevelValue(mergedOptions.level!, mergedOptions.customLevels)
@@ -216,6 +216,6 @@ export const createLogger = (options: CreateLoggerOptions = {}): Logger<never> =
 		});
 	}
 
-	// 8. The multistream gets the same level map, so it routes lines of a custom level instead of dropping them
+	// The multistream gets the same level map, so it routes lines of a custom level instead of dropping them.
 	return pino(mergedOptions, pino.multistream(streams, { levels: levelValues }));
 };

@@ -27,9 +27,8 @@ export const COLLAPSE_ID_MAX_LENGTH = 64;
  * ```
  */
 export const toCollapseId = (tag: string | undefined): string | undefined => {
-	// 1. No tag, no header
 	if (!tag) return undefined;
 
-	// 2. Sanitise first, cut second: the result is ASCII, so the character cut is a byte cut on a character boundary
+	// Sanitised before the cut: the result is ASCII, so the character cut is a byte cut on a character boundary
 	return tag.replace(/[^A-Za-z0-9_.:-]/gu, '_').slice(0, COLLAPSE_ID_MAX_LENGTH);
 };

@@ -16,12 +16,12 @@ import { _state, bootstrap, shutdown } from './bootstrap';
 import { readEnv } from './env';
 
 afterEach(() => {
-	// 1. The boot flags and the parsed env reset first: every manager below is rebuilt from them on the next test
+	// The boot flags and the parsed env reset first: every manager below is rebuilt from them on the next test
 	_state.booted = false;
 	_state.handlers = false;
 	readEnv.reset();
 
-	// 2. Every subsystem manager goes back to unregistered, and the job handlers the bootstrap registered with it
+	// Every subsystem manager goes back to unregistered, and the job handlers the bootstrap registered with it
 	useQueue.reset();
 	useRedis.reset();
 	useStorage.reset();
@@ -35,7 +35,7 @@ afterEach(() => {
 	useBus.reset();
 	useLimiter.reset();
 
-	// 3. The environment stubs of the finished test, so the next one reads the real shell again
+	// The environment stubs of the finished test, so the next one reads the real shell again
 	vi.unstubAllEnvs();
 });
 
@@ -113,13 +113,13 @@ test('Registers the default database location from DATABASE_URL without opening 
 
 	bootstrap();
 
-	// 1. Registered on the postgres driver by default; the pool opens on the first `location()`, so a boot with a
-	//    URL nobody can reach still succeeds
+	// Registered on the postgres driver by default; the pool opens on the first `location()`, so a boot with a URL
+	// nobody can reach still succeeds
 	expect(useDatabase().hasLocation('default')).toBe(true);
 	expect(useDatabase().instantiated().size).toBe(0);
 	expect(useDatabase()['configs'].get('default')?.[0]).toMatchObject({ driver: 'postgres' });
 
-	// 2. `DATABASE_DRIVER` picks the Supabase driver for the same URL
+	// `DATABASE_DRIVER` picks the Supabase driver for the same URL
 	_state.booted = false;
 	readEnv.reset();
 	vi.stubEnv('DATABASE_DRIVER', 'supabase');
@@ -133,7 +133,7 @@ test('Registers the default database location from DATABASE_URL without opening 
 
 	expect(useDatabase().instantiated().size).toBe(0);
 
-	// 3. Both Neon transports take the URL as their connection
+	// Both Neon transports take the URL as their connection
 	for (const driver of ['neon', 'neon-http'] as const) {
 		_state.booted = false;
 		readEnv.reset();
@@ -167,14 +167,14 @@ test('Shuts every manager down, leaving the registrations for a later boot', asy
 
 	bootstrap();
 
-	// 1. A job through the local queue builds the queue and mail locations; the rest stay unbuilt
+	// A job through the local queue builds the queue and mail locations; the rest stay unbuilt
 	await enqueue('mail.send', { to: 'ada@example.com', subject: 'Bye', text: 'Hello' });
 	expect(useQueue().instantiated().size).toBe(1);
 	expect(useMail().instantiated().size).toBe(1);
 
 	await shutdown();
 
-	// 2. Every manager let its instances go, and still knows its locations
+	// Every manager let its instances go, and still knows its locations
 	expect(useQueue().instantiated().size).toBe(0);
 	expect(useMail().instantiated().size).toBe(0);
 	expect(useStorage().instantiated().size).toBe(0);
@@ -183,8 +183,8 @@ test('Shuts every manager down, leaving the registrations for a later boot', asy
 	expect(useMail().hasLocation('default')).toBe(true);
 	expect(useStorage().hasLocation('default')).toBe(true);
 
-	// 3. Not booted any more: the next `bootstrap()` registers the locations afresh instead of being a no-op over
-	//    quit clients, and keeps the job handlers it registered the first time
+	// Not booted any more: the next `bootstrap()` registers the locations afresh instead of being a no-op over quit
+	// clients, and keeps the job handlers it registered the first time
 	expect(_state.booted).toBe(false);
 	bootstrap();
 	expect(_state.booted).toBe(true);
@@ -196,8 +196,8 @@ test('Closes every manager and the Redis clients even when one refuses, then rep
 	vi.stubEnv('REDIS', '');
 	bootstrap();
 
-	// 1. The mail manager refuses to close; the Redis clients, which close after the managers, and the un-boot must
-	//    not be skipped because of it — under a `Promise.all` they would be
+	// The mail manager refuses to close; the Redis clients, which close after the managers, and the un-boot must not be
+	// skipped because of it — under a `Promise.all` they would be
 	const refusal = new Error('mail refuses');
 	vi.spyOn(useMail(), 'close').mockRejectedValue(refusal);
 	const redisClose = vi.spyOn(useRedis(), 'close');
@@ -214,7 +214,7 @@ test('Reports several refusals together', async () => {
 	vi.spyOn(useMail(), 'close').mockRejectedValue(new Error('mail refuses'));
 	vi.spyOn(useStorage(), 'close').mockRejectedValue(new Error('storage refuses'));
 
-	// 1. Two refusals make one `AggregateError`, so neither is lost
+	// Two refusals make one `AggregateError`, so neither is lost
 	const error: unknown = await shutdown().catch((thrown: unknown) => thrown);
 
 	expect(error).toBeInstanceOf(AggregateError);

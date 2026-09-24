@@ -1,6 +1,6 @@
 import * as sesv2 from '@aws-sdk/client-sesv2';
 import { SendEmailCommand, SESv2Client, SESv2ServiceException } from '@aws-sdk/client-sesv2';
-import { toProviderCallError } from '@novastarter/errors';
+import { InvalidPayloadError, toProviderCallError } from '@novastarter/errors';
 import { type CallOptions, type CallResponse, DEFAULT_REQUEST_TIMEOUT } from '@novastarter/http';
 import {
 	type MailDriver,
@@ -113,11 +113,10 @@ export class MailDriverSes implements MailDriver {
 	 * Create a driver on an SES client of its own.
 	 *
 	 * @param config - Region, credentials, endpoint, configuration set.
-	 * @throws Error when only one half of the `accessKeyId` / `secretAccessKey` pair is given.
+	 * @throws InvalidConfigError when only one half of the `accessKeyId` / `secretAccessKey` pair is given.
 	 */
 	constructor(config: MailDriverSesConfig = {}) {
-		// 1. A client per location, so two regions or two accounts never share credentials; `toSesClientConfig` is
-		//    what refuses half a credential pair
+		// A client per location, so two regions or two accounts never share credentials
 		this.client = new SESv2Client(toSesClientConfig(config));
 
 		this.transporter = nodemailer.createTransport({ SES: { sesClient: this.client, SendEmailCommand } });
@@ -135,11 +134,10 @@ export class MailDriverSes implements MailDriver {
 	 * `TimeoutError` as the cause when the send outlives 30 seconds.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
-		// 1. Tags and the configuration set ride on the `ses` field nodemailer merges into the SendEmailCommand; the tags
-		//    are sanitised first, since SES refuses the whole message over one name outside its character set. The
-		//    whole send is bounded: the client's request deadline stops at the response headers and the SDK retries
-		//    a timed-out attempt, so a stalled body or three slow attempts would otherwise hold the send (and the
-		//    fallback to the next location) far past the deadline
+		// SES refuses the whole message over one tag name outside its character set, so tags are sanitised first. The
+		// whole send is bounded: the client's request deadline stops at the response headers and the SDK retries a
+		// timed-out attempt, so a stalled body or three slow attempts would otherwise hold the send (and the fallback to
+		// the next location) far past the deadline
 		let info: SentMessageInfo;
 
 		try {
@@ -154,12 +152,11 @@ export class MailDriverSes implements MailDriver {
 				DEFAULT_REQUEST_TIMEOUT,
 			);
 		} catch (error) {
-			// 2. The transport or the SDK throws on a refusal, the deadline with a `TimeoutError`; wrapped so the log
-			//    names the provider
+			// Wrapped so the log names the provider
 			throw describeError(error);
 		}
 
-		// 3. nodemailer reports the envelope; SES itself answers with the message id only
+		// nodemailer reports the envelope; SES itself answers with the message id only
 		return toMailResult(info);
 	}
 
@@ -169,8 +166,8 @@ export class MailDriverSes implements MailDriver {
 	 * @returns Once the client is destroyed.
 	 */
 	async close(): Promise<void> {
-		// 1. The SES transport holds no sockets of its own and nodemailer defines no `close()` on it, so there is
-		//    nothing to release there; the SDK client's keep-alive agents are what keeps the process up
+		// The SES transport holds no sockets of its own and nodemailer defines no `close()` on it; the SDK client's
+		// keep-alive agents are what keeps the process up
 		this.client.destroy();
 	}
 
@@ -193,7 +190,7 @@ export class MailDriverSes implements MailDriver {
 	 * @throws ProviderCallError when SES refuses — its HTTP status in `extensions`, its `{ name, message }` as the body.
 	 * @throws HitRateLimitError when SES answers 429 or `TooManyRequestsException`.
 	 * @throws TimeoutError when the request outlives its timeout.
-	 * @throws Error when `method` names no SESv2 action, or headers are given.
+	 * @throws InvalidPayloadError when `method` names no SESv2 action, or headers are given.
 	 * @example
 	 * ```ts
 	 * const { data: account } = await useMail().location('ses').call!('GetAccount');
@@ -204,14 +201,12 @@ export class MailDriverSes implements MailDriver {
 		params: Record<string, unknown> = {},
 		options: CallOptions = {},
 	): Promise<CallResponse<T>> {
-		// 1. Headers — the call's or the location's `call.headers` — cannot reach the SDK's signed request; refused
-		//    rather than silently dropped
+		// Headers cannot reach the SDK's signed request, so they are refused rather than silently dropped
 		if (Object.keys(options.headers ?? {}).length > 0) {
-			throw new Error('SES call() sends no extra headers; use the SDK client');
+			throw new InvalidPayloadError({ reason: 'The ses call() sends no extra headers; use the SDK client' });
 		}
 
-		// 2. The action by name among the SDK's exports; only a command class passes, so a name such as `SESv2Client`
-		//    or a typo is refused before anything is sent
+		// Only a command class passes, so a name such as `SESv2Client` or a typo is refused before anything is sent
 		const name = `${method.trim().replace(/Command$/, '')}Command`;
 
 		const Command =
@@ -220,12 +215,13 @@ export class MailDriverSes implements MailDriver {
 				: undefined;
 
 		if (typeof Command !== 'function' || !(Command.prototype instanceof sesv2.$Command)) {
-			throw new Error(`The ses call method "${method}" is not an SESv2 action such as "GetAccount"`);
+			throw new InvalidPayloadError({
+				reason: `The ses call method "${method}" is not an SESv2 action such as "GetAccount"`,
+			});
 		}
 
-		// 3. The action on the location's client, abandoned at the timeout or the caller's abort: the SDK takes the
-		//    signal and stops its request. The same timeout goes to each HTTP attempt, since the client's own 30 s
-		//    request deadline would otherwise cut a longer one short and fail with the SDK's error, not the kit's
+		// The same timeout goes to each HTTP attempt, since the client's own 30 s request deadline would otherwise cut a
+		// longer one short and fail with the SDK's error, not the kit's
 		const timeout = options.timeout ?? DEFAULT_REQUEST_TIMEOUT;
 		let output: sesv2.ServiceOutputTypes;
 
@@ -240,8 +236,8 @@ export class MailDriverSes implements MailDriver {
 				options.signal ? { signal: options.signal } : {},
 			);
 		} catch (error) {
-			// 4. A refusal of SES becomes the kit's error, with the status and the exception's name and message only —
-			//    the credentials are never on it; a throttled request is a rate limit whatever the status says
+			// Only the status and the exception's name and message are kept, so the credentials are never on the error; a
+			// throttled request is a rate limit whatever the status says
 			if (error instanceof SESv2ServiceException) {
 				const throttled = error.name === 'TooManyRequestsException';
 
@@ -257,7 +253,7 @@ export class MailDriverSes implements MailDriver {
 			throw error;
 		}
 
-		// 5. The output as SES described it; the SDK's request metadata gives the status and is not part of the data
+		// The SDK's request metadata gives the status and is not part of the data
 		const { $metadata: metadata, ...data } = output;
 
 		return { status: metadata.httpStatusCode ?? 200, headers: {}, data: data as T };

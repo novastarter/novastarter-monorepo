@@ -17,7 +17,7 @@ afterEach(() => {
 
 describe('useEnv', () => {
 	test('Returns the cached env if it exists', () => {
-		// 1. The first call builds; the second answers with the same object without building again
+		// The first call builds; the second answers with the same object without building again
 		const mockEnv = {};
 		vi.mocked(createEnv).mockReturnValue(mockEnv);
 
@@ -28,7 +28,7 @@ describe('useEnv', () => {
 	});
 
 	test('Creates the env on first use, passing the options along', () => {
-		// 1. The options of the first call reach the builder; a later call without options gets the same object
+		// The options of the first call reach the builder; a later call without options gets the same object
 		const mockEnv = {};
 		vi.mocked(createEnv).mockReturnValue(mockEnv);
 

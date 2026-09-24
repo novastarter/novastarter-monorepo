@@ -8,17 +8,17 @@ import { readConfigurationFromProcess } from './read-configuration-from-process.
 const envBackup = { ...process.env };
 
 beforeEach(() => {
-	// 1. An empty environment, so a variable from the developer's shell cannot leak into the assertions
+	// An empty environment, so a variable from the developer's shell cannot leak into the assertions
 	process.env = {};
 });
 
 afterEach(() => {
-	// 1. The real environment comes back, so the rest of the suite runs against it
+	// The real environment comes back, so the rest of the suite runs against it
 	process.env = envBackup;
 });
 
 test('Returns shallow copy of process.env', () => {
-	// 1. A copy, so the configuration can be merged without the merge writing into the live environment
+	// A copy, so the configuration can be merged without the merge writing into the live environment
 	const env = { TEST: 'foo' };
 	process.env = env;
 

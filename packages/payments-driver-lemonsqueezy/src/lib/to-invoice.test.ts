@@ -18,7 +18,6 @@ const invoiceOf = (name: string): LsWebhookPayload<LsSubscriptionInvoiceAttribut
 
 describe('toInvoice', () => {
 	test('A paid subscription invoice, with its hosted link', () => {
-		// 1. Every field of the kit's shape: a paid invoice owes nothing, was paid when issued, and has no PDF link
 		expect(toInvoice(invoiceOf('subscription_payment_success'))).toStrictEqual({
 			id: '9001',
 			number: null,
@@ -35,7 +34,6 @@ describe('toInvoice', () => {
 			pdfUrl: null,
 		});
 
-		// 2. A pending invoice is the kit's open one: the whole total still due, nothing paid, no paid date
 		expect(toInvoice(invoiceOf('subscription_payment_failed'))).toMatchObject({
 			status: 'open',
 			amountPaid: 0,
@@ -45,7 +43,6 @@ describe('toInvoice', () => {
 	});
 
 	test('A partially refunded invoice stays paid', () => {
-		// 1. A partial refund does not unpay the invoice: the whole total counts as paid, nothing is due
 		const invoice = invoiceOf('subscription_payment_success');
 		const refunded = { ...invoice, attributes: { ...invoice.attributes, status: 'partial_refund' as const } };
 

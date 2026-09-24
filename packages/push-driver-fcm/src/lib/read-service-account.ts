@@ -1,3 +1,4 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import type { PushDriverFcmConfig } from './driver.js';
 
 /**
@@ -17,19 +18,22 @@ export type ServiceAccountJson = {
  *
  * @param config - The location's configuration.
  * @returns `projectId`, `clientEmail` and `privateKey` with its newlines restored.
- * @throws Error for `serviceAccount` text that is not JSON.
+ * @throws InvalidConfigError for `serviceAccount` text that is not JSON.
  */
 export const readServiceAccount = (
 	config: Pick<PushDriverFcmConfig, 'serviceAccount' | 'projectId' | 'clientEmail' | 'privateKey'>,
 ): { projectId: string | undefined; clientEmail: string | undefined; privateKey: string | undefined } => {
 	let json: ServiceAccountJson = {};
 
-	// 1. The JSON wins as a whole; the separate fields fill what it does not carry
+	// The JSON wins as a whole; the separate fields fill what it does not carry
 	if (typeof config.serviceAccount === 'string') {
 		try {
 			json = JSON.parse(config.serviceAccount) as ServiceAccountJson;
 		} catch (error) {
-			throw new Error('The fcm push driver got a "serviceAccount" that is not JSON', { cause: error });
+			throw new InvalidConfigError(
+				{ reason: 'The fcm push driver needs "serviceAccount" as JSON text or an object; the text given is not JSON' },
+				{ cause: error },
+			);
 		}
 	} else if (config.serviceAccount) {
 		json = config.serviceAccount;
@@ -37,7 +41,7 @@ export const readServiceAccount = (
 
 	const privateKey = json.private_key ?? json.privateKey ?? config.privateKey;
 
-	// 2. A PEM in a `.env` line has its newlines as the two characters `\n`; the SDK needs real ones
+	// A PEM in a `.env` line has its newlines as the two characters `\n`; the SDK needs real ones
 	return {
 		projectId: json.project_id ?? json.projectId ?? config.projectId,
 		clientEmail: json.client_email ?? json.clientEmail ?? config.clientEmail,

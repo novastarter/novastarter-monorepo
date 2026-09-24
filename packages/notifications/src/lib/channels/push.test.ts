@@ -9,7 +9,7 @@ import { pushChannel } from './push.js';
 vi.mock('@novastarter/push', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@novastarter/push')>();
 
-	// 1. Only the transport is faked, so `instanceof PushTargetGoneError` is the real check
+	// Only the transport is faked, so `instanceof PushTargetGoneError` is the real check
 	return { ...actual, sendPush: vi.fn(async () => null) };
 });
 
@@ -39,14 +39,12 @@ afterEach(() => {
 
 describe('pushChannel', () => {
 	test('Reaches a user with a device only', () => {
-		// 1. An empty list is no device
 		expect(pushChannel().reaches(RECIPIENT)).toBe(true);
 		expect(pushChannel().reaches({ userId: 'u1', pushTargets: [] })).toBe(false);
 		expect(pushChannel().reaches({ userId: 'u1' })).toBe(false);
 	});
 
 	test('Sends the message to every device', async () => {
-		// 1. One message per target, each carrying the content
 		await pushChannel().send(DELIVERY);
 
 		expect(sendPush).toHaveBeenCalledTimes(2);
@@ -59,7 +57,6 @@ describe('pushChannel', () => {
 
 		vi.mocked(sendPush).mockRejectedValueOnce(new PushTargetGoneError({ platform: 'webpush', reason: '410' }));
 
-		// 1. The browser is gone, the phone still gets it, and the delivery succeeds
 		await expect(pushChannel({ onGone }).send(DELIVERY)).resolves.toBeUndefined();
 
 		expect(onGone).toHaveBeenCalledWith(BROWSER, 'u1');
@@ -71,14 +68,12 @@ describe('pushChannel', () => {
 
 		vi.mocked(sendPush).mockRejectedValueOnce(failure);
 
-		// 1. The phone is still tried after the browser failed; the job retries on the failure
 		await expect(pushChannel().send(DELIVERY)).rejects.toBe(failure);
 
 		expect(sendPush).toHaveBeenCalledTimes(2);
 	});
 
 	test('Drops a target the content carries, so the template cannot redirect the message', async () => {
-		// 1. Only the recipient's devices are sent to
 		await pushChannel().send({
 			...DELIVERY,
 			content: { ...DELIVERY.content, token: 'evil', platform: 'apns' } as never,
@@ -92,7 +87,6 @@ describe('pushChannel', () => {
 		const failure = new Error('push service down');
 		const onGone = vi.fn(async () => undefined);
 
-		// 1. The browser fails, the phone is gone: the phone is still forgotten, and the browser's failure thrown
 		vi.mocked(sendPush)
 			.mockRejectedValueOnce(failure)
 			.mockRejectedValueOnce(new PushTargetGoneError({ platform: 'fcm', reason: '404' }));
@@ -100,7 +94,7 @@ describe('pushChannel', () => {
 		await expect(pushChannel({ onGone }).send(DELIVERY)).rejects.toBe(failure);
 		expect(onGone).toHaveBeenCalledWith(PHONE, 'u1');
 
-		// 2. A failing `onGone` is thrown, so the job retries the clean-up
+		// A failing `onGone` is thrown, so the job retries the clean-up
 		const goneFailure = new Error('database down');
 
 		vi.mocked(sendPush).mockRejectedValueOnce(new PushTargetGoneError({ platform: 'webpush', reason: '410' }));

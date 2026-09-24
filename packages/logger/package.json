@@ -26,6 +26,7 @@
 	},
 	"dependencies": {
 		"@novastarter/constants": "workspace:*",
+		"@novastarter/errors": "workspace:*",
 		"@novastarter/utils": "workspace:*",
 		"lodash-es": "catalog:",
 		"pino": "catalog:",

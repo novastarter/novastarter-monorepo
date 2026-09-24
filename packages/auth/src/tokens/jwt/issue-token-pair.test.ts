@@ -35,12 +35,10 @@ describe('issueTokenPair', () => {
 
 		const { pair, refresh } = await issueTokenPair('user-1');
 
-		// 1. The client's view: an access token, an opaque refresh token and their lifetimes
 		expect(pair.refreshToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
 		expect(pair.expiresIn).toBe(DEFAULT_ACCESS_TOKEN_TTL / 1000);
 		expect(pair.refreshExpiresAt).toBe(NOW + DEFAULT_REFRESH_TOKEN_TTL);
 
-		// 2. The record keeps the refresh token's hash only, unused
 		expect(refresh).toStrictEqual({
 			id: hashToken(pair.refreshToken),
 			familyId: expect.any(String),
@@ -58,10 +56,8 @@ describe('issueTokenPair', () => {
 
 		const { pair } = await issueTokenPair('user-1', { claims: { role: 'admin' } });
 
-		// 1. The access-token type and the configured algorithm in the header
 		expect(decodeProtectedHeader(pair.accessToken)).toStrictEqual({ alg: 'HS256', typ: ACCESS_TOKEN_TYPE });
 
-		// 2. Subject, times, id, issuer, audience and the custom claim in the payload
 		expect(decodeJwt(pair.accessToken)).toStrictEqual({
 			sub: 'user-1',
 			iat: NOW / 1000,
@@ -74,14 +70,12 @@ describe('issueTokenPair', () => {
 
 		expect(pair.expiresIn).toBe(60);
 
-		// 3. And the package verifies what it signed
 		await expect(verifyAccessToken(pair.accessToken)).resolves.toMatchObject({ userId: 'user-1' });
 	});
 
 	test('Drops custom claims under reserved names', async () => {
 		useAuth().registerSettings({ jwt: { secret: SECRET } });
 
-		// 1. A caller cannot forge the subject or stretch the expiry through the custom claims
 		const { pair } = await issueTokenPair('user-1', {
 			claims: { sub: 'admin', exp: 9_999_999_999, iss: 'x', aud: 'x', iat: 1, nbf: 1, jti: 'x', role: 'user' },
 		});
@@ -101,14 +95,12 @@ describe('issueTokenPair', () => {
 		const first = await issueTokenPair('user-1');
 		const second = await issueTokenPair('user-1');
 
-		// 1. Two sign-ins of one user are two chains, so revoking one leaves the other
 		expect(first.refresh.familyId).not.toBe(second.refresh.familyId);
 		expect(first.pair.refreshToken).not.toBe(second.pair.refreshToken);
 		expect(decodeJwt(first.pair.accessToken).jti).not.toBe(decodeJwt(second.pair.accessToken).jti);
 	});
 
 	test('Refuses to run without the jwt settings', async () => {
-		// 1. The configuration error comes as itself
 		await expect(issueTokenPair('user-1')).rejects.toThrow('JWT tokens need the "jwt" auth settings');
 	});
 });

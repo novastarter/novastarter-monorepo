@@ -17,7 +17,6 @@ export const encodeBase32 = (bytes: Uint8Array): string => {
 	let value = 0;
 	let output = '';
 
-	// 1. Feed the bytes into a bit buffer and take five bits at a time, one character each
 	for (const byte of bytes) {
 		value = (value << 8) | byte;
 		bits += 8;
@@ -28,8 +27,8 @@ export const encodeBase32 = (bytes: Uint8Array): string => {
 		}
 	}
 
-	// 2. The bits left over are padded with zeros on the right into one last character; the `=` padding is omitted,
-	//    since authenticator apps do not want it
+	// The bits left over are padded with zeros on the right into one last character; the `=` padding is omitted, since
+	// authenticator apps do not want it
 	if (bits > 0) {
 		output += ALPHABET[(value << (5 - bits)) & 31];
 	}
@@ -46,18 +45,17 @@ export const encodeBase32 = (bytes: Uint8Array): string => {
  * @internal
  */
 export const decodeBase32 = (text: string): Uint8Array => {
-	// 1. A secret copied from a screen comes grouped and in any case; neither changes its value
+	// A secret copied from a screen comes grouped and in any case; neither changes its value
 	const clean = text.replace(/[\s=-]/g, '').toUpperCase();
 	const bytes: number[] = [];
 	let bits = 0;
 	let value = 0;
 
-	// 2. Five bits per character into the buffer, a byte out whenever eight are there
 	for (const char of clean) {
 		const index = ALPHABET.indexOf(char);
 
 		if (index === -1) {
-			throw new Error(`Invalid base32 character "${char}"`);
+			throw new Error(`@novastarter/auth: invalid base32 character "${char}"`);
 		}
 
 		value = (value << 5) | index;
@@ -69,6 +67,6 @@ export const decodeBase32 = (text: string): Uint8Array => {
 		}
 	}
 
-	// 3. Fewer than eight bits left are the zero padding of the last character, not data
+	// Fewer than eight bits left are the zero padding of the last character, not data
 	return Uint8Array.from(bytes);
 };

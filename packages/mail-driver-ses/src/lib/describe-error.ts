@@ -7,5 +7,5 @@ import { toErrorMessage } from '@novastarter/utils';
  * @returns The error to raise.
  */
 export const describeError = (error: unknown): Error =>
-	// 1. The error already carries its details; the provider's name is added, so the log says who refused
+	// The provider's name is added so the log says who refused; the error already carries the details
 	new Error(`SES: ${toErrorMessage(error)}`, { cause: error });

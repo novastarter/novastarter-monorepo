@@ -37,20 +37,19 @@ import type { RedisConfig } from '../types.js';
  * ```
  */
 export const createRedis = (config: RedisConfig, overrides: RedisOptions = {}, logger?: Logger): Redis => {
-	// 1. A URL is taken apart here rather than handed to ioredis next to the overrides: ioredis keeps whatever the
-	//    URL carries — a `?maxRetriesPerRequest=20` query, a `/2` database — over options given beside it, the
-	//    opposite of what an override is for. Taken apart by ioredis's own parser, so every form it accepts — an
-	//    IPv6 literal, a scheme-less `host:port`, a socket path, a bare port — still means the same; spread over
-	//    that, the overrides win
+	// A URL is taken apart here rather than handed to ioredis next to the overrides: ioredis keeps whatever the
+	// URL carries — a `?maxRetriesPerRequest=20` query, a `/2` database — over options given beside it, the
+	// opposite of what an override is for. Taken apart by ioredis's own parser, so every form it accepts — an
+	// IPv6 literal, a scheme-less `host:port`, a socket path, a bare port — still means the same; spread over
+	// that, the overrides win
 	const base = typeof config === 'string' ? fromUrl(config) : config;
 
-	// 2. The client itself, opened with the overrides laid over whatever the connection carried
 	const redis = new Redis({ ...base, ...overrides });
 
-	// 3. A failing connection — refused at boot, dropped and retried mid-run — surfaces as `error` events, and an
-	//    `error` event nothing listens for throws straight out of the event emitter; the listener turns that into a
-	//    log line. The logger is resolved on the error, not here, so a client that never errs builds no logger, and
-	//    a caller's own logger wins over the process one
+	// A failing connection — refused at boot, dropped and retried mid-run — surfaces as `error` events, and an
+	// `error` event nothing listens for throws straight out of the event emitter; the listener turns that into a
+	// log line. The logger is resolved on the error, not here, so a client that never errs builds no logger, and
+	// a caller's own logger wins over the process one
 	redis.on('error', (error: Error) => {
 		(logger ?? useLogger()).error(error, 'Redis connection error');
 	});
@@ -70,10 +69,10 @@ export const createRedis = (config: RedisConfig, overrides: RedisOptions = {}, l
  * @internal
  */
 const fromUrl = (url: string): RedisOptions => {
-	// 1. `rediss://` means TLS with the default options, as it does for ioredis itself — which takes `tls: true` at
-	//    runtime while typing the field as an object, hence the cast; the scheme is compared case-insensitively, the
-	//    way a URI scheme is read (RFC 3986 §3.1), so `REDISS://…` gets its TLS too instead of reaching a TLS endpoint
-	//    over a plain socket; every other form carries none
+	// `rediss://` means TLS with the default options, as it does for ioredis itself — which takes `tls: true` at
+	// runtime while typing the field as an object, hence the cast; the scheme is compared case-insensitively, the
+	// way a URI scheme is read (RFC 3986 §3.1), so `REDISS://…` gets its TLS too instead of reaching a TLS endpoint
+	// over a plain socket; every other form carries none
 	const options = parseURL(url) as Record<string, unknown>;
 
 	if (/^rediss:\/\//i.test(url)) {

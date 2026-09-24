@@ -21,26 +21,26 @@ vi.mock('node:module', async (importOriginal) => {
 let mockRequire: NodeRequire;
 
 beforeEach(() => {
-	// 1. A fresh require double per test, so no return value leaks from one test into the next
+	// A fresh require double per test, so no return value leaks from one test into the next
 	mockRequire = vi.fn() as unknown as NodeRequire;
 
 	vi.mocked(createRequire).mockReturnValue(mockRequire);
 });
 
 afterEach(() => {
-	// 1. Both the require double and the isPlainObject stub must not leak into the next test
+	// Both the require double and the isPlainObject stub must not leak into the next test
 	vi.clearAllMocks();
 });
 
 test('Reads file with require', () => {
-	// 1. require is used instead of readFileSync + JSON.parse, so the path is handed to require as is
+	// require is used instead of readFileSync + JSON.parse, so the path is handed to require as is
 	readConfigurationFromJson('./test/path.json');
 
 	expect(mockRequire).toHaveBeenCalledWith('./test/path.json');
 });
 
 test('Returns config from JSON file if file contains plain object', () => {
-	// 1. A single plain object is the only shape that counts as configuration
+	// A single plain object is the only shape that counts as configuration
 	const mockFileContents = { foo: 'bar' };
 
 	vi.mocked(isPlainObject).mockReturnValue(true);
@@ -53,10 +53,10 @@ test('Returns config from JSON file if file contains plain object', () => {
 });
 
 test('Throws error if JSON file does not contain single plain object', () => {
-	// 1. Arrays and scalars are valid JSON but not a key/value configuration, so they are refused loudly
+	// Arrays and scalars are valid JSON but not a key/value configuration, so they are refused loudly
 	vi.mocked(isPlainObject).mockReturnValue(false);
 
 	expect(() => readConfigurationFromJson('./test/path.json')).toThrowErrorMatchingInlineSnapshot(
-		`[Error: JSON configuration file does not contain an object]`,
+		`[NovastarterError: Invalid config. The JSON configuration file must hold a single object.]`,
 	);
 });

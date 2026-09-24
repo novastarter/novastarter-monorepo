@@ -13,7 +13,7 @@ import { createHash } from 'node:crypto';
  * @returns The bucket.
  */
 export const bucketOf = (key: string, subject: string): number => {
-	// 1. The first four bytes of the digest are as uniform as the rest and plenty for a hundred buckets
+	// The first four bytes of the digest are as uniform as the rest and plenty for a hundred buckets
 	const digest = createHash('sha256').update(`${key}:${subject}`).digest();
 
 	return digest.readUInt32BE(0) % 100;
@@ -28,7 +28,7 @@ export const bucketOf = (key: string, subject: string): number => {
  * @returns `true` for a subject whose bucket is below the share.
  */
 export const isInRollout = (key: string, subject: string, percentage: number): boolean => {
-	// 1. The edges need no hash: nobody is in 0 %, everybody is in 100 %
+	// The edges need no hash: nobody is in 0 %, everybody is in 100 %
 	if (percentage <= 0) {
 		return false;
 	}
@@ -37,6 +37,6 @@ export const isInRollout = (key: string, subject: string, percentage: number): b
 		return true;
 	}
 
-	// 2. Everyone else by their bucket, so raising the share only ever adds subjects and never swaps them
+	// Everyone else goes by their bucket, so raising the share only ever adds subjects and never swaps them
 	return bucketOf(key, subject) < percentage;
 };

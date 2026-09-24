@@ -21,8 +21,8 @@ vi.mock('node:module', async (importOriginal) => {
 let mockRequire: NodeRequire;
 
 beforeEach(() => {
-	// 1. A require double whose default export is an empty factory, and an isPlainObject stub that accepts it, so a
-	//    test only states what it changes
+	// A require double whose default export is an empty factory, and an isPlainObject stub that accepts it, so a
+	// test only states what it changes
 	mockRequire = vi.fn() as unknown as NodeRequire;
 	vi.mocked(mockRequire).mockReturnValue(() => ({}));
 	vi.mocked(createRequire).mockReturnValue(mockRequire);
@@ -30,18 +30,18 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	// 1. Both the require double and the isPlainObject stub must not leak into the next test
+	// Both the require double and the isPlainObject stub must not leak into the next test
 	vi.clearAllMocks();
 });
 
 test('Reads file with node require', () => {
-	// 1. The whole loader is synchronous require, so the path is handed to require as is
+	// The whole loader is synchronous require, so the path is handed to require as is
 	readConfigurationFromJavaScript('./test/path.js');
 	expect(mockRequire).toHaveBeenCalledWith('./test/path.js');
 });
 
 test('Executes function if default export is a function type', () => {
-	// 1. A factory receives the raw environment, and its result passes the same plain-object check as a data export
+	// A factory receives the raw environment, and its result passes the same plain-object check as a data export
 	const fn = vi.fn().mockReturnValue({ test: 'foo' });
 	vi.mocked(mockRequire).mockReturnValue(fn);
 	vi.mocked(isPlainObject).mockReturnValue(true);
@@ -53,18 +53,18 @@ test('Executes function if default export is a function type', () => {
 });
 
 test('Throws an error if a function export does not return a plain object', () => {
-	// 1. A factory returning nothing would otherwise flow into the merge as `undefined`; the loader must refuse it
-	//    with the same error a bad data export gets
+	// A factory returning nothing would otherwise flow into the merge as `undefined`; the loader must refuse it
+	// with the same error a bad data export gets
 	vi.mocked(mockRequire).mockReturnValue(() => undefined);
 	vi.mocked(isPlainObject).mockReturnValue(false);
 
 	expect(() => readConfigurationFromJavaScript('./test/path.js')).toThrowErrorMatchingInlineSnapshot(
-		`[Error: Invalid JS configuration file export type. Requires one of "function", "object", received: "undefined"]`,
+		`[NovastarterError: Invalid config. The JavaScript configuration file must export an object or a function returning one, not "undefined".]`,
 	);
 });
 
 test('Returns exported thing if it is a plain object', () => {
-	// 1. A data export is validated and returned by reference, no copy — the merge downstream reads it once
+	// A data export is validated and returned by reference, no copy — the merge downstream reads it once
 	const config = { test: 'foo' };
 	vi.mocked(mockRequire).mockReturnValue(config);
 
@@ -72,7 +72,7 @@ test('Returns exported thing if it is a plain object', () => {
 });
 
 test('Returns default key from exported module', () => {
-	// 1. ESM-transpiled files nest the export under `default`; that indirection is peeled off before the checks
+	// ESM-transpiled files nest the export under `default`; that indirection is peeled off before the checks
 	const config = { test: 'foo' };
 	const mod = { default: config };
 	vi.mocked(mockRequire).mockReturnValue(mod);
@@ -81,20 +81,20 @@ test('Returns default key from exported module', () => {
 });
 
 test('Throws an error if the exported value is not a function or plain object', () => {
-	// 1. A scalar export names `undefined` because the value never survives the `object` / `function` gate
+	// A scalar export names `undefined` because the value never survives the `object` / `function` gate
 	vi.mocked(mockRequire).mockReturnValue(123);
 
 	expect(() => readConfigurationFromJavaScript('./test/path.js')).toThrowErrorMatchingInlineSnapshot(
-		`[Error: Invalid JS configuration file export type. Requires one of "function", "object", received: "undefined"]`,
+		`[NovastarterError: Invalid config. The JavaScript configuration file must export an object or a function returning one, not "undefined".]`,
 	);
 });
 
 test('Throws an error instead of crashing when the module exports null', () => {
-	// 1. `typeof null` is `object`, so without the null guard the `in` check would crash with a raw TypeError; null
-	//    must be refused with the same documented error as any other bad export
+	// `typeof null` is `object`, so without the null guard the `in` check would crash with a raw TypeError; null
+	// must be refused with the same documented error as any other bad export
 	vi.mocked(mockRequire).mockReturnValue(null);
 
 	expect(() => readConfigurationFromJavaScript('./test/path.js')).toThrowErrorMatchingInlineSnapshot(
-		`[Error: Invalid JS configuration file export type. Requires one of "function", "object", received: "undefined"]`,
+		`[NovastarterError: Invalid config. The JavaScript configuration file must export an object or a function returning one, not "undefined".]`,
 	);
 });

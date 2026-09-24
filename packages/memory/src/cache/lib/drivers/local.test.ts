@@ -22,25 +22,25 @@ const mockValue = 'test-value';
 let cache: CacheDriverLocal;
 
 beforeEach(() => {
-	// 1. The Kv store is automocked, so every method of `cache['store']` is a mock the tests configure and assert on
+	// The Kv store is automocked, so every method of `cache['store']` is a mock the tests configure and assert on
 	cache = new CacheDriverLocal({ maxKeys: 2 });
 });
 
 afterEach(() => {
-	// 1. Calls are cleared, not the implementations, so a `mockResolvedValue` of one test does not leak into the next
+	// Calls are cleared, not the implementations, so a `mockResolvedValue` of one test does not leak into the next
 	vi.clearAllMocks();
 });
 
 describe('constructor', () => {
 	test('Instantiates Kv with configuration', () => {
-		// 1. The config goes to the store unchanged: the cache has no options of its own
+		// The config goes to the store unchanged: the cache has no options of its own
 		expect(KvDriverLocal).toHaveBeenCalledWith({ maxKeys: 2 });
 
 		expect(cache['store']).toBeInstanceOf(KvDriverLocal);
 	});
 
 	test('Hands the lock timeout to the store', () => {
-		// 1. The cache exposes the store's locks, so it has to take the store's budget for them too
+		// The cache exposes the store's locks, so it has to take the store's budget for them too
 		new CacheDriverLocal({ maxKeys: 2, lockTimeout: 1000 });
 
 		expect(KvDriverLocal).toHaveBeenLastCalledWith({ maxKeys: 2, lockTimeout: 1000 });
@@ -49,7 +49,7 @@ describe('constructor', () => {
 
 describe('get', () => {
 	test('Returns result of store get', async () => {
-		// 1. The store's synchronous answer comes back through the async cache API
+		// The store's synchronous answer comes back through the async cache API
 		vi.mocked(cache['store'].get).mockResolvedValue(mockValue);
 
 		const res = await cache.get(mockKey);
@@ -60,7 +60,7 @@ describe('get', () => {
 
 describe('set', () => {
 	test('Sets the value to the kv store', async () => {
-		// 1. The value is handed over as is; serializing it is the store's job
+		// The value is handed over as is; serializing it is the store's job
 		await cache.set(mockKey, mockValue);
 
 		expect(cache['store'].set).toHaveBeenCalledWith(mockKey, mockValue);
@@ -69,7 +69,7 @@ describe('set', () => {
 
 describe('delete', () => {
 	test('Deletes key from kv store', async () => {
-		// 1. A single process holds no second copy, so the store's delete is the whole operation
+		// A single process holds no second copy, so the store's delete is the whole operation
 		await cache.delete(mockKey);
 
 		expect(cache['store'].delete).toHaveBeenCalledWith(mockKey);
@@ -78,7 +78,7 @@ describe('delete', () => {
 
 describe('has', () => {
 	test('Returns result of kv store has', async () => {
-		// 1. The store's probe answers; the cache adds no bookkeeping of its own
+		// The store's probe answers; the cache adds no bookkeeping of its own
 		vi.mocked(cache['store'].has).mockResolvedValue(true);
 
 		const res = await cache.has(mockKey);
@@ -89,7 +89,7 @@ describe('has', () => {
 
 describe('clear', () => {
 	test('Clears the kv store', async () => {
-		// 1. The store owns the LRU, so emptying it empties the cache
+		// The store owns the LRU, so emptying it empties the cache
 		await cache.clear();
 		expect(cache['store'].clear).toHaveBeenCalled();
 	});
@@ -97,7 +97,6 @@ describe('clear', () => {
 
 describe('acquireLock', () => {
 	test('Acquires lock from kv store', async () => {
-		// 1. The handle is the store's own, handed through untouched
 		const mockLock: Lock = { release: vi.fn(), extend: vi.fn() };
 		vi.mocked(cache['store'].acquireLock).mockResolvedValue(mockLock);
 
@@ -109,7 +108,6 @@ describe('acquireLock', () => {
 
 describe('usingLock', () => {
 	test('Uses lock from kv store', async () => {
-		// 1. The callback and its result travel through the store's `usingLock` unchanged
 		const mockCallback = vi.fn().mockResolvedValue('result');
 		vi.mocked(cache['store'].usingLock).mockResolvedValue('result');
 

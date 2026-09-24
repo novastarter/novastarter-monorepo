@@ -1,12 +1,12 @@
 /**
  * Tests of `to-mailjet-message`: how a `MailMessage` becomes one entry of Mailjet's Send API v3.1 `Messages`.
  */
+import { InvalidPayloadError } from '@novastarter/errors';
 import { describe, expect, test } from 'vitest';
 import { toMailjetMessage } from './to-mailjet-message.js';
 
 describe('toMailjetMessage', () => {
 	test('Maps the message into Mailjet shape, inline attachments apart', async () => {
-		// 1. Every field finds its Mailjet name; the attachment with a content id lands in `InlinedAttachments`
 		expect(
 			await toMailjetMessage({
 				to: [{ name: 'Ada', address: 'ada@example.com' }],
@@ -52,13 +52,13 @@ describe('toMailjetMessage', () => {
 			],
 		});
 
-		// 2. A message without a sender is refused by name
+		await expect(toMailjetMessage({ to: 'a@b.c', subject: 'x', text: 'x' })).rejects.toThrow(InvalidPayloadError);
 		await expect(toMailjetMessage({ to: 'a@b.c', subject: 'x', text: 'x' })).rejects.toThrow(/"from"/);
 	});
 
 	test('Cuts the joined tags at the CustomID limit, so an over-long value never fails the send', async () => {
-		// 1. Mailjet refuses a request whose `CustomID` passes 255 characters; joined tags that long must trim the
-		//    analytics instead of failing the whole send
+		// Mailjet refuses a request whose `CustomID` passes 255 characters; joined tags that long must trim the
+		// analytics instead of failing the whole send
 		const message = await toMailjetMessage({
 			to: 'a@b.c',
 			from: 'x@y.z',
@@ -67,7 +67,7 @@ describe('toMailjetMessage', () => {
 			tags: ['a'.repeat(200), 'b'.repeat(200)],
 		});
 
-		// 2. The value is cut at the limit, not dropped — a partial id still groups the statistics
+		// A partial id still groups the statistics, so the value is cut rather than dropped
 		expect(message.CustomID).toBe(`${'a'.repeat(200)},${'b'.repeat(54)}`);
 	});
 });

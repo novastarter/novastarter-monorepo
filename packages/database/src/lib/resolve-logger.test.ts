@@ -18,25 +18,25 @@ let sample: {
 };
 
 beforeEach(() => {
-	// 1. Fresh fixtures per test, so no test can read a return value another one left behind
+	// Fresh fixtures per test, so no test can read a return value another one left behind
 	sample = { logger: { child: vi.fn() }, child: { debug: vi.fn() }, processLogger: { child: vi.fn() } };
 
-	// 2. A child logger answers the fixture child, so the label-binding assertions have a value to compare
+	// The label-binding assertions compare against the fixture child
 	sample.logger.child.mockReturnValue(sample.child);
 	sample.processLogger.child.mockReturnValue(sample.child);
 
-	// 3. The process logger is what a driver built with no logger falls back to
+	// The process logger is what a driver built with no logger falls back to
 	vi.mocked(useLogger).mockReturnValue(sample.processLogger as never);
 });
 
 afterEach(() => {
-	// 1. Implementations and recorded calls reset together, so one test's mock state cannot leak into the next
+	// Implementations and recorded calls reset together, so one test's mock state cannot leak into the next
 	vi.resetAllMocks();
 });
 
 describe('resolveLogger', () => {
 	test('Hands a given logger back untouched without a label', () => {
-		// 1. No child: a driver built by hand keeps exactly the logger it was given
+		// A driver built by hand keeps exactly the logger it was given
 		expect(resolveLogger({ logger: sample.logger as unknown as Logger })).toBe(sample.logger);
 		expect(sample.logger.child).not.toHaveBeenCalled();
 	});
@@ -49,7 +49,6 @@ describe('resolveLogger', () => {
 		expect(resolveLogger({ logger: sample.logger as unknown as Logger, label: 'main' })).toBe(sample.child);
 		expect(sample.logger.child).toHaveBeenCalledExactlyOnceWith({ database: 'main' });
 
-		// 1. The process logger gets the same treatment
 		expect(resolveLogger({ label: 'main' })).toBe(sample.child);
 		expect(sample.processLogger.child).toHaveBeenCalledExactlyOnceWith({ database: 'main' });
 	});

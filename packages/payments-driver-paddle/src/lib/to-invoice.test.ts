@@ -8,7 +8,7 @@ import { toInvoice } from './to-invoice.js';
 
 describe('toInvoice', () => {
 	test('A completed transaction is a paid invoice, paid when its payment was captured', () => {
-		// 1. The completed fixture has a captured payment, so the totals, the number and the dates all have a value
+		// The completed fixture has a captured payment, so the totals, the number and the dates all have a value
 		expect(toInvoice(parsed('transaction.completed').data as never)).toStrictEqual({
 			id: 'txn_01h7zcgmdc8n1v3ypn6pkqtb3t',
 			number: '325-10001',
@@ -27,7 +27,7 @@ describe('toInvoice', () => {
 	});
 
 	test('A past-due transaction is open, its balance due', () => {
-		// 1. Nothing was captured, so the whole grand total is still due and there is no paid date
+		// Nothing was captured, so the whole grand total is still due and there is no paid date
 		expect(toInvoice(parsed('transaction.payment_failed').data as never)).toMatchObject({
 			status: 'open',
 			amountPaid: 0,

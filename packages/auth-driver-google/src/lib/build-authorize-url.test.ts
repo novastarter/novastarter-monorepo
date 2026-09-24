@@ -19,7 +19,6 @@ describe('buildAuthorizeUrl', () => {
 	test('Carries the client, the redirect, the state, the S256 challenge and the nonce', () => {
 		const url = buildAuthorizeUrl(params, 'client-1', DEFAULT_SCOPES);
 
-		// 1. Every parameter Google needs for an OpenID Connect code flow with PKCE; the redirect keeps its own query
 		expect(`${url.origin}${url.pathname}`).toBe(AUTHORIZE_URL);
 
 		expect(Object.fromEntries(url.searchParams)).toStrictEqual({
@@ -35,12 +34,11 @@ describe('buildAuthorizeUrl', () => {
 	});
 
 	test('Lets the call scopes win over the location and adds openid when missing', () => {
-		// 1. The call names its own scopes; without `openid` Google would issue no ID token, so it is added
+		// Without `openid` Google would issue no ID token
 		expect(
 			buildAuthorizeUrl({ ...params, scopes: ['email'] }, 'client-1', DEFAULT_SCOPES).searchParams.get('scope'),
 		).toBe('openid email');
 
-		// 2. The location's scopes apply when the call has none, kept as they are when `openid` is among them
 		expect(buildAuthorizeUrl(params, 'client-1', ['email', 'openid']).searchParams.get('scope')).toBe('email openid');
 	});
 });

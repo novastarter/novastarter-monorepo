@@ -18,8 +18,8 @@ const refusal = (statusCode: number, reason: string): ApnsError =>
 
 describe('describeError', () => {
 	test('A dead token is a PushTargetGoneError, another refusal names the status and reason', () => {
-		// 1. The three reasons that mean the token is dead, whatever the status; the client's error stays as the
-		//    cause, the same as for any other refusal
+		// The three reasons that mean the token is dead, whatever the status; the client's error stays as the cause, the
+		// same as for any other refusal
 		const unregistered = refusal(410, 'Unregistered');
 		const gone = describeError(unregistered);
 
@@ -35,14 +35,12 @@ describe('describeError', () => {
 		expect(describeError(refusal(400, 'BadDeviceToken'))).toBeInstanceOf(PushTargetGoneError);
 		expect(describeError(refusal(400, 'DeviceTokenNotForTopic'))).toBeInstanceOf(PushTargetGoneError);
 
-		// 2. Any other refusal names the status and the reason, the client's error as the cause
 		const other = describeError(refusal(403, 'InvalidProviderToken'));
 
 		expect(other).not.toBeInstanceOf(PushTargetGoneError);
 		expect(other.message).toBe('APNs 403 InvalidProviderToken');
 		expect(other.cause).toBeInstanceOf(ApnsError);
 
-		// 3. A network failure is prefixed and passed on
 		const network = new Error('socket hang up');
 		const described = describeError(network);
 

@@ -1,11 +1,10 @@
 ## Super-rule: English only
 
-This rule overrides everything else and applies always and everywhere.
+Overrides everything else.
 
-Everything is done and written in English: code, comments, docs, commit messages, changesets, PR titles and
-descriptions, issues, file names, identifiers, error messages, logs, chat replies to the user, questions, plans.
-
-**No other languages. No exceptions.** Input in another language is answered in English.
+Everything is in English: code, comments, docs, commit messages, changesets, PR titles and descriptions, issues, file
+names, identifiers, error messages, logs, chat replies to the user, questions, plans. No other language, no exceptions.
+Input in another language is answered in English.
 
 ## Rule: never push to git
 
@@ -31,6 +30,9 @@ Run from the repository root. Apps are named `web` and `docs`, packages `@novast
 - `pnpm lint` — ESLint over the whole repo, check only. `pnpm exec eslint <file>` — one file.
 - `pnpm format` — Prettier check only. `pnpm exec prettier --write <file>` — format one file.
 - `pnpm check:catalog` — every dependency version comes from the catalog (see "dependency versions only via catalog:").
+
+The Stop hook `.claude/hooks/typecheck.mjs` runs `check-types` through turbo for every package or app with uncommitted
+changes and keeps the turn open while it fails.
 
 Never run a fixer over the whole repo (`pnpm lint --fix`, `prettier --write .`): other work may be in the same tree.
 
@@ -103,244 +105,61 @@ Mandatory, no exceptions. ESLint checks all of it.
   `vi.mocked()`.
 - `@ts-ignore` and `@ts-nocheck` are forbidden. `@ts-expect-error` only with a description:
   `// @ts-expect-error -- the option is checked at runtime`.
-- The presence of JSDoc (see "comment all code") is checked by `eslint-plugin-jsdoc`, in tests too. Callbacks passed as
-  arguments (`it(…, () => …)`, `map((x) => …)`) and helpers declared inside a function body need none: the enclosing
-  function's numbered comment explains them.
+- JSDoc presence (see "comment all code") is checked by `eslint-plugin-jsdoc`, in tests too.
 
 ## Rule: comment all code
 
-This rule applies always and everywhere:
+Mandatory, no exceptions. Applies to every file: `packages/`, `apps/`, tests, scripts, configs.
 
-- `packages/`
-- `apps/`
-- `tests/`
-- scripts
-- TypeScript/JavaScript configs
-- new code
-- modified code
-- exported code
-- internal code
-- public API
-- private API
-- production code
-- temporary code
+A reader must understand what the code does and why without opening neighbouring files.
 
-**There are no exceptions.**
+**JSDoc** above every class, method and member (private too), constructor, module-level function and function-valued `const`, and
+every exported type or `const`. ESLint (`jsdoc/require-jsdoc`) checks presence; callbacks passed as arguments and
+helpers declared inside a function body need none.
 
-A person reading the code must understand **what the code does and why it is done this way** without opening
-neighbouring files.
+- The first line is one sentence: what the symbol does. Non-obvious behaviour or constraints go in a paragraph after it.
+- Tags: `@param` for every argument, `@returns`, `@throws`, `@typeParam` for generics, `@defaultValue` for default
+  constants, `@example` for public API, `@internal` for private members. Link symbols with `{@link OtherSymbol}`.
 
-### Comment format
+**Comments inside a function body:**
 
-#### 1. Full JSDoc above every export
-
-JSDoc is mandatory above:
-
-- `class`
-- `function`
-- `const`
-- `type`
-- every class method
-- `constructor`
-- private methods
-- private members, where JSDoc applies to them
-
-The first line of the JSDoc is **one sentence** describing what the symbol does.
-
-If the behaviour or constraints are not obvious, a separate paragraph explaining the behaviour and constraints follows
-the first line.
-
-Use the matching JSDoc tags:
-
-- `@param` — for every argument
-- `@returns` — for the return value
-- `@throws` — for errors the function may throw
-- `@typeParam` — for generic parameters
-- `@defaultValue` — for constants holding a default value
-- `@example` — for public API
-- `@internal` — for private/internal members
-
-Reference other symbols with `{@link OtherSymbol}`.
-
-#### 2. Numbered comments inside function bodies
-
-Inside every function, every logical block must have a comment before it.
-
-Format:
+- Only where the code does not say it itself: why it is done this way, a constraint, a non-obvious consequence, a link to
+  a protocol or bug.
+- No numbering (`// 1.`, `// 2.`): the step order is visible from the code. ESLint (`local/no-numbered-comments`)
+  rejects it.
+- A comment that retells the code ("Create the set", "Return the result") is deleted. In a "what + why" comment, keep
+  only the why.
 
 ```ts
-// 1. Describe what this step does and why
-// 2. Describe the next logical step and why
-// 3. Describe the next logical step and why
-```
-
-Numbering:
-
-- starts at `1` for every function;
-- runs sequentially;
-- must have no gaps;
-- every number goes **before its logical block**.
-
-The comment must explain not only **what** happens but also **why** it is done this particular way.
-
-#### 3. Comment language
-
-All comments are written **in English**, like the rest of the code in `packages/`.
-
-### Example
-
-````ts
 /**
- * Retry settings applied when the caller passes none.
+ * Top the bucket back up for the time elapsed since the previous refill.
  *
- * @defaultValue 3 repeats, 100 ms base delay, 5 s ceiling.
+ * @internal
  */
-export const DEFAULT_RETRY_OPTIONS: RetryOptions = {
-	retries: 3,
-	baseDelay: 100,
-	maxDelay: 5_000,
-};
+private refill(): void {
+	// A monotonic clock, so NTP corrections cannot hand out free tokens
+	const now = performance.now();
+	const elapsed = (now - this.lastRefill) / 1000;
 
-/**
- * Rate limiter that hands out a fixed number of tokens per second.
- *
- * The bucket starts full and refills continuously up to its capacity, so short bursts are allowed while the long-run
- * average stays at `refillPerSecond`.
- *
- * @example
- * ```ts
- * const bucket = new TokenBucket(10, 2);
- *
- * if (!bucket.consume()) {
- *     throw new Error('Rate limit exceeded');
- * }
- * ```
- */
-export class TokenBucket {
-	private tokens: number;
-	private lastRefill: number;
-
-	/**
-	 * Create a bucket that starts out full.
-	 *
-	 * @param capacity - Largest burst the bucket will ever allow.
-	 * @param refillPerSecond - Tokens added back every second.
-	 */
-	constructor(
-		private readonly capacity: number,
-		private readonly refillPerSecond: number,
-	) {
-		this.tokens = capacity;
-		this.lastRefill = performance.now();
-	}
-
-	/**
-	 * Take tokens from the bucket.
-	 *
-	 * @param count - Number of tokens the caller wants.
-	 * @returns `true` when the tokens were deducted, `false` when the budget was insufficient.
-	 */
-	consume(count = 1): boolean {
-		// 1. Account for the time passed since the previous call
-		this.refill();
-
-		// 2. Reject the request outright when the budget is short
-		if (this.tokens < count) {
-			return false;
-		}
-
-		// 3. Charge the request and let it through
-		this.tokens -= count;
-
-		return true;
-	}
-
-	/**
-	 * Top the bucket back up for the time elapsed since the previous refill.
-	 *
-	 * @internal
-	 */
-	private refill(): void {
-		// 1. Measure the gap on a monotonic clock, so NTP corrections cannot hand out free tokens
-		const now = performance.now();
-		const elapsed = (now - this.lastRefill) / 1000;
-
-		// 2. Nothing to add within the same tick
-		if (elapsed <= 0) {
-			return;
-		}
-
-		// 3. Credit the elapsed time, keeping fractions so a slow rate never rounds down to zero
-		this.tokens = Math.min(this.capacity, this.tokens + elapsed * this.refillPerSecond);
-		this.lastRefill = now;
-	}
+	// Fractions are kept so a slow rate never rounds down to zero
+	this.tokens = Math.min(this.capacity, this.tokens + elapsed * this.refillPerSecond);
+	this.lastRefill = now;
 }
-
-/**
- * Run an operation again with exponential backoff until it succeeds or the retry budget runs out.
- *
- * @typeParam T - Value the operation resolves to.
- * @param fn - Operation to run. Called at least once.
- * @param options - Partial overrides merged over {@link DEFAULT_RETRY_OPTIONS}.
- * @returns The first successful result.
- * @throws The error raised by the final attempt.
- */
-export async function withRetry<T>(fn: () => Promise<T>, options: Partial<RetryOptions> = {}): Promise<T> {
-	// 1. Caller overrides win over the defaults
-	const { retries, baseDelay, maxDelay } = { ...DEFAULT_RETRY_OPTIONS, ...options };
-
-	let lastError: unknown;
-
-	// 2. One call plus `retries` repeats, hence the inclusive bound
-	for (let attempt = 0; attempt <= retries; attempt++) {
-		try {
-			return await fn();
-		} catch (error) {
-			// 3. Remember the failure — it becomes the thrown error once the budget is spent
-			lastError = error;
-
-			// 4. Out of budget: stop without sleeping for nothing
-			if (attempt === retries) {
-				break;
-			}
-
-			// 5. Double the wait each round, capped, then jitter it to break up synchronised clients
-			const backoff = Math.min(maxDelay, baseDelay * 2 ** attempt);
-			await sleep(backoff * (0.5 + Math.random() / 2));
-		}
-	}
-
-	// 6. Every attempt failed — surface the most recent reason
-	throw lastError;
-}
-````
-
-### What not to do
-
-Do not add comments that merely repeat the code.
-
-Bad:
-
-```ts
-// Increment the counter
-counter++;
 ```
 
-Such a comment explains nothing, because `counter++` is already obvious.
+**Do not:** write banners or decorative blocks (`====`, `----`, `****`); put a comment after code on the same line;
+translate code into English (`// Increment the counter` above `counter++`). Why: `docs/decisions/0006`.
 
-Also forbidden:
+## Rule: errors
 
-- full-width separator/banner comments;
-- large decorative blocks of `====`, `----`, `*****` and the like;
-- trailing comments after code on the same line.
+Mandatory, no exceptions.
 
-Bad:
-
-```ts
-counter++; // Increment counter
-```
-
-Comments must explain **logic, intent, reason or constraint**, not translate the code into English.
+- A mistake in driver, manager or location configuration throws `InvalidConfigError` from `@novastarter/errors` (code
+  `INVALID_CONFIG`). The message names the subject and what to do: `The mysql database driver needs a "connection"`.
+- An error the caller may branch on (bad input, a provider answer, a limit) is a class of the kit with a code.
+- A plain `Error` only for a broken invariant or a programming mistake nobody catches; its message still names the
+  package and the cause.
+- Why: `docs/decisions/0007-config-errors.md`.
 
 ## Rule: check existing packages first
 

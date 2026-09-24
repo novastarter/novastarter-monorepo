@@ -1,6 +1,7 @@
 /**
  * Tests of `billing/plans`: what `definePlans()` accepts, what it refuses, and the catalog it builds.
  */
+import { InvalidConfigError, InvalidPayloadError } from '@novastarter/errors';
 import { describe, expect, test } from 'vitest';
 import { PlanCatalog } from './plan-catalog';
 import { definePlans, type PlanDefinition } from './plans';
@@ -39,7 +40,7 @@ const definitions: PlanDefinition[] = [
 
 describe('definePlans', () => {
 	test('Builds a catalog in the given order, with provider ids filled in and the free flag derived', () => {
-		// 1. The catalog keeps the definition order; the free flag comes from the missing prices, not from the id
+		// The catalog keeps the definition order; the free flag comes from the missing prices, not from the id
 		const catalog = definePlans(definitions);
 
 		expect(catalog).toBeInstanceOf(PlanCatalog);
@@ -50,15 +51,21 @@ describe('definePlans', () => {
 		expect(catalog.has('business')).toBe(true);
 		expect(catalog.find('enterprise')).toBeUndefined();
 
-		// 2. A plan the catalog does not know fails loudly, listing what exists
+		// A plan the catalog does not know fails loudly, listing what exists
 		expect(() => catalog.get('enterprise')).toThrow(
 			'Plan "enterprise" is not defined; known plans: free, pro, business',
 		);
+
+		expect(() => catalog.get('enterprise')).toThrow(InvalidPayloadError);
 	});
 
 	test('Refuses malformed definitions with a message naming the field', () => {
-		// 1. Each malformed field is named in the error, so a broken plan file points at its line
-		expect(() => definePlans([{ ...definitions[0]!, id: 'Free Plan' }])).toThrow(/Invalid plan definitions[\s\S]*id/);
+		// Each malformed field is named in the error, so a broken plan file points at its line
+		expect(() => definePlans([{ ...definitions[0]!, id: 'Free Plan' }])).toThrow(
+			/Invalid config\. Fix the plan definitions[\s\S]*id/,
+		);
+
+		expect(() => definePlans([{ ...definitions[0]!, id: 'Free Plan' }])).toThrow(InvalidConfigError);
 
 		expect(() =>
 			definePlans([{ ...definitions[1]!, prices: { monthly: { amount: 19.99, currency: 'usd' } } }]),
@@ -74,7 +81,7 @@ describe('definePlans', () => {
 	});
 
 	test('Refuses duplicate ids, provider ids without a price and a price id used twice', () => {
-		// 1. Two plans claiming one id, a provider id with no matching price, and one price id on two plans
+		// Two plans claiming one id, a provider id with no matching price, and one price id on two plans
 		expect(() => definePlans([definitions[0]!, definitions[0]!])).toThrow('plan "free" is defined twice');
 
 		expect(() =>
@@ -85,7 +92,7 @@ describe('definePlans', () => {
 			definePlans([definitions[1]!, { ...definitions[2]!, providerIds: { stripe: { monthly: 'price_pro_m' } } }]),
 		).toThrow('"stripe" price id "price_pro_m" is used by both "pro" and "business"');
 
-		// 2. The same id under two providers is fine: the lookup is per provider
+		// The same id under two providers is fine: the lookup is per provider
 		expect(() =>
 			definePlans([{ ...definitions[2]!, providerIds: { stripe: { monthly: 'x' }, polar: { monthly: 'x' } } }]),
 		).not.toThrow();

@@ -8,42 +8,41 @@ import type { JobHandler, JobInput, JobPayload } from '../types.js';
 import { _contracts, getJobContract, getJobNames, getQueueNames, registerJob } from './index.js';
 
 afterEach(() => {
-	// 1. The registry is global state: the contract of a test may not leak into the next one
+	// The registry is global state: the contract of a test may not leak into the next one
 	_contracts.delete('reports.build');
 });
 
 describe('registry', () => {
 	test('Starts empty', () => {
-		// 1. The registry is per-application: the package ships with nothing registered
+		// The registry is per-application: the package ships with nothing registered
 		expect(getJobNames()).toStrictEqual([]);
 		expect(getQueueNames()).toStrictEqual([]);
 	});
 
 	test('Registers a contract once and refuses a second one of the same name', () => {
-		// 1. Registering answers the contract, exposes it by name and lists its queue
 		const reportsBuild = defineJob({ name: 'reports.build', schema: z.object({ customer: z.string() }) });
 
 		expect(registerJob(reportsBuild)).toBe(reportsBuild);
 		expect(getJobContract('reports.build')).toBe(reportsBuild);
 		expect(getQueueNames()).toContain('reports');
 
-		// 2. A name is taken: the same contract twice or another one under the name is refused
+		// A name is taken: the same contract twice or another one under the name is refused
 		expect(() => registerJob(reportsBuild)).toThrow('Job "reports.build" is already registered');
 		expect(() => registerJob(defineJob({ name: 'reports.build', schema: z.object({}) }))).toThrow('already registered');
 	});
 
 	test('Refuses to look up a name nobody registered', () => {
-		// 1. A lookup of an unknown name fails the caller instead of answering something they would have to check
+		// A lookup of an unknown name fails the caller instead of answering something they would have to check
 		expect(() => getJobContract('nope.nope')).toThrow('Job "nope.nope" is not registered');
 	});
 });
 
 describe('contracts', () => {
 	test('Types the payloads of a contract end to end', () => {
-		// 1. Compile-time check: the handler of a contract sees its parsed payload, the caller its input
+		// Compile-time check: the handler of a contract sees its parsed payload, the caller its input
 		const testEcho = defineJob({ name: 'test.echo', schema: z.object({ message: z.string().default('ping') }) });
 
-		// 2. The handler receives the parsed payload: the field is a plain string, no cast needed
+		// The handler receives the parsed payload: the field is a plain string, no cast needed
 		/**
 		 * Handler of the contract, typed from it; reads the parsed field as a plain string.
 		 *
@@ -54,7 +53,7 @@ describe('contracts', () => {
 			expect(message).toBeDefined();
 		};
 
-		// 3. The defaulted field may stay out of the input, and is present in the parsed payload
+		// The defaulted field may stay out of the input, and is present in the parsed payload
 		const input: JobInput<typeof testEcho> = {};
 		const parsed: JobPayload<typeof testEcho> = { message: 'ping' };
 

@@ -19,14 +19,14 @@ afterEach(() => {
 });
 
 test('Returns cached value if exists', () => {
-	// 1. A cached id is answered with as it is: hashing again would embed a new time and change the id mid-process
+	// A cached id is answered with as it is: hashing again would embed a new time and change the id mid-process
 	const val = 'test-value';
 	_cache.id = val;
 	expect(processId()).toBe(val);
 });
 
 test('Generates and returns hash if value does not exist yet', () => {
-	// 1. Host, pid and time are fixed here, so the exact text fed to the hash can be asserted
+	// Host, pid and time are fixed here, so the exact text fed to the hash can be asserted
 	const mockHash = { update: vi.fn().mockReturnThis(), digest: vi.fn() } as unknown as Hash;
 	vi.mocked(createHash).mockReturnValue(mockHash);
 	vi.mocked(hostname).mockReturnValue('test-hostname');
@@ -34,7 +34,7 @@ test('Generates and returns hash if value does not exist yet', () => {
 
 	processId();
 
-	// 2. MD5 over the three parts joined without a separator is the documented shape of the id
+	// MD5 over the three parts joined without a separator is the documented shape of the id
 	expect(createHash).toHaveBeenCalledWith('md5');
 	expect(hostname).toHaveBeenCalled();
 	expect(mockHash.update).toHaveBeenCalledWith(`test-hostname${process.pid}1700000000000`);

@@ -85,15 +85,15 @@ describe('startSchedules', () => {
 	});
 
 	test('Skips a schedule resolving to a rule another schedule of the job already took, out loud', async () => {
-		// 1. A string and a function resolving to the same rule pass `registerSchedule`, which cannot resolve the
-		//    function; sharing one clock, only the first would ever fire, and the second's payload would be lost
+		// A string and a function resolving to the same rule pass `registerSchedule`, which cannot resolve the
+		// function; sharing one clock, only the first would ever fire, and the second's payload would be lost
 		registerSchedule({ job: 'test.ping', cron: '* * * * * *', payload: { message: 'first' } } as never);
 		registerSchedule({ job: 'test.ping', cron: () => '* * * * * *', payload: { message: 'second' } } as never);
 
 		const enqueue = vi.fn(async () => ({ id: '1', name: 'test.ping', queue: 'test' }));
 		const running = startSchedules({ env: {}, kv, enqueue, logger: logger as unknown as Logger });
 
-		// 2. Only the first is started; the second is named in the log, not silently dropped
+		// Only the first is started; the second is named in the log, not silently dropped
 		expect(running.schedules).toHaveLength(1);
 
 		expect(logger.error).toHaveBeenCalledWith(
@@ -109,7 +109,7 @@ describe('startSchedules', () => {
 	});
 
 	test('Takes the enqueue() of the package as it is, as the readme shows', async () => {
-		// 1. The option is typed as the package's `enqueue`; a stub would not prove the readme's example compiles
+		// The option is typed as the package's `enqueue`; a stub would not prove the readme's example compiles
 		registerJob(defineJob({ name: 'test.ping', schema: z.object({ message: z.string().default('ping') }) }));
 
 		const handler = vi.fn(async () => {});
@@ -119,7 +119,7 @@ describe('startSchedules', () => {
 
 		const running = startSchedules({ env: {}, kv, enqueue, logger: logger as unknown as Logger });
 
-		// 2. The empty payload of the schedule is validated on the tick, the default applied where the job runs
+		// The empty payload of the schedule is validated on the tick, the default applied where the job runs
 		await vi.advanceTimersByTimeAsync(1_000);
 		expect(handler).toHaveBeenCalledWith({ message: 'ping' }, expect.objectContaining({ name: 'test.ping' }));
 

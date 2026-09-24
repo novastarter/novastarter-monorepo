@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { DEFAULT_CHUNK_SIZE } from '@novastarter/constants';
+import { InvalidConfigError } from '@novastarter/errors';
 import { type CallOptions, type CallResponse, type HttpApi, type HttpCallFetch, request } from '@novastarter/http';
 import {
 	type ChunkedUploadContext,
@@ -33,7 +34,6 @@ import { FileReader } from './tus-source.js';
  * @internal
  */
 const undiciFetch: HttpCallFetch = async (url, { body, ...init }) => {
-	// 1. A global `FormData` is rebuilt as `undici`'s, entry by entry; a string or a `Blob` passes as it is
 	let payload: string | Blob | FormData | undefined;
 
 	if (body instanceof globalThis.FormData) {
@@ -46,8 +46,8 @@ const undiciFetch: HttpCallFetch = async (url, { body, ...init }) => {
 		payload = body;
 	}
 
-	// 2. The response of `undici` is used through the members the global one shares with it: status, headers, text;
-	//    `init` keeps `redirect: 'manual'`, so a redirect comes back here rather than followed with the credentials
+	// Casting is safe because only the members both responses share are used: status, headers, text. `init` keeps
+	// `redirect: 'manual'`, so a redirect comes back here rather than being followed with the credentials
 	return (await fetch(url, payload === undefined ? init : { ...init, body: payload })) as unknown as Response;
 };
 
@@ -156,32 +156,32 @@ export class StorageDriverSupabase implements TusDriver {
 	 * Create a driver together with its client and bucket handle.
 	 *
 	 * @param config - Connection and behaviour options.
-	 * @throws Error when neither `projectId` nor `endpoint` is given, when `serviceRole` or `bucket` is missing, or
+	 * @throws InvalidConfigError when neither `projectId` nor `endpoint` is given, when `serviceRole` or `bucket` is missing, or
 	 * when `tus.chunkSize` is not a positive number.
 	 */
 	constructor(config: StorageDriverSupabaseConfig) {
-		// 1. Normalise the root once without a leading slash: Supabase object names are not paths, and a leading `/`
-		//    would become part of the name and produce objects nobody can find by the expected key
+		// Supabase object names are not paths: a leading `/` would become part of the name, and nobody could find the
+		// object by the expected key
 		this.config = {
 			...config,
 			root: confinePath(config.root ?? ''),
 		};
 
-		// 2. A zero, negative or NaN chunk size would be kept as the per-chunk bound and refuse every arriving chunk
-		//    with a misleading "exceeds the chunk size limit" error; the check is written as `!(size > 0)`, the
-		//    NaN-safe form the S3 and Azure drivers use, since comparisons never catch NaN
+		// A zero, negative or NaN chunk size would refuse every arriving chunk with a misleading "exceeds the chunk
+		// size limit" error. `!(size > 0)` is the NaN-safe form the S3 and Azure drivers use, since comparisons never
+		// catch NaN
 		if (this.config.tus?.chunkSize !== undefined && !(this.config.tus.chunkSize > 0)) {
-			throw new Error('The supabase storage driver got a "tus.chunkSize" below 1 byte');
+			throw new InvalidConfigError({
+				reason: 'The supabase storage driver needs a "tus.chunkSize" of at least 1 byte',
+			});
 		}
 
 		this.preferredChunkSize = this.config.tus?.chunkSize ?? DEFAULT_CHUNK_SIZE;
 
-		// 3. Build the client and bucket up front, so configuration mistakes fail at construction instead of on the
-		//    first request
+		// Configuration mistakes fail at construction instead of on the first request
 		this.client = this.getClient();
 		this.bucket = this.getBucket();
 
-		// 4. The API of `call()`, from the options the client and bucket just checked
 		this.api = {
 			provider: 'supabase',
 			baseUrl: this.endpoint,
@@ -198,7 +198,7 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @internal
 	 */
 	private get endpoint() {
-		// 1. A custom endpoint wins over the project id, so self-hosted instances are never routed to supabase.co
+		// A custom endpoint wins over the project id, so self-hosted instances are never routed to supabase.co
 		return this.config.endpoint ?? `https://${this.config.projectId}.supabase.co/storage/v1`;
 	}
 
@@ -206,22 +206,22 @@ export class StorageDriverSupabase implements TusDriver {
 	 * Build the storage client from the driver options.
 	 *
 	 * @returns A client authenticated with the service-role key.
-	 * @throws Error when neither `projectId` nor `endpoint` is given, or when `serviceRole` is missing.
+	 * @throws InvalidConfigError when neither `projectId` nor `endpoint` is given, or when `serviceRole` is missing.
 	 * @internal
 	 */
 	private getClient() {
-		// 1. Without either the endpoint getter would produce `https://undefined.supabase.co`, so refuse early
+		// Without either the endpoint getter would produce `https://undefined.supabase.co`, so refuse early
 		if (!this.config.projectId && !this.config.endpoint) {
-			throw new Error('The supabase storage driver needs a "projectId" or an "endpoint"');
+			throw new InvalidConfigError({ reason: 'The supabase storage driver needs a "projectId" or an "endpoint"' });
 		}
 
-		// 2. The service-role key is the only credential the driver supports; without it every request would be
-		//    rejected as anonymous
+		// The service-role key is the only credential the driver supports; without it every request would be
+		// rejected as anonymous
 		if (!this.config.serviceRole) {
-			throw new Error('The supabase storage driver needs a "serviceRole"');
+			throw new InvalidConfigError({ reason: 'The supabase storage driver needs a "serviceRole"' });
 		}
 
-		// 3. Supabase expects the key in both headers: `apikey` identifies the project, the bearer token authorises
+		// Supabase expects the key in both headers: `apikey` identifies the project, the bearer token authorises
 		return new StorageClient(this.endpoint, {
 			apikey: this.config.serviceRole,
 			Authorization: `Bearer ${this.config.serviceRole}`,
@@ -232,13 +232,13 @@ export class StorageDriverSupabase implements TusDriver {
 	 * Resolve the bucket handle every object operation uses.
 	 *
 	 * @returns The bucket API bound to the configured bucket name.
-	 * @throws Error when `bucket` is missing.
+	 * @throws InvalidConfigError when `bucket` is missing.
 	 * @internal
 	 */
 	private getBucket() {
-		// 1. `from('')` would not fail until the first request, so check the name here
+		// `from('')` would not fail until the first request, so check the name here
 		if (!this.config.bucket) {
-			throw new Error('The supabase storage driver needs a "bucket"');
+			throw new InvalidConfigError({ reason: 'The supabase storage driver needs a "bucket"' });
 		}
 
 		return this.client.from(this.config.bucket);
@@ -252,10 +252,9 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @internal
 	 */
 	private fullPath(filepath: string) {
-		// 1. Confine the caller path under the root before joining, as every other driver does: a leading `..` is
-		//    dropped, so `../other/secret` cannot address an object outside the location, and a leading slash goes,
-		//    so an empty root leaves a clean object name. `joinPath` answers `''` for no root and no path, which is
-		//    what Supabase expects for the top of the bucket
+		// Confining first, as every other driver does, drops a leading `..`, so `../other/secret` cannot address an
+		// object outside the location, and drops a leading slash, so an empty root leaves a clean object name.
+		// `joinPath` answers `''` for no root and no path, which is what Supabase expects for the top of the bucket
 		return joinPath(this.config.root, confinePath(filepath));
 	}
 
@@ -267,11 +266,11 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @internal
 	 */
 	private getAuthenticatedUrl(filepath: string) {
-		// 1. `object/authenticated` rather than `object/public`: the bucket may be private, and the bearer token in the
-		//    request is what grants access either way. Each name segment is percent-encoded: a raw `?` would read as the
-		//    start of the query string and a raw `#` as the fragment, so an unencoded name would make the endpoint
-		//    address a different object than the caller named. `joinPath` keeps the forward slashes an HTTP URL needs,
-		//    the way the object names are built
+		// `object/authenticated` rather than `object/public`: the bucket may be private, and the bearer token in the
+		// request is what grants access either way. Each name segment is percent-encoded: a raw `?` would read as the
+		// start of the query string and a raw `#` as the fragment, so an unencoded name would make the endpoint
+		// address a different object than the caller named. `joinPath` keeps the forward slashes an HTTP URL needs,
+		// the way the object names are built
 		const encodedPath = this.fullPath(filepath)
 			.split('/')
 			.map((segment) => encodeURIComponent(segment))
@@ -287,7 +286,7 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @internal
 	 */
 	private getResumableUrl() {
-		// 1. The bucket and object name are not part of the URL: Supabase reads them from the TUS metadata instead
+		// The bucket and object name are not part of the URL: Supabase reads them from the TUS metadata instead
 		return `${this.endpoint}/upload/resumable`;
 	}
 
@@ -310,45 +309,45 @@ export class StorageDriverSupabase implements TusDriver {
 
 		const requestInit: RequestInit = { method: 'GET' };
 
-		// 1. Supabase expects the key in both headers, the way `getClient` authenticates the storage-js client:
-		//    `apikey` identifies the project, the bearer token is what lets the `authenticated` endpoint serve
-		//    private objects
+		// Supabase expects the key in both headers, the way `getClient` authenticates the storage-js client:
+		// `apikey` identifies the project, the bearer token is what lets the `authenticated` endpoint serve
+		// private objects
 		requestInit.headers = {
 			Authorization: `Bearer ${this.config.serviceRole}`,
 			apikey: this.config.serviceRole,
 		};
 
-		// 2. Translate the range into the HTTP header form: an omitted start is `0` — `{ end }` alone asks for the
-		//    first bytes up to `end`, where `bytes=-N` would mean the last N bytes — and an omitted end is left open
+		// An omitted start is `0`: `{ end }` alone asks for the first bytes up to `end`, where `bytes=-N` would mean
+		// the last N bytes. An omitted end is left open
 		if (range) {
 			requestInit.headers['Range'] = `bytes=${range.start ?? 0}-${range.end ?? ''}`;
 		}
 
 		const response = await fetch(this.getAuthenticatedUrl(filepath), requestInit);
 
-		// 3. A 404 becomes the error every backend shares, so a caller tells a missing object from a denied or failed
-		//    read; the body is cancelled first because an unread body holds its connection open
+		// A 404 becomes the error every backend shares, so a caller tells a missing object from a denied or failed
+		// read; the body is cancelled first because an unread body holds its connection open
 		if (response.status === 404) {
 			await response.body?.cancel();
 
 			throw new StorageFileNotFoundError({ filepath });
 		}
 
-		// 4. Any other error status is a failed read, not a missing stream: the status stays in the message so a
-		//    denied, throttled or failed read can be told apart, and the body, which carries Supabase's own reason, is
-		//    read as the cause — reading it also releases the connection
+		// Any other error status is a failed read, not a missing stream: the status stays in the message so a
+		// denied, throttled or failed read can be told apart, and the body, which carries Supabase's own reason, is
+		// read as the cause — reading it also releases the connection
 		if (response.status >= 400) {
 			const reason = await response.text().catch(() => '');
 
 			throw new Error(`Couldn't read file "${filepath}" (${response.status})`, reason ? { cause: reason } : undefined);
 		}
 
-		// 5. A successful answer without a body has nothing to stream; nothing to cancel either
+		// A successful answer without a body has nothing to stream; nothing to cancel either
 		if (!response.body) {
 			throw new Error(`No stream returned for file "${filepath}"`);
 		}
 
-		// 6. `fetch` returns a Web stream; the rest of the storage layer works with Node readables
+		// `fetch` returns a Web stream; the rest of the storage layer works with Node readables
 		return Readable.fromWeb(response.body);
 	}
 
@@ -367,10 +366,10 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @internal
 	 */
 	private async find(filepath: string) {
-		// 1. The folder is the full object name without its last segment, confined under the root like the name
-		//    itself; `joinPath` with `..` drops that segment and answers `''` at the top of the bucket. The split is on
-		//    `/` alone — `node:path`'s `basename` would use the platform separator, and an object name containing a
-		//    backslash is one name in Supabase, not a path
+		// The folder is the full object name without its last segment, confined under the root like the name
+		// itself; `joinPath` with `..` drops that segment and answers `''` at the top of the bucket. The split is on
+		// `/` alone — `node:path`'s `basename` would use the platform separator, and an object name containing a
+		// backslash is one name in Supabase, not a path
 		const name = this.fullPath(filepath);
 		const rootFolder = joinPath(name, '..');
 		const fileName = name.split('/').pop() ?? '';
@@ -379,9 +378,9 @@ export class StorageDriverSupabase implements TusDriver {
 		let offset = 0;
 		let itemCount;
 
-		// 2. Search by the base name only: the API filters within the given folder, so the folder part goes into the
-		//    prefix and the name into `search`. The filter also matches `name.bak` or `NAME`, so a page can hold other
-		//    entries first; a full page means the exact one may still follow, a short page ends the walk
+		// Search by the base name only: the API filters within the given folder, so the folder part goes into the
+		// prefix and the name into `search`. The filter also matches `name.bak` or `NAME`, so a page can hold other
+		// entries first; a full page means the exact one may still follow, a short page ends the walk
 		do {
 			const { data, error } = await this.bucket.list(rootFolder, {
 				search: fileName,
@@ -389,14 +388,14 @@ export class StorageDriverSupabase implements TusDriver {
 				offset,
 			});
 
-			// 3. A failed lookup is not an empty one; surfacing the error, with the path the caller asked for, keeps
-			//    callers from acting on a wrong answer
+			// A failed lookup is not an empty one; surfacing the error, with the path the caller asked for, keeps
+			// callers from acting on a wrong answer
 			if (error || !data) {
 				throw new Error(`Error looking up file "${filepath}"`, error ? { cause: error } : undefined);
 			}
 
-			// 4. Only the entry with exactly the requested name counts, and only as a file: a folder of the same name
-			//    has no id and no metadata, and answering for it would report a missing object as present
+			// Only the entry with exactly the requested name counts, and only as a file: a folder of the same name
+			// has no id and no metadata, and answering for it would report a missing object as present
 			const file = data.find((item) => item.id !== null && item.name === fileName);
 
 			if (file) {
@@ -423,16 +422,16 @@ export class StorageDriverSupabase implements TusDriver {
 	async stat(filepath: string): Promise<Stat> {
 		const file = await this.find(filepath);
 
-		// 1. A listing without a file of exactly that name is the only way Supabase reports a missing object; it
-		//    becomes the error every backend shares
+		// A listing without a file of exactly that name is the only way Supabase reports a missing object; it
+		// becomes the error every backend shares
 		if (!file) {
 			throw new StorageFileNotFoundError({ filepath });
 		}
 
-		// 2. `find` only returns file entries, which carry their size and modification time in the listing metadata; an
-		//    entry without those fields is a broken answer from the API and is refused here — the way the S3, GCS and
-		//    Azure drivers refuse a stat response missing its fields — rather than handed out as `0` / the epoch under
-		//    the `Stat` type
+		// `find` only returns file entries, which carry their size and modification time in the listing metadata; an
+		// entry without those fields is a broken answer from the API and is refused here — the way the S3, GCS and
+		// Azure drivers refuse a stat response missing its fields — rather than handed out as `0` / the epoch under
+		// the `Stat` type
 		if (file.metadata?.['contentLength'] === undefined || file.metadata?.['lastModified'] === undefined) {
 			throw new Error(`No stat returned for file "${filepath}": the listing entry has no size or modification time`);
 		}
@@ -452,7 +451,7 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @throws Error wrapping the storage error when the lookup fails, since that says nothing about the object.
 	 */
 	async exists(filepath: string): Promise<boolean> {
-		// 1. Reuse the exact lookup behind `stat`; an entry is proof of existence
+		// Reuse the exact lookup behind `stat`; an entry is proof of existence
 		return (await this.find(filepath)) !== undefined;
 	}
 
@@ -468,14 +467,14 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @throws Error wrapping the copy or removal error when the move fails.
 	 */
 	async move(src: string, dest: string): Promise<void> {
-		// 1. A move onto the same key is a no-op, as in the S3 driver: the upserting copy would succeed onto itself and
-		//    the removal below would then delete the only copy. The comparison is on the resolved keys, so `a.png` and
-		//    `./a.png` count as the same object
+		// A move onto the same key is a no-op, as in the S3 driver: the upserting copy would succeed onto itself and
+		// the removal below would then delete the only copy. The comparison is on the resolved keys, so `a.png` and
+		// `./a.png` count as the same object
 		if (this.fullPath(src) === this.fullPath(dest)) return;
 
-		// 2. Copy first and remove the source only once the copy landed: deleting the destination up front, or the
-		//    source before the copy, would lose data when the second step fails. A failure of either step is thrown, so a
-		//    move that did not happen does not read as done
+		// Copy first and remove the source only once the copy landed: deleting the destination up front, or the
+		// source before the copy, would lose data when the second step fails. A failure of either step is thrown, so a
+		// move that did not happen does not read as done
 		try {
 			await this.copy(src, dest);
 			await this.delete(src);
@@ -495,9 +494,9 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @throws Error wrapping the Storage API error when the copy fails.
 	 */
 	async copy(src: string, dest: string): Promise<void> {
-		// 1. The Storage API copies server-side, so the object never passes through this process; `x-upsert` makes a
-		//    copy onto an existing name replace it, as the driver contract expects. A refusal is thrown with the paths,
-		//    so a copy that did not happen does not read as done
+		// The Storage API copies server-side, so the object never passes through this process; `x-upsert` makes a
+		// copy onto an existing name replace it, as the driver contract expects. A refusal is thrown with the paths,
+		// so a copy that did not happen does not read as done
 		try {
 			await request(
 				this.api,
@@ -520,8 +519,8 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @throws Error wrapping the storage error when the upload fails.
 	 */
 	async write(filepath: string, content: Readable, type?: string): Promise<void> {
-		// 1. `upsert` makes a write over an existing name replace it, as the driver contract expects; `duplex: 'half'`
-		//    is required by `fetch` for a streamed request body; the one-hour cache header mirrors the Supabase default
+		// `upsert` makes a write over an existing name replace it, as the driver contract expects; `duplex: 'half'`
+		// is required by `fetch` for a streamed request body; the one-hour cache header mirrors the Supabase default
 		const { error } = await this.bucket.upload(this.fullPath(filepath), content, {
 			contentType: type ?? 'application/octet-stream',
 			cacheControl: '3600',
@@ -529,7 +528,7 @@ export class StorageDriverSupabase implements TusDriver {
 			duplex: 'half',
 		});
 
-		// 2. The client reports failures as a return value; rethrow with the path so the caller knows which file failed
+		// The client reports failures as a return value; rethrow with the path so the caller knows which file failed
 		if (error) {
 			throw new Error(`Error uploading file "${filepath}"`, { cause: error });
 		}
@@ -542,8 +541,8 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @throws Error wrapping the storage error when the removal fails.
 	 */
 	async delete(filepath: string): Promise<void> {
-		// 1. `remove` is a batch API; a one-element list is the single-object form. A failure comes back as a return
-		//    value and is thrown, so an object that is still there does not read as deleted
+		// `remove` is a batch API; a one-element list is the single-object form. A failure comes back as a return
+		// value and is thrown, so an object that is still there does not read as deleted
 		const { error } = await this.bucket.remove([this.fullPath(filepath)]);
 
 		if (error) {
@@ -558,9 +557,9 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @returns Object paths relative to the root, folders descended recursively.
 	 */
 	list(prefix = ''): AsyncIterable<string> {
-		// 1. Resolve the prefix once against the root; the generator works with full object names from here on. The
-		//    whole root, or a caller folder, keeps its trailing slash, so the generator lists that folder rather than
-		//    searching its parent for names starting with it — `media` would match `media-archive` too
+		// Resolve the prefix once against the root; the generator works with full object names from here on. The
+		// whole root, or a caller folder, keeps its trailing slash, so the generator lists that folder rather than
+		// searching its parent for names starting with it — `media` would match `media-archive` too
 		return this.listGenerator(toListPrefix(this.fullPath(prefix), prefix));
 	}
 
@@ -603,13 +602,12 @@ export class StorageDriverSupabase implements TusDriver {
 		let offset = 0;
 		let itemCount;
 
-		// 1. Split the prefix into the folder to query and the name fragment to search for, as described above; a
-		//    trailing slash means the whole folder is wanted
+		// A trailing slash means the whole folder is wanted
 		const isDirectory = prefix.endsWith('/');
 		const prefixDirectory = isDirectory ? prefix : dirname(prefix);
 		const search = isDirectory ? '' : (prefix.split('/').pop() ?? '');
 
-		// 2. Page through the listing with an offset; a full page means there may be more, a short page ends the loop
+		// A full page means there may be more; a short page ends the loop
 		do {
 			const { data, error } = await this.bucket.list(prefixDirectory, {
 				limit,
@@ -617,10 +615,10 @@ export class StorageDriverSupabase implements TusDriver {
 				search,
 			});
 
-			// 3. A failed page must not end the listing as if it were complete: a caller that removes what is no longer
-			//    listed would wipe data on a transient error, so the failure is thrown like every other operation of
-			//    this driver. A page without data and without an error breaks the client's own contract and is
-			//    treated the same way rather than read as an empty prefix
+			// A failed page must not end the listing as if it were complete: a caller that removes what is no longer
+			// listed would wipe data on a transient error, so the failure is thrown like every other operation of
+			// this driver. A page without data and without an error breaks the client's own contract and is
+			// treated the same way rather than read as an empty prefix
 			if (error || !data) {
 				throw new Error(`Error listing prefix "${prefix}"`, error ? { cause: error } : undefined);
 			}
@@ -629,19 +627,19 @@ export class StorageDriverSupabase implements TusDriver {
 			offset += itemCount;
 
 			for (const item of data) {
-				// 4. Supabase's `search` is a case-insensitive `ILIKE` with `_` and `%` unescaped, so it also returns
-				//    `Report.pdf` for `report` and `axb` for `a_b`; only names that start with the fragment exactly
-				//    belong to the prefix, and a caller deleting or syncing by prefix must not see the rest
+				// Supabase's `search` is a case-insensitive `ILIKE` with `_` and `%` unescaped, so it also returns
+				// `Report.pdf` for `report` and `axb` for `a_b`; only names that start with the fragment exactly
+				// belong to the prefix, and a caller deleting or syncing by prefix must not see the rest
 				if (search !== '' && !item.name.startsWith(search)) continue;
 
-				// 5. The API only returns the entry name, so the full path is rebuilt from the queried folder
+				// The API only returns the entry name, so the full path is rebuilt from the queried folder
 				const filePath = normalizePath(join(prefixDirectory, item.name));
 
 				if (item.id !== null) {
-					// 6. A file: strip the root (and its trailing slash) so callers get paths in the form they pass in
+					// Callers get file paths without the root, in the form they pass in
 					yield toRelativePath(this.config.root, filePath);
 				} else {
-					// 7. A folder has no id; descend with a trailing slash so the recursive call lists its contents
+					// A folder has no id; the trailing slash makes the recursive call list its contents
 					yield* this.listGenerator(`${filePath}/`);
 				}
 			}
@@ -654,9 +652,9 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @returns The extension names in the order the TUS server advertises them.
 	 */
 	get tusExtensions(): string[] {
-		// 1. Exactly what Supabase's own TUS endpoint supports: uploads are created lazily on the first chunk,
-		//    `deleteChunkedUpload` terminates them through the upload URL and Supabase expires unfinished ones itself; concatenation and
-		//    checksums are not offered, so advertising them would promise what the backend cannot honour
+		// Exactly what Supabase's own TUS endpoint supports: uploads are created lazily on the first chunk,
+		// `deleteChunkedUpload` terminates them through the upload URL and Supabase expires unfinished ones itself; concatenation and
+		// checksums are not offered, so advertising them would promise what the backend cannot honour
 		return ['creation', 'termination', 'expiration'];
 	}
 
@@ -698,8 +696,8 @@ export class StorageDriverSupabase implements TusDriver {
 		params?: Record<string, unknown>,
 		options?: CallOptions,
 	): Promise<CallResponse<T>> {
-		// 1. The Storage API does the rest: placeholders — the caller's, then `{bucket}` — the host check, the key, the
-		//    deadline and the mapping of Supabase's `{ statusCode, error, message }` refusals, which name no key
+		// The Storage API does the rest: placeholders — the caller's, then `{bucket}` — the host check, the key, the
+		// deadline and the mapping of Supabase's `{ statusCode, error, message }` refusals, which name no key
 		return request<T>(this.api, method, params, options);
 	}
 
@@ -714,8 +712,8 @@ export class StorageDriverSupabase implements TusDriver {
 	 * @returns The context unchanged.
 	 */
 	async createChunkedUpload(_filepath: string, context: ChunkedUploadContext): Promise<ChunkedUploadContext> {
-		// 1. Creating the TUS upload here would need a request without a body; `tus-js-client` does creation and the
-		//    first chunk in one go, so the context is passed through untouched
+		// Creating the TUS upload here would need a request without a body; `tus-js-client` does creation and the
+		// first chunk in one go, so the context is passed through untouched
 		return context;
 	}
 
@@ -743,13 +741,13 @@ export class StorageDriverSupabase implements TusDriver {
 	): Promise<number> {
 		let bytesUploaded = offset || 0;
 
-		// 1. The map may arrive absent from a POST without `Upload-Metadata`; it is created rather than crashing with a
-		//    TypeError, so the upload state below always has a place to go
+		// The map may arrive absent from a POST without `Upload-Metadata`; it is created rather than crashing with a
+		// TypeError, so the upload state below always has a place to go
 		const contextMetadata = (context.metadata ??= {});
 
-		// 2. Supabase reads the target from the TUS metadata rather than the URL; the content type falls back to a
-		//    generic binary type because the endpoint rejects an empty one. `contentType` is the standardised key and
-		//    wins; `type` is still read as the legacy name older clients send
+		// Supabase reads the target from the TUS metadata rather than the URL; the content type falls back to a
+		// generic binary type because the endpoint rejects an empty one. `contentType` is the standardised key and
+		// wins; `type` is still read as the legacy name older clients send
 		const metadata = {
 			bucketName: this.config.bucket,
 			objectName: this.fullPath(filepath),
@@ -757,12 +755,12 @@ export class StorageDriverSupabase implements TusDriver {
 			cacheControl: '3600',
 		};
 
-		// 3. Refuse a deferred length up front: `tus-js-client` needs `uploadSize` or `uploadLengthDeferred`, and the
-		//    latter makes the one-shot source report itself as done after the first slice, so every chunk's PATCH would
-		//    carry an `Upload-Length` claiming that chunk completes the upload and Supabase would finalise the object
-		//    after the first chunk of a multi-chunk upload. A named error beats the library's cryptic pre-request
-		//    rejection, and the driver never advertises `creation-defer-length` in `tusExtensions` either. The known
-		//    size is captured in a local because the narrowing does not reach into the callbacks below
+		// Refuse a deferred length up front: `tus-js-client` needs `uploadSize` or `uploadLengthDeferred`, and the
+		// latter makes the one-shot source report itself as done after the first slice, so every chunk's PATCH would
+		// carry an `Upload-Length` claiming that chunk completes the upload and Supabase would finalise the object
+		// after the first chunk of a multi-chunk upload. A named error beats the library's cryptic pre-request
+		// rejection, and the driver never advertises `creation-defer-length` in `tusExtensions` either. The known
+		// size is captured in a local because the narrowing does not reach into the callbacks below
 		if (context.size === undefined) {
 			throw new Error(
 				`Cannot write a chunk of "${filepath}": the supabase storage driver does not support deferred-length uploads`,
@@ -774,19 +772,19 @@ export class StorageDriverSupabase implements TusDriver {
 		const chunks: Buffer[] = [];
 		let chunkSize = 0;
 
-		// 4. Buffer the chunk as it streams in, counting bytes on the way: the one-shot source handed to
-		//    `tus-js-client` below serves exactly one slice, so a chunk larger than the configured size would be
-		//    truncated to the first request and crash the library's upload loop. The bound is checked on the running
-		//    total, so an oversized chunk is refused while it is still arriving rather than after the whole of it has
-		//    been buffered, and before any upload starts
+		// Buffer the chunk as it streams in, counting bytes on the way: the one-shot source handed to
+		// `tus-js-client` below serves exactly one slice, so a chunk larger than the configured size would be
+		// truncated to the first request and crash the library's upload loop. The bound is checked on the running
+		// total, so an oversized chunk is refused while it is still arriving rather than after the whole of it has
+		// been buffered, and before any upload starts
 		for await (let chunk of content) {
 			if (!Buffer.isBuffer(chunk)) chunk = Buffer.from(chunk);
 
 			chunkSize += chunk.length;
 			chunks.push(chunk);
 
-			// 5. The TUS server agreed to send at most the configured size per request; the wording mirrors the other
-			//    drivers, so a caller sees the same error whatever backend serves the location
+			// The TUS server agreed to send at most the configured size per request; the wording mirrors the other
+			// drivers, so a caller sees the same error whatever backend serves the location
 			if (chunkSize > this.preferredChunkSize) {
 				throw new Error(
 					`The chunk of ${chunkSize} bytes exceeds the chunk size limit of ${this.preferredChunkSize} bytes`,
@@ -794,23 +792,23 @@ export class StorageDriverSupabase implements TusDriver {
 			}
 		}
 
-		// 6. Skip the upload for an empty chunk, the way the Azure and Cloudinary drivers do: a zero-length one-shot
-		//    source is rejected by `tus-js-client` with a size-mismatch error, and the offset is unchanged either way
+		// Skip the upload for an empty chunk, the way the Azure and Cloudinary drivers do: a zero-length one-shot
+		// source is rejected by `tus-js-client` with a size-mismatch error, and the offset is unchanged either way
 		if (chunkSize === 0) {
 			return bytesUploaded;
 		}
 
-		// 7. `tus-js-client` reports through callbacks, so the one chunk is wrapped in a promise the callbacks settle
-		//    with the offset the upload reached
+		// `tus-js-client` reports through callbacks, so the one chunk is wrapped in a promise the callbacks settle
+		// with the offset the upload reached
 		return new Promise<number>((resolve, reject) => {
-			// 1. The custom file reader feeds `tus-js-client` the buffered chunk as a one-shot source, so the library
-			//    sends exactly this chunk instead of trying to read the whole file. `x-upsert` lets a re-upload
-			//    replace the object; retries are disabled because the TUS server in front of this driver already
-			//    retries. The deferred-length refusal above guarantees a known size here, so `uploadSize` is always
-			//    set — an explicit `undefined` would not be an absent key to the library's option types. The endpoint is
-			//    only given for the first chunk: with it, a resume HEAD Supabase answers with 4xx (an expired or unknown
-			//    upload) makes the library silently create a new upload and PATCH this chunk at offset 0, so without it
-			//    the library fails with "unable to resume upload" instead
+			// The custom file reader feeds `tus-js-client` the buffered chunk as a one-shot source, so the library
+			// sends exactly this chunk instead of trying to read the whole file. `x-upsert` lets a re-upload
+			// replace the object; retries are disabled because the TUS server in front of this driver already
+			// retries. The deferred-length refusal above guarantees a known size here, so `uploadSize` is always
+			// set — an explicit `undefined` would not be an absent key to the library's option types. The endpoint is
+			// only given for the first chunk: with it, a resume HEAD Supabase answers with 4xx (an expired or unknown
+			// upload) makes the library silently create a new upload and PATCH this chunk at offset 0, so without it
+			// the library fails with "unable to resume upload" instead
 			const resumeUrl = contextMetadata['upload-url'];
 
 			const upload = new tus.Upload(Readable.from(chunks, { objectMode: false }), {
@@ -828,19 +826,19 @@ export class StorageDriverSupabase implements TusDriver {
 					reject(error);
 				},
 				onAfterResponse(req, res) {
-					// 1. Only the resume HEAD tells where Supabase holds the upload; the library would PATCH this chunk at
-					//    that offset whatever it is, since the one-shot source ignores the offset it is sliced at, so a
-					//    mismatch must be caught here, before the PATCH goes out
+					// Only the resume HEAD tells where Supabase holds the upload; the library would PATCH this chunk at
+					// that offset whatever it is, since the one-shot source ignores the offset it is sliced at, so a
+					// mismatch must be caught here, before the PATCH goes out
 					if (req.getMethod() !== 'HEAD') return;
 
 					const serverOffset = Number.parseInt(res.getHeader('Upload-Offset') ?? '', 10);
 
-					// 2. A missing offset is left to the library, which refuses it itself; the expected one proceeds
+					// A missing offset is left to the library, which refuses it itself; the expected one proceeds
 					if (Number.isNaN(serverOffset) || serverOffset === bytesUploaded) return;
 
-					// 3. An offset right past this chunk means an earlier attempt landed but its answer was lost: the
-					//    retry resolves with that offset instead of appending the bytes a second time. Any other offset
-					//    would put the chunk in the wrong place and is refused
+					// An offset right past this chunk means an earlier attempt landed but its answer was lost: the
+					// retry resolves with that offset instead of appending the bytes a second time. Any other offset
+					// would put the chunk in the wrong place and is refused
 					if (serverOffset === bytesUploaded + chunkSize) {
 						resolve(serverOffset);
 					} else {
@@ -851,14 +849,14 @@ export class StorageDriverSupabase implements TusDriver {
 						);
 					}
 
-					// 4. Throwing stops the library before the PATCH; the promise is already settled, so the error it
-					//    reports through `onError` afterwards changes nothing
+					// Throwing stops the library before the PATCH; the promise is already settled, so the error it
+					// reports through `onError` afterwards changes nothing
 					throw new Error('Chunk upload stopped after the offset check');
 				},
 				onChunkComplete(_chunkSize, bytesAccepted) {
-					// 1. Resolve after the first chunk completes: this call only ever carries one chunk, so waiting for
-					//    `onSuccess` would block until the whole upload finished. The offset Supabase acknowledged is
-					//    returned rather than a computed one, so the TUS server in front tracks the real position
+					// Resolve after the first chunk completes: this call only ever carries one chunk, so waiting for
+					// `onSuccess` would block until the whole upload finished. The offset Supabase acknowledged is
+					// returned rather than a computed one, so the TUS server in front tracks the real position
 					bytesUploaded = bytesAccepted;
 
 					resolve(bytesUploaded);
@@ -867,10 +865,10 @@ export class StorageDriverSupabase implements TusDriver {
 					resolve(bytesUploaded);
 				},
 				onUploadUrlAvailable() {
-					// 1. Remember the upload URL Supabase assigned on creation: it is the only handle for appending
-					//    later chunks, and the context is what the TUS server hands back on every following call. The
-					//    creation date is recorded next to it because resuming an upload reads both, the way
-					//    tus-js-client keeps them together
+					// Remember the upload URL Supabase assigned on creation: it is the only handle for appending
+					// later chunks, and the context is what the TUS server hands back on every following call. The
+					// creation date is recorded next to it because resuming an upload reads both, the way
+					// tus-js-client keeps them together
 					if (!contextMetadata['upload-url']) {
 						contextMetadata['upload-url'] = upload.url;
 						contextMetadata['creation_date'] = new Date().toString();
@@ -878,9 +876,9 @@ export class StorageDriverSupabase implements TusDriver {
 				},
 			});
 
-			// 2. On every chunk after the first, resume the existing upload instead of creating a new one; the literal
-			//    is the tus-js-client previous-upload contract, with an empty storage key and no parallel URLs because
-			//    this driver never stores uploads in a urlStorage and uploads a single stream
+			// On every chunk after the first, resume the existing upload instead of creating a new one; the literal
+			// is the tus-js-client previous-upload contract, with an empty storage key and no parallel URLs because
+			// this driver never stores uploads in a urlStorage and uploads a single stream
 			if (resumeUrl) {
 				const previousUpload: tus.PreviousUpload = {
 					size: totalSize,
@@ -922,21 +920,21 @@ export class StorageDriverSupabase implements TusDriver {
 	async deleteChunkedUpload(_filepath: string, context: ChunkedUploadContext): Promise<void> {
 		const uploadUrl = context.metadata?.['upload-url'];
 
-		// 1. No upload URL means no chunk was ever sent, so nothing exists on Supabase to terminate
+		// No upload URL means no chunk was ever sent, so nothing exists on Supabase to terminate
 		if (!uploadUrl) return;
 
-		// 2. A TUS DELETE on the upload URL, authorised like the chunks; retries are left to the TUS server in front,
-		//    as for `writeChunk`. Removing the object under the final name instead would delete the previous version
+		// A TUS DELETE on the upload URL, authorised like the chunks; retries are left to the TUS server in front,
+		// as for `writeChunk`. Removing the object under the final name instead would delete the previous version
 		try {
 			await tus.Upload.terminate(uploadUrl, {
 				headers: { Authorization: `Bearer ${this.config.serviceRole}` },
 				retryDelays: null,
 			});
 		} catch (error) {
-			// 3. An upload Supabase answers 404 or 410 for has already expired or finished, so there is nothing left to
-			//    abort; it resolves quietly, the way the other drivers answer a missing upload. Any other failure is
-			//    rethrown. The status is read off the library's `DetailedError` response by shape, so a failure that
-			//    never got a response (a network error) is rethrown too
+			// An upload Supabase answers 404 or 410 for has already expired or finished, so there is nothing left to
+			// abort; it resolves quietly, the way the other drivers answer a missing upload. Any other failure is
+			// rethrown. The status is read off the library's `DetailedError` response by shape, so a failure that
+			// never got a response (a network error) is rethrown too
 			const status = (error as tus.DetailedError | undefined)?.originalResponse?.getStatus();
 
 			if (status === 404 || status === 410) return;

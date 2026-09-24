@@ -29,12 +29,12 @@ const judgeFailure = async (
 	userId: string,
 	options: PushChannelOptions,
 ): Promise<unknown> => {
-	// 1. Anything but a gone device is a failure the job retries
+	// Anything but a gone device is a failure the job retries
 	if (!(error instanceof PushTargetGoneError)) {
 		return error;
 	}
 
-	// 2. A gone device is forgotten now; a failure to forget is retried instead of losing the chance to clean up
+	// A gone device is forgotten now; a failure to forget is retried instead of losing the chance to clean up
 	try {
 		await options.onGone?.(target, userId);
 
@@ -84,8 +84,8 @@ export const pushChannel = (options: PushChannelOptions = {}): NotificationChann
 	 * @throws The first failure of a device that is not gone, after every device was tried.
 	 */
 	async send({ recipient, content }: NotificationDelivery<PushContent>): Promise<void> {
-		// 1. The target is the channel's to fill in: whatever of one the content carries is dropped, so a template can
-		//    neither redirect the message nor give it two targets
+		// The target is the channel's to fill in: whatever of one the content carries is dropped, so a template can
+		// neither redirect the message nor give it two targets
 		const {
 			subscription: _subscription,
 			token: _token,
@@ -96,19 +96,19 @@ export const pushChannel = (options: PushChannelOptions = {}): NotificationChann
 
 		let failure: unknown;
 
-		// 2. One device after another; a message is one target in `@novastarter/push`
+		// One message per device, since a message is one target in `@novastarter/push`
 		for (const target of recipient.pushTargets ?? []) {
 			try {
 				await sendPush({ ...message, ...target });
 			} catch (error) {
-				// 3. Judged every time — a gone device is forgotten even after another failed — and the first failure kept
+				// A gone device is forgotten even after another device failed; only the first failure is kept
 				const judged = await judgeFailure(error, target, recipient.userId, options);
 
 				failure ??= judged;
 			}
 		}
 
-		// 4. A failure makes the job retry, once every device had its chance
+		// Thrown only once every device had its chance, so the job retries
 		if (failure !== undefined) {
 			throw failure;
 		}

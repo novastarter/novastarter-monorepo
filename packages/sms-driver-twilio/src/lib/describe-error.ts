@@ -22,7 +22,7 @@ import twilio from 'twilio';
  * ```
  */
 export const describeError = (error: unknown): Error => {
-	// 1. Twilio answered: the status and its own code are what the caller acts on, the help URL what a developer reads
+	// The status and Twilio's own code are what the caller acts on; the help URL is what a developer reads.
 	if (error instanceof twilio.RestException) {
 		const moreInfo = error.moreInfo ? ` (${error.moreInfo})` : '';
 
@@ -31,13 +31,12 @@ export const describeError = (error: unknown): Error => {
 		});
 	}
 
-	// 2. A transport failure of the SDK's axios carries the request config — the `Authorization` header with the
-	//    credentials — so it is described without being passed on
+	// A transport failure of the SDK's axios carries the request config, with the credentials in the `Authorization`
+	// header, so it is described without being passed on.
 	if (isAxiosLike(error)) {
 		return describeTransportError(error);
 	}
 
-	// 3. Anything else — a bad key, a thrown value — as is, prefixed
 	return new Error(`Twilio: ${toErrorMessage(error)}`, { cause: error });
 };
 
@@ -61,11 +60,11 @@ export const describeError = (error: unknown): Error => {
  * ```
  */
 export const describeTransportError = (error: unknown): Error => {
-	// 1. The code (`ECONNABORTED`, `ENOTFOUND`) is what a caller matches on; the message of axios names no header
+	// The code (`ECONNABORTED`, `ENOTFOUND`) is what a caller matches on; the axios message names no header.
 	const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
 
-	// 2. The axios timeout is the kit's TimeoutError, so a caller matching it catches the race the SDK usually wins;
-	//    the error itself — config with the credentials included — is still dropped, only the deadline is read off it
+	// The axios timeout becomes the kit's TimeoutError, so a caller matching it catches the race the SDK usually wins.
+	// The error holds the credentials in its config, so only the deadline is read off it.
 	if (code === 'ECONNABORTED') {
 		return new TimeoutError(deadlineOf(error));
 	}
@@ -86,7 +85,7 @@ export const describeTransportError = (error: unknown): Error => {
  * @internal
  */
 const deadlineOf = (error: unknown): number => {
-	// 1. The config is reached for its `timeout` field only
+	// The config is reached for its `timeout` field only.
 	const config =
 		typeof error === 'object' && error !== null && 'config' in error
 			? (error.config as { timeout?: unknown } | undefined)
@@ -94,7 +93,7 @@ const deadlineOf = (error: unknown): number => {
 
 	const timeout = config?.timeout;
 
-	// 2. No usable deadline on the error: the SDK's own default is the closest there is
+	// Without a usable deadline on the error, the SDK's own default is the closest there is.
 	return typeof timeout === 'number' && Number.isFinite(timeout) ? timeout : DEFAULT_REQUEST_TIMEOUT;
 };
 
@@ -106,7 +105,7 @@ const deadlineOf = (error: unknown): number => {
  * @internal
  */
 const isAxiosLike = (error: unknown): boolean => {
-	// 1. `isAxiosError` marks the real one; any error holding a `config` or a `request` may hold the headers too
+	// `isAxiosError` marks the real one; any error holding a `config` or a `request` may hold the headers too.
 	if (typeof error !== 'object' || error === null) return false;
 
 	return (

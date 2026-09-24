@@ -29,10 +29,9 @@ describe('SmsManager', () => {
 	test('Registers the built-in driver on construction and builds a location on first use', () => {
 		const manager = new SmsManager();
 
-		// 1. The console driver is known without any registration by the application
 		expect([...manager['drivers'].keys()]).toStrictEqual(['console']);
 
-		// 2. Registering a location keeps the configuration only; the first `location()` builds the driver
+		// The first `location()` builds the driver; registering keeps the configuration only.
 		manager.registerLocation('default', {
 			driver: 'console',
 			options: {},
@@ -47,7 +46,6 @@ describe('SmsManager', () => {
 		const manager = new SmsManager();
 		const mockDriver = vi.fn();
 
-		// 1. A bare mock stands in for a vendor driver class, recording how the manager calls `new Driver(...)`
 		manager.registerDriver('test-driver', mockDriver);
 
 		manager.registerLocation('main', {
@@ -65,10 +63,10 @@ describe('SmsManager', () => {
 	test('Holds the routes the application registers, replacing them on a second call', () => {
 		const manager = new SmsManager();
 
-		// 1. Nothing registered yet: an empty object, so callers can read `routes().from` without a guard
+		// An empty object, so callers can read `routes().from` without a guard.
 		expect(manager.routes()).toStrictEqual({});
 
-		// 2. The last registration wins whole, the way `registerLocation` replaces a location
+		// The last registration wins whole, the way `registerLocation` replaces a location.
 		manager.registerRoutes({ from: '+14155550100', transactional: ['main'] });
 		manager.registerRoutes({ from: 'Acme' });
 

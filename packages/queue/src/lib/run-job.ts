@@ -16,15 +16,15 @@ import { getJobHandler } from './handlers.js';
  * match; whatever the handler throws.
  */
 export const runContract = async (contract: JobContract, payload: unknown, context: JobContext): Promise<void> => {
-	// 1. The handler must be there before the payload is checked: a missing handler is the deployment's problem, a
-	//    bad payload the sender's, and the error should say which
+	// The handler must be there before the payload is checked: a missing handler is the deployment's problem, a
+	// bad payload the sender's, and the error should say which
 	const handler = getJobHandler(contract);
 
 	if (!handler) {
 		throw new Error(`No handler registered for job "${contract.name}"`);
 	}
 
-	// 2. Parsed on the way in, so the handler sees exactly what the contract promises
+	// Parsed on the way in, so the handler sees exactly what the contract promises
 	await handler(contract.parse(payload), context);
 };
 
@@ -53,6 +53,6 @@ export const runContract = async (contract: JobContract, payload: unknown, conte
  * ```
  */
 export const runJob = async (name: string, payload: unknown, context: JobContext): Promise<void> => {
-	// 1. The contract, or an error naming the job — a receiver turns that into "unknown job"
+	// The contract, or an error naming the job — a receiver turns that into "unknown job"
 	await runContract(getJobContract(name), payload, context);
 };

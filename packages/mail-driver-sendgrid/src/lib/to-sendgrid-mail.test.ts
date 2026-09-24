@@ -2,6 +2,7 @@
  * Tests of `to-sendgrid-mail`: how a message, its addresses and its attachments become the payload of SendGrid's
  * `send()`.
  */
+import { InvalidPayloadError } from '@novastarter/errors';
 import { describe, expect, test } from 'vitest';
 import {
 	SENDGRID_CATEGORY_COUNT,
@@ -14,8 +15,7 @@ import {
 
 describe('toSendgridCategories', () => {
 	test('Cuts every label to the length limit, drops an empty one and caps the count, the category first', () => {
-		// 1. SendGrid refuses a message past its category limits, so the labels are adapted instead: the category
-		//    leads, an empty tag drops out and the tail past ten is left off
+		// SendGrid refuses a message past its category limits, so the labels are adapted instead
 		const tags = Array.from({ length: SENDGRID_CATEGORY_COUNT + 3 }, (_, index) => `tag-${index}`);
 
 		expect(toSendgridCategories({ to: 'a@b.c', subject: 'x', category: 'marketing', tags })).toStrictEqual([
@@ -23,12 +23,10 @@ describe('toSendgridCategories', () => {
 			...tags.slice(0, SENDGRID_CATEGORY_COUNT - 1).map((_, index) => `tag-${index}`),
 		]);
 
-		// 2. A tag past the 255-character name limit is cut to its prefix, not refused
 		expect(
 			toSendgridCategories({ to: 'a@b.c', subject: 'x', tags: ['x'.repeat(SENDGRID_CATEGORY_LENGTH + 10)] }),
 		).toStrictEqual(['transactional', 'x'.repeat(SENDGRID_CATEGORY_LENGTH)]);
 
-		// 3. An empty tag drops out; the category alone fits
 		expect(toSendgridCategories({ to: 'a@b.c', subject: 'x', tags: ['', 'welcome'] })).toStrictEqual([
 			'transactional',
 			'welcome',
@@ -38,7 +36,7 @@ describe('toSendgridCategories', () => {
 
 describe('toSendgridAddress', () => {
 	test('Parses a display-name string and keeps the name of an object', () => {
-		// 1. SendGrid takes name and address apart; a display-name string is parsed, so its name is kept
+		// A display-name string is parsed, so its name is kept
 		expect(toSendgridAddress('Bob <bob@example.com>')).toStrictEqual({
 			email: 'bob@example.com',
 			name: 'Bob',
@@ -55,7 +53,6 @@ describe('toSendgridAddress', () => {
 
 describe('toSendgridAttachment', () => {
 	test('Encodes content to base64 and marks an attachment with a content id inline', async () => {
-		// 1. A plain attachment carries its type and is sent as a regular attachment
 		expect(
 			await toSendgridAttachment({ filename: 'a.txt', content: 'hello', contentType: 'text/plain' }),
 		).toStrictEqual({
@@ -65,7 +62,6 @@ describe('toSendgridAttachment', () => {
 			disposition: 'attachment',
 		});
 
-		// 2. A content id turns the attachment inline, so `cid:` references from the html resolve
 		expect(
 			await toSendgridAttachment({ filename: 'logo.png', content: Buffer.from('png'), cid: 'logo' }),
 		).toStrictEqual({
@@ -77,7 +73,7 @@ describe('toSendgridAttachment', () => {
 	});
 
 	test('Reads a path', async () => {
-		// 1. This very file is the attachment; base64 of a non-empty file proves the path was read
+		// Base64 of a non-empty file proves the path was read
 		const attachment = await toSendgridAttachment({
 			filename: 'self.ts',
 			path: new URL(import.meta.url).pathname,
@@ -88,14 +84,12 @@ describe('toSendgridAttachment', () => {
 	});
 
 	test('Throws without content or path', async () => {
-		// 1. An attachment without a source is refused by name
 		await expect(toSendgridAttachment({ filename: 'x' })).rejects.toThrow(/neither content nor path/);
 	});
 });
 
 describe('toSendgridMail', () => {
 	test('Maps addresses to objects, category and tags to categories, attachments to base64', async () => {
-		// 1. Every field of the message finds its SendGrid name; the sandbox flag rides in `mailSettings`
 		expect(
 			await toSendgridMail(
 				{
@@ -145,7 +139,7 @@ describe('toSendgridMail', () => {
 	});
 
 	test('Leaves optional fields out and keeps sandbox off by default', async () => {
-		// 1. A minimal message carries no `undefined` keys and no `mailSettings`, so the request stays what the API expects
+		// No `undefined` keys and no `mailSettings`, so the request stays what the API expects
 		expect(
 			await toSendgridMail({ to: 'a@b.c', from: 'x@y.z', subject: 'x', text: 'x', category: 'marketing' }),
 		).toStrictEqual({
@@ -158,8 +152,7 @@ describe('toSendgridMail', () => {
 	});
 
 	test('Sends an address repeated across to, cc and bcc once, in the first list it appears in', async () => {
-		// 1. SendGrid refuses a personalization that repeats an address, so repeats drop out case-insensitively; a list
-		//    left empty is not sent at all
+		// SendGrid refuses a personalization that repeats an address
 		expect(
 			await toSendgridMail({
 				to: ['Ada <ada@example.com>', 'ADA@example.com'],
@@ -180,7 +173,7 @@ describe('toSendgridMail', () => {
 	});
 
 	test('Throws without a sender', async () => {
-		// 1. SendGrid requires `from`; the mapper refuses the message by name before any request goes out
 		await expect(toSendgridMail({ to: 'a@b.c', subject: 'x', text: 'x' })).rejects.toThrow(/"from"/);
+		await expect(toSendgridMail({ to: 'a@b.c', subject: 'x', text: 'x' })).rejects.toThrow(InvalidPayloadError);
 	});
 });

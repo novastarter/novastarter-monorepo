@@ -22,14 +22,14 @@ const subscription = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys
 
 describe('toTopic', () => {
 	test('Cuts the tag to the URL-safe alphabet and the length limit, dropping an empty one', () => {
-		// 1. Anything outside the alphabet becomes `_`, so a dotted or colon-separated tag still collapses
+		// Anything outside the alphabet becomes `_`, so a dotted or colon-separated tag still collapses
 		expect(toTopic('invoice.paid:42')).toBe('invoice_paid_42');
 		expect(toTopic('::')).toBe('__');
 
-		// 2. The push services refuse a longer topic, so it is cut rather than rejected
+		// The push services refuse a longer topic, so it is cut rather than rejected
 		expect(toTopic('x'.repeat(40))).toHaveLength(32);
 
-		// 3. No tag means no header at all, never an empty one
+		// No tag means no header at all, never an empty one
 		expect(toTopic('')).toBeUndefined();
 		expect(toTopic(undefined)).toBeUndefined();
 	});
@@ -37,7 +37,7 @@ describe('toTopic', () => {
 
 describe('toRequestOptions', () => {
 	test('Maps ttl, urgency, tag and the location defaults to the library keys', () => {
-		// 1. Every option maps to the library's key; the message's ttl wins over the location's default
+		// The message's ttl wins over the location's default
 		expect(
 			toRequestOptions(
 				{ subscription, title: 'Hi', tag: 'a b', ttl: 60, urgency: 'high' },
@@ -55,7 +55,7 @@ describe('toRequestOptions', () => {
 	});
 
 	test('Fills in the location defaults and leaves absent options out entirely', () => {
-		// 1. The location's ttl fills in; urgency and encoding fall back to the spec defaults
+		// The location's ttl fills in; urgency and encoding fall back to the spec defaults
 		expect(toRequestOptions({ subscription, title: 'Hi' }, { ...keys, subject, ttl: 3600 })).toStrictEqual({
 			vapidDetails: { subject, ...keys },
 			contentEncoding: 'aes128gcm',
@@ -63,7 +63,7 @@ describe('toRequestOptions', () => {
 			TTL: 3600,
 		});
 
-		// 2. Nothing optional set means no key at all, so the library never sees an `undefined` value
+		// Nothing optional set means no key at all, so the library never sees an `undefined` value
 		expect(toRequestOptions({ subscription, title: 'Hi' }, { ...keys, subject })).toStrictEqual({
 			vapidDetails: { subject, ...keys },
 			contentEncoding: 'aes128gcm',

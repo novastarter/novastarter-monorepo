@@ -12,19 +12,19 @@ vi.mock('node:path');
 const envBackup = { ...process.env };
 
 beforeEach(() => {
-	// 1. An empty environment, so a CONFIG_PATH from the developer's shell cannot leak into the assertions
+	// An empty environment, so a CONFIG_PATH from the developer's shell cannot leak into the assertions
 	process.env = {};
 	vi.mocked(resolve).mockReturnValue('test-resolved-path');
 });
 
 afterEach(() => {
-	// 1. Mocks are cleared so the next test starts clean, then the real environment comes back
+	// Mocks are cleared so the next test starts clean, then the real environment comes back
 	vi.clearAllMocks();
 	process.env = envBackup;
 });
 
 test('Resolves configured CONFIG_PATH from env', () => {
-	// 1. The variable wins over the default, and the path it names is resolved as given
+	// The variable wins over the default, and the path it names is resolved as given
 	process.env['CONFIG_PATH'] = 'test-config-path';
 	const res = getConfigPath();
 	expect(resolve).toHaveBeenCalledWith('test-config-path');
@@ -32,9 +32,9 @@ test('Resolves configured CONFIG_PATH from env', () => {
 });
 
 test('Resolves the relative default CONFIG_PATH against the working directory', () => {
-	// 1. An unset variable falls back to the package default; the default is kept relative, so the resolution
-	//    happens against the working directory of the call — which getConfigPath performs — and not of the module
-	//    import
+	// An unset variable falls back to the package default; the default is kept relative, so the resolution
+	// happens against the working directory of the call — which getConfigPath performs — and not of the module
+	// import
 	process.env['CONFIG_PATH'] = undefined;
 	const res = getConfigPath();
 	expect(resolve).toHaveBeenCalledWith('.env');

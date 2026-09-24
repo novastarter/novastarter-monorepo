@@ -1,3 +1,4 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import { LocationManager } from './location-manager.js';
 
 /**
@@ -54,13 +55,12 @@ export const mergeCallOptions = <O extends CallDefaults & { headers?: Record<str
 	defaults: CallDefaults | undefined,
 	options?: O,
 ): O => {
-	// 1. Nothing set on the location: the call's options as they are
 	if (!defaults) {
 		return (options ?? {}) as O;
 	}
 
-	// 2. The call wins where both say something; a header name is compared case-insensitively, so the call's
-	//    `Content-Type` replaces the location's `content-type` rather than both being sent
+	// A header name is compared case-insensitively, so the call's `Content-Type` replaces the location's `content-type`
+	// rather than both being sent.
 	const headers: Record<string, string> = {};
 
 	for (const [name, value] of [...Object.entries(defaults.headers ?? {}), ...Object.entries(options?.headers ?? {})]) {
@@ -164,7 +164,7 @@ export class DriverManager<
 	 * @param driver - Driver class.
 	 */
 	registerDriver(name: keyof Drivers & string, driver: DriverClass<Instance>): void {
-		// 1. A plain Map write is enough: a duplicate name replaces the earlier class, as the JSDoc promises
+		// A duplicate name replaces the earlier class, as the JSDoc promises.
 		this.drivers.set(name, driver);
 	}
 
@@ -176,15 +176,18 @@ export class DriverManager<
 	 *
 	 * @param name - Location identifier used later with {@link DriverManager.location}.
 	 * @param config - Which driver to use and the options passed to its constructor.
-	 * @throws Error when `config.driver` names a driver that has not been registered.
+	 * @throws InvalidConfigError when `config.driver` names a driver that has not been registered.
 	 */
 	override registerLocation(name: string, config: LocationConfig<Drivers>): void {
-		// 1. Resolve the driver class up front, so a typo in the config fails at registration rather than on first use
+		// The driver class is resolved up front, so a typo in the config fails at registration rather than on first
+		// use.
 		if (!this.drivers.has(config.driver)) {
-			throw new Error(`Driver "${config.driver}" isn't registered.`);
+			throw new InvalidConfigError({
+				reason: `The "${config.driver}" driver isn't registered; call registerDriver() with it before a location uses it`,
+			});
 		}
 
-		// 2. The base keeps the configuration and drops the earlier instance
+		// The base keeps the configuration and drops the earlier instance
 		super.registerLocation(name, config);
 	}
 
@@ -193,20 +196,22 @@ export class DriverManager<
 	 *
 	 * @param config - Which driver and which options, as the location was registered with.
 	 * @returns The driver instance.
-	 * @throws Error when `config.driver` names no registered driver.
+	 * @throws InvalidConfigError when `config.driver` names no registered driver.
 	 */
 	protected build(config: LocationConfig<Drivers>): Instance {
-		// 1. The driver was checked at registration; it may have been replaced since, which is why it is looked up now
+		// The driver was checked at registration; it may have been replaced since, which is why it is looked up now
 		const Driver = this.drivers.get(config.driver);
 
 		if (!Driver) {
-			throw new Error(`Driver "${config.driver}" isn't registered.`);
+			throw new InvalidConfigError({
+				reason: `The "${config.driver}" driver isn't registered; call registerDriver() with it before a location uses it`,
+			});
 		}
 
 		const instance = new Driver(config.options as never);
 
-		// 2. The location's call defaults go under every `call()` of the instance, so the application sets an API
-		//    version or an account once, at registration; a driver without `call()` is left as it is
+		// The location's call defaults go under every `call()` of the instance, so the application sets an API
+		// version or an account once, at registration; a driver without `call()` is left as it is
 		const defaults = config.call;
 		const target = instance as Instance & { call?: CallFunction };
 
@@ -226,7 +231,7 @@ export class DriverManager<
 	 * @returns Once the driver released everything.
 	 */
 	protected async release(driver: Instance): Promise<void> {
-		// 1. `close()` is optional on every contract: only the drivers with an SDK that keeps connections open have it
+		// `close()` is optional on every contract: only the drivers with an SDK that keeps connections open have it
 		await driver.close?.();
 	}
 }

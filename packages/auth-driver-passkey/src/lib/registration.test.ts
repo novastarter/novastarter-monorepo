@@ -6,6 +6,7 @@
  * whose driver is not the passkey one.
  */
 import { AuthInvalidTokenError, useAuth } from '@novastarter/auth';
+import { InvalidConfigError } from '@novastarter/errors';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { AuthDriverPasskey } from './driver.js';
@@ -31,7 +32,6 @@ class FakeFormDriver {}
 const RESPONSE = { id: 'cred-2' } as never;
 
 beforeEach(() => {
-	// 1. A passkey location, another location on another driver, and the secret the cookie is sealed with
 	const auth = useAuth();
 
 	auth.registerDriver('passkey', AuthDriverPasskey);
@@ -72,7 +72,6 @@ describe('startPasskeyRegistration / finishPasskeyRegistration', () => {
 	test('Carries the challenge through the cookie and hands back the key for the account', async () => {
 		const started = await startPasskeyRegistration('passkey', { userId: 'user-1', userName: 'a@example.com' });
 
-		// 1. The browser gets the options; the cookie carries their challenge
 		expect(started.options).toStrictEqual({ challenge: 'reg-1' });
 
 		await expect(
@@ -85,7 +84,7 @@ describe('startPasskeyRegistration / finishPasskeyRegistration', () => {
 	test('Refuses a cookie of another account, a missing one and a broken one', async () => {
 		const { cookie } = await startPasskeyRegistration('passkey', { userId: 'user-1', userName: 'a@example.com' });
 
-		// 1. Every case is the same refusal, and the library is never asked
+		// The library is never asked
 		for (const params of [
 			{ userId: 'user-2', cookie },
 			{ userId: 'user-1', cookie: undefined },
@@ -100,9 +99,8 @@ describe('startPasskeyRegistration / finishPasskeyRegistration', () => {
 	});
 
 	test('Refuses a location whose driver is not the passkey one', async () => {
-		// 1. A configuration mistake, reported as itself
 		await expect(startPasskeyRegistration('form', { userId: 'user-1', userName: 'a' })).rejects.toThrow(
-			'Auth location "form" is not a passkey one',
+			new InvalidConfigError({ reason: 'The auth location "form" needs the passkey driver' }),
 		);
 	});
 });

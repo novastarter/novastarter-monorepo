@@ -820,6 +820,9 @@ importers:
       '@novastarter/database':
         specifier: workspace:*
         version: link:../database
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       drizzle-orm:
         specifier: 'catalog:'
         version: 0.45.3(@cloudflare/workers-types@5.20260916.1)(@electric-sql/pglite@0.5.8)(@libsql/client@0.18.0)(@neondatabase/serverless@1.1.0)(@opentelemetry/api@1.9.1)(@types/better-sqlite3@9.6.0)(@types/pg@8.23.1)(better-sqlite3@13.0.3)(mysql2@3.24.4(@types/node@24.13.6))(pg@8.23.0)
@@ -857,6 +860,9 @@ importers:
       '@novastarter/database':
         specifier: workspace:*
         version: link:../database
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/utils':
         specifier: workspace:*
         version: link:../utils
@@ -900,6 +906,9 @@ importers:
       '@novastarter/database':
         specifier: workspace:*
         version: link:../database
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/logger':
         specifier: workspace:*
         version: link:../logger
@@ -940,6 +949,9 @@ importers:
       '@novastarter/database':
         specifier: workspace:*
         version: link:../database
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/logger':
         specifier: workspace:*
         version: link:../logger
@@ -974,6 +986,9 @@ importers:
       '@novastarter/database':
         specifier: workspace:*
         version: link:../database
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/logger':
         specifier: workspace:*
         version: link:../logger
@@ -1017,6 +1032,9 @@ importers:
       '@novastarter/database':
         specifier: workspace:*
         version: link:../database
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@types/better-sqlite3':
         specifier: 'catalog:'
         version: 9.6.0
@@ -1060,6 +1078,9 @@ importers:
       '@novastarter/database-driver-postgres':
         specifier: workspace:*
         version: link:../database-driver-postgres
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@types/pg':
         specifier: 'catalog:'
         version: 8.23.1
@@ -1097,6 +1118,9 @@ importers:
       '@novastarter/database':
         specifier: workspace:*
         version: link:../database
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/utils':
         specifier: workspace:*
         version: link:../utils
@@ -1168,6 +1192,9 @@ importers:
       '@novastarter/constants':
         specifier: workspace:*
         version: link:../constants
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/utils':
         specifier: workspace:*
         version: link:../utils
@@ -1233,6 +1260,9 @@ importers:
 
   packages/feature-flags:
     dependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/utils':
         specifier: workspace:*
         version: link:../utils
@@ -1295,6 +1325,9 @@ importers:
       '@novastarter/constants':
         specifier: workspace:*
         version: link:../constants
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/utils':
         specifier: workspace:*
         version: link:../utils
@@ -1378,6 +1411,9 @@ importers:
 
   packages/mail-driver-mailgun:
     dependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/http':
         specifier: workspace:*
         version: link:../http
@@ -1391,9 +1427,6 @@ importers:
         specifier: 'catalog:'
         version: 14.0.1(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
     devDependencies:
-      '@novastarter/errors':
-        specifier: workspace:*
-        version: link:../errors
       '@novastarter/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
@@ -1415,6 +1448,9 @@ importers:
 
   packages/mail-driver-mailjet:
     dependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/http':
         specifier: workspace:*
         version: link:../http
@@ -1428,9 +1464,6 @@ importers:
         specifier: 'catalog:'
         version: 6.0.11(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
     devDependencies:
-      '@novastarter/errors':
-        specifier: workspace:*
-        version: link:../errors
       '@novastarter/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
@@ -1757,6 +1790,9 @@ importers:
       '@novastarter/emitter':
         specifier: workspace:*
         version: link:../emitter
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/mail':
         specifier: workspace:*
         version: link:../mail
@@ -2053,6 +2089,9 @@ importers:
 
   packages/push-driver-apns:
     dependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/push':
         specifier: workspace:*
         version: link:../push
@@ -2084,6 +2123,9 @@ importers:
 
   packages/push-driver-fcm:
     dependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/http':
         specifier: workspace:*
         version: link:../http
@@ -2097,9 +2139,6 @@ importers:
         specifier: 'catalog:'
         version: 14.4.0(supports-color@10.2.2)
     devDependencies:
-      '@novastarter/errors':
-        specifier: workspace:*
-        version: link:../errors
       '@novastarter/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
@@ -2121,6 +2160,9 @@ importers:
 
   packages/push-driver-webpush:
     dependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/push':
         specifier: workspace:*
         version: link:../push
@@ -2555,6 +2597,9 @@ importers:
 
   packages/storage-driver-local:
     dependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/logger':
         specifier: workspace:*
         version: link:../logger
@@ -2653,6 +2698,9 @@ importers:
       '@novastarter/constants':
         specifier: workspace:*
         version: link:../constants
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       '@novastarter/http':
         specifier: workspace:*
         version: link:../http
@@ -2675,9 +2723,6 @@ importers:
       '@ngneat/falso':
         specifier: 'catalog:'
         version: 8.0.2
-      '@novastarter/errors':
-        specifier: workspace:*
-        version: link:../errors
       '@novastarter/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
@@ -2722,6 +2767,9 @@ importers:
 
   packages/utils:
     dependencies:
+      '@novastarter/errors':
+        specifier: workspace:*
+        version: link:../errors
       js-yaml:
         specifier: 'catalog:'
         version: 4.3.2

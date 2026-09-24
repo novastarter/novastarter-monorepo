@@ -34,7 +34,7 @@ export const PROVIDER_CALL_MESSAGE_LIMIT = 300;
  * @returns The reason, cut to {@link PROVIDER_CALL_MESSAGE_LIMIT}; `undefined` when the answer names none.
  */
 export const providerErrorReason = (body: unknown): string | undefined => {
-	// 1. A text answer — an HTML error page, an XML one — is its own reason
+	// A text answer — an HTML error page, an XML one — is its own reason
 	if (typeof body === 'string') {
 		return clip(body);
 	}
@@ -43,7 +43,7 @@ export const providerErrorReason = (body: unknown): string | undefined => {
 		return undefined;
 	}
 
-	// 2. The shapes in the order they are most specific; a nested `error` object is looked into as well
+	// The shapes in the order they are most specific; a nested `error` object is looked into as well
 	const record = body as Record<string, unknown>;
 
 	const nested =
@@ -83,7 +83,6 @@ export const providerErrorReason = (body: unknown): string | undefined => {
  * @returns `<provider> refused <method>: <status> <reason>`; never a credential, since none is in the extensions.
  */
 export const providerCallMessage = (extensions: ProviderCallErrorExtensions): string => {
-	// 1. The reason when the answer has one, the bare status otherwise
 	const reason = providerErrorReason(extensions.body);
 
 	return `${extensions.provider} refused ${extensions.method}: ${extensions.status}${reason ? ` ${reason}` : ''}`;
@@ -149,7 +148,7 @@ export interface ToProviderCallErrorOptions extends ProviderCallErrorExtensions 
 export const toProviderCallError = (options: ToProviderCallErrorOptions): Error => {
 	const { provider, method, status, body, headers, cause } = options;
 
-	// 1. Too many requests: the caller may try again once the provider's wait is over — one second when it names none
+	// Too many requests: the caller may try again once the provider's wait is over — one second when it names none
 	if (status === 429) {
 		const named = options.retryAfter;
 
@@ -164,7 +163,7 @@ export const toProviderCallError = (options: ToProviderCallErrorOptions): Error 
 		);
 	}
 
-	// 2. Everything else keeps the provider's status and answer for the caller to read
+	// Everything else keeps the provider's status and answer for the caller to read
 	return new ProviderCallError({ provider, method, status, body }, cause === undefined ? undefined : { cause });
 };
 
@@ -177,7 +176,7 @@ export const toProviderCallError = (options: ToProviderCallErrorOptions): Error 
  * @internal
  */
 const readHeader = (headers: ProviderCallHeaders, name: string): string | undefined => {
-	// 1. A `Headers` object answers by itself; a record is searched by lower-cased key
+	// A `Headers` object answers by itself; a record is searched by lower-cased key
 	if (!headers) return undefined;
 
 	if (typeof headers.get === 'function') {
@@ -197,7 +196,7 @@ const readHeader = (headers: ProviderCallHeaders, name: string): string | undefi
  * @internal
  */
 const retryAfterSeconds = (value: string | undefined): number | undefined => {
-	// 1. Seconds first, the common form; a date is the time left until it. A blank value names no wait at all
+	// Seconds first, the common form; a date is the time left until it. A blank value names no wait at all
 	if (value === undefined || value.trim() === '') return undefined;
 
 	const seconds = Number(value);
@@ -225,7 +224,7 @@ export const MAX_RETRY_AFTER = 86_400;
  * @internal
  */
 const clampWait = (seconds: number): number => {
-	// 1. A negative wait is "now", an absurd one a day
+	// A negative wait is "now", an absurd one a day
 	return Math.min(MAX_RETRY_AFTER, Math.max(0, seconds));
 };
 
@@ -237,7 +236,7 @@ const clampWait = (seconds: number): number => {
  * @internal
  */
 const clip = (text: string): string | undefined => {
-	// 1. One line, trimmed; an empty text names no reason
+	// One line, trimmed; an empty text names no reason
 	const folded = text.replace(/\s+/g, ' ').trim();
 
 	if (folded.length === 0) return undefined;

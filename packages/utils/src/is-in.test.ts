@@ -8,12 +8,12 @@ describe('isIn', () => {
 	const array = ['foo', 'bar'] as const;
 
 	it('returns true when string is inside array', () => {
-		// 1. A plain string is looked up in an `as const` tuple, which `includes` alone would reject at the type level
+		// A plain string is looked up in an `as const` tuple, which `includes` alone would reject at the type level
 		expect(isIn('foo', array)).toBe(true);
 	});
 
 	it('returns false when string is not inside array', () => {
-		// 1. The guard answers `false` for a string outside the tuple, so the narrowed type is never wrong
+		// The guard answers `false` for a string outside the tuple, so the narrowed type is never wrong
 		expect(isIn('baz', array)).toBe(false);
 	});
 });

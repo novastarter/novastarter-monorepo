@@ -1,6 +1,7 @@
 /**
  * Tests of `to-apns-notification`: how a message becomes the SDK's notification, its priority and its collapse id.
  */
+import { InvalidPayloadError } from '@novastarter/errors';
 import { COLLAPSE_ID_MAX_LENGTH } from '@novastarter/push';
 import { Priority } from 'apns2';
 import { describe, expect, test } from 'vitest';
@@ -8,8 +9,8 @@ import { toApnsNotification, toApnsPriority } from './to-apns-notification.js';
 
 describe('toApnsPriority', () => {
 	test('Maps the urgency onto 10 or 5', () => {
-		// 1. Four urgencies on our side, two priorities an alert push may use on Apple's: priority 1 is refused with
-		//    BadPriority, so both low ones take 5, the power-friendly moment, exactly like `normal`
+		// Four urgencies on our side, two priorities an alert push may use on Apple's: priority 1 is refused with
+		// BadPriority, so both low ones take 5, the power-friendly moment, exactly like `normal`
 		expect(toApnsPriority('high')).toBe(Priority.immediate);
 		expect(toApnsPriority('normal')).toBe(Priority.throttled);
 		expect(toApnsPriority(undefined)).toBe(Priority.throttled);
@@ -22,7 +23,7 @@ describe('toApnsNotification', () => {
 	test('Builds the alert with the data at the top level, the collapse id and the expiration', () => {
 		const now = new Date('2026-09-12T00:00:00Z');
 
-		// 1. Every field set: the message's ttl wins over the location's, the tag is cut to the collapse id limit
+		// The message's ttl wins over the location's, the tag is cut to the collapse id limit
 		const notification = toApnsNotification(
 			{
 				token: 'tok',
@@ -39,7 +40,7 @@ describe('toApnsNotification', () => {
 			now,
 		);
 
-		// 2. The token, the type and the priority are the client's own fields; the rest are its options
+		// The token, the type and the priority are the client's own fields; the rest are its options
 		expect(notification.deviceToken).toBe('tok');
 		expect(notification.pushType).toBe('alert');
 		expect(notification.priority).toBe(Priority.immediate);
@@ -54,7 +55,7 @@ describe('toApnsNotification', () => {
 			data: { kind: 'invoice', url: '/dashboard', image: 'https://cdn/img.png' },
 		});
 
-		// 3. The payload APNs receives: the alert under `aps`, the custom pairs at the top level for the app
+		// The alert goes under `aps`, the custom pairs at the top level for the app
 		expect(notification.buildApnsOptions()).toStrictEqual({
 			aps: { alert: { title: 'Hi', body: 'There' }, sound: 'default', 'mutable-content': 1 },
 			kind: 'invoice',
@@ -64,15 +65,16 @@ describe('toApnsNotification', () => {
 	});
 
 	test('Sanitizes the tag into the collapse id', () => {
-		// 1. A tag the HTTP client would refuse as a header value reaches the options in its safe form
+		// A tag the HTTP client would refuse as a header value reaches the options in its safe form
 		const notification = toApnsNotification({ token: 'tok', title: 'Hi', tag: 'счёт-42' }, { topic: 't' });
 
 		expect(notification.options.collapseId).toBe('____-42');
 	});
 
 	test('Refuses a message without a token', () => {
-		// 1. A subscription is the webpush driver's business; the mapper throws for a direct caller without a token
+		// The mapper throws for a direct caller without a token
 		expect(() => toApnsNotification({ title: 'Hi' }, { topic: 't' })).toThrow(/needs a token/);
+		expect(() => toApnsNotification({ title: 'Hi' }, { topic: 't' })).toThrow(InvalidPayloadError);
 	});
 
 	test('Takes the location ttl and sound, an empty body for a title alone, and no data block when empty', () => {
@@ -84,8 +86,7 @@ describe('toApnsNotification', () => {
 			now,
 		);
 
-		// 1. The bare minimum: a ttl of 0 is "now or never", an empty sound is silence, an empty tag no collapse id,
-		//    no data key at all
+		// A ttl of 0 is "now or never", an empty sound is silence, an empty tag no collapse id
 		expect(notification.options).toStrictEqual({
 			type: 'alert',
 			topic: 't',

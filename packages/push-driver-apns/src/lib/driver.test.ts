@@ -4,6 +4,7 @@
  * `describe-error.test.ts` and `to-apns-notification.test.ts`.
  */
 import { generateKeyPairSync } from 'node:crypto';
+import { InvalidConfigError, InvalidPayloadError } from '@novastarter/errors';
 import { PushTargetGoneError } from '@novastarter/push';
 import { TimeoutError } from '@novastarter/utils';
 import { ApnsError, Host, Notification } from 'apns2';
@@ -104,7 +105,8 @@ afterEach(() => {
 
 describe('PushDriverApns', () => {
 	test('Requires the credentials and the topic', () => {
-		// 1. Configuration errors are reported by the options' names; the key is checked at construction
+		// The key is checked at construction
+		expect(() => new PushDriverApns({ ...credentials, teamId: '' })).toThrow(InvalidConfigError);
 		expect(() => new PushDriverApns({ ...credentials, teamId: '' })).toThrow('"teamId"');
 		expect(() => new PushDriverApns({ ...credentials, topic: '' })).toThrow('"topic"');
 		expect(() => new PushDriverApns({ ...credentials, signingKey: rsaPem() })).toThrow('P-256');
@@ -115,7 +117,6 @@ describe('PushDriverApns', () => {
 		const production = new PushDriverApns({ ...credentials, signingKey: escaped });
 		const sandbox = new PushDriverApns({ ...credentials, production: false, timeout: 5000 });
 
-		// 1. The client is the SDK's, built on the unescaped key with the host the environment picks
 		expect(construct).toHaveBeenNthCalledWith(1, {
 			team: 'TEAM1',
 			keyId: 'KEY1',
@@ -138,14 +139,13 @@ describe('PushDriverApns', () => {
 	test('Sends the notification for the token and answers accepted', async () => {
 		send.mockResolvedValueOnce(new Notification('tok'));
 
-		// 1. APNs hands out no id the client exposes, so the result is the status alone
+		// APNs hands out no id the client exposes, so the result is the status alone
 		const driver = new PushDriverApns(credentials);
 		const result = await driver.send({ token: 'tok', title: 'Hi', body: 'There', tag: 'счёт-42', platform: 'apns' });
 
 		expect(result).toStrictEqual({ status: 'accepted' });
 		expect(send).toHaveBeenCalledTimes(1);
 
-		// 2. The notification carries the token, the location's topic and the tag in the form the header takes
 		const notification = send.mock.calls[0]?.[0] as Notification;
 
 		expect(notification.deviceToken).toBe('tok');
@@ -156,12 +156,14 @@ describe('PushDriverApns', () => {
 	test('Refuses a subscription, passes a gone token on, names another refusal', async () => {
 		const driver = new PushDriverApns(credentials);
 
-		// 1. A subscription is the webpush driver's business
+		await expect(
+			driver.send({ subscription: { endpoint: 'https://p', keys: { p256dh: 'p', auth: 'a' } }, title: 'Hi' }),
+		).rejects.toThrow(InvalidPayloadError);
+
 		await expect(
 			driver.send({ subscription: { endpoint: 'https://p', keys: { p256dh: 'p', auth: 'a' } }, title: 'Hi' }),
 		).rejects.toThrow('needs a token');
 
-		// 2. A dead token is the error the caller deletes it on; any other refusal is named
 		send.mockRejectedValueOnce(refusal(410, 'Unregistered'));
 		await expect(driver.send({ token: 'tok', title: 'Hi' })).rejects.toBeInstanceOf(PushTargetGoneError);
 
@@ -170,8 +172,8 @@ describe('PushDriverApns', () => {
 	});
 
 	test('Fails a send that outlives the timeout, and waits without one', async () => {
-		// 1. The SDK never reads the timeout it is given, so the driver has to race it: a request APNs never answers
-		//    fails after the deadline, the timeout as the cause
+		// The SDK never reads the timeout it is given, so the driver has to race it: a request APNs never answers fails
+		// after the deadline, the timeout as the cause
 		send.mockReturnValueOnce(new Promise(() => {}));
 
 		const bounded = new PushDriverApns({ ...credentials, timeout: 20 });
@@ -181,11 +183,11 @@ describe('PushDriverApns', () => {
 		expect((failure as Error).message).toBe('APNs: Timed out after 20 ms');
 		expect((failure as Error).cause).toBeInstanceOf(TimeoutError);
 
-		// 2. An answer in time goes through unchanged, so the race costs a bounded send nothing
+		// An answer in time goes through unchanged, so the race costs a bounded send nothing
 		send.mockResolvedValueOnce(new Notification('tok'));
 		await expect(bounded.send({ token: 'tok', title: 'Hi' })).resolves.toStrictEqual({ status: 'accepted' });
 
-		// 3. Without a deadline the driver waits for the client, however long it takes
+		// Without a deadline the driver waits for the client, however long it takes
 		let settled = false;
 
 		send.mockReturnValueOnce(new Promise(() => {}));
@@ -208,13 +210,11 @@ describe('PushDriverApns', () => {
 	test('Closes the client', async () => {
 		const driver = new PushDriverApns(credentials);
 
-		// 1. `close()` reaches the client the driver built
 		await driver.close();
 		expect(close).toHaveBeenCalledTimes(1);
 	});
 
 	test('Is exported by name from the entry point', () => {
-		// 1. The package entry hands out the same class under the same name
 		expect(EntryExport).toBe(PushDriverApns);
 	});
 });

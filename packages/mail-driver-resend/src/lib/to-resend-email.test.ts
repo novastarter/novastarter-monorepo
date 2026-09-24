@@ -1,6 +1,7 @@
 /**
  * Tests of `to-resend-email`: how a message and its attachments become the payload of Resend's `emails.send()`.
  */
+import { InvalidPayloadError } from '@novastarter/errors';
 import { describe, expect, test } from 'vitest';
 import {
 	RESEND_TAG_COUNT,
@@ -12,17 +13,17 @@ import {
 
 describe('toResendTag', () => {
 	test('Replaces everything outside Resend character set with an underscore and cuts at the length limit', () => {
-		// 1. A space, a dot and a slash are outside Resend's name set, so each becomes one `_`
+		// A space, a dot and a slash are outside Resend's name set
 		expect(toResendTag('a b.c/d')).toBe('a_b_c_d');
 
-		// 2. Resend refuses a name past 256 characters, so the tail is cut rather than taking the whole send down
+		// Resend refuses a name past 256 characters, so the tail is cut rather than taking the whole send down
 		expect(toResendTag('a'.repeat(RESEND_TAG_LENGTH + 10))).toHaveLength(RESEND_TAG_LENGTH);
 	});
 });
 
 describe('toResendAttachment', () => {
 	test('Encodes text content as base64 instead of forwarding it as given', async () => {
-		// 1. Resend base64-decodes a string `content`; raw text would come out corrupted or be refused
+		// Resend base64-decodes a string `content`; raw text would come out corrupted or be refused
 		expect(await toResendAttachment({ filename: 'report.csv', content: 'id,name\n1,Ada' })).toStrictEqual({
 			filename: 'report.csv',
 			content: Buffer.from('id,name\n1,Ada').toString('base64'),
@@ -46,7 +47,7 @@ describe('toResendAttachment', () => {
 	});
 
 	test('Reads a local path instead of forwarding it as a hosted URL', async () => {
-		// 1. This very file is the attachment; base64 of its bytes proves the path was read and not passed on
+		// Base64 of its bytes proves the path was read and not passed on
 		const attachment = await toResendAttachment({ filename: 'self.ts', path: new URL(import.meta.url).pathname });
 
 		expect(attachment).not.toHaveProperty('path');
@@ -60,7 +61,6 @@ describe('toResendAttachment', () => {
 
 describe('toResendEmail', () => {
 	test('Maps every field, formats addresses and turns category and tags into Resend tags', async () => {
-		// 1. Addresses become `Name <address>` strings; attachments are base64-encoded with Resend's key names
 		expect(
 			await toResendEmail({
 				to: [{ name: 'Ada', address: 'ada@example.com' }, 'bob@example.com'],
@@ -103,8 +103,8 @@ describe('toResendEmail', () => {
 	});
 
 	test('Drops a tag that sanitises to nothing and caps the list at the limit', async () => {
-		// 1. A tag with no characters Resend's character set would take has no name at all; Resend would reject it, so
-		//    the tag drops and the rest of the message still sends
+		// A tag with no characters from Resend's set has no name at all; Resend would reject it, so the tag drops and the
+		// rest of the message still sends
 		expect(
 			await toResendEmail({ to: 'a@b.c', from: 'x@y.z', subject: 'x', text: 'x', tags: ['', 'welcome'] }),
 		).toMatchObject({
@@ -114,7 +114,7 @@ describe('toResendEmail', () => {
 			],
 		});
 
-		// 2. Resend caps an email at its tag count; the category takes one slot and the tail is left off
+		// The category takes one of Resend's tag slots
 		const tags = Array.from({ length: RESEND_TAG_COUNT + 5 }, (_, index) => `tag_${index}`);
 
 		const email = await toResendEmail({ to: 'a@b.c', from: 'x@y.z', subject: 'x', text: 'x', tags });
@@ -125,5 +125,6 @@ describe('toResendEmail', () => {
 
 	test('Refuses a message without a sender by name', async () => {
 		await expect(toResendEmail({ to: 'a@b.c', subject: 'x', text: 'x' })).rejects.toThrow(/"from"/);
+		await expect(toResendEmail({ to: 'a@b.c', subject: 'x', text: 'x' })).rejects.toThrow(InvalidPayloadError);
 	});
 });

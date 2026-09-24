@@ -26,6 +26,7 @@
 	},
 	"dependencies": {
 		"@novastarter/database": "workspace:*",
+		"@novastarter/errors": "workspace:*",
 		"@novastarter/utils": "workspace:*",
 		"drizzle-orm": "catalog:",
 		"mysql2": "catalog:"

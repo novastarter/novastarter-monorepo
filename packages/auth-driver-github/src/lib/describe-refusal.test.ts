@@ -6,7 +6,7 @@ import { describeRefusal } from './describe-refusal.js';
 
 describe('describeRefusal', () => {
 	test('Leads with the OAuth error and adds its description', () => {
-		// 1. The error code is what tells a spent code from a wrong secret; the description is for the reader
+		// The error code is what tells a spent code from a wrong secret; the description is for the reader
 		expect(
 			describeRefusal('the token endpoint', {
 				status: 400,
@@ -27,7 +27,6 @@ describe('describeRefusal', () => {
 	});
 
 	test('Falls back to the status for a body without an OAuth error', () => {
-		// 1. No body, a body that is not an object, or an object without `error`: the status is all there is
 		expect(
 			describeRefusal('the token endpoint', { status: 503, ok: false, body: undefined, headers: new Headers() }),
 		).toBe('the token endpoint answered 503');
@@ -42,7 +41,7 @@ describe('describeRefusal', () => {
 	});
 
 	test('Reads the message of a REST API refusal', () => {
-		// 1. `/user` answers a bad token with `{ message }`, which is worth more than the status alone
+		// `/user` answers a bad token with `{ message }`, which is worth more than the status alone
 		expect(
 			describeRefusal('the user endpoint', {
 				status: 401,

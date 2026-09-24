@@ -11,6 +11,7 @@ import {
 	toMigrationConfig,
 	toUnavailableError,
 } from '@novastarter/database';
+import { InvalidConfigError } from '@novastarter/errors';
 import { hasMethods } from '@novastarter/utils';
 import { sql } from 'drizzle-orm';
 import { drizzle, type LibSQLDatabase } from 'drizzle-orm/libsql';
@@ -120,32 +121,31 @@ export class DatabaseDriverTurso<
 	 * Create a driver over a client, opening one when given a URL or a config.
 	 *
 	 * @param config - Connection, schema and logging options.
-	 * @throws Error when `connection` is missing, or is a config without a `url`.
+	 * @throws InvalidConfigError when `connection` is missing, or is a config without a `url`.
 	 * @throws What libsql raised when a local file could not be opened.
 	 * @throws What the filesystem raised when the directory of a local file could not be created.
 	 */
 	constructor(config: DatabaseDriverTursoConfig<Schema>) {
-		// 1. Refuse a missing connection up front, and a config without a URL with it: libsql would report an invalid
-		//    URL of `undefined`, far from the configuration at fault
+		// A config without a URL is refused with a missing connection: libsql would otherwise report an invalid URL of
+		// `undefined`, far from the configuration at fault
 		if (
 			!config.connection ||
 			(!hasMethods<Client>(config.connection, ['execute', 'close']) &&
 				typeof config.connection !== 'string' &&
 				!config.connection.url)
 		) {
-			throw new Error('The turso database driver needs a "connection"');
+			throw new InvalidConfigError({ reason: 'The turso database driver needs a "connection"' });
 		}
 
-		// 2. A given client belongs to whoever created it — told by the methods the driver calls, since a client from
-		//    another copy of the SDK fails `instanceof`; a URL or a config become a client of the driver's own
+		// A given client belongs to whoever created it. It is told by the methods the driver calls, since a client from
+		// another copy of the SDK fails `instanceof`
 		this.ownsClient = !hasMethods<Client>(config.connection, ['execute', 'close']);
 		this.label = config.label;
 
 		if (hasMethods<Client>(config.connection, ['execute', 'close'])) {
 			this.client = config.connection;
 		} else {
-			// 3. A local file wants its directory: libsql opens the file as soon as the client is created, and SQLite
-			//    creates no directories
+			// libsql opens the file as soon as the client is created, and SQLite creates no directories
 			const clientConfig: Config =
 				typeof config.connection === 'string' ? { url: config.connection } : config.connection;
 
@@ -158,7 +158,6 @@ export class DatabaseDriverTurso<
 			this.client = createClient(clientConfig);
 		}
 
-		// 4. Drizzle over the client, with the schema and, when asked for, the query logger bound to the label
 		this.db = drizzle(this.client, toDrizzleOptions(config, resolveLogger(config)));
 	}
 
@@ -169,11 +168,11 @@ export class DatabaseDriverTurso<
 	 * @throws DatabaseUnavailableError naming the location, with what libsql raised as its `cause`.
 	 */
 	async ping(): Promise<void> {
-		// 1. The cheapest statement; through Drizzle, so the same path the queries take is proven
+		// Through Drizzle, so the same path the queries take is proven
 		try {
 			await this.db.run(sql`select 1`);
 		} catch (error) {
-			// 2. One error for every backend, 503, naming the location; libsql's error stays as `cause`
+			// One error for every backend; libsql's error stays as `cause`
 			throw toUnavailableError(error, this.label);
 		}
 	}
@@ -186,10 +185,9 @@ export class DatabaseDriverTurso<
 	 *
 	 * @param options - The folder and, optionally, the journal table; `migrationsSchema` means nothing to SQLite.
 	 * @returns Once every pending migration ran.
-	 * @throws Error when `migrationsFolder` is missing; what the migrator raised otherwise.
+	 * @throws InvalidConfigError when `migrationsFolder` is missing; what the migrator raised otherwise.
 	 */
 	async migrate(options: MigrateOptions): Promise<void> {
-		// 1. The migrator batches the pending files onto the client
 		await migrate(this.db, toMigrationConfig(options));
 	}
 
@@ -199,7 +197,7 @@ export class DatabaseDriverTurso<
 	 * @returns Once the client is closed; libsql closes synchronously, the promise is the contract's.
 	 */
 	async close(): Promise<void> {
-		// 1. A client the caller handed in is theirs to close; one opened here would otherwise keep the file open
+		// A client the caller handed in is theirs to close; one opened here would otherwise keep the file open
 		if (this.ownsClient) {
 			this.client.close();
 		}

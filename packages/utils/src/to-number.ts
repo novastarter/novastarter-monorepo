@@ -18,26 +18,26 @@
  * ```
  */
 export const toNumber = (value: unknown): number | undefined => {
-	// 1. A number is answered with as it is, unless it is one of the non-finite values that break arithmetic
+	// A number is answered with as it is, unless it is one of the non-finite values that break arithmetic
 	if (typeof value === 'number') {
 		return Number.isFinite(value) ? value : undefined;
 	}
 
-	// 2. Only strings are parsed: `Number(true)` and `Number(null)` give `1` and `0`, which is never what a config
-	//    value meant
+	// Only strings are parsed: `Number(true)` and `Number(null)` give `1` and `0`, which is never what a config
+	// value meant
 	if (typeof value !== 'string') {
 		return undefined;
 	}
 
-	// 3. An empty or blank string would parse to `0`; treat it as absent instead
+	// An empty or blank string would parse to `0`; treat it as absent instead
 	const trimmed = value.trim();
 
 	if (trimmed === '') {
 		return undefined;
 	}
 
-	// 4. `Number()` rejects trailing garbage (`'12px'` → `NaN`) where `parseInt` would not, which is the strictness
-	//    a config value wants
+	// `Number()` rejects trailing garbage (`'12px'` → `NaN`) where `parseInt` would not, which is the strictness
+	// a config value wants
 	const parsed = Number(trimmed);
 
 	return Number.isFinite(parsed) ? parsed : undefined;

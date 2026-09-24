@@ -34,8 +34,8 @@ export const AUTH_SIGN_IN_FAILED_EVENT = 'auth.sign-in-failed';
  * @internal
  */
 export const completeSignIn = async (location: string, identity: AuthIdentity): Promise<AuthIdentity> => {
-	// 1. The application's last word: a handler returning `null` refuses, which reads as wrong credentials to the
-	//    client so it learns nothing about why
+	// The application's last word: a handler returning `null` refuses, which reads as wrong credentials to the client
+	// so it learns nothing about why
 	const filtered = await useEmitter().emitFilter<AuthIdentity | null>(AUTH_SIGN_IN_FILTER, identity, { location });
 
 	if (!filtered) {
@@ -44,8 +44,8 @@ export const completeSignIn = async (location: string, identity: AuthIdentity): 
 		throw new InvalidCredentialsError();
 	}
 
-	// 2. Announced once accepted; the identity goes under `payload`, since the emitter puts the event name under
-	//    `event` in the meta
+	// Announced once accepted; the identity goes under `payload`, since the emitter puts the event name under `event`
+	// in the meta
 	useEmitter().emitAction(AUTH_SIGNED_IN_EVENT, { location, payload: filtered });
 
 	return filtered;
@@ -60,7 +60,7 @@ export const completeSignIn = async (location: string, identity: AuthIdentity): 
  * @internal
  */
 export const failSignIn = (location: string, error: unknown): unknown => {
-	// 1. The reason is the error's code when it has one, so a listener can count refusals without parsing messages
+	// The reason is the error's code when it has one, so a listener can count refusals without parsing messages
 	const reason = (error as { code?: unknown } | null)?.code ?? 'error';
 
 	useEmitter().emitAction(AUTH_SIGN_IN_FAILED_EVENT, { location, reason });

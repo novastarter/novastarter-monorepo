@@ -18,19 +18,19 @@ import { isInRollout } from './percentage.js';
  * ```
  */
 export const evaluateFeatureFlag = (definition: FeatureFlagDefinition, context: FeatureFlagContext): boolean => {
-	// 1. The switch overrides everything, so switching a flag off is always a way back
+	// The switch overrides everything, so switching a flag off is always a way back
 	if (!definition.enabled) {
 		return false;
 	}
 
-	// 2. No rules, or rules that name nothing: everyone, since an empty rule set restricts nobody
+	// No rules, or rules that name nothing, let everyone in, since an empty rule set restricts nobody
 	const rules = definition.rules;
 
 	if (!rules || (!rules.users?.length && !rules.organizations?.length && rules.percentage === undefined)) {
 		return true;
 	}
 
-	// 3. Listed by id: an explicit list beats the rollout, so a named tester always sees the feature
+	// An explicit list beats the rollout, so a named tester always sees the feature
 	if (context.user && rules.users?.includes(context.user)) {
 		return true;
 	}
@@ -39,13 +39,13 @@ export const evaluateFeatureFlag = (definition: FeatureFlagDefinition, context: 
 		return true;
 	}
 
-	// 4. The rollout, by the user first — a person keeps the feature across organizations — else the organization
+	// The rollout goes by the user first, so a person keeps the feature across organizations, and by the organization
+	// otherwise
 	const subject = context.user || context.organization;
 
 	if (rules.percentage !== undefined && subject) {
 		return isInRollout(definition.key, subject, rules.percentage);
 	}
 
-	// 5. Rules exist and none let the caller in
 	return false;
 };

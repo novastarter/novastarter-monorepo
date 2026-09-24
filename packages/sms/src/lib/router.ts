@@ -26,10 +26,9 @@ export const resolveSmsChain = (routes: SmsRoutes, message: SmsMessage, manager:
 	const known = manager.locationNames();
 	const category: SmsCategory = message.category ?? 'transactional';
 
-	// 1. A rule is judged on the locations it can reach: unknown names are dropped before the rule is chosen, so a
-	//    rule made only of typos never wins the selection with an empty chain
+	// Unknown names are dropped before the rule is chosen, so a rule made only of typos never wins the selection with
+	// an empty chain.
 	const byCategory = (routes[category] ?? []).filter((name) => known.includes(name));
 
-	// 2. The category, then everything the manager knows
 	return byCategory.length ? byCategory : known;
 };

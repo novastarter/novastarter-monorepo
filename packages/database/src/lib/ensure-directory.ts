@@ -15,6 +15,6 @@ import { mkdirSync } from 'node:fs';
  * ```
  */
 export const ensureDirectory = (directory: string): void => {
-	// 1. Recursive, so every missing parent is created too and an existing directory is no error
+	// Recursive, so every missing parent is created too and an existing directory is no error
 	mkdirSync(directory, { recursive: true });
 };

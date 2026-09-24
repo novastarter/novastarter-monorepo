@@ -66,7 +66,7 @@ describe('enqueue', () => {
 	});
 
 	test('Hands the driver the payload as passed, so a schema transform runs once, at the run', async () => {
-		// 1. Parsed twice, a doubling transform would double twice and a type-changing one would fail the second parse
+		// Parsed twice, a doubling transform would double twice and a type-changing one would fail the second parse
 		registerJob(
 			defineJob({
 				name: 'test.shape',
@@ -79,8 +79,8 @@ describe('enqueue', () => {
 
 		const job = await enqueue('test.shape' as never, { n: 1, s: 'abc' } as never);
 
-		// 2. The handler sees the output of one parse; listeners see the same, since the id and the event are built
-		//    from it
+		// The handler sees the output of one parse; listeners see the same, since the id and the event are built
+		// from it
 		expect(handler).toHaveBeenCalledWith({ n: 2, s: 3 }, expect.objectContaining({ id: job.id }));
 		expect(emitter.emitAction).toHaveBeenCalledWith(QUEUE_ENQUEUED_EVENT, { ...job, payload: { n: 2, s: 3 } });
 		expect(vi.mocked(useLogger)().error).not.toHaveBeenCalled();
@@ -125,7 +125,7 @@ describe('enqueue', () => {
 			defineJob({ name: 'reports.build', schema: z.object({ customer: z.string() }), options: { unique: true } }),
 		);
 
-		// 1. A handler held on a gate, so the first job is still running when the duplicate lands
+		// A handler held on a gate, so the first job is still running when the duplicate lands
 		let release!: () => void;
 
 		const gate = new Promise<void>((resolve) => {
@@ -141,16 +141,16 @@ describe('enqueue', () => {
 		const firstRun = enqueue('reports.build' as never, { customer: 'c1' } as never);
 		const secondRun = enqueue('reports.build' as never, { customer: 'c1' } as never);
 
-		// 2. The duplicate answers the first job's identity and the handler runs only once; the gate opens only after
-		//    both enqueues were accepted, so a driver without deduplication runs the handler a second time and fails the
-		//    count below instead of blocking on the gate
+		// The duplicate answers the first job's identity and the handler runs only once; the gate opens only after
+		// both enqueues were accepted, so a driver without deduplication runs the handler a second time and fails the
+		// count below instead of blocking on the gate
 		release();
 		const [first, second] = await Promise.all([firstRun, secondRun]);
 
 		expect(second).toStrictEqual(first);
 		expect(handler).toHaveBeenCalledTimes(1);
 
-		// 3. Once the run settled, the same work can be enqueued again
+		// Once the run settled, the same work can be enqueued again
 		await enqueue('reports.build' as never, { customer: 'c1' } as never);
 		expect(handler).toHaveBeenCalledTimes(2);
 

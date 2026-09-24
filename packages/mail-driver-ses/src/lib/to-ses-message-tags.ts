@@ -24,8 +24,8 @@ export const SES_MESSAGE_TAG_COUNT = 100;
  * input.
  */
 export const toSesMessageTag = (value: string): string =>
-	// 1. SES matches a name against `^[a-zA-Z0-9_-]{1,256}$` and refuses the whole message over one miss, so anything
-	//    outside the set becomes `_` and the tail past the limit is cut; `toSesMessageTags` drops a result left empty
+	// SES matches a name against `^[a-zA-Z0-9_-]{1,256}$` and refuses the whole message over one miss;
+	// `toSesMessageTags` drops a result left empty
 	value.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, SES_MESSAGE_TAG_LENGTH);
 
 /**
@@ -41,18 +41,16 @@ export const toSesMessageTag = (value: string): string =>
  * @returns SES's `EmailTags`.
  */
 export const toSesMessageTags = (message: MailMessage): MessageTag[] => {
-	// 1. The category is always recorded; its value goes through the sanitiser too, since at runtime it is any string
+	// The category goes through the sanitiser too, since at runtime it is any string
 	const tags: MessageTag[] = [{ Name: 'category', Value: toSesMessageTag(message.category ?? 'transactional') }];
 
-	// 2. SES refuses a message with two tags of one name, and the sanitiser itself folds distinct tags together
-	//    (`welcome flow` and `welcome_flow`), so the names already emitted are kept to skip a repeat; `category` is
-	//    seeded since the category above already holds it
+	// SES refuses a message with two tags of one name, and the sanitiser itself folds distinct tags together
+	// (`welcome flow` and `welcome_flow`); `category` is seeded since the category above already holds it
 	const names = new Set<string>(['category']);
 
-	// 3. A tag that sanitises to nothing has no name SES would take, and one already emitted would fail the request;
-	//    dropping either keeps the rest of the message sending. SES caps a message at its tag count — the category
-	//    takes one slot — so the loop stops at the cap instead of letting a longer list fail the whole request, the
-	//    way the other drivers cap their label lists
+	// A tag that sanitises to nothing has no name SES would take, and one already emitted would fail the request;
+	// dropping either keeps the rest of the message sending. SES caps a message at its tag count and the category
+	// takes one slot, so the loop stops at the cap instead of letting a longer list fail the whole request
 	for (const tag of message.tags ?? []) {
 		const name = toSesMessageTag(tag);
 

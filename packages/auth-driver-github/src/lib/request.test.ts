@@ -16,8 +16,6 @@ describe('request', () => {
 			body: 'a=1',
 		});
 
-		// 1. The status, the headers and the parsed body come back; the fetch saw the request plus a signal for the
-		//    deadline
 		expect(response).toStrictEqual({ status: 200, ok: true, body: { a: 1 }, headers: expect.any(Headers) });
 
 		expect(fetch).toHaveBeenCalledWith('https://x.test/token', {
@@ -29,7 +27,7 @@ describe('request', () => {
 	});
 
 	test('Reads a body that is not JSON as none and leaves the status to the caller', async () => {
-		// 1. A gateway's HTML page on a 502 is neither an error here nor a body worth passing on
+		// A gateway's HTML page on a 502 is neither an error here nor a body worth passing on
 		/**
 		 * A fetch that answers a gateway's HTML page with a 502.
 		 *
@@ -46,7 +44,6 @@ describe('request', () => {
 	});
 
 	test('Throws a provider failure for a network error and for a request past its deadline', async () => {
-		// 1. The network error travels as the cause, and the reason names the URL
 		const socket = new Error('ECONNRESET');
 
 		/**
@@ -70,7 +67,6 @@ describe('request', () => {
 			cause: socket,
 		});
 
-		// 2. A fetch that never answers is abandoned at the deadline, and the abort reaches its signal
 		let seen: AbortSignal | undefined;
 
 		/**
@@ -96,7 +92,6 @@ describe('request', () => {
 
 describe('toHttpCallFetch', () => {
 	test('Forwards the whole request, redirect and multipart body included; keeps a Response', async () => {
-		// 1. The platform's answer passes through untouched
 		const real = new Response('{}', { status: 200, headers: { 'x-a': '1' } });
 		const fetch = vi.fn<AuthFetch>(async () => real);
 		const body = new FormData();
@@ -112,7 +107,7 @@ describe('toHttpCallFetch', () => {
 
 		expect(response).toBe(real);
 
-		// 2. `redirect: 'manual'` reaches the fetch, so it cannot follow a redirect with the credentials
+		// `redirect: 'manual'` must reach the fetch, so it cannot follow a redirect with the credentials
 		expect(fetch.mock.calls[0]![1]).toStrictEqual({
 			method: 'POST',
 			headers: {},
@@ -123,7 +118,7 @@ describe('toHttpCallFetch', () => {
 	});
 
 	test('Gives a fake answer without headers empty ones', async () => {
-		// 1. A narrow fake answers status and text only; `httpCall()` still reads headers of it
+		// A narrow fake answers status and text only; `httpCall()` still reads headers of it
 		const fetch = vi.fn<AuthFetch>(async () => ({ status: 204, ok: true, text: async () => '' }));
 
 		const response = await toHttpCallFetch(fetch)('https://x.test', {

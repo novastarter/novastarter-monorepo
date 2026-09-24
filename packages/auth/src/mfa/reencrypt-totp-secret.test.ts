@@ -23,12 +23,10 @@ afterEach(() => {
 
 describe('reencryptTotpSecret', () => {
 	test('Moves a secret from the old key to the new one, and leaves a current one alone', () => {
-		// 1. Enrolled before the rotation, under the old key
 		useAuth().registerSettings({ mfa: { encryptionKey: OLD_KEY } });
 
 		const { secret, encryptedSecret } = enrollTotp({ accountName: 'a' });
 
-		// 2. The new key goes first; the stored secret comes back under it, the same secret inside
 		useAuth().registerSettings({ mfa: { encryptionKey: [NEW_KEY, OLD_KEY] } });
 
 		const moved = reencryptTotpSecret(encryptedSecret);
@@ -36,7 +34,6 @@ describe('reencryptTotpSecret', () => {
 		expect(moved).not.toBeNull();
 		expect(decrypt(moved!, [NEW_KEY], 'totp-secret').plaintext).toBe(secret);
 
-		// 3. Already under the current key: nothing to write back
 		expect(reencryptTotpSecret(moved!)).toBeNull();
 	});
 
@@ -45,11 +42,10 @@ describe('reencryptTotpSecret', () => {
 
 		const { encryptedSecret } = enrollTotp({ accountName: 'a' });
 
-		// 1. The old key already dropped: the secret is lost, and says so
 		useAuth().registerSettings({ mfa: { encryptionKey: NEW_KEY } });
 
 		expect(() => reencryptTotpSecret(encryptedSecret)).toThrow(
-			'The encrypted value does not open with any of the configured secrets',
+			'@novastarter/auth: the encrypted value does not open with any of the configured secrets',
 		);
 	});
 });

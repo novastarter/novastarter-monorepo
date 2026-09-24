@@ -20,8 +20,8 @@ function chunkStream(bytes: string): Readable {
 
 describe('FileReader', () => {
 	test('Wraps the stream in a source whose first slice starts at the chunk, whatever the upload offset', async () => {
-		// 1. The library asks for absolute upload offsets, here as if this were the third chunk; the stream only holds
-		//    the chunk itself, so the slice must be rebased to its start
+		// The library asks for absolute upload offsets, here as if this were the third chunk; the stream only holds
+		// the chunk itself, so the slice must be rebased to its start
 		const source = await new FileReader().openFile(chunkStream('hello world'), 1024);
 
 		const slice = await source.slice(2048, 2053);
@@ -31,10 +31,10 @@ describe('FileReader', () => {
 	});
 
 	test('Reports the stream as ended on the second slice, so one chunk maps to one TUS request', async () => {
-		// 1. After the first slice the library would keep asking for the next range of the "file"; an exhausted
-		//    `{ value: null, done: true }` is how the source says there is nothing more, which ends the request after
-		//    this chunk — and the shape is what the library destructures, where a bare `null` crashed it with a
-		//    TypeError
+		// After the first slice the library would keep asking for the next range of the "file"; an exhausted
+		// `{ value: null, done: true }` is how the source says there is nothing more, which ends the request after
+		// this chunk — and the shape is what the library destructures, where a bare `null` crashed it with a
+		// TypeError
 		const source = await new FileReader().openFile(chunkStream('hello world'), 1024);
 
 		await source.slice(0, 5);
@@ -43,8 +43,8 @@ describe('FileReader', () => {
 	});
 
 	test('Ignores the chunk size the library passes, since the stream already holds exactly one chunk', async () => {
-		// 1. A chunk size of one byte would make a size-aware reader split the chunk; the slice must still come back
-		//    whole, sized by the requested range
+		// A chunk size of one byte would make a size-aware reader split the chunk; the slice must still come back
+		// whole, sized by the requested range
 		const source = await new FileReader().openFile(chunkStream('hello world'), 1);
 
 		const slice = await source.slice(0, 11);

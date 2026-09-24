@@ -1,6 +1,7 @@
 /**
  * Tests of `memory/kv/lib/kv-manager`.
  */
+import { InvalidConfigError } from '@novastarter/errors';
 import { describe, expect, test, vi } from 'vitest';
 import { KvDriverLocal } from './drivers/local.js';
 import { KvManager } from './kv-manager.js';
@@ -16,10 +17,9 @@ describe('KvManager', () => {
 	test('Registers the built-in drivers on construction and builds a location on first use', () => {
 		const manager = new KvManager();
 
-		// 1. The built-ins are known without any registration by the application
 		expect([...manager['drivers'].keys()]).toStrictEqual(['local', 'redis']);
 
-		// 2. Registering a location keeps the configuration only; the first `location()` builds the driver
+		// Registering a location keeps the configuration only; the first `location()` builds the driver
 		manager.registerLocation('default', {
 			driver: 'local',
 			options: {},
@@ -34,7 +34,7 @@ describe('KvManager', () => {
 		const manager = new KvManager();
 		const mockDriver = vi.fn();
 
-		// 1. A bare mock stands in for a driver class of the application, recording how the manager calls `new Driver(...)`
+		// A bare mock stands in for an application's driver class, recording how the manager calls `new Driver(...)`
 		manager.registerDriver('test-driver', mockDriver);
 
 		manager.registerLocation('main', {
@@ -52,12 +52,12 @@ describe('KvManager', () => {
 	test('Refuses a location whose driver is not registered', () => {
 		const manager = new KvManager();
 
-		// 1. The lookup by name fails at registration, before any instantiation happens
+		// The lookup by name fails at registration, before any instantiation happens
 		expect(() =>
 			manager.registerLocation('main', {
 				driver: 'missing' as 'local',
 				options: {},
 			}),
-		).toThrowErrorMatchingInlineSnapshot(`[Error: Driver "missing" isn't registered.]`);
+		).toThrow(InvalidConfigError);
 	});
 });

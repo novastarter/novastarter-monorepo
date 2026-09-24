@@ -12,8 +12,8 @@ import process from 'node:process';
  * a release chore and never blocked. Bypass with `LEFTHOOK=0 git commit` or `git commit --no-verify`.
  */
 
-// 1. Read every staged path, NUL-separated so spaces parse safely; deletions are included because removing code
-//    is a change the package consumer must hear about too
+// NUL-separated so spaces parse safely; deletions count, since removing code is a change the package consumer must hear
+// about too
 const diff = spawnSync('git', ['diff', '--cached', '--name-only', '-z'], { encoding: 'utf8' });
 
 if (diff.status !== 0) {
@@ -23,13 +23,12 @@ if (diff.status !== 0) {
 
 const paths = diff.stdout.split('\0').filter(Boolean);
 
-// 2. A staged CHANGELOG.md means `changeset version` ran: the changesets were consumed on purpose, nothing to demand
+// A staged CHANGELOG.md means `changeset version` ran: the changesets were consumed on purpose, nothing to demand
 if (paths.some((path) => /(^|\/)CHANGELOG\.md$/.test(path))) {
 	process.exit(0);
 }
 
-// 3. Code changes live under `packages/` and `apps/`; a changeset is any Markdown file in `.changeset/` except the
-//    generated README
+// The generated README in `.changeset/` is not a changeset
 const code = paths.filter((path) => /^(packages|apps)\/[^/]+\//.test(path));
 const changesets = paths.filter((path) => /^\.changeset\/(?!README\.md$)[^/]+\.md$/.test(path));
 
@@ -37,7 +36,7 @@ if (code.length === 0 || changesets.length > 0) {
 	process.exit(0);
 }
 
-// 4. Reject the commit and name the files that still lack a changeset, capped so a wide refactor stays readable
+// The list is capped so a wide refactor stays readable
 const shown = code.slice(0, 10).join(', ') + (code.length > 10 ? `, … (${code.length - 10} more)` : '');
 
 process.stderr.write(

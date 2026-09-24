@@ -46,7 +46,7 @@ export interface ExchangedCode {
  * ```
  */
 export const exchangeCode = async (context: RequestContext, params: ExchangeCodeParams): Promise<ExchangedCode> => {
-	// 1. A form post, as OAuth prescribes; the secret travels in the body, which Google accepts as well as Basic auth
+	// A form post, as OAuth prescribes; the secret travels in the body, which Google accepts as well as Basic auth
 	const response = await request(context, TOKEN_URL, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
@@ -60,7 +60,7 @@ export const exchangeCode = async (context: RequestContext, params: ExchangeCode
 		}).toString(),
 	});
 
-	// 2. A refusal names its OAuth error — `invalid_grant` for a spent or forged code — which leads the reason
+	// The OAuth error leads the reason, such as `invalid_grant` for a spent or forged code
 	if (!response.ok) {
 		throw new AuthProviderFailedError(
 			{ provider: PROVIDER, reason: describeRefusal('the token endpoint', response) },
@@ -68,8 +68,8 @@ export const exchangeCode = async (context: RequestContext, params: ExchangeCode
 		);
 	}
 
-	// 3. Without `openid` Google answers an access token only; that is a failure here, as the identity is read from
-	//    the ID token
+	// Without `openid` Google answers an access token only; that is a failure here, as the identity is read from the ID
+	// token
 	const body = response.body as
 		| {
 				id_token?: unknown;
@@ -90,8 +90,8 @@ export const exchangeCode = async (context: RequestContext, params: ExchangeCode
 		);
 	}
 
-	// 4. The access token and what Google says of it, in the shape of every driver: the expiry from seconds left into
-	//    a moment, the space-separated scopes into a list; the refresh token only comes with offline access
+	// The expiry becomes a moment and the space-separated scopes a list, in the shape of every driver; the refresh
+	// token only comes with offline access
 	if (typeof body?.access_token !== 'string' || !body.access_token) {
 		return { idToken };
 	}

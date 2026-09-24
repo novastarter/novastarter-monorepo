@@ -28,7 +28,6 @@ describe('toUnavailableError', () => {
 
 		const error = toUnavailableError(cause, 'main');
 
-		// 1. Recognisable both ways the kit offers, with the backend's error one step away
 		expect(error).toBeInstanceOf(DatabaseUnavailableError);
 		expect(isNovastarterError(error, 'DATABASE_UNAVAILABLE')).toBe(true);
 		expect(error.message).toBe('Database "main" is unavailable: ECONNREFUSED 127.0.0.1:5432');
@@ -41,7 +40,7 @@ describe('toUnavailableError', () => {
 
 		const error = toUnavailableError(wrapper, 'main');
 
-		// 1. The reason names the real failure, not the query text, and the driver's error is the cause
+		// The reason is the real failure, not Drizzle's query text
 		expect(error.extensions.reason).toBe('connect ECONNREFUSED 127.0.0.1:5432');
 		expect(error.cause).toBe(cause);
 	});
@@ -59,7 +58,7 @@ describe('toUnavailableError', () => {
 
 		const error = toUnavailableError(wrapper, 'main');
 
-		// 1. Node's refused `localhost` names every attempted address instead of the bare class name
+		// Node's refused `localhost` names every attempted address instead of the bare class name
 		expect(error.extensions.reason).toBe('connect ECONNREFUSED ::1:5432; connect ECONNREFUSED 127.0.0.1:5432');
 		expect(error.cause).toBe(cause);
 	});
@@ -69,7 +68,7 @@ describe('toUnavailableError', () => {
 
 		const error = toUnavailableError(cause);
 
-		// 1. The code is the only thing that says what failed
+		// The code is the only thing that says what failed
 		expect(error.extensions.reason).toBe('ECONNREFUSED');
 	});
 

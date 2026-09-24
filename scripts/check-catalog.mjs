@@ -33,7 +33,7 @@ const ALLOWED_SPECIFIER = /^(catalog:([\w@./-]+)?|workspace:\*)$/;
  * @returns Paths relative to the repository root.
  */
 function listManifests() {
-	// 1. A root may be missing in a trimmed checkout, and a child without a manifest is not a package
+	// A root may be missing in a trimmed checkout, and a child without a manifest is not a package
 	return WORKSPACE_ROOTS.filter((root) => existsSync(root))
 		.flatMap((root) =>
 			readdirSync(root, { withFileTypes: true })
@@ -51,11 +51,11 @@ function listManifests() {
  * @returns {string[]} One human-readable line per offending dependency.
  */
 function findInlineVersions(path) {
-	// 1. Parse the manifest; a broken one is reported by pnpm itself, so here it is a hard error
+	// A broken manifest is reported by pnpm itself, so here it is a hard error.
 	const manifest = JSON.parse(readFileSync(path, 'utf8'));
 	const problems = [];
 
-	// 2. Walk every dependency field, since a peer or optional pin drifts from the catalog just like a regular one
+	// Walk every dependency field, since a peer or optional pin drifts from the catalog just like a regular one
 	for (const field of DEPENDENCY_FIELDS) {
 		for (const [name, specifier] of Object.entries(manifest[field] ?? {})) {
 			if (!ALLOWED_SPECIFIER.test(specifier)) {
@@ -67,10 +67,9 @@ function findInlineVersions(path) {
 	return problems;
 }
 
-// 1. Check every workspace package and gather all problems, so one run lists everything to fix
+// All problems are gathered, so one run lists everything to fix.
 const problems = listManifests().flatMap((path) => findInlineVersions(path));
 
-// 2. Report and fail, pointing to where the version belongs
 if (problems.length > 0) {
 	process.stderr.write(
 		`check-catalog: use "catalog:", "catalog:<name>" or "workspace:*"; add the version to pnpm-workspace.yaml\n` +

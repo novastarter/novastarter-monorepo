@@ -1,5 +1,5 @@
 import { useEmitter } from '@novastarter/emitter';
-import { ErrorCode, InvalidPayloadError, isNovastarterError } from '@novastarter/errors';
+import { ErrorCode, InvalidConfigError, InvalidPayloadError, isNovastarterError } from '@novastarter/errors';
 import { type Logger, useLogger } from '@novastarter/logger';
 import type { LimiterDriver } from '@novastarter/memory';
 import { toError } from '@novastarter/utils';
@@ -59,10 +59,10 @@ export interface MailSendOptions {
  * @param options - Per-call overrides.
  * @returns The driver's result and the location that delivered, or `null` when a `mail.send` filter dropped the
  * message.
- * @throws InvalidPayloadError for a message without a sender, or a `from` object without name or address; Error
- * when `options.location` names a location nobody registered, before anything is sent; HitRateLimitError when every
- * location of the chain is over its limit; Error when every location failed, the last failure as `cause`, or when no
- * location is registered.
+ * @throws InvalidPayloadError for a message without a sender, or a `from` object without name or address;
+ * InvalidConfigError when `options.location` names a location nobody registered, before anything is sent, or when no
+ * location is registered; HitRateLimitError when every location of the chain is over its limit; Error when every
+ * location failed, the last failure as `cause`.
  *
  * @example
  * ```ts
@@ -79,37 +79,37 @@ export const sendMail = async (message: MailMessage, options: MailSendOptions = 
 	const routes = manager.routes();
 	const logger = useLogger();
 
-	// 1. A filter handler may rewrite the message — a footer, a redirect to a test inbox — or veto it
+	// A filter handler may rewrite the message — a footer, a redirect to a test inbox — or veto it
 	const filtered = await useEmitter().emitFilter<MailMessage | null>(MAIL_SEND_FILTER, message, {
 		category: message.category ?? 'transactional',
 	});
 
 	if (!filtered) return null;
 
-	// 2. The sender is completed from the routes and the html cleaned before any driver sees the message
 	const prepared: MailMessage = {
 		...filtered,
 		from: resolveFrom(filtered.from, routes.from),
 		...(typeof filtered.html === 'string' ? { html: normalizeHtml(filtered.html) } : {}),
 	};
 
-	// 3. An explicit location short-circuits the routes; otherwise the chain comes from `from` and `category`. A name
-	//    nobody registered is a configuration mistake, named here rather than logged as a delivery failure below
+	// A location name nobody registered is a configuration mistake, named here rather than logged as a delivery failure
+	// below
 	if (options.location && !manager.hasLocation(options.location)) {
-		throw new Error(`Mail location "${options.location}" doesn't exist.`);
+		throw new InvalidConfigError({
+			reason: `Mail location "${options.location}" doesn't exist; register it with registerLocation()`,
+		});
 	}
 
 	const chain = options.location ? [options.location] : resolveMailChain(routes, prepared, manager);
 
 	if (chain.length === 0) {
-		throw new Error('No mail location is registered');
+		throw new InvalidConfigError({ reason: 'No mail location is registered; register one with registerLocation()' });
 	}
 
 	let lastError: unknown;
 	let lastLimit: unknown;
 	let limited = 0;
 
-	// 4. Down the chain: the first location with budget that accepts the message wins
 	for (const location of chain) {
 		const limit = await consume(location, routes.limiters?.[location], logger);
 
@@ -127,14 +127,13 @@ export const sendMail = async (message: MailMessage, options: MailSendOptions = 
 
 			return sent;
 		} catch (error) {
-			// 5. pino takes a non-object first argument as the message, so a driver rejecting with a string would replace
-			//    the line and drop the location; `toError` keeps both
+			// pino takes a non-object first argument as the message, so a driver rejecting with a string would replace
+			// the line and drop the location; `toError` keeps both
 			lastError = error;
 			logger.warn(toError(error), `Mail location "${location}" failed to send "${prepared.subject}"`);
 		}
 	}
 
-	// 6. Nobody took it: the reason is the limit when that is all that stood in the way, the last failure otherwise
 	useEmitter().emitAction(MAIL_FAILED_EVENT, { locations: chain, subject: prepared.subject, to: prepared.to });
 
 	if (limited === chain.length) {
@@ -154,14 +153,13 @@ export const sendMail = async (message: MailMessage, options: MailSendOptions = 
  * carry a sender.
  */
 const resolveFrom = (from: MailAddress | undefined, fallback: MailAddress | undefined): MailAddress => {
-	// 1. The message's own sender wins; the routes only fill a gap
 	const sender = from ?? fallback;
 
 	if (sender === undefined || sender === '') {
 		throw new InvalidPayloadError({ reason: 'No sender: pass "from" or register one in the mail routes' });
 	}
 
-	// 2. A half-filled object would reach the provider as `undefined <undefined>`; refuse it here, by name
+	// A half-filled object would reach the provider as `undefined <undefined>`, so it is refused here, by name
 	if (typeof sender === 'object' && (!sender.name || !sender.address)) {
 		throw new InvalidPayloadError({ reason: 'A name and address property are required in the "from" object' });
 	}
@@ -180,7 +178,6 @@ const resolveFrom = (from: MailAddress | undefined, fallback: MailAddress | unde
  * @throws Whatever a broken limiter store throws — a limit that cannot be checked is not silently ignored.
  */
 const consume = async (location: string, limiter: LimiterDriver | undefined, logger: Logger): Promise<unknown> => {
-	// 1. No limiter, no budget to spend
 	if (!limiter) return undefined;
 
 	try {
@@ -188,7 +185,7 @@ const consume = async (location: string, limiter: LimiterDriver | undefined, log
 
 		return undefined;
 	} catch (error) {
-		// 2. A hit is the expected outcome of a busy location; anything else is the store failing
+		// A hit is the expected outcome of a busy location; anything else is the store failing
 		if (isNovastarterError(error, ErrorCode.RequestsExceeded)) {
 			logger.warn(`Mail location "${location}" is over its rate limit; trying the next one`);
 
@@ -213,7 +210,7 @@ const consume = async (location: string, limiter: LimiterDriver | undefined, log
  * ```
  */
 export const normalizeHtml = (html: string): string =>
-	// 1. Line breaks stay, so the markup remains readable in the source view; only the indentation goes
+	// Line breaks stay, so the markup remains readable in the source view; only the indentation goes
 	html
 		.split('\n')
 		.map((line) => line.trim())

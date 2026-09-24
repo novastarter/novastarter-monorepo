@@ -6,14 +6,14 @@ import { expect, test } from 'vitest';
 import { isReadableStream } from './is-readable-stream.js';
 
 test('Accepts a Node Readable that has not ended', () => {
-	// 1. Both a plain readable and a duplex expose the piping API, `_read` and the readable state
+	// Both a plain readable and a duplex expose the piping API, `_read` and the readable state
 	expect(isReadableStream(Readable.from(['chunk']))).toBe(true);
 	expect(isReadableStream(new PassThrough())).toBe(true);
 });
 
 test('Accepts a stream-shaped object without the node:stream prototype', () => {
-	// 1. The check is structural: a stream from another copy of the streams implementation must pass although
-	//    `instanceof Readable` would fail
+	// The check is structural: a stream from another copy of the streams implementation must pass although
+	// `instanceof Readable` would fail
 	const lookalike = {
 		pipe() {},
 		_read() {},
@@ -25,8 +25,8 @@ test('Accepts a stream-shaped object without the node:stream prototype', () => {
 });
 
 test('Refuses a stream that has ended or been destroyed', () => {
-	// 1. `destroy()` flips `readable` to `false` at once; a stream in that state cannot be piped, so it is not a usable
-	//    readable any more
+	// `destroy()` flips `readable` to `false` at once; a stream in that state cannot be piped, so it is not a usable
+	// readable any more
 	const stream = Readable.from(['chunk']);
 
 	stream.destroy();
@@ -36,12 +36,12 @@ test('Refuses a stream that has ended or been destroyed', () => {
 });
 
 test('Refuses a Web ReadableStream', () => {
-	// 1. A Web stream has no `pipe` and no `_read`; it is consumed through a reader, not the Node piping API
+	// A Web stream has no `pipe` and no `_read`; it is consumed through a reader, not the Node piping API
 	expect(isReadableStream(new ReadableStream())).toBe(false);
 });
 
 test('Refuses plain values and objects missing the stream internals', () => {
-	// 1. `null` is `typeof 'object'`, so it needs the explicit check; the rest lack one or more of the probed members
+	// `null` is `typeof 'object'`, so it needs the explicit check; the rest lack one or more of the probed members
 	expect(isReadableStream(null)).toBe(false);
 	expect(isReadableStream(undefined)).toBe(false);
 	expect(isReadableStream('text')).toBe(false);

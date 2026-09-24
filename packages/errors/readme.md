@@ -38,10 +38,19 @@ without it `error.extensions` is `unknown`.
 The classes of the kit:
 
 ```ts
-import { ErrorCode, HitRateLimitError, InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
+import {
+	ErrorCode,
+	HitRateLimitError,
+	InvalidConfigError,
+	InvalidCredentialsError,
+	InvalidPayloadError,
+} from '@novastarter/errors';
 
 throw new InvalidPayloadError({ reason: 'Field "email" is required' });
 // message: 'Invalid payload. Field "email" is required.', code: 'INVALID_PAYLOAD', status: 400
+
+throw new InvalidConfigError({ reason: 'The mysql database driver needs a "connection"' });
+// message: 'Invalid config. The mysql database driver needs a "connection".', code: 'INVALID_CONFIG', status: 500
 
 throw new InvalidCredentialsError();
 // message: 'Invalid credentials.', code: 'INVALID_CREDENTIALS', status: 401
@@ -54,6 +63,9 @@ throw new HitRateLimitError({
 
 ErrorCode.InvalidPayload; // 'INVALID_PAYLOAD' — the codes, for matching
 ```
+
+`InvalidConfigError` is for a driver, a manager or a location set up wrong. The reason names the subject and the fix, so
+the developer reading the log knows what to change without opening the source.
 
 A driver's `call()` turns a provider's error answer into the kit's with `toProviderCallError()`: a 429 becomes a
 `HitRateLimitError` reset at `Retry-After`, anything else a `ProviderCallError` (`PROVIDER_CALL_FAILED`, 502) with the

@@ -103,8 +103,8 @@ try {
 }
 ```
 
-A driver refuses a missing or invalid option at construction with a plain `Error` naming it:
-`The s3 storage driver needs a "bucket"`.
+A driver refuses a missing or invalid option at construction with `InvalidConfigError` from `@novastarter/errors` (code
+`INVALID_CONFIG`) naming it: `Invalid config. The s3 storage driver needs a "bucket".`
 
 ## Any other request
 
@@ -141,9 +141,9 @@ const { status, headers, data } = await useStorage().location('uploads').call!('
 A driver is a class taking its options in the constructor and implementing `StorageDriver` — or `TusDriver` for
 resumable uploads — from this package; see `@novastarter/storage-driver-local` for the smallest one. Every path a driver
 gets is relative to its configured root and uses forward slashes. `stat()` throws `StorageFileNotFoundError` for a
-missing object; a missing option is refused in the constructor with `The <name> storage driver needs a "<option>"`;
-`close()`, when the SDK keeps connections open, releases them. The package registers its options in the driver map, so a
-location naming it is type-checked:
+missing object; a missing option is refused in the constructor with `InvalidConfigError` and the reason
+`The <name> storage driver needs a "<option>"`; `close()`, when the SDK keeps connections open, releases them. The
+package registers its options in the driver map, so a location naming it is type-checked:
 
 ```ts
 declare module '@novastarter/storage' {

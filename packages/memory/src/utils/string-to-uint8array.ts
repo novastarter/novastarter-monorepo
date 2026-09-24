@@ -12,6 +12,6 @@ const encoder = new TextEncoder();
  * @returns UTF-8 encoded bytes.
  */
 export const stringToUint8Array = (val: string): Uint8Array => {
-	// 1. UTF-8 is the only encoding `TextEncoder` supports and the one every consumer of these bytes expects
+	// UTF-8 is the only encoding `TextEncoder` supports and the one every consumer of these bytes expects
 	return encoder.encode(val);
 };

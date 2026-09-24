@@ -1,4 +1,4 @@
-import { HitRateLimitError } from '@novastarter/errors';
+import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { MessengerTargetGoneError } from '@novastarter/messenger';
 
 /**
@@ -28,7 +28,7 @@ const GONE_DESCRIPTIONS = ['chat not found', 'user is deactivated', 'bot was kic
  * - `403` (blocked, kicked, deactivated) and a `400` saying the chat is gone → `MessengerTargetGoneError`: the chat id
  *   is dead for this bot, forget it;
  * - `429` → `HitRateLimitError`, reset at `retry_after`; Telegram does not tell the limit, so it is `0`;
- * - anything else → `Error` with Telegram's description.
+ * - anything else → `ProviderCallError` with the status and Telegram's answer, its description in the message.
  *
  * @param method - The method that was called, for the message.
  * @param answer - What the Bot API answered.
@@ -36,22 +36,21 @@ const GONE_DESCRIPTIONS = ['chat not found', 'user is deactivated', 'bot was kic
  * @returns The error to throw.
  */
 export const toTelegramError = (method: string, answer: Partial<TelegramErrorAnswer>, status: number): Error => {
-	// 1. The code of the answer wins over the HTTP status; they agree, but a proxy may rewrite the latter
+	// The code of the answer wins over the HTTP status; they agree, but a proxy may rewrite the latter
 	const code = answer.error_code ?? status;
 	const description = answer.description ?? `HTTP ${status}`;
 
-	// 2. The recipient is unreachable for good: not a failure to retry
+	// The recipient is unreachable for good, so this is not a failure to retry
 	if (code === 403 || (code === 400 && GONE_DESCRIPTIONS.some((gone) => description.toLowerCase().includes(gone)))) {
 		return new MessengerTargetGoneError({ reason: description });
 	}
 
-	// 3. Too many requests: the caller may try again after the wait Telegram names
 	if (code === 429) {
 		const retryAfter = answer.parameters?.retry_after ?? 1;
 
 		return new HitRateLimitError({ limit: 0, reset: new Date(Date.now() + retryAfter * 1000) });
 	}
 
-	// 4. Everything else is Telegram's refusal of the request, told in its words; the token is never in the message
-	return new Error(`Telegram refused ${method}: ${description}`);
+	// The token is never in the message
+	return new ProviderCallError({ provider: 'telegram', method, status: code, body: answer });
 };

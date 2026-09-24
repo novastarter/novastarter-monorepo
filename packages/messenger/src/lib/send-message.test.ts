@@ -4,7 +4,7 @@
  * `@novastarter/logger` and `@novastarter/emitter` are mocked.
  */
 import { useEmitter } from '@novastarter/emitter';
-import { InvalidPayloadError } from '@novastarter/errors';
+import { InvalidConfigError, InvalidPayloadError } from '@novastarter/errors';
 import { useLogger } from '@novastarter/logger';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { MessengerDriver } from '../driver.js';
@@ -57,7 +57,6 @@ class OkDriver implements MessengerDriver {
 	 * @returns A fixed id.
 	 */
 	async send(message: MessengerMessage): Promise<MessengerResult> {
-		// 1. Recorded for the assertions, accepted as given
 		sent.push(message);
 
 		return { messageId: '7' };
@@ -74,7 +73,7 @@ class DownDriver implements MessengerDriver {
 	 * @throws Always.
 	 */
 	async send(): Promise<MessengerResult> {
-		// 1. What an unreachable API looks like to the caller
+		// What an unreachable API looks like to the caller
 		throw new Error('ECONNREFUSED');
 	}
 }
@@ -89,7 +88,7 @@ class GoneDriver implements MessengerDriver {
 	 * @throws MessengerTargetGoneError, always.
 	 */
 	async send(): Promise<MessengerResult> {
-		// 1. What a blocked bot looks like to the caller
+		// What a blocked bot looks like to the caller
 		throw new MessengerTargetGoneError({ reason: 'Forbidden: bot was blocked by the user' });
 	}
 }
@@ -98,7 +97,7 @@ beforeEach(() => {
 	vi.mocked(useLogger).mockReturnValue(logger as unknown as ReturnType<typeof useLogger>);
 	vi.mocked(useEmitter).mockReturnValue(emitter as unknown as ReturnType<typeof useEmitter>);
 
-	// 1. One location per behaviour; `default` is the one a message without a location goes through
+	// One location per behaviour; `default` is the one a message without a location goes through
 	const manager = useMessenger();
 
 	manager.registerDriver('ok', OkDriver);
@@ -118,10 +117,9 @@ afterEach(() => {
 
 describe('sendMessage', () => {
 	test('Sends through `default`, the message’s location or the option’s, and announces it', async () => {
-		// 1. No location anywhere: `default`
 		await expect(sendMessage({ to: '42', text: 'Hi' })).resolves.toStrictEqual({ messageId: '7', location: 'default' });
 
-		// 2. The message's own, then the option over it
+		// The option wins over the message's own location
 		await expect(sendMessage({ to: '42', text: 'Hi', location: 'telegram' })).resolves.toMatchObject({
 			location: 'telegram',
 		});
@@ -138,14 +136,12 @@ describe('sendMessage', () => {
 	});
 
 	test('Accepts attachments without text', async () => {
-		// 1. A photo alone is a message
 		await sendMessage({ to: '42', attachments: [{ kind: 'photo', source: 'https://example.com/a.png' }] });
 
 		expect(sent).toHaveLength(1);
 	});
 
 	test('Refuses a message without a recipient or without content, before the filter', async () => {
-		// 1. Both are the payload's fault
 		await expect(sendMessage({ to: ' ', text: 'Hi' })).rejects.toBeInstanceOf(InvalidPayloadError);
 		await expect(sendMessage({ to: '42', text: '  ' })).rejects.toBeInstanceOf(InvalidPayloadError);
 		await expect(sendMessage({ to: '42', attachments: [] })).rejects.toBeInstanceOf(InvalidPayloadError);
@@ -154,7 +150,6 @@ describe('sendMessage', () => {
 	});
 
 	test('Sends what the filter rewrote, checks the rewrite, and sends nothing when dropped', async () => {
-		// 1. A redirect to a test chat goes through
 		emitter.emitFilter.mockResolvedValueOnce({ to: 'test-chat', text: 'Hi' });
 
 		await sendMessage({ to: '42', text: 'Hi' });
@@ -162,7 +157,6 @@ describe('sendMessage', () => {
 		expect(emitter.emitFilter).toHaveBeenCalledWith(MESSENGER_SEND_FILTER, { to: '42', text: 'Hi' }, {});
 		expect(sent[0]!.to).toBe('test-chat');
 
-		// 2. A rewrite that blanked the text is refused, a drop answers `null`
 		emitter.emitFilter.mockResolvedValueOnce({ to: '42', text: '' });
 
 		await expect(sendMessage({ to: '42', text: 'Hi' })).rejects.toBeInstanceOf(InvalidPayloadError);
@@ -173,14 +167,13 @@ describe('sendMessage', () => {
 	});
 
 	test('Refuses a location nobody registered', async () => {
-		// 1. A configuration mistake, named
 		await expect(sendMessage({ to: '42', text: 'Hi' }, { location: 'slack' })).rejects.toThrow(
-			'Messenger location "slack" doesn\'t exist.',
+			new InvalidConfigError({ reason: 'Messenger location "slack" doesn\'t exist; register it or name another one' }),
 		);
 	});
 
 	test('Passes a gone recipient on as is and announces it', async () => {
-		// 1. Not wrapped: the caller forgets the chat on this very class
+		// Not wrapped, since the caller forgets the chat on this very class
 		await expect(sendMessage({ to: '42', text: 'Hi', location: 'gone' })).rejects.toBeInstanceOf(
 			MessengerTargetGoneError,
 		);
@@ -193,12 +186,11 @@ describe('sendMessage', () => {
 	});
 
 	test('Wraps a gone recipient a filter redirected to, so the caller keeps its own chat', async () => {
-		// 1. The filter sends to a test chat on the gone location; the caller asked for chat 42
+		// The filter sends to a test chat on the gone location; the caller asked for chat 42
 		emitter.emitFilter.mockResolvedValueOnce({ to: 'test-chat', text: 'Hi', location: 'gone' });
 
 		const error = await sendMessage({ to: '42', text: 'Hi', location: 'gone' }).catch((caught: unknown) => caught);
 
-		// 2. A plain error, the gone error as its cause, and the event names the chat actually contacted
 		expect(error).toBeInstanceOf(Error);
 		expect(error).not.toBeInstanceOf(MessengerTargetGoneError);
 		expect((error as Error).cause).toBeInstanceOf(MessengerTargetGoneError);
@@ -209,14 +201,14 @@ describe('sendMessage', () => {
 			reason: 'Forbidden: bot was blocked by the user',
 		});
 
-		// 3. Same chat, but a filter moved it to another location than the caller meant: wrapped as well
+		// Same chat, but a filter moved it to another location than the caller meant: wrapped as well
 		emitter.emitFilter.mockResolvedValueOnce({ to: '42', text: 'Hi', location: 'gone' });
 
 		await expect(sendMessage({ to: '42', text: 'Hi' })).rejects.not.toBeInstanceOf(MessengerTargetGoneError);
 	});
 
 	test('Wraps any other failure with the driver’s error as the cause, and announces it', async () => {
-		// 1. The job retries on the wrapper; the reason travels as the cause
+		// The job retries on the wrapper; the reason travels as the cause
 		const error = await sendMessage({ to: '42', text: 'Hi', location: 'down' }).catch((caught: unknown) => caught);
 
 		expect(error).toBeInstanceOf(Error);

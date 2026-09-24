@@ -18,7 +18,7 @@ import {
 	randGitShortSha as randUnique,
 } from '@ngneat/falso';
 import { DEFAULT_CHUNK_SIZE } from '@novastarter/constants';
-import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
+import { HitRateLimitError, InvalidConfigError, ProviderCallError } from '@novastarter/errors';
 import { StorageFileNotFoundError } from '@novastarter/storage';
 import { StorageClient } from '@supabase/storage-js';
 import * as tus from 'tus-js-client';
@@ -120,7 +120,7 @@ function chunkStream(bytes: Buffer): Readable {
 }
 
 beforeEach(() => {
-	// 1. Fresh random values per test; falso keeps them realistic enough to catch accidental string handling
+	// Fresh random values per test; falso keeps them realistic enough to catch accidental string handling
 	sample = {
 		config: {
 			serviceRole: randAlphaNumeric({ length: 40 }).join(''),
@@ -148,8 +148,8 @@ beforeEach(() => {
 		},
 	};
 
-	// 2. `@supabase/storage-js` and `undici` are mocked above, so constructing the driver only records calls and never
-	//    opens a socket; no root is set, so paths pass through `fullPath` unchanged
+	// `@supabase/storage-js` and `undici` are mocked above, so constructing the driver only records calls and never
+	// opens a socket; no root is set, so paths pass through `fullPath` unchanged
 	driver = new StorageDriverSupabase({
 		serviceRole: sample.config.serviceRole,
 		bucket: sample.config.bucket,
@@ -158,7 +158,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	// 1. Reset call history and implementations, so a `mockReturnValue` set in one test cannot leak into the next
+	// Reset call history and implementations, so a `mockReturnValue` set in one test cannot leak into the next
 	vi.resetAllMocks();
 });
 
@@ -169,8 +169,8 @@ describe('#constructor', () => {
 	let sampleBucket: ReturnType<StorageClient['from']>;
 
 	beforeEach(() => {
-		// 1. Swap `getClient` and `getBucket` on the prototype before construction, so the constructor's own calls are
-		//    observable; the originals are restored afterwards because the other describe blocks rely on them
+		// Swap `getClient` and `getBucket` on the prototype before construction, so the constructor's own calls are
+		// observable; the originals are restored afterwards because the other describe blocks rely on them
 		getClientBackup = StorageDriverSupabase.prototype['getClient'];
 		sampleClient = {} as StorageClient;
 		StorageDriverSupabase.prototype['getClient'] = vi.fn().mockReturnValue(sampleClient);
@@ -181,37 +181,37 @@ describe('#constructor', () => {
 	});
 
 	afterEach(() => {
-		// 1. Put the real builders back, so the driver created in the outer `beforeEach` keeps calling the mocked
-		//    `StorageClient` rather than the stubs of this block
+		// Put the real builders back, so the driver created in the outer `beforeEach` keeps calling the mocked
+		// `StorageClient` rather than the stubs of this block
 		StorageDriverSupabase.prototype['getClient'] = getClientBackup;
 		StorageDriverSupabase.prototype['getBucket'] = getBucketBackup;
 	});
 
 	test('Saves passed config to local property', () => {
-		// 1. The config is copied with a confined root; `confinePath` leaves this sample root untouched because it has
-		//    no leading slash and no `..`, so the copy must equal the input field by field
+		// The config is copied with a confined root; `confinePath` leaves this sample root untouched because it has
+		// no leading slash and no `..`, so the copy must equal the input field by field
 		const driver = new StorageDriverSupabase(sample.config);
 
 		expect(driver['config']).toStrictEqual(sample.config);
 	});
 
 	test('Creates shared client', () => {
-		// 1. The client is built inside the constructor, so a bad config fails early; the stub only records that call
+		// The client is built inside the constructor, so a bad config fails early; the stub only records that call
 		const driver = new StorageDriverSupabase(sample.config);
 		expect(driver['getClient']).toHaveBeenCalledOnce();
 		expect(driver['client']).toBe(sampleClient);
 	});
 
 	test('Defaults root to empty string', () => {
-		// 1. An absent root must become the empty string, which is what Supabase expects for the top of the bucket,
-		//    not `undefined` that would end up in joined object names
+		// An absent root must become the empty string, which is what Supabase expects for the top of the bucket,
+		// not `undefined` that would end up in joined object names
 		expect(driver['config'].root).toBe('');
 	});
 
 	test.each([[-1], [0], [Number.NaN]])('Refuses a non-positive chunk size of %s', (chunkSize) => {
-		// 1. A zero, negative or NaN size would be kept as the per-chunk bound and refuse every arriving chunk with a
-		//    misleading "exceeds the chunk size limit" error; NaN slips through every comparison, which is why the
-		//    check is written as `!(size > 0)`
+		// A zero, negative or NaN size would be kept as the per-chunk bound and refuse every arriving chunk with a
+		// misleading "exceeds the chunk size limit" error; NaN slips through every comparison, which is why the
+		// check is written as `!(size > 0)`
 		expect(
 			() =>
 				new StorageDriverSupabase({
@@ -220,49 +220,55 @@ describe('#constructor', () => {
 					projectId: sample.config.projectId,
 					tus: { chunkSize },
 				}),
-		).toThrowError('The supabase storage driver got a "tus.chunkSize" below 1 byte');
+		).toThrowError(
+			new InvalidConfigError({ reason: 'The supabase storage driver needs a "tus.chunkSize" of at least 1 byte' }),
+		);
 	});
 });
 
 describe('#getClient', () => {
 	test('Throws error if serviceRole is missing', () => {
-		// 1. The constructor calls `getClient`, so constructing is enough to exercise it; with a project set the
-		//    endpoint check passes, so the missing key is what gets reported
+		// The constructor calls `getClient`, so constructing is enough to exercise it; with a project set the
+		// endpoint check passes, so the missing key is what gets reported
 		expect(() => new StorageDriverSupabase({ bucket: 'bucket', projectId: 'project', serviceRole: '' })).toThrowError(
-			'The supabase storage driver needs a "serviceRole"',
+			new InvalidConfigError({ reason: 'The supabase storage driver needs a "serviceRole"' }),
 		);
 	});
 
 	test('Throws error if bucket missing', () => {
-		// 1. The client builds fine with a project and a key; the bucket check is the last guard and names the option
+		// The client builds fine with a project and a key; the bucket check is the last guard and names the option
 		expect(() => new StorageDriverSupabase({ bucket: '', serviceRole: 'key', projectId: 'project' })).toThrowError(
-			'The supabase storage driver needs a "bucket"',
+			new InvalidConfigError({ reason: 'The supabase storage driver needs a "bucket"' }),
 		);
 	});
 
 	test('Throws error if projectId and endpoint are both missing', () => {
-		// 1. Without either the endpoint would read `https://undefined.supabase.co`, so the constructor has to refuse
+		// Without either the endpoint would read `https://undefined.supabase.co`, so the constructor has to refuse
 		expect(() => new StorageDriverSupabase({ serviceRole: 'secret', bucket: 'bucket' })).toThrowError(
-			'The supabase storage driver needs a "projectId" or an "endpoint"',
+			new InvalidConfigError({ reason: 'The supabase storage driver needs a "projectId" or an "endpoint"' }),
+		);
+
+		expect(() => new StorageDriverSupabase({ serviceRole: 'secret', bucket: 'bucket' })).toThrowError(
+			InvalidConfigError,
 		);
 	});
 
 	test('Throws error if serviceRole is missing with a project', () => {
-		// 1. With a project the endpoint check passes, so the missing key is what gets reported
+		// With a project the endpoint check passes, so the missing key is what gets reported
 		expect(() => new StorageDriverSupabase({ bucket: 'bucket', projectId: 'project', serviceRole: '' })).toThrowError(
-			'The supabase storage driver needs a "serviceRole"',
+			new InvalidConfigError({ reason: 'The supabase storage driver needs a "serviceRole"' }),
 		);
 	});
 
 	test('Throws error if bucket is missing with a project and a key', () => {
-		// 1. The client builds fine; the bucket check is the last guard and names the option
+		// The client builds fine; the bucket check is the last guard and names the option
 		expect(() => new StorageDriverSupabase({ bucket: '', projectId: 'project', serviceRole: 'secret' })).toThrowError(
-			'The supabase storage driver needs a "bucket"',
+			new InvalidConfigError({ reason: 'The supabase storage driver needs a "bucket"' }),
 		);
 	});
 
 	test('Is valid if projectId is given', () => {
-		// 1. A project id alone must expand to the hosted Storage API URL
+		// A project id alone must expand to the hosted Storage API URL
 		const projectId = 'project';
 		const driver = new StorageDriverSupabase({ serviceRole: 'secret', bucket: 'bucket', projectId });
 		expect(driver).toBeInstanceOf(StorageDriverSupabase);
@@ -270,7 +276,7 @@ describe('#getClient', () => {
 	});
 
 	test('Is valid if endpoint is given', () => {
-		// 1. A custom endpoint is used verbatim, which is what self-hosted setups rely on
+		// A custom endpoint is used verbatim, which is what self-hosted setups rely on
 		const endpoint = 'https://example.com';
 		const driver = new StorageDriverSupabase({ serviceRole: 'secret', bucket: 'bucket', endpoint });
 		expect(driver).toBeInstanceOf(StorageDriverSupabase);
@@ -278,7 +284,7 @@ describe('#getClient', () => {
 	});
 
 	test('Creates storage client', () => {
-		// 1. Supabase needs the key in both headers: `apikey` identifies the project, the bearer token authorises
+		// Supabase needs the key in both headers: `apikey` identifies the project, the bearer token authorises
 		expect(StorageClient).toHaveBeenCalledWith(`https://${sample.config.projectId}.supabase.co/storage/v1`, {
 			apikey: sample.config.serviceRole,
 			Authorization: `Bearer ${sample.config.serviceRole}`,
@@ -290,7 +296,7 @@ describe('#getClient', () => {
 
 describe('#fullPath', () => {
 	test('Returns the input value if no root is given', () => {
-		// 1. Without a root there is nothing to prefix, so the caller path is the object name as it is
+		// Without a root there is nothing to prefix, so the caller path is the object name as it is
 		const driver = new StorageDriverSupabase({
 			serviceRole: sample.config.serviceRole,
 			bucket: sample.config.bucket,
@@ -302,7 +308,7 @@ describe('#fullPath', () => {
 	});
 
 	test('Returns normalized joined path', () => {
-		// 1. The root is joined with a single slash, so a caller path never gets a double separator in its name
+		// The root is joined with a single slash, so a caller path never gets a double separator in its name
 		const driver = new StorageDriverSupabase({
 			serviceRole: sample.config.serviceRole,
 			bucket: sample.config.bucket,
@@ -315,7 +321,7 @@ describe('#fullPath', () => {
 	});
 
 	test('Keeps a caller path under the root and drops a leading slash, like every other driver', () => {
-		// 1. One driver with a root and one without, since confinement has to hold in both cases
+		// One driver with a root and one without, since confinement has to hold in both cases
 		const rooted = new StorageDriverSupabase({
 			serviceRole: sample.config.serviceRole,
 			bucket: sample.config.bucket,
@@ -329,7 +335,7 @@ describe('#fullPath', () => {
 			endpoint: sample.config.endpoint,
 		});
 
-		// 2. `..` used to climb out of the root and a leading slash used to stay in the object name
+		// `..` used to climb out of the root and a leading slash used to stay in the object name
 		expect(rooted['fullPath']('../other/secret')).toBe('media/other/secret');
 		expect(unrooted['fullPath']('../x')).toBe('x');
 		expect(unrooted['fullPath']('/x')).toBe('x');
@@ -339,7 +345,7 @@ describe('#fullPath', () => {
 
 describe('#getAuthenticatedUrl', () => {
 	test('Returns the url for an object with no root that requires authentication', () => {
-		// 1. The URL goes through `object/authenticated`, which serves private objects to a bearer-authenticated request
+		// The URL goes through `object/authenticated`, which serves private objects to a bearer-authenticated request
 		const driver = new StorageDriverSupabase({
 			serviceRole: 'serviceRole',
 			bucket: 'bucket',
@@ -352,7 +358,7 @@ describe('#getAuthenticatedUrl', () => {
 	});
 
 	test('Returns the url for an object that requires authentication', () => {
-		// 1. The root sits between the bucket and the object name, since it is part of the object name in Supabase
+		// The root sits between the bucket and the object name, since it is part of the object name in Supabase
 		const driver = new StorageDriverSupabase({
 			serviceRole: 'serviceRole',
 			bucket: 'bucket',
@@ -369,8 +375,8 @@ describe('#getAuthenticatedUrl', () => {
 		['report?v=1.pdf', 'report%3Fv%3D1.pdf'],
 		['report#v1.pdf', 'report%23v1.pdf'],
 	])('Percent-encodes the object name %s so it addresses one object', (input, encoded) => {
-		// 1. A raw `?` would read as the start of the query string and a raw `#` as the fragment, so the endpoint
-		//    would be asked for a different object than the caller named
+		// A raw `?` would read as the start of the query string and a raw `#` as the fragment, so the endpoint
+		// would be asked for a different object than the caller named
 		const driver = new StorageDriverSupabase({
 			serviceRole: 'serviceRole',
 			bucket: 'bucket',
@@ -388,8 +394,8 @@ describe('#read', () => {
 	let endpoint: string;
 
 	beforeEach(() => {
-		// 1. Stub the URL builder and give `fetch` a successful streaming response, so each test only varies the
-		//    headers it cares about
+		// Stub the URL builder and give `fetch` a successful streaming response, so each test only varies the
+		// headers it cares about
 		rootEndpoint = `https://projectId.supabase.co/storage/v1/object/authenticated/bucket/testing/${sample.path.input}.png`;
 		endpoint = `https://projectId.supabase.co/storage/v1/object/authenticated/bucket/${sample.path.input}.png`;
 		vi.mocked(fetch).mockReturnValue({ status: 200, body: new ReadableStream() } as unknown as Promise<Response>);
@@ -397,8 +403,8 @@ describe('#read', () => {
 	});
 
 	test('Uses getAuthenticatedUrl to get endpoint when no root is set', async () => {
-		// 1. The request must carry the service-role key in both headers and nothing else: no range header when none
-		//    was asked for
+		// The request must carry the service-role key in both headers and nothing else: no range header when none
+		// was asked for
 		await driver.read(sample.path.input);
 
 		expect(driver['getAuthenticatedUrl']).toHaveBeenCalledWith(sample.path.input);
@@ -413,7 +419,7 @@ describe('#read', () => {
 	});
 
 	test('Uses getAuthenticatedUrl to get endpoint when a root is set', async () => {
-		// 1. The root only changes the URL the builder answers with; the request itself stays the same
+		// The root only changes the URL the builder answers with; the request itself stays the same
 		driver['getAuthenticatedUrl'] = vi.fn().mockReturnValue(rootEndpoint);
 
 		await driver.read(sample.path.input);
@@ -430,7 +436,7 @@ describe('#read', () => {
 	});
 
 	test('Optionally allows setting start range offset', async () => {
-		// 1. An open end must produce `bytes=N-`, which the server reads as "from N to the end"
+		// An open end must produce `bytes=N-`, which the server reads as "from N to the end"
 		await driver.read(sample.path.input, { range: { start: sample.range.start } });
 
 		expect(fetch).toHaveBeenCalledWith(endpoint, {
@@ -444,7 +450,7 @@ describe('#read', () => {
 	});
 
 	test('Optionally allows setting end range offset', async () => {
-		// 1. An open start means the first bytes up to `end`, `bytes=0-N`; `bytes=-N` would ask for the last N bytes
+		// An open start means the first bytes up to `end`, `bytes=0-N`; `bytes=-N` would ask for the last N bytes
 		await driver.read(sample.path.input, { range: { end: sample.range.end } });
 
 		expect(fetch).toHaveBeenCalledWith(endpoint, {
@@ -458,7 +464,7 @@ describe('#read', () => {
 	});
 
 	test('Optionally allows setting start and end range offset', async () => {
-		// 1. Both bounds given go out as `bytes=start-end`, the inclusive form HTTP expects
+		// Both bounds given go out as `bytes=start-end`, the inclusive form HTTP expects
 		await driver.read(sample.path.input, { range: sample.range });
 
 		expect(fetch).toHaveBeenCalledWith(endpoint, {
@@ -472,8 +478,8 @@ describe('#read', () => {
 	});
 
 	test('Throws an error naming the status and the reason for an error status', async () => {
-		// 1. A 403 with a JSON body: the status must survive in the message, so a denied read is not mistaken for a
-		//    missing stream, and the body, which is Supabase's own explanation, must come along as the cause
+		// A 403 with a JSON body: the status must survive in the message, so a denied read is not mistaken for a
+		// missing stream, and the body, which is Supabase's own explanation, must come along as the cause
 		const reason = '{"statusCode":"403","error":"Unauthorized","message":"invalid signature"}';
 		const text = vi.fn().mockResolvedValue(reason);
 
@@ -488,12 +494,12 @@ describe('#read', () => {
 			cause: reason,
 		});
 
-		// 2. Reading the body is what releases the connection, so it has to be read rather than left dangling
+		// Reading the body is what releases the connection, so it has to be read rather than left dangling
 		expect(text).toHaveBeenCalledOnce();
 	});
 
 	test('Throws an error naming the status without a cause when the error response has no body', async () => {
-		// 1. An empty body must not become an empty-string cause; the status alone is the whole story
+		// An empty body must not become an empty-string cause; the status alone is the whole story
 		vi.mocked(fetch).mockReturnValue({
 			status: 500,
 			body: null,
@@ -508,7 +514,7 @@ describe('#read', () => {
 	});
 
 	test('Throws an error naming the status when the error body cannot be read', async () => {
-		// 1. A body that fails to read must not replace the read error with a body error; the status still reports
+		// A body that fails to read must not replace the read error with a body error; the status still reports
 		vi.mocked(fetch).mockReturnValue({
 			status: 502,
 			body: new ReadableStream(),
@@ -521,8 +527,8 @@ describe('#read', () => {
 	});
 
 	test('Throws StorageFileNotFoundError when the object is missing', async () => {
-		// 1. A 404 is the error every backend shares; any other error status stays the generic one. The body is
-		//    cancelled rather than read, since an unread body holds its connection open
+		// A 404 is the error every backend shares; any other error status stays the generic one. The body is
+		// cancelled rather than read, since an unread body holds its connection open
 		const cancel = vi.fn(async () => {});
 		vi.mocked(fetch).mockReturnValue({ status: 404, body: { cancel } } as unknown as Promise<Response>);
 
@@ -531,8 +537,8 @@ describe('#read', () => {
 	});
 
 	test('Throws an error when returned stream is not a readable stream', async () => {
-		// 1. A successful status without a body is the one case that keeps the "no stream" wording: nothing failed,
-		//    there is just nothing to stream
+		// A successful status without a body is the one case that keeps the "no stream" wording: nothing failed,
+		// there is just nothing to stream
 		vi.mocked(fetch).mockReturnValue({ status: 200, body: undefined } as unknown as Promise<Response>);
 
 		await expect(driver.read(sample.path.input, { range: sample.range })).rejects.toThrowError(
@@ -541,7 +547,7 @@ describe('#read', () => {
 	});
 
 	test('Returns stream', async () => {
-		// 1. The Web stream from `fetch` must come back converted, since callers expect a Node readable
+		// The Web stream from `fetch` must come back converted, since callers expect a Node readable
 		const stream = await driver.read(sample.path.input, { range: sample.range });
 
 		expect(fetch).toHaveBeenCalledWith(endpoint, {
@@ -559,7 +565,7 @@ describe('#read', () => {
 
 describe('#stat', () => {
 	test('Returns the size/modified from metadata', async () => {
-		// 1. The bucket handle is replaced per test: only `list` is needed, and its answer is the whole fixture
+		// The bucket handle is replaced per test: only `list` is needed, and its answer is the whole fixture
 		driver['bucket'] = {
 			list: vi.fn().mockReturnValue({
 				data: [fileEntry(basename(sample.path.input), sample.file.size, sample.file.modified)],
@@ -574,9 +580,9 @@ describe('#stat', () => {
 			modified: sample.file.modified,
 		});
 
-		// 2. The lookup must query the parent folder and search for the base name, not list the whole bucket; the
-		//    page is the API default rather than one entry, since the search is a prefix filter and the exact entry
-		//    need not come first
+		// The lookup must query the parent folder and search for the base name, not list the whole bucket; the
+		// page is the API default rather than one entry, since the search is a prefix filter and the exact entry
+		// need not come first
 		expect(driver['bucket'].list).toHaveBeenCalledWith(dirname(sample.path.input), {
 			limit: 100,
 			offset: 0,
@@ -585,7 +591,7 @@ describe('#stat', () => {
 	});
 
 	test('Uses the configured root directory', async () => {
-		// 1. The root becomes part of the queried folder, since it is part of the object name in Supabase
+		// The root becomes part of the queried folder, since it is part of the object name in Supabase
 		driver['config'].root = 'root';
 
 		driver['bucket'] = {
@@ -610,7 +616,7 @@ describe('#stat', () => {
 	});
 
 	test('Uses empty string instead of "." when root is the empty string', async () => {
-		// 1. `join('', '')` yields `.`, which Supabase would treat as a literal folder name
+		// `join('', '')` yields `.`, which Supabase would treat as a literal folder name
 		const filename = 'test.png';
 
 		driver['bucket'] = {
@@ -630,9 +636,9 @@ describe('#stat', () => {
 	});
 
 	test('Picks the entry with exactly the requested name over folders and longer names listed before it', async () => {
-		// 1. Supabase's search is a prefix filter and lists folders first, so a folder `report.pdf.versions` and a
-		//    file `report.pdf.bak` come back ahead of `report.pdf`; the exact file is the one whose size must be
-		//    reported
+		// Supabase's search is a prefix filter and lists folders first, so a folder `report.pdf.versions` and a
+		// file `report.pdf.bak` come back ahead of `report.pdf`; the exact file is the one whose size must be
+		// reported
 		const other = randNumber();
 
 		driver['bucket'] = {
@@ -653,8 +659,8 @@ describe('#stat', () => {
 	});
 
 	test('Throws the kit error when only longer names or a folder of that name match', async () => {
-		// 1. `report.pdf.bak` and a folder `report.pdf` both satisfy the search filter, yet neither is the object;
-		//    answering with the folder's zero size or the other file's size would report a missing object as present
+		// `report.pdf.bak` and a folder `report.pdf` both satisfy the search filter, yet neither is the object;
+		// answering with the folder's zero size or the other file's size would report a missing object as present
 		driver['bucket'] = {
 			list: vi.fn().mockResolvedValue({
 				data: [folderEntry('report.pdf'), fileEntry('report.pdf.bak', sample.file.size, sample.file.modified)],
@@ -669,7 +675,7 @@ describe('#stat', () => {
 	});
 
 	test('Throws the kit error when only a name differing in case matches', async () => {
-		// 1. The search filter is case-insensitive while object names are not: `A.PNG` is not `a.png`
+		// The search filter is case-insensitive while object names are not: `A.PNG` is not `a.png`
 		driver['bucket'] = {
 			list: vi.fn().mockResolvedValue({
 				data: [fileEntry('A.PNG', sample.file.size, sample.file.modified)],
@@ -681,8 +687,8 @@ describe('#stat', () => {
 	});
 
 	test('Walks the following page when a full page holds only other matches', async () => {
-		// 1. A hundred files whose names start with the requested one fill the first page; the exact entry is on the
-		//    second, so a lookup that stopped at one page would report it missing
+		// A hundred files whose names start with the requested one fill the first page; the exact entry is on the
+		// second, so a lookup that stopped at one page would report it missing
 		const filler = Array.from({ length: 100 }, (_, i) => fileEntry(`a.png.${i}`, randNumber(), randPastDate()));
 
 		driver['bucket'] = {
@@ -699,13 +705,13 @@ describe('#stat', () => {
 
 		expect(stat).toEqual({ size: sample.file.size, modified: sample.file.modified });
 
-		// 2. The second request continues where the first ended, so no entry is skipped or listed twice
+		// The second request continues where the first ended, so no entry is skipped or listed twice
 		expect(driver['bucket'].list).toHaveBeenCalledTimes(2);
 		expect(driver['bucket'].list).toHaveBeenLastCalledWith('', { limit: 100, offset: 100, search: 'a.png' });
 	});
 
 	test('Throws the kit error when no file is returned by list', async () => {
-		// 1. An empty listing is how Supabase says "missing"; it becomes the error every backend shares
+		// An empty listing is how Supabase says "missing"; it becomes the error every backend shares
 		driver['bucket'] = {
 			list: vi.fn().mockReturnValue({
 				data: [],
@@ -720,9 +726,9 @@ describe('#stat', () => {
 	});
 
 	test('Throws an error naming the file when the entry carries no metadata, instead of reporting zero size and the epoch', async () => {
-		// 1. The API can report a file entry whose metadata is absent; the S3, GCS and Azure drivers refuse a stat
-		//    response missing its fields, so this driver does the same rather than handing out `0` / the epoch under
-		//    the `Stat` type
+		// The API can report a file entry whose metadata is absent; the S3, GCS and Azure drivers refuse a stat
+		// response missing its fields, so this driver does the same rather than handing out `0` / the epoch under
+		// the `Stat` type
 		driver['bucket'] = {
 			list: vi.fn().mockReturnValue({
 				data: [{ name: basename(sample.path.input), id: randUnique(), metadata: null }],
@@ -736,8 +742,8 @@ describe('#stat', () => {
 	});
 
 	test('Throws an error naming the file when the entry metadata has no size or modification time', async () => {
-		// 1. A metadata map without the fields is as broken as an absent one: without both values there is no stat to
-		//    report, only a guess
+		// A metadata map without the fields is as broken as an absent one: without both values there is no stat to
+		// report, only a guess
 		driver['bucket'] = {
 			list: vi.fn().mockReturnValue({
 				data: [{ name: basename(sample.path.input), id: randUnique(), metadata: {} }],
@@ -751,8 +757,8 @@ describe('#stat', () => {
 	});
 
 	test('Throws an error wrapping the storage error if the lookup failed', async () => {
-		// 1. A failed lookup is not the same answer as an empty one, so the failure has to reach the caller instead of
-		//    being reported as a missing file; it is wrapped with the path like every other failure of this driver
+		// A failed lookup is not the same answer as an empty one, so the failure has to reach the caller instead of
+		// being reported as a missing file; it is wrapped with the path like every other failure of this driver
 		const cause = new Error('Service unavailable');
 
 		driver['bucket'] = {
@@ -771,7 +777,7 @@ describe('#stat', () => {
 
 describe('#exists', () => {
 	test('Returns true if the file is returned by list', async () => {
-		// 1. An entry with exactly the requested name and a non-null id is proof of existence
+		// An entry with exactly the requested name and a non-null id is proof of existence
 		driver['bucket'] = {
 			list: vi.fn().mockReturnValue({
 				data: [fileEntry(basename(sample.path.input), sample.file.size, sample.file.modified)],
@@ -785,7 +791,7 @@ describe('#exists', () => {
 	});
 
 	test('Returns false if no file is returned by list', async () => {
-		// 1. An empty listing is how Supabase says "missing"
+		// An empty listing is how Supabase says "missing"
 		driver['bucket'] = {
 			list: vi.fn().mockReturnValue({
 				data: [],
@@ -799,8 +805,8 @@ describe('#exists', () => {
 	});
 
 	test('Returns false when only longer names, a folder of that name or another case match', async () => {
-		// 1. Every entry here satisfies Supabase's prefix search, none is the object: a `true` would make a caller
-		//    skip an upload or serve a link to nothing
+		// Every entry here satisfies Supabase's prefix search, none is the object: a `true` would make a caller
+		// skip an upload or serve a link to nothing
 		driver['bucket'] = {
 			list: vi.fn().mockResolvedValue({
 				data: [
@@ -816,7 +822,7 @@ describe('#exists', () => {
 	});
 
 	test('Throws an error wrapping the storage error if the lookup failed', async () => {
-		// 1. Reporting a failed request as "not found" would make callers act on a wrong answer
+		// Reporting a failed request as "not found" would make callers act on a wrong answer
 		const cause = new Error('Service unavailable');
 
 		driver['bucket'] = {
@@ -835,7 +841,7 @@ describe('#exists', () => {
 
 describe('#move', () => {
 	beforeEach(() => {
-		// 1. The copy goes through the mocked `undici` fetch; the source removal through the bucket handle
+		// The copy goes through the mocked `undici` fetch; the source removal through the bucket handle
 		vi.mocked(fetch).mockResolvedValue(new globalThis.Response('{"Key":"x"}', { status: 200 }) as never);
 
 		driver['bucket'] = { remove: vi.fn(async () => ({ data: [], error: null })) } as unknown as BucketApi;
@@ -844,7 +850,7 @@ describe('#move', () => {
 	test('Copies with upsert onto the destination and then removes the source', async () => {
 		await driver.move(sample.path.input, 'new/path');
 
-		// 1. The native move refuses an existing destination, so the move is an upserting copy and a removal
+		// The native move refuses an existing destination, so the move is an upserting copy and a removal
 		const [url, init] = vi.mocked(fetch).mock.calls[0] as unknown as [string, SentInit];
 
 		expect(url).toBe(`https://${sample.config.projectId}.supabase.co/storage/v1/object/copy`);
@@ -865,13 +871,13 @@ describe('#move', () => {
 	])('Does nothing when "%s" and "%s" name the same object', async (src, dest) => {
 		await driver.move(src, dest);
 
-		// 1. The upserting copy would succeed onto itself, so removing the source would delete the only copy
+		// The upserting copy would succeed onto itself, so removing the source would delete the only copy
 		expect(fetch).not.toHaveBeenCalled();
 		expect(driver['bucket'].remove).not.toHaveBeenCalled();
 	});
 
 	test('Keeps the source and throws when the copy fails', async () => {
-		// 1. A refused copy must not be followed by removing the source, or the object would be lost
+		// A refused copy must not be followed by removing the source, or the object would be lost
 		vi.mocked(fetch).mockResolvedValue(
 			new globalThis.Response('{"statusCode":"404","error":"not_found","message":"Object not found"}', {
 				status: 404,
@@ -886,7 +892,7 @@ describe('#move', () => {
 	});
 
 	test('Throws when the source removal fails instead of resolving', async () => {
-		// 1. storage-js answers a failure as `{ error }`; a move whose source is still there must not read as done
+		// storage-js answers a failure as `{ error }`; a move whose source is still there must not read as done
 		const cause = new Error('Access denied');
 		driver['bucket'] = { remove: vi.fn(async () => ({ data: null, error: cause })) } as unknown as BucketApi;
 
@@ -903,8 +909,8 @@ describe('#copy', () => {
 
 		await driver.copy(sample.path.input, 'new/path');
 
-		// 1. Both names go through `fullPath`, which is the identity without a root; `x-upsert` is what storage-js
-		//    leaves out and what makes Supabase overwrite instead of answering 409
+		// Both names go through `fullPath`, which is the identity without a root; `x-upsert` is what storage-js
+		// leaves out and what makes Supabase overwrite instead of answering 409
 		const [url, init] = vi.mocked(fetch).mock.calls[0] as unknown as [string, SentInit];
 
 		expect(url).toBe(`https://${sample.config.projectId}.supabase.co/storage/v1/object/copy`);
@@ -924,7 +930,7 @@ describe('#copy', () => {
 	});
 
 	test('Throws when Supabase refuses the copy instead of resolving', async () => {
-		// 1. An error status must not read as a copy that happened
+		// An error status must not read as a copy that happened
 		vi.mocked(fetch).mockResolvedValue(
 			new globalThis.Response('{"statusCode":"404","error":"not_found","message":"Object not found"}', {
 				status: 404,
@@ -940,15 +946,15 @@ describe('#copy', () => {
 
 describe('#write', () => {
 	beforeEach(() => {
-		// 1. A successful upload is the default; the failure test overrides the handle
+		// A successful upload is the default; the failure test overrides the handle
 		driver['bucket'] = {
 			upload: vi.fn().mockResolvedValue({ data: null, error: null }),
 		} as unknown as BucketApi;
 	});
 
 	test('Passes streams to body as is', async () => {
-		// 1. Without a type the driver sends a generic binary content type, since the endpoint rejects an empty one;
-		//    the other options are fixed by the driver
+		// Without a type the driver sends a generic binary content type, since the endpoint rejects an empty one;
+		// the other options are fixed by the driver
 		await driver.write(sample.path.input, sample.stream);
 
 		expect(driver['bucket'].upload).toHaveBeenCalledWith(sample.path.input, sample.stream, {
@@ -960,7 +966,7 @@ describe('#write', () => {
 	});
 
 	test('Ensures input is passed to fullPath', async () => {
-		// 1. Stubbing `fullPath` shows the caller path reaches it unchanged, so the root is applied on every write
+		// Stubbing `fullPath` shows the caller path reaches it unchanged, so the root is applied on every write
 		driver['fullPath'] = vi.fn();
 
 		await driver.write(sample.path.input, sample.stream);
@@ -968,7 +974,7 @@ describe('#write', () => {
 	});
 
 	test('Optionally sets ContentType', async () => {
-		// 1. A given type is stored as the object's content type, so downloads are served with it
+		// A given type is stored as the object's content type, so downloads are served with it
 		await driver.write(sample.path.input, sample.stream, sample.file.type);
 
 		expect(driver['bucket'].upload).toHaveBeenCalledWith(sample.path.input, sample.stream, {
@@ -980,7 +986,7 @@ describe('#write', () => {
 	});
 
 	test('Throws error when upload fails', async () => {
-		// 1. The client reports failures as a return value, so the driver has to turn it into a thrown error
+		// The client reports failures as a return value, so the driver has to turn it into a thrown error
 		const uploadError = new Error('Upload failed');
 
 		driver['bucket'] = {
@@ -995,7 +1001,7 @@ describe('#write', () => {
 
 describe('#delete', () => {
 	test('Ensures input is passed to fullPath', async () => {
-		// 1. Stubbing `fullPath` shows the caller path reaches it unchanged, so the root is applied on every removal
+		// Stubbing `fullPath` shows the caller path reaches it unchanged, so the root is applied on every removal
 		driver['bucket'] = {
 			remove: vi.fn(async () => ({ data: [], error: null })),
 		} as unknown as BucketApi;
@@ -1007,7 +1013,7 @@ describe('#delete', () => {
 	});
 
 	test('Throws when the client reports the removal failed instead of resolving', async () => {
-		// 1. storage-js answers a failure as `{ error }`; an object that is still there must not read as deleted
+		// storage-js answers a failure as `{ error }`; an object that is still there must not read as deleted
 		const cause = new Error('jwt expired');
 		driver['bucket'] = { remove: vi.fn(async () => ({ data: null, error: cause })) } as unknown as BucketApi;
 
@@ -1020,18 +1026,18 @@ describe('#delete', () => {
 
 describe('#list', () => {
 	test('Constructs list objects params based on input prefix', async () => {
-		// 1. A prefix without a trailing slash is split into the folder to query and the name fragment to search
+		// A prefix without a trailing slash is split into the folder to query and the name fragment to search
 		const sampleFile = randFileName();
 		const sampleDirectory = randDirectoryPath();
 		const fullSample = `${sampleDirectory}/${sampleFile}`;
 
-		// 2. The bucket handle is replaced inline: only `list` is needed, and an empty page ends the walk at once
+		// The bucket handle is replaced inline: only `list` is needed, and an empty page ends the walk at once
 		driver['bucket'] = {
 			list: vi.fn().mockReturnValue({ data: [], error: null }),
 		} as unknown as BucketApi;
 
-		// 3. Pull one item to trigger the first request; the generator is lazy until iterated. The prefix goes through
-		//    `fullPath`, which confines it under the root, so a leading slash of the sample directory is gone
+		// Pull one item to trigger the first request; the generator is lazy until iterated. The prefix goes through
+		// `fullPath`, which confines it under the root, so a leading slash of the sample directory is gone
 		await driver.list(fullSample)[Symbol.asyncIterator]().next();
 
 		expect(driver['bucket'].list).toHaveBeenCalledWith(sampleDirectory.replace(/^\/+/, ''), {
@@ -1042,7 +1048,7 @@ describe('#list', () => {
 	});
 
 	test('Lists the whole root as a folder, not as a search for names starting with it', async () => {
-		// 1. `media` as a search term would match `media-archive` too; the folder itself is what an empty prefix means
+		// `media` as a search term would match `media-archive` too; the folder itself is what an empty prefix means
 		const rooted = new StorageDriverSupabase({
 			serviceRole: sample.config.serviceRole,
 			bucket: sample.config.bucket,
@@ -1052,7 +1058,7 @@ describe('#list', () => {
 
 		rooted['bucket'] = { list: vi.fn().mockResolvedValue({ data: [], error: null }) } as unknown as BucketApi;
 
-		// 2. Both the empty prefix and a caller folder must be queried with their trailing slash and no search term
+		// Both the empty prefix and a caller folder must be queried with their trailing slash and no search term
 		await rooted.list('')[Symbol.asyncIterator]().next();
 		expect(rooted['bucket'].list).toHaveBeenCalledWith('media/', { search: '', limit: 1000, offset: 0 });
 
@@ -1061,7 +1067,7 @@ describe('#list', () => {
 	});
 
 	test('Yields file name omitting root if prefix is the full file path', async () => {
-		// 1. Outcome 1 from the driver docs: a non-null id marks a file, which is yielded with the root stripped
+		// Outcome 1 from the driver docs: a non-null id marks a file, which is yielded with the root stripped
 		const sampleRoot = randDirectoryPath();
 		const sampleFile = randFileName();
 		const sampleFull = `${sample.path.input}/${sampleFile}`;
@@ -1080,7 +1086,7 @@ describe('#list', () => {
 
 		driver['config'].root = sampleRoot;
 
-		// 2. Drain the generator, since a listing is only observable through what it yields
+		// Drain the generator, since a listing is only observable through what it yields
 		const iterator = driver.list(sampleFull);
 		const output: string[] = [];
 
@@ -1092,7 +1098,7 @@ describe('#list', () => {
 	});
 
 	test('Yields file name omitting root if prefix is the parent directory', async () => {
-		// 1. Outcome 2: the first listing returns the folder itself (null id), the second its contents
+		// Outcome 2: the first listing returns the folder itself (null id), the second its contents
 		const sampleRoot = randDirectoryPath();
 		const sampleFile = randFileName();
 		const sampleParentDir = randUnique();
@@ -1124,7 +1130,7 @@ describe('#list', () => {
 
 		driver['config'].root = sampleRoot;
 
-		// 2. Drain the generator; the folder entry itself must not be yielded, only the file found by descending
+		// Drain the generator; the folder entry itself must not be yielded, only the file found by descending
 		const iterator = driver.list(sampleInput);
 		const output: string[] = [];
 
@@ -1137,7 +1143,7 @@ describe('#list', () => {
 	});
 
 	test('Yields file name omitting root if prefix is part of the file name', async () => {
-		// 1. Outcome 3: a partial name matches several files, all of which are yielded
+		// Outcome 3: a partial name matches several files, all of which are yielded
 		const sampleRoot = randDirectoryPath();
 		const sampleFilePrefix = randFileName();
 		const sampleFiles = [1, 2, 3].map((i) => `${sampleFilePrefix}_postfix${i}`);
@@ -1156,7 +1162,7 @@ describe('#list', () => {
 
 		driver['config'].root = sampleRoot;
 
-		// 2. Drain the generator; the matches must come out in listing order with the root stripped
+		// Drain the generator; the matches must come out in listing order with the root stripped
 		const iterator = driver.list(sampleInput);
 		const output: string[] = [];
 
@@ -1168,11 +1174,11 @@ describe('#list', () => {
 	});
 
 	test('Skips entries the search matched only case-insensitively or through a wildcard', async () => {
-		// 1. Supabase answers `report` with `Report.pdf` and `a_b` style fragments with any character in place of `_`;
-		//    only the exact-prefix file and folder belong to the prefix, the others must be neither yielded nor listed
+		// Supabase answers `report` with `Report.pdf` and `a_b` style fragments with any character in place of `_`;
+		// only the exact-prefix file and folder belong to the prefix, the others must be neither yielded nor listed
 		driver['bucket'] = {
 			list: vi.fn(async (path: string, options?: { search?: string }): Promise<ListAnswer> => {
-				// 1. The root is searched for the fragment and answers with exact and false matches alike
+				// The root is searched for the fragment and answers with exact and false matches alike
 				if (path === '' && options?.search === 'rep_rt')
 					return {
 						data: [
@@ -1185,7 +1191,7 @@ describe('#list', () => {
 						error: null,
 					};
 
-				// 2. Only the exact-prefix folder may be descended into
+				// Only the exact-prefix folder may be descended into
 				if (path === 'rep_rts/' && options?.search === '')
 					return { data: [{ name: 'x.txt', id: randUnique() }], error: null };
 
@@ -1195,7 +1201,7 @@ describe('#list', () => {
 
 		driver['config'].root = '';
 
-		// 2. Drain the generator, since a listing is only observable through what it yields
+		// Drain the generator, since a listing is only observable through what it yields
 		const output: string[] = [];
 
 		for await (const filepath of driver.list('rep_rt')) {
@@ -1207,8 +1213,8 @@ describe('#list', () => {
 	});
 
 	test('Recursively fetches all nested directories and yields only the files', async () => {
-		// 1. Fixture layout: the prefix folder holds one file and one folder with a nested file, so the listing has to
-		//    descend exactly once and yield two files
+		// Fixture layout: the prefix folder holds one file and one folder with a nested file, so the listing has to
+		// descend exactly once and yield two files
 		const sampleRoot = randUnique() + randDirectoryPath();
 		const samplePrefixBase = randUnique() + randDirectoryPath();
 		const samplePrefixLastDir = randUnique();
@@ -1222,15 +1228,15 @@ describe('#list', () => {
 		const fullSampleFile = `${samplePrefix}/${sampleFile}`;
 		const fullSampleFileNested = `${fullSampleDirectory}/${sampleFileNested}`;
 
-		// 2. Route each listing call by the exact folder and search the driver is expected to send; any other call is
-		//    a wrong query and fails the test by throwing
+		// Route each listing call by the exact folder and search the driver is expected to send; any other call is
+		// a wrong query and fails the test by throwing
 		driver['bucket'] = {
 			list: vi.fn(async (path: string, options?: { search?: string }): Promise<ListAnswer> => {
-				// 1. The parent is queried with the last segment as the search term and answers with the folder itself
+				// The parent is queried with the last segment as the search term and answers with the folder itself
 				if (path === `${sampleRoot}/${samplePrefixBase}` && options?.search === samplePrefixLastDir)
 					return { data: [{ name: samplePrefixLastDir, id: null }], error: null };
 
-				// 2. The prefix folder is then listed whole and answers with its file and its sub-folder
+				// The prefix folder is then listed whole and answers with its file and its sub-folder
 				if (path === `${sampleRoot}/${samplePrefix}/` && options?.search === '')
 					return {
 						data: [
@@ -1240,7 +1246,7 @@ describe('#list', () => {
 						error: null,
 					};
 
-				// 3. The sub-folder is listed whole in turn and answers with the nested file
+				// The sub-folder is listed whole in turn and answers with the nested file
 				if (path === `${sampleRoot}/${fullSampleDirectory}/` && options?.search === '')
 					return {
 						data: [{ name: sampleFileNested, id: randUnique() }],
@@ -1253,7 +1259,7 @@ describe('#list', () => {
 
 		driver['config'].root = sampleRoot;
 
-		// 3. Drain the generator, since a listing is only observable through what it yields
+		// Drain the generator, since a listing is only observable through what it yields
 		const iterator = driver.list(samplePrefix);
 		const output: string[] = [];
 
@@ -1261,14 +1267,14 @@ describe('#list', () => {
 			output.push(filepath);
 		}
 
-		// 4. Three queries: the parent, the prefix folder and the nested folder; folders are descended in listing
-		//    order, so the nested file comes out before the sibling file
+		// Three queries: the parent, the prefix folder and the nested folder; folders are descended in listing
+		// order, so the nested file comes out before the sibling file
 		expect(driver['bucket'].list).toHaveBeenCalledTimes(3);
 		expect(output).toStrictEqual([fullSampleFileNested, fullSampleFile]);
 	});
 
 	test('Continuously fetches until all pages are returned', async () => {
-		// 1. A full page of 1000 must trigger a second request; the short second page ends the loop
+		// A full page of 1000 must trigger a second request; the short second page ends the loop
 		const firstContents = Array.from({ length: 1000 }, () => ({
 			name: `${basename(sample.path.input)}-${randUnique()}`,
 		}));
@@ -1277,7 +1283,6 @@ describe('#list', () => {
 			name: `${basename(sample.path.input)}-${randUnique()}`,
 		}));
 
-		// 2. The bucket handle is replaced inline with a `list` that answers the two pages in order
 		driver['bucket'] = {
 			list: vi
 				.fn()
@@ -1291,7 +1296,7 @@ describe('#list', () => {
 				}),
 		} as unknown as BucketApi;
 
-		// 3. Drain the generator; every entry of both pages must come out
+		// Drain the generator; every entry of both pages must come out
 		const iterator = driver.list(sample.path.input);
 
 		const output: string[] = [];
@@ -1304,18 +1309,18 @@ describe('#list', () => {
 	});
 
 	test('Throws when the first page fails instead of ending the listing as empty', async () => {
-		// 1. storage-js reports a rotated key or an outage as `{ data: null, error }`; a listing that ends quietly
-		//    would let a cleanup job conclude the prefix is empty
+		// storage-js reports a rotated key or an outage as `{ data: null, error }`; a listing that ends quietly
+		// would let a cleanup job conclude the prefix is empty
 		const cause = new Error('Invalid JWT');
 
 		driver['bucket'] = { list: vi.fn().mockResolvedValue({ data: null, error: cause }) } as unknown as BucketApi;
 
 		const output: string[] = [];
 
-		// 2. Draining has to reject with the full prefix that was queried and the storage error as the cause, and
-		//    nothing may have been yielded before that
+		// Draining has to reject with the full prefix that was queried and the storage error as the cause, and
+		// nothing may have been yielded before that
 		await expect(async () => {
-			// 1. Collect everything, so a yield before the failure would show up
+			// Collect everything, so a yield before the failure would show up
 			for await (const filepath of driver.list(sample.path.input)) {
 				output.push(filepath);
 			}
@@ -1328,8 +1333,8 @@ describe('#list', () => {
 	});
 
 	test('Throws when a later page fails instead of ending the listing early', async () => {
-		// 1. A full first page followed by a failed second one: what was yielded stays yielded, the failure must still
-		//    reach the caller rather than pass for the end of the listing
+		// A full first page followed by a failed second one: what was yielded stays yielded, the failure must still
+		// reach the caller rather than pass for the end of the listing
 		const firstContents = Array.from({ length: 1000 }, () => ({
 			name: `${basename(sample.path.input)}-${randUnique()}`,
 		}));
@@ -1345,9 +1350,9 @@ describe('#list', () => {
 
 		const output: string[] = [];
 
-		// 2. Collect what comes through before the failure, so the truncation point is observable
+		// Collect what comes through before the failure, so the truncation point is observable
 		await expect(async () => {
-			// 1. Every yield lands in the outer array, which survives the rejection
+			// Every yield lands in the outer array, which survives the rejection
 			for await (const filepath of driver.list(sample.path.input)) {
 				output.push(filepath);
 			}
@@ -1360,8 +1365,8 @@ describe('#list', () => {
 	});
 
 	test('Throws when a page carries neither data nor an error', async () => {
-		// 1. An answer without data and without an error breaks the client's contract; it must not pass for an empty
-		//    prefix, and without a storage error there is no cause to attach
+		// An answer without data and without an error breaks the client's contract; it must not pass for an empty
+		// prefix, and without a storage error there is no cause to attach
 		driver['bucket'] = { list: vi.fn().mockResolvedValue({ data: null, error: null }) } as unknown as BucketApi;
 
 		const error: unknown = await driver
@@ -1386,12 +1391,12 @@ describe('#call', () => {
 		vi.mocked(fetch).mock.calls[0] as never;
 
 	beforeEach(() => {
-		// 1. The mocked `undici` fetch answers with a real response, so `request()` reads it as it would Supabase's
+		// The mocked `undici` fetch answers with a real response, so `request()` reads it as it would Supabase's
 		vi.mocked(fetch).mockResolvedValue(new globalThis.Response('[{"id":"media"}]', { status: 200 }) as never);
 	});
 
 	test('Requests a path under the Storage API with the service-role key and the query of a GET', async () => {
-		// 1. The key goes as bearer token and `apikey`, the way `read()` sends it; the parameters into the query
+		// The key goes as bearer token and `apikey`, the way `read()` sends it; the parameters into the query
 		const result = await driver.call('GET /object/info/{bucket}/a.png', { download: true });
 
 		const [url, init] = request();
@@ -1411,7 +1416,7 @@ describe('#call', () => {
 	});
 
 	test('Fills a placeholder from the parameters, encoded, and does not send that parameter again', async () => {
-		// 1. `{id}` takes the `id` parameter; a `/` in it cannot reshape the path, and only the rest is the query
+		// `{id}` takes the `id` parameter; a `/` in it cannot reshape the path, and only the rest is the query
 		await driver.call('GET /bucket/{id}', { id: 'a/b c', verbose: 1 });
 
 		const url = new URL(request()[0]);
@@ -1421,14 +1426,14 @@ describe('#call', () => {
 	});
 
 	test('Refuses a placeholder nobody filled before any request', async () => {
-		// 1. Sent, `{id}` would reach Supabase as `%7Bid%7D`
+		// Sent, `{id}` would reach Supabase as `%7Bid%7D`
 		await expect(driver.call('GET /bucket/{id}')).rejects.toThrow('needs a "id" parameter');
 
 		expect(fetch).not.toHaveBeenCalled();
 	});
 
 	test('Answers with the status, the headers lower-cased and the body', async () => {
-		// 1. A response header, read by its lower-case name
+		// A response header, read by its lower-case name
 		vi.mocked(fetch).mockResolvedValue(
 			new globalThis.Response('[]', {
 				status: 200,
@@ -1446,7 +1451,7 @@ describe('#call', () => {
 	});
 
 	test('Sends the parameters of a POST as JSON to a custom endpoint, with the headers of the caller', async () => {
-		// 1. A self-hosted endpoint is the root; the caller's headers go over the driver's
+		// A self-hosted endpoint is the root; the caller's headers go over the driver's
 		driver = new StorageDriverSupabase({
 			serviceRole: sample.config.serviceRole,
 			bucket: sample.config.bucket,
@@ -1463,7 +1468,7 @@ describe('#call', () => {
 	});
 
 	test('Hands a file among the parameters to undici as its own FormData', async () => {
-		// 1. The global `FormData` httpCall builds is copied into `undici`'s, stubbed so its fields can be asserted
+		// The global `FormData` httpCall builds is copied into `undici`'s, stubbed so its fields can be asserted
 		const form = { append: vi.fn() };
 		vi.mocked(FormData).mockReturnValue(form as unknown as FormData);
 
@@ -1474,21 +1479,21 @@ describe('#call', () => {
 	});
 
 	test('Hands undici redirect: manual, so a redirect is never followed with the credentials', async () => {
-		// 1. `httpCall` follows redirects itself and drops the credentials off the origin; undici must not do it first
+		// `httpCall` follows redirects itself and drops the credentials off the origin; undici must not do it first
 		await driver.call('GET /bucket');
 
 		expect(request()[1]).toMatchObject({ redirect: 'manual' });
 	});
 
 	test('Refuses a full URL on a foreign host before any request', async () => {
-		// 1. The service-role key would go wherever the URL points
+		// The service-role key would go wherever the URL points
 		await expect(driver.call('GET https://evil.example/bucket')).rejects.toThrow('not on a host of this provider');
 
 		expect(fetch).not.toHaveBeenCalled();
 	});
 
 	test('Turns an error status into a ProviderCallError without the service-role key', async () => {
-		// 1. Supabase's `{ statusCode, error, message }` reaches the message; the key never does
+		// Supabase's `{ statusCode, error, message }` reaches the message; the key never does
 		vi.mocked(fetch).mockResolvedValue(
 			new globalThis.Response('{"statusCode":"404","error":"Bucket not found","message":"Bucket not found"}', {
 				status: 404,
@@ -1510,14 +1515,14 @@ describe('#call', () => {
 	});
 
 	test('Turns a 429 into a HitRateLimitError', async () => {
-		// 1. Supabase asking to slow down becomes the kit's rate-limit error
+		// Supabase asking to slow down becomes the kit's rate-limit error
 		vi.mocked(fetch).mockResolvedValue(new globalThis.Response('', { status: 429 }) as never);
 
 		await expect(driver.call('GET /bucket')).rejects.toBeInstanceOf(HitRateLimitError);
 	});
 
 	test('Gives up at the timeout of the caller', async () => {
-		// 1. A request that never answers ends at the deadline
+		// A request that never answers ends at the deadline
 		vi.mocked(fetch).mockImplementation(
 			(_url, init) =>
 				new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))),
@@ -1529,15 +1534,15 @@ describe('#call', () => {
 
 describe('#tusExtensions', () => {
 	test('Advertises creation, termination and expiration', () => {
-		// 1. Exactly what Supabase's own TUS endpoint supports; advertising more would promise what the backend
-		//    cannot honour
+		// Exactly what Supabase's own TUS endpoint supports; advertising more would promise what the backend
+		// cannot honour
 		expect(driver.tusExtensions).toStrictEqual(['creation', 'termination', 'expiration']);
 	});
 });
 
 describe('#getResumableUrl', () => {
 	test('Points at the resumable endpoint of the Storage API', () => {
-		// 1. The bucket and object name travel in the TUS metadata, so the URL is the bare endpoint
+		// The bucket and object name travel in the TUS metadata, so the URL is the bare endpoint
 		expect(driver['getResumableUrl']()).toBe(
 			`https://${sample.config.projectId}.supabase.co/storage/v1/upload/resumable`,
 		);
@@ -1546,8 +1551,8 @@ describe('#getResumableUrl', () => {
 
 describe('#createChunkedUpload', () => {
 	test('Passes the context through untouched', async () => {
-		// 1. The TUS upload is created lazily by the first `writeChunk`, so there is nothing to set up on Supabase's
-		//    side and the client's metadata must survive unchanged
+		// The TUS upload is created lazily by the first `writeChunk`, so there is nothing to set up on Supabase's
+		// side and the client's metadata must survive unchanged
 		const context = { size: sample.file.size, metadata: { contentType: sample.file.type } };
 
 		const result = await driver.createChunkedUpload(sample.path.input, context);
@@ -1577,8 +1582,8 @@ describe('#writeChunk', () => {
 			resumeFromPreviousUpload: vi.fn(),
 		};
 
-		// 1. The library is replaced by a recording stand-in, so the options the driver hands it can be asserted
-		//    without any request; `start` is driven per test through the callbacks the driver relies on
+		// The library is replaced by a recording stand-in, so the options the driver hands it can be asserted
+		// without any request; `start` is driven per test through the callbacks the driver relies on
 		vi.mocked(tus.Upload).mockImplementation(((source: Readable, options: CapturedOptions) => {
 			captured = { source, options };
 
@@ -1596,8 +1601,8 @@ describe('#writeChunk', () => {
 
 		const result = await driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 0, context);
 
-		// 1. The buffered chunk is the library's one-shot source, the endpoint is the resumable URL, and the metadata
-		//    names the target: the bucket, the object name under the root and the content type from the client metadata
+		// The buffered chunk is the library's one-shot source, the endpoint is the resumable URL, and the metadata
+		// names the target: the bucket, the object name under the root and the content type from the client metadata
 		expect(tus.Upload).toHaveBeenCalledTimes(1);
 
 		const received: Buffer[] = [];
@@ -1616,8 +1621,8 @@ describe('#writeChunk', () => {
 			cacheControl: '3600',
 		});
 
-		// 2. The service-role key authorises the upload, `x-upsert` lets a re-upload replace the object, the chunk size
-		//    is the configured one, and retries are left to the TUS server in front of this driver
+		// The service-role key authorises the upload, `x-upsert` lets a re-upload replace the object, the chunk size
+		// is the configured one, and retries are left to the TUS server in front of this driver
 		expect(captured!.options.headers).toStrictEqual({
 			Authorization: `Bearer ${sample.config.serviceRole}`,
 			'x-upsert': 'true',
@@ -1626,7 +1631,7 @@ describe('#writeChunk', () => {
 		expect(captured!.options.chunkSize).toBe(DEFAULT_CHUNK_SIZE);
 		expect(captured!.options.retryDelays).toBeNull();
 
-		// 3. A known size is passed as `uploadSize`; the offset moves by what the chunk callback reports
+		// A known size is passed as `uploadSize`; the offset moves by what the chunk callback reports
 		expect(captured!.options.uploadSize).toBe(sample.file.size);
 		expect(result).toBe(3);
 	});
@@ -1634,8 +1639,8 @@ describe('#writeChunk', () => {
 	test('Refuses a deferred length with a named error instead of reaching the library', async () => {
 		const context = { size: undefined, metadata: {} };
 
-		// 1. A chunk without a known total can never be forwarded: `tus-js-client` would reject it before any request
-		//    with a size-derivation error, so the refusal names the limitation up front, before an upload is created
+		// A chunk without a known total can never be forwarded: `tus-js-client` would reject it before any request
+		// with a size-derivation error, so the refusal names the limitation up front, before an upload is created
 		await expect(
 			driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 0, context),
 		).rejects.toThrowError(
@@ -1654,8 +1659,8 @@ describe('#writeChunk', () => {
 
 		await driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 0, context);
 
-		// 1. A POST without `Upload-Metadata` still produces a valid upload: the content type falls back to a generic
-		//    binary type and the known size goes out as `uploadSize`
+		// A POST without `Upload-Metadata` still produces a valid upload: the content type falls back to a generic
+		// binary type and the known size goes out as `uploadSize`
 		expect(captured!.options.metadata?.['contentType']).toBe('application/octet-stream');
 		expect(captured!.options.uploadSize).toBe(sample.file.size);
 	});
@@ -1663,9 +1668,9 @@ describe('#writeChunk', () => {
 	test('Sends no request for an empty chunk and returns the offset unchanged', async () => {
 		const context = { size: sample.file.size, metadata: {} };
 
-		// 1. A zero-length chunk is a no-op, the way the Azure and Cloudinary drivers treat one: `tus-js-client`
-		//    would reject the empty one-shot source with a size-mismatch error, so no upload is created and the given
-		//    offset comes back
+		// A zero-length chunk is a no-op, the way the Azure and Cloudinary drivers treat one: `tus-js-client`
+		// would reject the empty one-shot source with a size-mismatch error, so no upload is created and the given
+		// offset comes back
 		await expect(driver.writeChunk(sample.path.input, Readable.from([]), 3, context)).resolves.toBe(3);
 
 		expect(tus.Upload).not.toHaveBeenCalled();
@@ -1681,8 +1686,8 @@ describe('#writeChunk', () => {
 
 		await driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 0, context);
 
-		// 1. The upload URL is the only handle for appending later chunks, and the creation date is recorded next to
-		//    it because resuming an upload reads both
+		// The upload URL is the only handle for appending later chunks, and the creation date is recorded next to
+		// it because resuming an upload reads both
 		expect(context.metadata).toStrictEqual({
 			'upload-url': uploadUrl,
 			creation_date: expect.any(String),
@@ -1703,9 +1708,9 @@ describe('#writeChunk', () => {
 
 		const result = await driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 3, context);
 
-		// 1. Resuming must hand the library its previous-upload literal: the recorded URL and creation date, the same
-		//    metadata the upload started with, and no storage key or parallel URLs, since this driver never stores
-		//    uploads in a urlStorage
+		// Resuming must hand the library its previous-upload literal: the recorded URL and creation date, the same
+		// metadata the upload started with, and no storage key or parallel URLs, since this driver never stores
+		// uploads in a urlStorage
 		expect(mockUpload.resumeFromPreviousUpload).toHaveBeenCalledWith({
 			size: sample.file.size,
 			creationTime: creationDate,
@@ -1730,7 +1735,7 @@ describe('#writeChunk', () => {
 
 		await driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 3, context);
 
-		// 1. With an endpoint, a 4xx resume HEAD makes the library create a new upload and PATCH this chunk at offset 0
+		// With an endpoint, a 4xx resume HEAD makes the library create a new upload and PATCH this chunk at offset 0
 		expect(captured!.options.endpoint).toBeNull();
 	});
 
@@ -1741,7 +1746,7 @@ describe('#writeChunk', () => {
 			captured!.options.onChunkComplete(3, 2, sample.file.size);
 		});
 
-		// 1. Supabase took only two of the three bytes; the TUS server must learn the real offset
+		// Supabase took only two of the three bytes; the TUS server must learn the real offset
 		await expect(driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 0, context)).resolves.toBe(2);
 	});
 
@@ -1754,7 +1759,7 @@ describe('#writeChunk', () => {
 		 */
 		const answerHead = (serverOffset: number) => {
 			mockUpload.start.mockImplementation(async () => {
-				// 1. The HEAD answer is checked first; a throw is what the library turns into `onError`
+				// The HEAD answer is checked first; a throw is what the library turns into `onError`
 				try {
 					await captured!.options.onAfterResponse(
 						{ getMethod: () => 'HEAD' } as tus.HttpRequest,
@@ -1768,7 +1773,7 @@ describe('#writeChunk', () => {
 					return;
 				}
 
-				// 2. A matching offset lets the PATCH go out, which then completes the chunk
+				// A matching offset lets the PATCH go out, which then completes the chunk
 				captured!.options.onChunkComplete(3, serverOffset + 3, sample.file.size);
 			});
 		};
@@ -1794,7 +1799,7 @@ describe('#writeChunk', () => {
 		test('Resolves without resending when an earlier attempt of this chunk already landed', async () => {
 			answerHead(11);
 
-			// 1. The response of the first attempt was lost; appending the bytes again would shift every later chunk
+			// The response of the first attempt was lost; appending the bytes again would shift every later chunk
 			await expect(
 				driver.writeChunk(sample.path.input, chunkStream(Buffer.from('abc')), 8, resumedContext()),
 			).resolves.toBe(11);
@@ -1826,9 +1831,9 @@ describe('#writeChunk', () => {
 	test.each([[4], [5]])(
 		'Refuses a chunk of %d bytes above the configured size before the upload starts',
 		async (bytes) => {
-			// 1. A chunk larger than `tus.chunkSize` used to be truncated to the first request and crash the library's
-			//    upload loop with a TypeError; it is now refused with the named error the other drivers use, before
-			//    `tus-js-client` is involved at all
+			// A chunk larger than `tus.chunkSize` used to be truncated to the first request and crash the library's
+			// upload loop with a TypeError; it is now refused with the named error the other drivers use, before
+			// `tus-js-client` is involved at all
 			const limitedDriver = new StorageDriverSupabase({
 				serviceRole: sample.config.serviceRole,
 				bucket: sample.config.bucket,
@@ -1842,8 +1847,8 @@ describe('#writeChunk', () => {
 				limitedDriver.writeChunk(sample.path.input, chunkStream(Buffer.alloc(bytes, 'a')), 0, context),
 			).rejects.toThrowError(`The chunk of ${bytes} bytes exceeds the chunk size limit of 3 bytes`);
 
-			// 2. The refusal happens before the library's upload loop starts, so no TypeError escapes and no upload is
-			//    created
+			// The refusal happens before the library's upload loop starts, so no TypeError escapes and no upload is
+			// created
 			expect(tus.Upload).not.toHaveBeenCalled();
 		},
 	);
@@ -1851,7 +1856,7 @@ describe('#writeChunk', () => {
 
 describe('#finishChunkedUpload', () => {
 	test('Resolves without a request', async () => {
-		// 1. Supabase assembles the object itself once the final chunk arrives, so there is nothing to do
+		// Supabase assembles the object itself once the final chunk arrives, so there is nothing to do
 		await expect(
 			driver.finishChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} }),
 		).resolves.toBeUndefined();
@@ -1860,7 +1865,7 @@ describe('#finishChunkedUpload', () => {
 
 describe('#deleteChunkedUpload', () => {
 	beforeEach(() => {
-		// 1. The object removal is watched, so a test can prove the previous version under the final name survives
+		// The object removal is watched, so a test can prove the previous version under the final name survives
 		driver['bucket'] = { remove: vi.fn().mockResolvedValue({ data: [], error: null }) } as unknown as BucketApi;
 	});
 
@@ -1874,7 +1879,7 @@ describe('#deleteChunkedUpload', () => {
 			metadata: { 'upload-url': uploadUrl },
 		});
 
-		// 1. The unfinished upload has not replaced the object yet, so removing it would delete the previous version
+		// The unfinished upload has not replaced the object yet, so removing it would delete the previous version
 		expect(tus.Upload.terminate).toHaveBeenCalledWith(uploadUrl, {
 			headers: { Authorization: `Bearer ${sample.config.serviceRole}` },
 			retryDelays: null,
@@ -1884,7 +1889,7 @@ describe('#deleteChunkedUpload', () => {
 	});
 
 	test('Does nothing when no chunk was ever sent', async () => {
-		// 1. Without an upload URL nothing exists on Supabase to terminate
+		// Without an upload URL nothing exists on Supabase to terminate
 		await driver.deleteChunkedUpload(sample.path.input, { size: sample.file.size, metadata: {} });
 
 		expect(tus.Upload.terminate).not.toHaveBeenCalled();
@@ -1892,8 +1897,8 @@ describe('#deleteChunkedUpload', () => {
 	});
 
 	test.each([404, 410])('Resolves when Supabase answers %i because the upload is already gone', async (status) => {
-		// 1. An expired or finished upload has nothing left to abort; the library reports it as a DetailedError
-		//    carrying the response
+		// An expired or finished upload has nothing left to abort; the library reports it as a DetailedError
+		// carrying the response
 		vi.mocked(tus.Upload.terminate).mockRejectedValue(
 			Object.assign(new Error('tus: unexpected response while terminating upload'), {
 				originalResponse: { getStatus: () => status },

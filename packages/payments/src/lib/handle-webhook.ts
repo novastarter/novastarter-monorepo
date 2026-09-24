@@ -1,5 +1,5 @@
 import { useEmitter } from '@novastarter/emitter';
-import { ErrorCode, isNovastarterError } from '@novastarter/errors';
+import { ErrorCode, InvalidConfigError, isNovastarterError } from '@novastarter/errors';
 import { useLogger } from '@novastarter/logger';
 import { DEFAULT_LOCATION, toError } from '@novastarter/utils';
 import type { PaymentsEvent, WebhookHeaders } from '../types.js';
@@ -57,7 +57,8 @@ export interface PaymentsWebhookOptions {
  * @returns The event, or `null` when the delivery is not one the application acts on.
  * @throws InvalidPayloadError when the signature is missing or the body unreadable.
  * @throws InvalidCredentialsError when the signature is wrong.
- * @throws Error when the location does not exist, or when the driver failed for any other reason (the cause).
+ * @throws InvalidConfigError when the location does not exist.
+ * @throws Error when the driver failed for any other reason (the cause).
  * @example
  * ```ts
  * export async function POST(request: Request) {
@@ -77,11 +78,13 @@ export const handleWebhook = async (
 	const manager = usePayments();
 	const logger = useLogger();
 
-	// 1. One location, named or the default; a name nobody registered is a configuration mistake worth naming
+	// A name nobody registered is a configuration mistake worth naming.
 	const location = options.location ?? DEFAULT_LOCATION;
 
 	if (!manager.hasLocation(location)) {
-		throw new Error(`Payments location "${location}" doesn't exist.`);
+		throw new InvalidConfigError({
+			reason: `The payments location "${location}" doesn't exist; register it on the payments manager or pass another "location"`,
+		});
 	}
 
 	let parsed: PaymentsEvent | null;
@@ -89,8 +92,8 @@ export const handleWebhook = async (
 	try {
 		parsed = await manager.location(location).parseWebhook(rawBody, headers);
 	} catch (error) {
-		// 2. A delivery that does not verify is the kit's own answer — 400 or 401 — and passes through as is; the
-		//    route maps the status. Reported before rethrowing, so a forged or broken delivery is visible to listeners
+		// A delivery that does not verify is the kit's own answer (400 or 401) and passes through as is, so the route
+		// can map the status. It is reported before rethrowing, so a forged or broken delivery is visible to listeners.
 		if (
 			isNovastarterError(error, ErrorCode.InvalidPayload) ||
 			isNovastarterError(error, ErrorCode.InvalidCredentials)
@@ -101,19 +104,19 @@ export const handleWebhook = async (
 			throw error;
 		}
 
-		// 3. Anything else is the provider's SDK or the driver failing; the driver's error travels as the cause. Pino
-		//    takes a non-object first argument for the message, so a driver rejecting with a string would replace the
-		//    line and drop the location; `toError` keeps both
+		// Anything else is the provider's SDK or the driver failing. Pino takes a non-object first argument for the
+		// message, so a driver rejecting with a string would replace the line and drop the location; `toError` keeps
+		// both.
 		logger.warn(toError(error), `Payments location "${location}" failed to parse a webhook`);
 		useEmitter().emitAction(PAYMENTS_FAILED_EVENT, { location, reason: 'error' });
 
 		throw new Error(`Payments location "${location}" failed to parse a webhook`, { cause: error });
 	}
 
-	// 4. A verified event the kit does not track is neither an error nor news: the route still answers 200
+	// A verified event the kit does not track is neither an error nor news, so the route still answers 200.
 	if (!parsed) return null;
 
-	// 5. A filter handler may rewrite the event or veto it; vetoed, the route still answers 200
+	// A filter handler may rewrite the event or veto it; a vetoed event still gets a 200.
 	const event = await useEmitter().emitFilter<PaymentsEvent | null>(PAYMENTS_WEBHOOK_FILTER, parsed, {
 		location,
 		provider: parsed.provider,
@@ -122,8 +125,8 @@ export const handleWebhook = async (
 
 	if (!event) return null;
 
-	// 6. The event goes under `payload`: the emitter spreads the meta over `{ event: name }`, so a key named `event`
-	//    would overwrite the event name
+	// The event goes under `payload` because the emitter spreads the meta over `{ event: name }`, so a key named
+	// `event` would overwrite the event name.
 	useEmitter().emitAction(PAYMENTS_RECEIVED_EVENT, {
 		location,
 		id: event.id,

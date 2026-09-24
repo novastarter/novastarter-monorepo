@@ -10,9 +10,9 @@ import { DEFAULTS } from '../constants/defaults.js';
  * @returns The resolved path; defaults to `.env` in the working directory.
  */
 export const getConfigPath = (): string => {
-	// 1. An empty `CONFIG_PATH` falls back to the default too, hence `||` rather than `??`
+	// An empty `CONFIG_PATH` falls back to the default too, hence `||` rather than `??`
 	const path = process.env['CONFIG_PATH'] || DEFAULTS['CONFIG_PATH'];
 
-	// 2. Resolve relative to the working directory, so a relative path behaves the same as an absolute one downstream
+	// Resolve relative to the working directory, so a relative path behaves the same as an absolute one downstream
 	return resolve(path as string);
 };

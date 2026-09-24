@@ -13,7 +13,7 @@ import type { MailAddress, MailMessage } from '../types.js';
  * ```
  */
 export const toNodemailerAddress = (address: MailAddress): string | { name: string; address: string } =>
-	// 1. Both shapes are nodemailer's own, so nothing is formatted here and its quoting and encoding apply
+	// Both shapes are nodemailer's own, so nothing is formatted here and its quoting and encoding apply
 	address;
 
 /**
@@ -32,13 +32,13 @@ export const toNodemailerAddress = (address: MailAddress): string | { name: stri
  * ```
  */
 export const toNodemailerMessage = (message: MailMessage): SendMailOptions => {
-	// 1. The required fields first; `to` keeps its shape, nodemailer takes a single address or a list
+	// `to` keeps its shape: nodemailer takes a single address or a list
 	const options: SendMailOptions = {
 		to: Array.isArray(message.to) ? message.to.map(toNodemailerAddress) : toNodemailerAddress(message.to),
 		subject: message.subject,
 	};
 
-	// 2. Optional fields are only set when present, so nodemailer applies its own defaults for the rest
+	// Optional fields are only set when present, so nodemailer applies its own defaults for the rest
 	if (message.cc) options.cc = message.cc.map(toNodemailerAddress);
 	if (message.bcc) options.bcc = message.bcc.map(toNodemailerAddress);
 	if (message.from) options.from = toNodemailerAddress(message.from);
@@ -47,7 +47,7 @@ export const toNodemailerMessage = (message: MailMessage): SendMailOptions => {
 	if (message.text !== undefined) options.text = message.text;
 	if (message.headers) options.headers = message.headers;
 
-	// 3. Attachments keep `path` as given: nodemailer reads the file itself when it builds the message
+	// Attachments keep `path` as given: nodemailer reads the file itself when it builds the message
 	if (message.attachments) {
 		options.attachments = message.attachments.map((attachment) => ({
 			filename: attachment.filename,

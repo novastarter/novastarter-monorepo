@@ -15,13 +15,11 @@ export type LogStyle = 'pretty' | 'raw';
  * @returns The style.
  */
 export const resolveLogStyle = (env: Record<string, unknown>): LogStyle => {
-	// 1. An explicit choice wins, whatever the environment
 	const style = String(env['LOG_STYLE'] ?? '')
 		.trim()
 		.toLowerCase();
 
 	if (style === 'pretty' || style === 'raw') return style;
 
-	// 2. Nothing chosen: the process's purpose decides
 	return env['NODE_ENV'] === 'production' ? 'raw' : 'pretty';
 };

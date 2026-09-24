@@ -17,11 +17,10 @@
  * ```
  */
 export function toArray<T = unknown>(val: T | T[]): T[] {
-	// 1. A string is treated as a comma-separated list, so `LIST=a,b` in an env file becomes `['a', 'b']`
+	// A string is treated as a comma-separated list, so `LIST=a,b` in an env file becomes `['a', 'b']`
 	if (typeof val === 'string') {
 		return val.split(',') as unknown as T[];
 	}
 
-	// 2. Anything else is either already a list or a single item to wrap
 	return Array.isArray(val) ? val : [val];
 }

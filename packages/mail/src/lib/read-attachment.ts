@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { InvalidPayloadError } from '@novastarter/errors';
 import type { MailAttachment } from '../types.js';
 
 /**
@@ -9,7 +10,7 @@ import type { MailAttachment } from '../types.js';
  *
  * @param attachment - Attachment of a message.
  * @returns Its content: the given bytes, the given text as UTF-8, or the file at `path`.
- * @throws Error for an attachment with neither `content` nor `path`.
+ * @throws InvalidPayloadError for an attachment with neither `content` nor `path`.
  * @example
  * ```ts
  * const attachments = await Promise.all(
@@ -21,16 +22,17 @@ import type { MailAttachment } from '../types.js';
  * ```
  */
 export const readAttachment = async (attachment: MailAttachment): Promise<Buffer> => {
-	// 1. Inline content wins over a path; text is encoded as UTF-8, the way every provider expects it
+	// Text is encoded as UTF-8, the way every provider expects it
 	if (attachment.content !== undefined) {
 		return Buffer.isBuffer(attachment.content) ? attachment.content : Buffer.from(attachment.content, 'utf8');
 	}
 
-	// 2. A path is read here, once, so the driver never streams the same file twice
+	// A path is read here, once, so the driver never streams the same file twice
 	if (attachment.path !== undefined) {
 		return readFile(attachment.path);
 	}
 
-	// 3. An attachment without a source is a programming error; name it so the caller finds it
-	throw new Error(`Attachment "${attachment.filename}" has neither content nor path`);
+	throw new InvalidPayloadError({
+		reason: `Attachment "${attachment.filename}" has neither content nor path; give it one of them`,
+	});
 };

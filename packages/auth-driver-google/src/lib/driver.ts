@@ -6,6 +6,7 @@ import {
 	type CallbackParams,
 	type OAuthCallbackResult,
 } from '@novastarter/auth';
+import { InvalidConfigError } from '@novastarter/errors';
 import { type CallResponse, type HttpApi, request as requestApi } from '@novastarter/http';
 import { MAX_TIMER_DELAY } from '@novastarter/utils';
 import { createRemoteJWKSet, customFetch, type JWTVerifyGetKey } from 'jose';
@@ -124,44 +125,43 @@ export class AuthDriverGoogle implements AuthDriver {
 	 * Create a driver for one OAuth client.
 	 *
 	 * @param config - Client credentials, scopes and timeout.
-	 * @throws Error without a client id or secret.
-	 * @throws RangeError for a timeout that is not a whole number from 1 to `MAX_TIMER_DELAY` — refused here, at the
+	 * @throws InvalidConfigError without a client id or secret.
+	 * @throws InvalidConfigError for a timeout that is not a whole number from 1 to `MAX_TIMER_DELAY` — refused here, at the
 	 * location's first use, rather than on a sign-in.
 	 */
 	constructor(config: AuthDriverGoogleConfig) {
-		// 1. Missing credentials are a configuration error; report them by the option's name
 		if (!config.clientId) {
-			throw new Error('The google auth driver needs a "clientId"');
+			throw new InvalidConfigError({ reason: 'The google auth driver needs a "clientId"' });
 		}
 
 		if (!config.clientSecret) {
-			throw new Error('The google auth driver needs a "clientSecret"');
+			throw new InvalidConfigError({ reason: 'The google auth driver needs a "clientSecret"' });
 		}
 
-		// 2. A timeout a timer cannot hold would fail every request at once instead of never, so it is refused now
+		// A timeout a timer cannot hold would fail every request at once instead of never, so it is refused now
 		const timeout = config.timeout ?? DEFAULT_TIMEOUT;
 
 		if (!(Number.isInteger(timeout) && timeout >= 1 && timeout <= MAX_TIMER_DELAY)) {
-			throw new RangeError(
-				`The google auth driver needs a "timeout" between 1 and ${MAX_TIMER_DELAY} ms, got ${config.timeout}`,
-			);
+			throw new InvalidConfigError({
+				reason: `The google auth driver needs a "timeout" between 1 and ${MAX_TIMER_DELAY} ms, got ${config.timeout}`,
+			});
 		}
 
 		this.clientId = config.clientId;
 		this.clientSecret = config.clientSecret;
 		this.scopes = config.scopes ?? DEFAULT_SCOPES;
 
-		// 3. The platform's fetch unless a test hands in its own, bound to the global object: `fetch` throws
-		//    `Illegal invocation` on some runtimes when called with another receiver, which `context.fetch(...)` is
+		// Bound to the global object: `fetch` throws `Illegal invocation` on some runtimes when called with another
+		// receiver, which `context.fetch(...)` is
 		this.context = {
 			fetch: config.fetch ?? (globalThis.fetch.bind(globalThis) as unknown as AuthFetch),
 			timeout,
 		};
 
-		// 4. The remote set is lazy — nothing is fetched until the first token — and `jose` caches it and refetches on
-		//    an unknown `kid`, which is how Google's key rotation is followed; the same deadline bounds its fetch, and
-		//    it goes through the configured fetch too — behind an egress proxy the key set must not be readable around
-		//    the fetch the location set
+		// The remote set is lazy, so nothing is fetched until the first token, and `jose` caches it and refetches on an
+		// unknown `kid`, which is how Google's key rotation is followed. It goes through the configured fetch under the
+		// same deadline, since behind an egress proxy the key set must not be readable around the fetch the location
+		// set
 		this.jwks =
 			config.jwks ??
 			createRemoteJWKSet(new URL(JWKS_URL), {
@@ -177,7 +177,6 @@ export class AuthDriverGoogle implements AuthDriver {
 	 * @returns The URL to redirect the browser to.
 	 */
 	async authorize(params: AuthorizeParams): Promise<URL> {
-		// 1. Nothing to ask Google yet: the URL is built from the parameters alone
 		return buildAuthorizeUrl(params, this.clientId, this.scopes);
 	}
 
@@ -191,7 +190,6 @@ export class AuthDriverGoogle implements AuthDriver {
 	 * @throws AuthProviderFailedError when Google refuses the code, or the ID token fails a check.
 	 */
 	async callback(params: CallbackParams): Promise<OAuthCallbackResult> {
-		// 1. The code, bound to this sign-in by the PKCE verifier, buys the ID token and the access token
 		const { idToken, tokens } = await exchangeCode(this.context, {
 			code: params.code,
 			codeVerifier: params.codeVerifier,
@@ -200,11 +198,11 @@ export class AuthDriverGoogle implements AuthDriver {
 			clientSecret: this.clientSecret,
 		});
 
-		// 2. The token is only trusted once its signature, audience and nonce check out
+		// The token is only trusted once its signature, audience and nonce check out
 		const claims = await verifyIdToken(idToken, { jwks: this.jwks, audience: this.clientId, nonce: params.nonce });
 
-		// 3. The tokens go back with the identity; `finishOAuth()` takes them off before anything else sees it, and
-		//    keeping them is the application's call
+		// `finishOAuth()` takes the tokens off before anything else sees the identity, and keeping them is the
+		// application's call
 		return { ...toIdentity(claims), ...(tokens ? { tokens } : {}) };
 	}
 
@@ -246,9 +244,8 @@ export class AuthDriverGoogle implements AuthDriver {
 		params?: Record<string, unknown>,
 		options: AuthCallOptions = {},
 	): Promise<CallResponse<T>> {
-		// 1. The token stays out of the options handed on, so it is never sent as a header of its own; the API built
-		//    for it does the rest: placeholders, the host check, the deadline and the mapping of Google's refusals,
-		//    which never name the token
+		// The token stays out of the options handed on, so it is never sent as a header of its own; the API built for
+		// it maps Google's refusals without naming the token
 		const { accessToken, ...rest } = options;
 
 		return requestApi<T>(this.api(accessToken), method, params, rest);
@@ -263,7 +260,7 @@ export class AuthDriverGoogle implements AuthDriver {
 	 * @internal
 	 */
 	private api(accessToken: string | undefined): HttpApi {
-		// 1. Built per call, as the credentials are the caller's
+		// Built per call, as the credentials are the caller's
 		return {
 			provider: PROVIDER,
 			baseUrl: API_URL,
@@ -282,7 +279,7 @@ export class AuthDriverGoogle implements AuthDriver {
 	 * @throws AuthProviderFailedError when the key set cannot be read.
 	 */
 	async verify(): Promise<void> {
-		// 1. The key set is what every callback needs first; a set without keys would verify nothing
+		// Every callback needs the key set first, and a set without keys would verify nothing
 		const response = await request(this.context, JWKS_URL, { method: 'GET', headers: { Accept: 'application/json' } });
 		const keys = (response.body as { keys?: unknown } | undefined)?.keys;
 

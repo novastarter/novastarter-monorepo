@@ -12,10 +12,9 @@ import { load } from 'js-yaml';
  * support, or when a matched manifest cannot be read or parsed.
  */
 export async function findWorkspacePackages(workspaceRoot: string): Promise<Project[]> {
-	// 1. Split the declared patterns into includes and excludes
 	const { include, exclude } = await readWorkspacePatterns(workspaceRoot);
 
-	// 2. Expand the excludes first, so an included directory can be dropped by name
+	// Excludes are expanded first, so an included directory can be dropped by name
 	const expandExcluded = () => Promise.all(exclude.map((pattern) => expandPattern(workspaceRoot, pattern)));
 	const excluded = new Set(await expandExcluded().then((result) => result.flat()));
 
@@ -24,7 +23,6 @@ export async function findWorkspacePackages(workspaceRoot: string): Promise<Proj
 
 	const directories = [...included].filter((directory) => !excluded.has(directory));
 
-	// 3. Read the manifests in parallel and drop the directories that turned out not to be packages
 	const manifests = await Promise.all(
 		directories.map((directory) => readProject(join(workspaceRoot, directory, 'package.json'))),
 	);
@@ -37,7 +35,7 @@ export async function findWorkspacePackages(workspaceRoot: string): Promise<Proj
 		}
 	}
 
-	// 4. Stable ordering so downstream graph traversal and release notes don't depend on FS order
+	// A stable order, so downstream graph traversal and release notes don't depend on FS order
 	return projects.sort((a, b) => a.rootDir.localeCompare(b.rootDir));
 }
 
@@ -49,7 +47,7 @@ export async function findWorkspacePackages(workspaceRoot: string): Promise<Proj
  * @throws When `pnpm-workspace.yaml` cannot be read, including when it is missing.
  */
 export async function readWorkspacePatterns(workspaceRoot: string): Promise<{ include: string[]; exclude: string[] }> {
-	// 1. A missing `packages` key means no workspace packages at all, not an error
+	// A missing `packages` key means no workspace packages at all, not an error
 	const raw = await readFile(join(workspaceRoot, 'pnpm-workspace.yaml'), 'utf8');
 	const parsed = load(raw) as { packages?: string[] } | undefined;
 	const patterns = parsed?.packages ?? [];
@@ -57,7 +55,7 @@ export async function readWorkspacePatterns(workspaceRoot: string): Promise<{ in
 	const include: string[] = [];
 	const exclude: string[] = [];
 
-	// 2. pnpm marks excludes with a leading `!`, the same way `.gitignore` negates patterns
+	// pnpm marks excludes with a leading `!`, the same way `.gitignore` negates patterns
 	for (const pattern of patterns) {
 		if (pattern.startsWith('!')) {
 			exclude.push(pattern.slice(1));
@@ -83,11 +81,10 @@ export async function readWorkspacePatterns(workspaceRoot: string): Promise<{ in
  * than it being missing.
  */
 export async function expandPattern(workspaceRoot: string, pattern: string): Promise<string[]> {
-	// 1. Drop empty and `.` segments, so `./packages/*` and `packages/*` behave the same
+	// Empty and `.` segments are dropped, so `./packages/*` and `packages/*` behave the same
 	const segments = pattern.split('/').filter((segment) => segment !== '' && segment !== '.');
 	let directories = [''];
 
-	// 2. Walk the pattern segment by segment, widening the candidate set at every wildcard
 	for (const segment of segments) {
 		if (segment === '**') {
 			directories = await Promise.all(directories.map((dir) => collectDescendants(workspaceRoot, dir))).then((result) =>
@@ -118,7 +115,7 @@ export async function expandPattern(workspaceRoot: string, pattern: string): Pro
 export async function readSubdirectories(workspaceRoot: string, directory: string): Promise<string[]> {
 	let entries;
 
-	// 1. A pattern may point at a directory that doesn't exist in this checkout
+	// A pattern may point at a directory that doesn't exist in this checkout
 	try {
 		entries = await readdir(join(workspaceRoot, directory), { withFileTypes: true });
 	} catch (error) {
@@ -132,11 +129,11 @@ export async function readSubdirectories(workspaceRoot: string, directory: strin
 	const subdirectories: string[] = [];
 
 	for (const entry of entries) {
-		// 2. A symlinked directory is never a workspace package root, and following one would let a symlink loop
-		//    recurse forever in `collectDescendants` — this is the cycle guard for the tree walk
+		// A symlinked directory is never a workspace package root, and following one would let a symlink loop
+		// recurse forever in `collectDescendants` — this is the cycle guard for the tree walk
 		if (entry.isSymbolicLink()) continue;
 
-		// 3. `node_modules` never holds workspace packages and would make `**` patterns crawl every dependency
+		// `node_modules` never holds workspace packages and would make `**` patterns crawl every dependency
 		if (!entry.isDirectory() || entry.name === 'node_modules') continue;
 
 		subdirectories.push(directory ? `${directory}/${entry.name}` : entry.name);
@@ -154,7 +151,7 @@ export async function readSubdirectories(workspaceRoot: string, directory: strin
  * @throws Any `readdir` error other than `ENOENT` raised while walking the tree.
  */
 export async function collectDescendants(workspaceRoot: string, directory: string): Promise<string[]> {
-	// 1. The directory itself matches `**` too, which is why it leads the result
+	// The directory itself matches `**` too, which is why it leads the result
 	const children = await readSubdirectories(workspaceRoot, directory);
 	const nested = await Promise.all(children.map((child) => collectDescendants(workspaceRoot, child)));
 
@@ -171,7 +168,7 @@ export async function collectDescendants(workspaceRoot: string, directory: strin
 export async function readProject(manifestPath: string): Promise<Project | null> {
 	let raw: string;
 
-	// 1. Matched directories don't necessarily hold a package
+	// Matched directories don't necessarily hold a package
 	try {
 		raw = await readFile(manifestPath, 'utf8');
 	} catch (error) {
@@ -182,7 +179,7 @@ export async function readProject(manifestPath: string): Promise<Project | null>
 		throw error;
 	}
 
-	// 2. Keep the original text around, so a later write can copy its indentation
+	// The original text is kept, so a later write can copy its indentation
 	const manifest = JSON.parse(raw) as ProjectManifest;
 	const rootDir = resolve(manifestPath, '..');
 
@@ -205,7 +202,7 @@ export async function readProject(manifestPath: string): Promise<Project | null>
  * @returns The JSON text to write.
  */
 export function serializeManifest(manifest: ProjectManifest, original: string): string {
-	// 1. The indentation of the second line is the indentation of the whole file; tabs when there is none
+	// The indentation of the second line is the indentation of the whole file; tabs when there is none
 	const indentMatch = /^[^\n]*\n([ \t]+)/.exec(original);
 	const indent = indentMatch?.[1] ?? '\t';
 	const trailingNewline = original.endsWith('\n') ? '\n' : '';

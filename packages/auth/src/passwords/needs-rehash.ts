@@ -16,7 +16,7 @@ import { DEFAULT_SCRYPT_PARAMS, parseHash, type ScryptParams } from './scrypt-pa
  * ```
  */
 export const needsRehash = (hash: string, params: ScryptParams = DEFAULT_SCRYPT_PARAMS): boolean => {
-	// 1. Any difference counts, a lower cost as well as a higher one: the configured cost is the one wanted
+	// Any difference counts, a lower cost as well as a higher one: the configured cost is the one wanted
 	const current = parseHash(hash).params;
 
 	return current.ln !== params.ln || current.r !== params.r || current.p !== params.p;

@@ -25,13 +25,13 @@ export const INVOICE_STATUS: Record<string, InvoiceStatus> = {
  * @returns The normalised invoice.
  */
 export const toInvoice = (invoice: LsResource<LsSubscriptionInvoiceAttributes>): Invoice => {
-	// 1. An unknown status reads as open: the safer default, since an open invoice is still awaiting payment
+	// An unknown status reads as open: the safer default, since an open invoice is still awaiting payment.
 	const attributes = invoice.attributes;
 	const status = INVOICE_STATUS[attributes.status] ?? 'open';
 	const paid = status === 'paid';
 
-	// 2. The amounts follow the status: all or nothing, with a void invoice owing nothing. The provider sends the
-	//    currency in upper case, while the kit's contract reads it in lower case
+	// The amounts follow the status: all or nothing, with a void invoice owing nothing. The provider sends the currency
+	// in upper case, while the kit's contract reads it in lower case.
 	return {
 		id: invoice.id,
 		number: null,

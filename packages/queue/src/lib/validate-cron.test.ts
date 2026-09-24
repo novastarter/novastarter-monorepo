@@ -15,7 +15,7 @@ describe('validateCron', () => {
 		['0 3 * *', false],
 		['0 0 3 * * * 2026', false],
 	])('%s → %s', (rule, expected) => {
-		// 1. The rule is what a schedule variable carries; the expected answer is whether croner accepts it
+		// The rule is what a schedule variable carries; the expected answer is whether croner accepts it
 		expect(validateCron(rule)).toBe(expected);
 	});
 });

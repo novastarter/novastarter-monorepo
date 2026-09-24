@@ -25,7 +25,6 @@ export function generateMarkdown(
 	untypedPackages: UntypedPackage[],
 	packageVersions: PackageVersion[],
 ): string {
-	// 1. Turn the version type sections into output sections, attaching the notices to the configured one
 	let foundNoticeSection = false;
 
 	const noticeTypeTitle = config.typedTitles[config.noticeType];
@@ -39,13 +38,13 @@ export function generateMarkdown(
 		return { title: type.title, packages: type.packages, notices: [] };
 	});
 
-	// 2. The notice section may not exist yet when no package had a change of that type; create it up front so
-	//    notices are never lost
+	// The notice section may not exist yet when no package had a change of that type; create it up front so
+	// notices are never lost
 	if (notices.length > 0 && !foundNoticeSection) {
 		sections = [{ title: noticeTypeTitle, packages: [], notices }, ...sections];
 	}
 
-	// 3. Assemble the parts and drop the empty ones, so no stray blank lines end up between them
+	// Empty parts are dropped, so no stray blank lines end up between them
 	const output = [];
 
 	output.push(formatSections(sections));
@@ -67,20 +66,19 @@ function formatSections(sections: Section[]): string {
 	const output = [];
 
 	for (const { title, packages, notices } of sections) {
-		// 1. A section with nothing in it would only leave a dangling heading
+		// A section with nothing in it would only leave a dangling heading
 		if (packages.length === 0 && notices.length === 0) {
 			continue;
 		}
 
 		let lines = `### ${title}`;
 
-		// 2. Notices come first, as they are the part readers must not miss
+		// Notices come first, as they are the part readers must not miss
 		if (notices.length > 0) {
 			lines += '\n\n';
 			lines += formatNotices(notices);
 		}
 
-		// 3. Then the regular changes, grouped by package
 		if (packages.length > 0) {
 			lines += '\n\n';
 			lines += formatPackages(packages);
@@ -103,12 +101,12 @@ function formatSections(sections: Section[]): string {
  */
 function formatNotices(notices: Notice[]): string {
 	const output = notices.map((notice) => {
-		// 1. The short change form keeps the title on one line, so the bold heading never spans multiple lines;
-		//    trimming drops the space the commit link is joined with when there is no summary in front of it
+		// The short change form keeps the title on one line, so the bold heading never spans multiple lines;
+		// trimming drops the space the commit link is joined with when there is no summary in front of it
 		const title = formatChange(notice.change, true).trim();
 
-		// 2. `**` around nothing is not emphasis in CommonMark and would be printed literally, so the wrapper is
-		//    left out when there is nothing to wrap
+		// `**` around nothing is not emphasis in CommonMark and would be printed literally, so the wrapper is
+		// left out when there is nothing to wrap
 		return title ? `**${title}**\n${notice.notice}` : notice.notice;
 	});
 
@@ -125,7 +123,7 @@ function formatPackages(packages: Package[]): string {
 	const output = packages.map(({ name, changes }) => {
 		let lines = '';
 
-		// 1. Indent every line of every change by two spaces, so multi-line summaries stay inside the nested list
+		// Every line is indented by two spaces, so multi-line summaries stay inside the nested list
 		if (changes.length > 0) {
 			lines += `- **${name}**\n`;
 
@@ -155,7 +153,7 @@ function formatUntypedPackages(untypedPackages: UntypedPackage[]): string {
 	const output = [];
 
 	for (const { name, changes } of untypedPackages) {
-		// 1. Skip packages without changes to avoid empty headings
+		// Packages without changes are skipped to avoid empty headings
 		if (changes.length === 0) {
 			continue;
 		}
@@ -179,7 +177,7 @@ function formatChanges(changes: Change[]): string[] {
 	return changes.map((change) => {
 		const lines = [];
 
-		// 1. Only the first line gets the bullet; the rest is indented to stay part of the same item
+		// Only the first line gets the bullet; the rest is indented to stay part of the same item
 		const [firstLine, ...remainingLines] = formatChange(change).split('\n');
 
 		lines.push(`- ${firstLine}`);
@@ -204,10 +202,9 @@ function formatChanges(changes: Change[]): string[] {
  * @returns The change as Markdown text.
  */
 function formatChange(change: Change, short?: boolean): string {
-	// 1. Reference the commit when `changesets` could resolve one
 	const ref = change.commit ? ` ([${change.commit}](https://github.com/${config.repo}/commit/${change.commit}))` : '';
 
-	// 2. The reference goes after the first summary line; further lines follow only in the long form
+	// The reference goes after the first summary line; further lines follow only in the long form
 	const [firstSummaryLine, ...remainingSummaryLines] = change.summary.split('\n');
 
 	const title = short && remainingSummaryLines.length > 0 ? `${firstSummaryLine}...` : firstSummaryLine;
@@ -225,7 +222,6 @@ function formatChange(change: Change, short?: boolean): string {
 function formatPackageVersions(packageVersions: PackageVersion[]): string {
 	let lines = '';
 
-	// 1. Only add the heading when there is something to list under it
 	if (packageVersions.length > 0) {
 		lines += `### ${config.versionTitle}\n`;
 	}

@@ -22,17 +22,17 @@ export interface VerifiedAccessToken {
  * @param token - The token, without the `Bearer ` prefix.
  * @returns The user and the claims.
  * @throws AuthInvalidTokenError when any check fails; the reason is the `cause`.
- * @throws Error when the JWT settings are missing or unusable.
+ * @throws InvalidConfigError when the JWT settings are missing or unusable.
  * @example
  * ```ts
  * const { userId, claims } = await verifyAccessToken(request.headers.get('authorization')?.slice(7) ?? '');
  * ```
  */
 export const verifyAccessToken = async (token: string): Promise<VerifiedAccessToken> => {
-	// 1. The keys first: a configuration error is thrown as itself, not hidden behind an invalid token
+	// The keys first: a configuration error is thrown as itself, not hidden behind an invalid token
 	const keys = await jwtKeys();
 
-	// 2. Every check jose knows, pinned to the settings; its errors become the one error a caller handles
+	// Every check jose knows, pinned to the settings; its errors become the one error a caller handles
 	try {
 		const { payload } = await jwtVerify(token, keys.verifyKey, {
 			algorithms: [keys.algorithm],

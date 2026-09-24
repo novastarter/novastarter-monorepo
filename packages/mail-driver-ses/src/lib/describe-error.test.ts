@@ -6,7 +6,7 @@ import { describeError } from './describe-error.js';
 
 describe('describeError', () => {
 	test('Names the provider and keeps the original error as the cause', () => {
-		// 1. A refusal is wrapped, not replaced: the cause keeps the details SES or the transport answered
+		// Wrapped, not replaced, so the cause keeps the details SES or the transport answered
 		const refusal = new Error('Message rejected: Email address is not verified.');
 
 		expect(describeError(refusal)).toMatchObject({
@@ -14,7 +14,7 @@ describe('describeError', () => {
 			cause: refusal,
 		});
 
-		// 2. A thrown non-error is still described rather than crashing the description
+		// A thrown non-error is still described rather than crashing the description
 		expect(describeError('boom')).toMatchObject({ message: 'SES: boom', cause: 'boom' });
 	});
 });

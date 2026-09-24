@@ -72,7 +72,6 @@ export const toEvent = async (
 	payload: LsWebhookPayload,
 	intervalOf: IntervalResolver,
 ): Promise<PaymentsEvent | null> => {
-	// 1. What every event shares: the delivery id, the driver name, when the resource last changed, the raw payload
 	const name = payload.meta.event_name;
 	const attributes = payload.data.attributes as { updated_at?: string; created_at?: string };
 	const occurredAt = new Date(attributes.updated_at ?? attributes.created_at ?? Date.now());
@@ -84,21 +83,20 @@ export const toEvent = async (
 		raw: payload,
 	};
 
-	// 2. The checkout's custom data rides under `meta` on every event of the order and the subscription
+	// The checkout's custom data rides under `meta` on every event of the order and the subscription.
 	const metadata = toMetadata(payload.meta.custom_data);
 
-	// 3. The subscription events share one shape and one mapping, the type of the kit's event apart
 	const subscriptionEvent = async (
 		type: 'subscription.created' | 'subscription.updated' | 'subscription.deleted',
 	): Promise<PaymentsEvent> => {
-		// 1. The interval is read from the variant, since the subscription payload does not carry it
+		// The subscription payload does not carry the interval, so it is read from the variant.
 		const data = payload.data as LsWebhookPayload<LsSubscriptionAttributes>['data'];
 		const interval = await intervalOf(String(data.attributes.variant_id));
 
 		return { ...base, type, subscription: toSubscription(data, { interval, metadata }) };
 	};
 
-	// 4. One branch per Lemon Squeezy event name; the update family is matched by set, everything else is dropped
+	// The update family is matched by set; any other event name is dropped.
 	switch (name) {
 		case 'order_created': {
 			const order = payload.data as LsWebhookPayload<LsOrderAttributes>['data'];

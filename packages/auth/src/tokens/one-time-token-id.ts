@@ -15,8 +15,8 @@ import { hashToken } from '../utils/index.js';
  * ```
  */
 export const oneTimeTokenId = (token: string, userId?: string): string => {
-	// 1. Surrounding whitespace is not part of a token, and a pasted one often carries some; a NUL separator cannot
-	//    occur in either part, so no user id and code can hash like another pair
+	// Surrounding whitespace is not part of a token, and a pasted one often carries some; a NUL separator cannot occur
+	// in either part, so no user id and code can hash like another pair
 	const clean = String(token).trim();
 
 	return hashToken(userId === undefined ? clean : `${userId}\u0000${clean}`);

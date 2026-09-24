@@ -49,8 +49,8 @@ export class MailDriverConsole implements MailDriver {
 	 * @param config - Logger and verbosity.
 	 */
 	constructor(config: MailDriverConsoleConfig = {}) {
-		// 1. The application logger is resolved here, not at send time, so a swapped logger does not split one
-		//    location's output across two destinations
+		// The application logger is resolved here, not at send time, so a swapped logger does not split one location's
+		// output across two destinations
 		this.logger = config.logger ?? useLogger();
 		this.includeHtml = Boolean(config.includeHtml);
 	}
@@ -62,11 +62,11 @@ export class MailDriverConsole implements MailDriver {
 	 * @returns Every recipient as accepted.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
-		// 1. Recipients are formatted for reading and kept bare for the result, which reports addresses only
+		// Recipients are formatted for reading and kept bare for the result, which reports addresses only
 		const recipients = toMailAddressList(message.to);
 		const to = recipients.map(formatMailAddress);
 
-		// 2. The text body is what a developer reads; the html only when asked, it is a wall of markup
+		// The text body is what a developer reads; the html only when asked, it is a wall of markup
 		this.logger.info(
 			{
 				to,
@@ -103,11 +103,11 @@ export class MailDriverConsole implements MailDriver {
 		params: Record<string, unknown> = {},
 		_options?: CallOptions,
 	): Promise<CallResponse<T>> {
-		// 1. A file stands for itself by its name, so the log line stays readable
+		// A file stands for itself by its name, so the log line stays readable
 		const logged = Object.fromEntries(Object.entries(params).map(([key, value]) => [key, describeValue(value)]));
 
-		// 2. One line per request, what a developer reads; a plain 200 comes back, as no provider answered, so code
-		//    reading the status runs too
+		// One line per request, what a developer reads; a plain 200 comes back, as no provider answered, so code
+		// reading the status runs too
 		this.logger.info({ method, params: logged }, `Mail call ${method}`);
 
 		return { status: 200, headers: {}, data: undefined as T };
@@ -122,7 +122,7 @@ export class MailDriverConsole implements MailDriver {
  * @internal
  */
 const describeValue = (value: unknown): unknown => {
-	// 1. A `File` has a name worth showing; a bare `Blob` only its kind
+	// A `File` has a name worth showing; a bare `Blob` only its kind
 	if (value instanceof File) return value.name;
 	if (value instanceof Blob) return 'blob';
 

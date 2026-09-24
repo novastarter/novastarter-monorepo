@@ -6,7 +6,7 @@ import { describeError } from './describe-error.js';
 
 describe('describeError', () => {
 	test('Names the provider and keeps the SDK error as the cause', () => {
-		// 1. A refusal is wrapped, not replaced: the cause keeps the code and status the SDK answered
+		// Wrapped, not replaced, so the cause keeps the code and status the SDK answered
 		const refusal = Object.assign(new Error('Inactive recipient'), { code: 406, statusCode: 422 });
 
 		expect(describeError(refusal)).toMatchObject({
@@ -14,7 +14,7 @@ describe('describeError', () => {
 			cause: refusal,
 		});
 
-		// 2. A thrown non-error is still described rather than crashing the description
+		// A thrown non-error is still described rather than crashing the description
 		expect(describeError('boom')).toMatchObject({ message: 'Postmark: boom', cause: 'boom' });
 	});
 });

@@ -41,12 +41,12 @@ export interface CreatedSession {
 export const createSession = (userId: string, options: CreateSessionOptions = {}): CreatedSession => {
 	const settings = authSettings().session ?? {};
 
-	// 1. Both deadlines from one clock reading; without an idle lifetime the idle deadline is the hard one
+	// Both deadlines from one clock reading; without an idle lifetime the idle deadline is the hard one
 	const now = Date.now();
 	const absoluteExpiresAt = now + (settings.ttl ?? DEFAULT_SESSION_TTL);
 	const expiresAt = settings.idleTtl ? Math.min(now + settings.idleTtl, absoluteExpiresAt) : absoluteExpiresAt;
 
-	// 2. The client gets the token, the application its hash
+	// The client gets the token, the application its hash
 	const token = randomToken();
 
 	return {

@@ -1,3 +1,4 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import { type Logger, useLogger } from '@novastarter/logger';
 import { createRedis, type RedisConfig } from '@novastarter/redis';
 import type { JobsOptions, Queue, QueueOptions } from 'bullmq';
@@ -33,7 +34,7 @@ export type QueueDriverBullmqConfig = {
  * @returns `true` for a client.
  */
 const isRedisClient = (connection: RedisConfig | Redis): connection is Redis => {
-	// 1. A client has the command methods; a URL is a string and options are a bare object without them
+	// A client has the command methods; a URL is a string and options are a bare object without them
 	return typeof connection === 'object' && connection !== null && typeof (connection as Redis).quit === 'function';
 };
 
@@ -73,27 +74,27 @@ export const WAITING_STATES = ['waiting', 'prioritized', 'waiting-children'] as 
 export const toJobsOptions = (options: JobOptions & EnqueueOptions, id?: string): JobsOptions => {
 	const jobsOptions: JobsOptions = {};
 
-	// 1. A derived id collapses duplicates through BullMQ's deduplication, which ends with the job; the record keeps
-	//    an id of BullMQ's own. Any other id names the record, so the caller finds it by what `enqueue()` answered
+	// A derived id collapses duplicates through BullMQ's deduplication, which ends with the job; the record keeps
+	// an id of BullMQ's own. Any other id names the record, so the caller finds it by what `enqueue()` answered
 	if (id !== undefined && options.unique && !options.jobId) {
 		jobsOptions.deduplication = { id };
 	} else if (id !== undefined) {
 		jobsOptions.jobId = id;
 	}
 
-	// 2. The counterparts BullMQ takes as they are, only set when given, since it would take `undefined` literally
+	// The counterparts BullMQ takes as they are, only set when given, since it would take `undefined` literally
 	if (options.attempts !== undefined) jobsOptions.attempts = options.attempts;
 	if (options.priority !== undefined) jobsOptions.priority = options.priority;
 	if (options.delay !== undefined) jobsOptions.delay = options.delay;
 
-	// 3. A bare number is a fixed wait; the object form is BullMQ's own
+	// A bare number is a fixed wait; the object form is BullMQ's own
 	if (typeof options.backoff === 'number') {
 		jobsOptions.backoff = { type: 'fixed', delay: options.backoff };
 	} else if (options.backoff !== undefined) {
 		jobsOptions.backoff = options.backoff;
 	}
 
-	// 4. Completed records go by the contract; failed ones are kept in bounded numbers for inspection
+	// Completed records go by the contract; failed ones are kept in bounded numbers for inspection
 	if (options.removeOnComplete !== undefined) jobsOptions.removeOnComplete = options.removeOnComplete;
 	jobsOptions.removeOnFail = DEFAULT_REMOVE_ON_FAIL;
 
@@ -145,24 +146,24 @@ export class QueueDriverBullmq implements QueueDriver {
 	 * Open the driver on its Redis.
 	 *
 	 * @param config - Connection, prefix, telemetry and logger.
-	 * @throws Error when `connection` is missing: ioredis would silently connect to `localhost:6379` and retry forever.
+	 * @throws InvalidConfigError when `connection` is missing: ioredis would silently connect to `localhost:6379` and retry forever.
 	 */
 	constructor(config: QueueDriverBullmqConfig) {
-		// 1. A missing connection is a configuration error of the location; refused by the option's name, like every
-		//    driver of the kit does, rather than left to ioredis's default of a local server
+		// A missing connection is a configuration error of the location; refused by the option's name, like every
+		// driver of the kit does, rather than left to ioredis's default of a local server
 		if (!config.connection) {
-			throw new Error('The bullmq queue driver needs a "connection"');
+			throw new InvalidConfigError({ reason: 'The bullmq queue driver needs a "connection"' });
 		}
 
-		// 2. A given client belongs to whoever created it; a URL or options become a client of the driver's own,
-		//    pinned to what BullMQ requires
+		// A given client belongs to whoever created it; a URL or options become a client of the driver's own,
+		// pinned to what BullMQ requires
 		this.ownsConnection = !isRedisClient(config.connection);
 
 		this.connection = isRedisClient(config.connection)
 			? config.connection
 			: createRedis(config.connection, { maxRetriesPerRequest: null });
 
-		// 3. What a worker of the same location reads back, so producer and worker agree on keys and traces
+		// What a worker of the same location reads back, so producer and worker agree on keys and traces
 		this.prefix = config.prefix;
 		this.telemetry = config.telemetry;
 		this.logger = config.logger ?? useLogger();
@@ -186,17 +187,17 @@ export class QueueDriverBullmq implements QueueDriver {
 		options: JobOptions & EnqueueOptions,
 		id?: string,
 	): Promise<EnqueuedJob> {
-		// 1. A delay a timer could not honour — negative, `NaN` or not finite — is refused through the shared check,
-		//    exactly as the `local` driver refuses it: BullMQ would take it as no delay at all, so the sibling drivers
-		//    would disagree about the same job
+		// A delay a timer could not honour — negative, `NaN` or not finite — is refused through the shared check,
+		// exactly as the `local` driver refuses it: BullMQ would take it as no delay at all, so the sibling drivers
+		// would disagree about the same job
 		validateJobDelay(contract.name, options.delay);
 
-		// 2. A `Queue` per name, shared with `stats()`; a closed driver refuses here
+		// A closed driver refuses here
 		const queue = await this.getQueue(contract.queue);
 
-		// 3. An explicit id names the record, and BullMQ answers an add with whatever record it holds under that id,
-		//    finished or not. A completed or failed one — kept for inspection — is dropped first, so the id can be
-		//    used again once its work is done and only queued, retrying or running work collapses, as with `unique`
+		// An explicit id names the record, and BullMQ answers an add with whatever record it holds under that id,
+		// finished or not. A completed or failed one — kept for inspection — is dropped first, so the id can be
+		// used again once its work is done and only queued, retrying or running work collapses, as with `unique`
 		if (options.jobId) {
 			const state = await queue.getJobState(options.jobId);
 
@@ -205,7 +206,7 @@ export class QueueDriverBullmq implements QueueDriver {
 			}
 		}
 
-		// 4. The BullMQ job name is the action: workers see `send` on queue `mail`, and `getJobContract` rejoins the two
+		// The BullMQ job name is the action: workers see `send` on queue `mail`, and `getJobContract` rejoins the two
 		const job = await queue.add(contract.action, payload, toJobsOptions(options, id));
 
 		return { id: String(job.id ?? id), name: contract.name, queue: contract.queue };
@@ -217,24 +218,24 @@ export class QueueDriverBullmq implements QueueDriver {
 	 * @throws What the first queue that refused to close threw, after every other queue and the client closed.
 	 */
 	async close(): Promise<void> {
-		// 1. Closed first, so an `enqueue()` racing the shutdown is refused rather than reopening a queue over a
-		//    client about to quit
+		// Closed first, so an `enqueue()` racing the shutdown is refused rather than reopening a queue over a
+		// client about to quit
 		this.closed = true;
 
-		// 2. A queue still opening — its first use awaiting the `bullmq` import — would land in the map after the
-		//    close and never be closed, over a client already quit; the openings are waited for first, failed or not
+		// A queue still opening — its first use awaiting the `bullmq` import — would land in the map after the
+		// close and never be closed, over a client already quit; the openings are waited for first, failed or not
 		await Promise.allSettled([...this.opening.values()]);
 
-		// 3. Every queue closes before the client does: a queue on a shared client that closed after it would fail
-		//    its last commands. Every outcome is waited for, so one refusing queue does not leave the others open
+		// Every queue closes before the client does: a queue on a shared client that closed after it would fail
+		// its last commands. Every outcome is waited for, so one refusing queue does not leave the others open
 		const outcomes = await Promise.allSettled([...this.queues.values()].map((queue) => queue.close()));
 		this.queues.clear();
 
-		// 4. A client the caller handed in is theirs to close; one opened here would otherwise keep the process alive
+		// A client the caller handed in is theirs to close; one opened here would otherwise keep the process alive
 		if (this.ownsConnection) {
-			// 1. `quit` sends QUIT through the normal command path, so a client that never reached `ready` reconnects
-			//    endlessly, retrying forever by default, to deliver it and the close never resolves; a client that is
-			//    not connected is dropped with `disconnect` instead, which sends nothing and waits for nothing
+			// `quit` sends QUIT through the normal command path, so a client that never reached `ready` reconnects
+			// endlessly, retrying forever by default, to deliver it and the close never resolves; a client that is
+			// not connected is dropped with `disconnect` instead, which sends nothing and waits for nothing
 			if (this.connection.status !== 'ready') {
 				this.connection.disconnect();
 			} else {
@@ -242,7 +243,7 @@ export class QueueDriverBullmq implements QueueDriver {
 			}
 		}
 
-		// 5. A queue that refused to close is reported once everything else is down
+		// A queue that refused to close is reported once everything else is down
 		const failure = outcomes.find((outcome) => outcome.status === 'rejected');
 
 		if (failure) {
@@ -260,13 +261,12 @@ export class QueueDriverBullmq implements QueueDriver {
 	async stats(queues: readonly string[] = getQueueNames()): Promise<QueueStats[]> {
 		return Promise.all(
 			queues.map(async (name) => {
-				// 1. A `Queue` per name, shared with `enqueue()`; the counts are one round trip each
 				const queue = await this.getQueue(name);
 
 				const counts = await queue.getJobCounts(...WAITING_STATES, 'active', 'delayed', 'failed', 'completed');
 
-				// 2. Queued work is spread over three of BullMQ's states — a prioritised job never sits in `waiting` —
-				//    and reported as one, since the reader asks how much is waiting, not where BullMQ keeps it
+				// Queued work is spread over three of BullMQ's states — a prioritised job never sits in `waiting` —
+				// and reported as one, since the reader asks how much is waiting, not where BullMQ keeps it
 				const waiting = WAITING_STATES.reduce((sum, state) => sum + (counts[state] ?? 0), 0);
 
 				return {
@@ -291,13 +291,13 @@ export class QueueDriverBullmq implements QueueDriver {
 	 * @throws Error when the driver is closed: a queue opened now would never be closed.
 	 */
 	private getQueue(name: string): Promise<Queue> {
-		// 1. Nothing opens after `close()`: the map it would land in was cleared, and the client may be gone
+		// Nothing opens after `close()`: the map it would land in was cleared, and the client may be gone
 		if (this.closed) {
 			return Promise.reject(new Error('The bullmq queue driver is closed'));
 		}
 
-		// 2. Open at most once per name: an open queue is answered with, an opening one is joined, so two `enqueue()`
-		//    calls in the same tick do not each build a `Queue` and leak the one the map forgets
+		// Open at most once per name: an open queue is answered with, an opening one is joined, so two `enqueue()`
+		// calls in the same tick do not each build a `Queue` and leak the one the map forgets
 		const existing = this.queues.get(name);
 
 		if (existing) return Promise.resolve(existing);
@@ -323,22 +323,21 @@ export class QueueDriverBullmq implements QueueDriver {
 	 * @internal
 	 */
 	private async openQueue(name: string): Promise<Queue> {
-		// 1. `bullmq` is loaded on first use, so a process that never opens a queue never pays for it
+		// `bullmq` is loaded on first use, so a process that never opens a queue never pays for it
 		const { Queue } = await loadBullmq();
 
-		// 2. Prefix and telemetry are only set when given: BullMQ would take an explicit `undefined` literally
+		// Prefix and telemetry are only set when given: BullMQ would take an explicit `undefined` literally
 		const queue = new Queue(name, {
 			connection: this.connection,
 			...(this.prefix ? { prefix: this.prefix } : {}),
 			...(this.telemetry ? { telemetry: this.telemetry } : {}),
 		});
 
-		// 3. A queue's connection errors would otherwise crash the process as unhandled events
+		// A queue's connection errors would otherwise crash the process as unhandled events
 		queue.on('error', (error) => {
 			this.logger.error(error, `Queue "${name}" connection error`);
 		});
 
-		// 4. Kept for every later use of the name, and for `close()`
 		this.queues.set(name, queue);
 
 		return queue;

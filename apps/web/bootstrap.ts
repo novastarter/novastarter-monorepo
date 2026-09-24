@@ -58,15 +58,15 @@ export const _state: { booted: boolean; handlers: boolean } = { booted: false, h
 export const bootstrap = (): AppEnv => {
 	const env = readEnv();
 
-	// 1. One boot per process: the managers are process-wide, registering twice would only rebuild their locations
+	// One boot per process: the managers are process-wide, registering twice would only rebuild their locations
 	if (_state.booted) {
 		return env;
 	}
 
-	// 2. The logger first, so everything registered next logs through the app's configuration
+	// The logger first, so everything registered next logs through the app's configuration
 	registerLogger(createLogger(loggerConfig(env)));
 
-	// 3. Redis: the `default` server, when the app has one; the other subsystems ask the manager for the client they share
+	// Redis: the `default` server, when the app has one; the other subsystems ask the manager for the client they share
 	const connection = redisConfig(env);
 
 	if (connection) {
@@ -75,7 +75,6 @@ export const bootstrap = (): AppEnv => {
 
 	const redis = connection ? useRedis().location('default') : undefined;
 
-	// 4. Memory: one key-value, cache, bus and limiter location, on the shared client or in-process
 	const memory = memoryConfig(redis);
 
 	useKv().registerLocation('default', memory.kv);
@@ -83,15 +82,12 @@ export const bootstrap = (): AppEnv => {
 	useBus().registerLocation('default', memory.bus);
 	useLimiter().registerLocation('api', memory.limiter);
 
-	// 5. Queues: the `default` location takes every queue
 	useQueue().registerLocation('default', queueConfig(env));
 
-	// 6. Storage: the driver classes the app ships with, then the `default` location
 	useStorage().registerDriver('local', StorageDriverLocal);
 	useStorage().registerLocation('default', storageConfig(env));
 
-	// 7. Database: the five driver classes the app ships with, then the `default` location — a server, or PGlite in
-	//    the process. Registering opens nothing: the driver, and with PGlite the WASM boot, runs on the first `location()`
+	// Registering opens nothing: the driver, and with PGlite the WASM boot, runs on the first `location()`.
 	useDatabase().registerDriver('postgres', DatabaseDriverPostgres);
 	useDatabase().registerDriver('supabase', DatabaseDriverSupabase);
 	useDatabase().registerDriver('neon', DatabaseDriverNeon);
@@ -102,21 +98,20 @@ export const bootstrap = (): AppEnv => {
 
 	useDatabase().registerLocation('default', database);
 
-	// 8. Mail: the built-in drivers come with the manager; the `default` location and the routes are the app's
+	// The built-in mail drivers come with the manager, so only the location and the routes are the app's.
 	const mail = mailConfig(env);
 
 	useMail().registerLocation('default', mail.location);
 	useMail().registerRoutes(mail.routes);
 
-	// 9. SMS: the built-in driver comes with the manager; the `default` location and the routes are the app's
+	// The built-in SMS driver comes with the manager, so only the location and the routes are the app's.
 	const sms = smsConfig(env);
 
 	useSms().registerLocation('default', sms.location);
 	useSms().registerRoutes(sms.routes);
 
-	// 10. Auth: the limiters first, since the settings take their instances; the package stores nothing, so there is
-	//     no store to register — the app keeps the records in its own tables under `auth/`; the three driver classes
-	//     the app ships with, then a location per provider it has keys for
+	// The limiters go first, since the settings take their instances. The package stores nothing, so there is no store
+	// to register: the app keeps the records in its own tables under `auth/`.
 	const auth = authConfig(env, { redis });
 
 	for (const [name, limiter] of Object.entries(auth.limiters)) {
@@ -140,8 +135,7 @@ export const bootstrap = (): AppEnv => {
 		},
 	});
 
-	// 11. AI: a provider per key the app has, then the aliases of the models the code asks for; a provider opens
-	//     nothing until a model of it is called
+	// A provider opens nothing until a model of it is called.
 	const ai = aiConfig(env);
 
 	for (const [name, provider] of Object.entries(ai.providers)) {
@@ -150,8 +144,8 @@ export const bootstrap = (): AppEnv => {
 
 	useAi().registerModels(ai.models);
 
-	// 12. Jobs: the handlers of the contracts under `jobs/`, so a worker or the local queue can run them — once per
-	//     process, since a handler holds nothing a shutdown would release and the queue refuses a second registration
+	// Once per process, since a handler holds nothing a shutdown would release and the queue refuses a second
+	// registration.
 	if (!_state.handlers) {
 		registerJobHandlers({
 			'mail.send': createMailSendHandler(),
@@ -181,9 +175,9 @@ export const bootstrap = (): AppEnv => {
  * manager and the Redis clients closed all the same.
  */
 export const shutdown = async (): Promise<void> => {
-	// 1. Every manager whose drivers hold connections of their own, or sit on the shared Redis client, closes first,
-	//    in parallel — each releases only what it built. Every outcome is waited for: one manager refusing to close
-	//    must not leave the others, or the Redis client below them, open
+	// Every manager whose drivers hold connections of their own, or sit on the shared Redis client, closes first, in
+	// parallel — each releases only what it built. Every outcome is waited for: one manager refusing to close must not
+	// leave the others, or the Redis client below them, open
 	const outcomes = await Promise.allSettled([
 		useQueue().close(),
 		useMail().close(),
@@ -197,14 +191,14 @@ export const shutdown = async (): Promise<void> => {
 		useLimiter().close(),
 	]);
 
-	// 2. The shared Redis clients last, once nothing uses them any more; a failure here joins the others
+	// The shared Redis clients last, once nothing uses them any more; a failure here joins the others
 	const redis = await Promise.allSettled([useRedis().close()]);
 
-	// 3. Booted no more: the memory locations were registered with the very client that was just quit, so the next
-	//    `bootstrap()` has to register everything afresh, on a fresh client, rather than being a no-op
+	// Booted no more: the memory locations were registered with the very client that was just quit, so the next
+	// `bootstrap()` has to register everything afresh, on a fresh client, rather than being a no-op
 	_state.booted = false;
 
-	// 4. Report what refused to close, once everything else is down
+	// Report what refused to close, once everything else is down
 	const failures = [...outcomes, ...redis]
 		.filter((outcome) => outcome.status === 'rejected')
 		.map((outcome) => outcome.reason);

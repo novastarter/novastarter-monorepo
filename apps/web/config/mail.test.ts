@@ -2,6 +2,7 @@
  * Tests of `config/mail`: the driver of the `default` location follows `MAIL_DRIVER` and `NODE_ENV`, and production
  * refuses to boot without an explicit driver.
  */
+import { InvalidConfigError } from '@novastarter/errors';
 import { describe, expect, test } from 'vitest';
 import { envSchema } from '../env';
 import { mailConfig } from './mail';
@@ -16,8 +17,8 @@ const env = (overrides: Record<string, string> = {}) => envSchema.parse({ NODE_E
 
 describe('mailConfig', () => {
 	test('Defaults to the console driver outside production', () => {
-		// 1. Without MAIL_DRIVER in test, the location rides the console driver, so a fresh clone reads its mail in
-		//    the terminal — and the sender comes from MAIL_FROM
+		// Without MAIL_DRIVER in test, the location rides the console driver, so a fresh clone reads its mail in the
+		// terminal — and the sender comes from MAIL_FROM
 		const config = mailConfig(env({ MAIL_FROM: 'no-reply@acme.test' }));
 
 		expect(config.location.driver).toBe('console');
@@ -25,19 +26,20 @@ describe('mailConfig', () => {
 	});
 
 	test('Takes the driver from MAIL_DRIVER', () => {
-		// 1. An explicit driver wins over the environment-dependent default
+		// An explicit driver wins over the environment-dependent default
 		const config = mailConfig(env({ MAIL_DRIVER: 'sendmail' }));
 
 		expect(config.location.driver).toBe('sendmail');
 	});
 
 	test('Refuses to boot in production without MAIL_DRIVER', () => {
-		// 1. The silent console default must not reach production: boot fails loudly instead of logging every message
+		// The silent console default must not reach production: boot fails loudly instead of logging every message
 		expect(() => mailConfig(env({ NODE_ENV: 'production' }))).toThrowError(/MAIL_DRIVER is required in production/);
+		expect(() => mailConfig(env({ NODE_ENV: 'production' }))).toThrowError(InvalidConfigError);
 	});
 
 	test('Accepts an explicit console driver in production', () => {
-		// 1. Logging instead of delivering stays possible where it is a deliberate choice, named in the configuration
+		// Logging instead of delivering stays possible where it is a deliberate choice, named in the configuration
 		const config = mailConfig(env({ NODE_ENV: 'production', MAIL_DRIVER: 'console' }));
 
 		expect(config.location.driver).toBe('console');

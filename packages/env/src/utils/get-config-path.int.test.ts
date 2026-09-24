@@ -17,15 +17,15 @@ const originalConfigPath = process.env['CONFIG_PATH'];
 let directory: string;
 
 beforeEach(() => {
-	// 1. A fresh directory per test, so the assertion never depends on what the checkout happens to contain, and no
-	//    CONFIG_PATH from the developer's shell can leak into it
+	// A fresh directory per test, so the assertion never depends on what the checkout happens to contain, and no
+	// CONFIG_PATH from the developer's shell can leak into it
 	directory = mkdtempSync(join(tmpdir(), 'env-get-config-path-'));
 	delete process.env['CONFIG_PATH'];
 	process.chdir(directory);
 });
 
 afterEach(() => {
-	// 1. The working directory and the developer's CONFIG_PATH come back, and the temporary directory goes away
+	// The working directory and the developer's CONFIG_PATH come back, and the temporary directory goes away
 	process.chdir(originalCwd);
 
 	if (originalConfigPath === undefined) {
@@ -38,12 +38,12 @@ afterEach(() => {
 });
 
 test('Resolves the default against the working directory at lookup time', () => {
-	// 1. The default is relative and resolved on each call, so a chdir between module import and this call cannot
-	//    pin a stale directory; `process.cwd()` is compared rather than the temp path, because a chdir resolves
-	//    symlinks and macOS hands `/tmp` out as `/private/tmp`
+	// The default is relative and resolved on each call, so a chdir between module import and this call cannot
+	// pin a stale directory; `process.cwd()` is compared rather than the temp path, because a chdir resolves
+	// symlinks and macOS hands `/tmp` out as `/private/tmp`
 	expect(getConfigPath()).toBe(join(process.cwd(), '.env'));
 
-	// 2. A relative CONFIG_PATH resolves against the same working directory, behaving like the default
+	// A relative CONFIG_PATH resolves against the same working directory, behaving like the default
 	process.env['CONFIG_PATH'] = 'config/app.yaml';
 	expect(getConfigPath()).toBe(join(process.cwd(), 'config/app.yaml'));
 });

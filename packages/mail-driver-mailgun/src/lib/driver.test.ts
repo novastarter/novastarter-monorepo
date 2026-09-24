@@ -2,7 +2,7 @@
  * Tests of the Mailgun driver class with the SDK mocked; the message mapper has its own tests in
  * `to-mailgun-message.test.ts`.
  */
-import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
+import { HitRateLimitError, InvalidConfigError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import * as entry from '../index.js';
@@ -67,7 +67,6 @@ const fetchMock = vi.fn();
  * @internal
  */
 const sent = (index = 0): { url: string; init: RequestInit & { headers: Record<string, string> } } => {
-	// 1. Read back from the stub, as `fetch(url, init)` was called
 	const [url, init] = fetchMock.mock.calls[index] as [string, RequestInit & { headers: Record<string, string> }];
 
 	return { url, init };
@@ -85,14 +84,14 @@ afterEach(() => {
 
 describe('MailDriverMailgun', () => {
 	test('Requires the key and the domain, and is exported by name', () => {
-		// 1. Either missing option is refused by name
+		expect(() => new MailDriverMailgun({ apiKey: '', domain: 'mg.acme.test' })).toThrow(InvalidConfigError);
 		expect(() => new MailDriverMailgun({ apiKey: '', domain: 'mg.acme.test' })).toThrow('"apiKey"');
 		expect(() => new MailDriverMailgun({ apiKey: 'key', domain: '' })).toThrow('"domain"');
 		expect(entry.MailDriverMailgun).toBe(MailDriverMailgun);
 	});
 
 	test('Builds the client for the US region by default and for the host given', () => {
-		// 1. No host: the US API over https, and a 30 s timeout, since without one the SDK waits forever on a stall
+		// No host: the US API over https, and a 30 s timeout, since without one the SDK waits forever on a stall
 		new MailDriverMailgun({ apiKey: 'key', domain: 'mg.acme.test' });
 
 		expect(client).toHaveBeenLastCalledWith({
@@ -102,7 +101,6 @@ describe('MailDriverMailgun', () => {
 			timeout: 30_000,
 		});
 
-		// 2. A bare host gets https; the location's own timeout replaces the default
 		new MailDriverMailgun({ apiKey: 'key', domain: 'mg.acme.test', host: 'api.eu.mailgun.net', timeout: 5000 });
 
 		expect(client).toHaveBeenLastCalledWith({
@@ -112,14 +110,13 @@ describe('MailDriverMailgun', () => {
 			timeout: 5000,
 		});
 
-		// 3. A full URL is taken as is, for a local stand-in
+		// A full URL is taken as is, for a local stand-in
 		new MailDriverMailgun({ apiKey: 'key', domain: 'mg.acme.test', host: 'http://localhost:8080' });
 
 		expect(client).toHaveBeenLastCalledWith(expect.objectContaining({ url: 'http://localhost:8080' }));
 	});
 
 	test('Sends on the domain and maps the result', async () => {
-		// 1. Mailgun answers an id in angle brackets and a `Queued.` line
 		create.mockResolvedValueOnce({ id: '<20260912.1@mg.acme.test>', message: 'Queued. Thank you.', status: 200 });
 
 		const driver = new MailDriverMailgun({ apiKey: 'key', domain: 'mg.acme.test', testMode: true });
@@ -131,13 +128,11 @@ describe('MailDriverMailgun', () => {
 			text: 'T',
 		});
 
-		// 2. The request went to the location's domain with the test mode on
 		expect(create).toHaveBeenCalledWith(
 			'mg.acme.test',
 			expect.objectContaining({ to: ['Ada <ada@example.com>', 'bob@example.com'], 'o:testmode': true }),
 		);
 
-		// 3. The brackets are stripped from the id; every recipient counts as accepted
 		expect(result).toStrictEqual({
 			messageId: '20260912.1@mg.acme.test',
 			accepted: ['ada@example.com', 'bob@example.com'],
@@ -147,7 +142,6 @@ describe('MailDriverMailgun', () => {
 	});
 
 	test('Names the provider in a refusal, keeping the SDK error as the cause', async () => {
-		// 1. The SDK's error is wrapped, not replaced: the cause keeps its status and details
 		const refusal = Object.assign(new Error('Forbidden'), { status: 401, details: 'Invalid private key' });
 
 		create.mockRejectedValueOnce(refusal);
@@ -163,16 +157,16 @@ describe('MailDriverMailgun', () => {
 	test('Verifies the domain is active', async () => {
 		const driver = new MailDriverMailgun({ apiKey: 'key', domain: 'mg.acme.test' });
 
-		// 1. An active domain passes
 		get.mockResolvedValueOnce({ name: 'mg.acme.test', state: 'active' });
 		await expect(driver.verify()).resolves.toBeUndefined();
 		expect(get).toHaveBeenCalledWith('mg.acme.test');
 
-		// 2. Any other state fails, even though Mailgun answered 200
-		get.mockResolvedValueOnce({ name: 'mg.acme.test', state: 'unverified' });
+		// Any other state fails, even though Mailgun answered 200
+		get.mockResolvedValue({ name: 'mg.acme.test', state: 'unverified' });
+		await expect(driver.verify()).rejects.toThrow(InvalidConfigError);
 		await expect(driver.verify()).rejects.toThrow('is unverified, not active');
+		get.mockReset();
 
-		// 3. A refusal is wrapped with the provider's name
 		get.mockRejectedValueOnce(new Error('Domain not found'));
 		await expect(driver.verify()).rejects.toThrow('Mailgun: Domain not found');
 	});
@@ -180,7 +174,6 @@ describe('MailDriverMailgun', () => {
 
 describe('MailDriverMailgun.call', () => {
 	test('Sends a GET with the query on the domain, and a POST with a form body, over HTTP Basic', async () => {
-		// 1. `{domain}` is the location's domain; a GET carries its parameters in the query
 		fetchMock.mockResolvedValueOnce(new Response('{"items":[]}', { status: 200 }));
 		fetchMock.mockResolvedValueOnce(new Response('{"message":"Address has been added"}', { status: 200 }));
 
@@ -193,7 +186,6 @@ describe('MailDriverMailgun.call', () => {
 		expect(sent().url).toBe('https://api.mailgun.net/v3/mg.acme.test/events?event=failed&limit=50');
 		expect(sent().init.headers['authorization']).toBe(`Basic ${Buffer.from('api:key-SECRET').toString('base64')}`);
 
-		// 2. A POST carries them as a form, a list repeating its key
 		await driver.call('POST /v3/{domain}/unsubscribes', { address: 'ada@example.com', tag: ['a', 'b'] });
 
 		expect(sent(1).url).toBe('https://api.mailgun.net/v3/mg.acme.test/unsubscribes');
@@ -202,7 +194,6 @@ describe('MailDriverMailgun.call', () => {
 	});
 
 	test('Turns an error status into ProviderCallError without the key, and a 429 into HitRateLimitError', async () => {
-		// 1. The provider's status and answer in the extensions; the key nowhere in the message
 		fetchMock.mockResolvedValueOnce(new Response('{"message":"Domain not found"}', { status: 404 }));
 
 		const driver = new MailDriverMailgun({ apiKey: 'key-SECRET', domain: 'mg.acme.test' });
@@ -222,14 +213,12 @@ describe('MailDriverMailgun.call', () => {
 		expect((error as Error).message).toBe('mailgun refused GET /v4/domains/{domain}: 404 Domain not found');
 		expect((error as Error).message).not.toContain('SECRET');
 
-		// 2. Too many requests is the rate-limit error
 		fetchMock.mockResolvedValueOnce(new Response('Too Many Requests', { status: 429 }));
 
 		await expect(driver.call('GET /v3/{domain}/bounces')).rejects.toBeInstanceOf(HitRateLimitError);
 	});
 
 	test('Accepts a full URL only on the location’s host, refusing another region before any request', async () => {
-		// 1. An EU location may not be sent to the US host, nor anywhere else
 		const driver = new MailDriverMailgun({ apiKey: 'key-SECRET', domain: 'mg.acme.test', host: 'api.eu.mailgun.net' });
 
 		await expect(driver.call('GET https://api.mailgun.net/v3/domains')).rejects.toThrow(
@@ -239,7 +228,6 @@ describe('MailDriverMailgun.call', () => {
 		await expect(driver.call('GET https://evil.example/v3/domains')).rejects.toThrow(/not on a host of this provider/);
 		expect(fetchMock).not.toHaveBeenCalled();
 
-		// 2. Its own host is fine, and so is a path, joined to it
 		fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
 
 		const { data } = await driver.call('DELETE https://api.eu.mailgun.net/v3/mg.acme.test/bounces/ada@example.com');
@@ -250,7 +238,6 @@ describe('MailDriverMailgun.call', () => {
 	});
 
 	test('Takes extra headers, and the location’s timeout unless the call names its own', async () => {
-		// 1. The caller's headers go on top of the driver's
 		fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
 
 		const driver = new MailDriverMailgun({ apiKey: 'key-SECRET', domain: 'mg.acme.test', timeout: 10 });
@@ -258,14 +245,12 @@ describe('MailDriverMailgun.call', () => {
 		await driver.call('GET /v3/domains', {}, { headers: { 'X-Mailgun-On-Behalf-Of': 'sub-1' } });
 		expect(sent().init.headers['x-mailgun-on-behalf-of']).toBe('sub-1');
 
-		// 2. A request that only ends when its signal aborts gives up at the location's timeout
 		const hang = (_url: string, init: RequestInit): Promise<Response> =>
 			new Promise((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
 
 		fetchMock.mockImplementationOnce(hang);
 		await expect(driver.call('GET /v3/domains')).rejects.toBeInstanceOf(TimeoutError);
 
-		// 3. And at the call's own timeout over the default one
 		fetchMock.mockImplementationOnce(hang);
 
 		await expect(
@@ -285,13 +270,11 @@ describe('MailDriverMailgun.call placeholders and answers', () => {
 
 		const driver = new MailDriverMailgun({ apiKey: 'key-SECRET', domain: 'mg.acme.test' });
 
-		// 1. A GET: the placeholder takes `id`, URL-encoded; the other parameters stay in the query
 		await driver.call('GET /v3/{domain}/tags/{id}', { id: 'a/b', limit: 5 });
 		const [first] = fetchMock.mock.calls[0] as [string];
 
 		expect(first).toBe('https://api.mailgun.net/v3/mg.acme.test/tags/a%2Fb?limit=5');
 
-		// 2. A POST: the placeholder's parameter is not in the body
 		await driver.call('POST /v3/{domain}/templates/{id}/versions', { id: 42, name: 'welcome' });
 
 		const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
@@ -315,7 +298,6 @@ describe('MailDriverMailgun.call placeholders and answers', () => {
 
 		const driver = new MailDriverMailgun({ apiKey: 'key-SECRET', domain: 'mg.acme.test' });
 
-		// 1. Every call answers the whole response, headers named in lower case
 		const answer = await driver.call('GET /v3/{domain}/tags/{id}', { id: 'x' });
 
 		expect(answer).toMatchObject({ status: 201, headers: { 'x-ratelimit-remaining': '9' }, data: { ok: true } });

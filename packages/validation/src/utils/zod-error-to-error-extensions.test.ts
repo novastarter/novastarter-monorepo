@@ -15,18 +15,16 @@ import { zodErrorToErrorExtensions } from './zod-error-to-error-extensions.js';
  * list.
  */
 const convert = (schema: z.ZodType, payload: unknown) => {
-	// 1. Run the schema without throwing, so the issues are available as data
+	// Run the schema without throwing, so the issues are available as data
 	const result = schema.safeParse(payload);
 
-	// 2. A passing payload would make the test assert on nothing, so fail loudly
+	// A passing payload would make the test assert on nothing, so fail loudly
 	if (result.success) throw new Error('Expected the payload to fail');
 
-	// 3. Hand the issues to the converter under test
 	return zodErrorToErrorExtensions(result.error);
 };
 
 test('Names the field and the path below it', () => {
-	// 1. An issue deep in an array: the top-level key is the field, the index and the inner key form the path
 	const schema = z.object({ items: z.array(z.object({ count: z.number() })) });
 
 	expect(convert(schema, { items: [{ count: 'x' }] })).toStrictEqual([
@@ -35,7 +33,7 @@ test('Names the field and the path below it', () => {
 });
 
 test('Reports a missing value and a wrong type as required', () => {
-	// 1. Both are `invalid_type` issues to zod, and both read as "field not usable" to the client
+	// Both are `invalid_type` issues to zod, and both read as "field not usable" to the client
 	const schema = z.object({ to: z.string(), count: z.number() });
 
 	expect(convert(schema, { count: 'x' })).toStrictEqual([
@@ -45,7 +43,7 @@ test('Reports a missing value and a wrong type as required', () => {
 });
 
 test('Maps bounds onto the comparison operators, inclusive or not', () => {
-	// 1. zod flags whether a bound is inclusive, which decides between gte / gt and lte / lt
+	// zod flags whether a bound is inclusive, which decides between gte / gt and lte / lt
 	const schema = z.object({ a: z.number().min(1), b: z.number().gt(1), c: z.number().max(5), d: z.number().lt(5) });
 
 	expect(convert(schema, { a: 0, b: 1, c: 6, d: 5 })).toStrictEqual([
@@ -57,8 +55,8 @@ test('Maps bounds onto the comparison operators, inclusive or not', () => {
 });
 
 test('Maps string formats onto their operators, and the rest onto regex', () => {
-	// 1. Formats with an operator of their own keep it with the compared text; a uuid has none and reports the
-	//    pattern zod checked
+	// Formats with an operator of their own keep it with the compared text; a uuid has none and reports the
+	// pattern zod checked
 	const schema = z.object({
 		email: z.email(),
 		prefix: z.string().startsWith('a'),
@@ -81,7 +79,7 @@ test('Maps string formats onto their operators, and the rest onto regex', () => 
 });
 
 test('Maps an enum onto in and a literal onto eq', () => {
-	// 1. Both are `invalid_value` issues; the size of the allowed list tells them apart
+	// Both are `invalid_value` issues; the size of the allowed list tells them apart
 	const schema = z.object({ route: z.enum(['transactional', 'marketing']), kind: z.literal('mail') });
 
 	expect(convert(schema, { route: 'x', kind: 'y' })).toStrictEqual([
@@ -91,8 +89,8 @@ test('Maps an enum onto in and a literal onto eq', () => {
 });
 
 test('Falls back to unsafe for rules without an operator form, and to an empty field on the root', () => {
-	// 1. A refinement and an unknown key have no operator; the unknown key is reported on the root, which has no
-	//    field name
+	// A refinement and an unknown key have no operator; the unknown key is reported on the root, which has no
+	// field name
 	const schema = z.object({ n: z.number().refine((n) => n % 2 === 0) }).strict();
 
 	expect(convert(schema, { n: 1, extra: true })).toStrictEqual([

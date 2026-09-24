@@ -40,26 +40,24 @@ export const describeError = (error: unknown): Error => {
 		const reason = `${failed?.status ?? 'unknown'}: ${failed?.errorText ?? error.message}`;
 		const delivered = error.getSuccessfulMessages().length;
 
-		// 1. Vonage took some parts and refused the rest: the delivered parts already went out, so this is reported as the
-		//    non-retryable SmsPartialDeliveryError — reading it as a refusal would have the chain re-send those parts
+		// The delivered parts already went out, so this is the non-retryable SmsPartialDeliveryError; read as a
+		// refusal, the chain would re-send those parts.
 		if (delivered > 0) {
 			return new SmsPartialDeliveryError({ delivered, parts: error.getMessages().length, reason }, { cause: error });
 		}
 
-		// 2. Vonage refused the whole message, whichever class the SDK chose: the first failed part says why, and the rest
-		//    of the answer stays on the cause
+		// Whichever class the SDK chose, the first failed part says why Vonage refused the whole message.
 		return new Error(`Vonage: ${reason}`, { cause: error });
 	}
 
-	// 3. An error status from Vonage: the SDK's VetchError carries the request, Authorization header included, in
-	//    `config`, so only the status and the message are kept and the error itself is dropped rather than made the cause.
-	//    Matched by shape, since `@vonage/vetch` is the SDK's own dependency and not one of this package
+	// The SDK's VetchError carries the request, Authorization header included, in `config`, so only the status and the
+	// message are kept and the error is not made the cause. Matched by shape, since `@vonage/vetch` is the SDK's own
+	// dependency and not one of this package.
 	if (error instanceof Error && 'config' in error && 'response' in error) {
 		const response = (error as { response?: { status?: number; statusText?: string } }).response;
 
 		return new Error(`Vonage: ${response?.status ?? 'unknown'}: ${response?.statusText || error.message}`);
 	}
 
-	// 4. Anything else — the network, a bad host — as is, prefixed
 	return new Error(`Vonage: ${toErrorMessage(error)}`, { cause: error });
 };

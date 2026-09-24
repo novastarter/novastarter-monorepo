@@ -8,6 +8,7 @@ import type {
 	SpeechModelV4,
 	TranscriptionModelV4,
 } from '@ai-sdk/provider';
+import { InvalidConfigError } from '@novastarter/errors';
 import { type CallOptions, type CallResponse, type HttpApi, request } from '@novastarter/http';
 import { createProviderRegistry, type ProviderRegistryProvider } from 'ai';
 import { AiModelNotFoundError } from '../errors/model-not-found.js';
@@ -115,10 +116,10 @@ export class AiManager {
 	 * `__proto__`.
 	 * @param provider - The provider, as its `@ai-sdk/*` package builds it.
 	 * @param options - The provider's HTTP API, when the application wants {@link call} for it.
-	 * @throws Error when the name is empty or contains a colon, since no model id could name it.
-	 * @throws Error when the name is `__proto__`, since the records are plain objects and the assignment would swap
-	 * their prototype instead of registering the provider.
-	 * @throws Error when `options.api.baseURL` is not an http(s) URL.
+	 * @throws InvalidConfigError when the name is empty or contains a colon, since no model id could name it.
+	 * @throws InvalidConfigError when the name is `__proto__`, since the records are plain objects and the assignment
+	 * would swap their prototype instead of registering the provider.
+	 * @throws InvalidConfigError when `options.api.baseURL` is not an http(s) URL.
 	 * @example
 	 * ```ts
 	 * ai.registerProvider('anthropic', createAnthropic({ apiKey: key }), {
@@ -130,26 +131,31 @@ export class AiManager {
 	 * ```
 	 */
 	registerProvider(name: string, provider: AiProvider, options: AiProviderOptions = {}): void {
-		// 1. The colon separates the provider from the model in an id, so a name holding one could never be reached;
-		//    `__proto__` passes that rule, but the assignment below would invoke the Object.prototype setter on the plain
-		//    records objects and swap their prototype instead of registering the provider, leaving it unreachable
+		// The colon separates the provider from the model in an id, so a name holding one could never be reached;
+		// `__proto__` passes that rule, but the assignment below would invoke the Object.prototype setter on the plain
+		// records objects and swap their prototype instead of registering the provider, leaving it unreachable
 		if (name === '' || name.includes(':') || name === '__proto__') {
-			throw new Error(`AI provider name "${name}" must be non-empty, must not contain ":" and must not be "__proto__"`);
+			throw new InvalidConfigError({
+				reason: `AI provider name "${name}" must be non-empty, must not contain ":" and must not be "__proto__"`,
+			});
 		}
 
-		// 2. A base URL that does not parse would only fail on the first call, far from the configuration that set it;
-		//    the URL itself stays out of the message, since a proxy URL may carry a key in its query
+		// A base URL that does not parse would only fail on the first call, far from the configuration that set it; the
+		// URL itself stays out of the message, since a proxy URL may carry a key in its query
 		const api = options.api;
 
 		if (api !== undefined && !isHttpUrl(api.baseURL)) {
-			throw new Error(`The API of AI provider "${name}" needs a "baseURL" that is an http(s) URL`);
+			throw new InvalidConfigError({
+				reason: `The API of AI provider "${name}" needs a "baseURL" that is an http(s) URL`,
+			});
 		}
 
-		// 3. Store it and drop the registry, so the next model is resolved against the new set of providers
+		// The registry is dropped, so the next model is resolved against the new set of providers
 		this.providers[name] = provider;
 		this.built = undefined;
 
-		// 4. The API copied, so a later change to the caller's object does not leak in; none drops the previous one
+		// Copied, so a later change to the caller's object does not leak in; registering without an API drops the
+		// previous one
 		if (api === undefined) {
 			delete this.apis[name];
 		} else {
@@ -170,8 +176,8 @@ export class AiManager {
 	 * @param models - Model id by alias: `{ chat: 'openai:gpt-5-mini', embeddings: 'openai:text-embedding-3-small' }`.
 	 */
 	registerModels(models: Record<string, AiModelId>): void {
-		// 1. Replace rather than merge, like `registerRoutes` of the other managers: a second bootstrap gets exactly
-		//    what it registered. Copied, so a later change to the caller's object does not leak in
+		// Replaced rather than merged, like `registerRoutes` of the other managers, so a second bootstrap gets exactly
+		// what it registered. Copied, so a later change to the caller's object does not leak in
 		this.aliases = { ...models };
 	}
 
@@ -182,7 +188,7 @@ export class AiManager {
 	 * @returns `true` when {@link registerProvider} ran with this name.
 	 */
 	hasProvider(name: string): boolean {
-		// 1. Own keys only, so a name like `toString` is not taken for a provider
+		// Own keys only, so a name like `toString` is not taken for a provider
 		return Object.hasOwn(this.providers, name);
 	}
 
@@ -192,7 +198,7 @@ export class AiManager {
 	 * @returns The names, in registration order.
 	 */
 	providerNames(): string[] {
-		// 1. A fresh array, so the caller cannot change the registry through it
+		// A fresh array, so the caller cannot change the registry through it
 		return Object.keys(this.providers);
 	}
 
@@ -202,7 +208,7 @@ export class AiManager {
 	 * @returns Model id by alias; an empty object when none were registered.
 	 */
 	models(): Readonly<Record<string, AiModelId>> {
-		// 1. A copy, so the caller cannot change the aliases behind the manager's back
+		// A copy, so the caller cannot change the aliases behind the manager's back
 		return { ...this.aliases };
 	}
 
@@ -212,7 +218,7 @@ export class AiManager {
 	 * @returns The registry; the same one until the next {@link registerProvider}.
 	 */
 	registry(): ProviderRegistryProvider {
-		// 1. Built lazily, once per set of providers, so registering several providers at start-up builds it once
+		// Built lazily, once per set of providers, so registering several providers at start-up builds it once
 		this.built ??= createProviderRegistry({ ...this.providers });
 
 		return this.built;
@@ -227,7 +233,7 @@ export class AiManager {
 	 * @throws NoSuchModelError of the AI SDK when the provider has no such model.
 	 */
 	languageModel(model: string): LanguageModelV4 {
-		// 1. Resolve the name first, so a typo fails with the kit's error rather than the registry's
+		// Resolved first, so a typo fails with the kit's error rather than the registry's
 		return this.registry().languageModel(this.resolve(model));
 	}
 
@@ -240,7 +246,7 @@ export class AiManager {
 	 * @throws NoSuchModelError of the AI SDK when the provider has no embedding models.
 	 */
 	embeddingModel(model: string): EmbeddingModelV4 {
-		// 1. Resolve the name first, so a typo fails with the kit's error rather than the registry's
+		// Resolved first, so a typo fails with the kit's error rather than the registry's
 		return this.registry().embeddingModel(this.resolve(model));
 	}
 
@@ -253,7 +259,7 @@ export class AiManager {
 	 * @throws NoSuchModelError of the AI SDK when the provider has no image models.
 	 */
 	imageModel(model: string): ImageModelV4 {
-		// 1. Resolve the name first, so a typo fails with the kit's error rather than the registry's
+		// Resolved first, so a typo fails with the kit's error rather than the registry's
 		return this.registry().imageModel(this.resolve(model));
 	}
 
@@ -266,7 +272,7 @@ export class AiManager {
 	 * @throws NoSuchModelError of the AI SDK when the provider has no transcription models.
 	 */
 	transcriptionModel(model: string): TranscriptionModelV4 {
-		// 1. Resolve the name first, so a typo fails with the kit's error rather than the registry's
+		// Resolved first, so a typo fails with the kit's error rather than the registry's
 		return this.registry().transcriptionModel(this.resolve(model));
 	}
 
@@ -279,7 +285,7 @@ export class AiManager {
 	 * @throws NoSuchModelError of the AI SDK when the provider has no speech models.
 	 */
 	speechModel(model: string): SpeechModelV4 {
-		// 1. Resolve the name first, so a typo fails with the kit's error rather than the registry's
+		// Resolved first, so a typo fails with the kit's error rather than the registry's
 		return this.registry().speechModel(this.resolve(model));
 	}
 
@@ -292,7 +298,7 @@ export class AiManager {
 	 * @throws NoSuchModelError of the AI SDK when the provider has no reranking models.
 	 */
 	rerankingModel(model: string): RerankingModelV4 {
-		// 1. Resolve the name first, so a typo fails with the kit's error rather than the registry's
+		// Resolved first, so a typo fails with the kit's error rather than the registry's
 		return this.registry().rerankingModel(this.resolve(model));
 	}
 
@@ -314,8 +320,8 @@ export class AiManager {
 	 * @param options - A timeout over the API's, an abort signal, extra headers.
 	 * @returns The status, the lower-cased headers and the body: parsed JSON, else its text; `undefined` when empty.
 	 * @throws AiProviderNotFoundError when no provider is registered under the name.
-	 * @throws Error when the provider was registered without an API, the method is malformed, or a full URL points at a
-	 * host of another party.
+	 * @throws InvalidConfigError when the provider was registered without an API.
+	 * @throws Error when the method is malformed, or a full URL points at a host of another party.
 	 * @throws HitRateLimitError when the provider answers 429.
 	 * @throws ProviderCallError when the provider answers any other error status.
 	 * @throws TimeoutError when the call takes longer than the timeout.
@@ -332,7 +338,7 @@ export class AiManager {
 		params?: Record<string, unknown>,
 		options?: CallOptions,
 	): Promise<CallResponse<T>> {
-		// 1. The provider and its API first, so a typo or a missing API fails before any request is built
+		// Checked first, so a typo or a missing API fails before any request is built
 		if (!this.hasProvider(provider)) {
 			throw new AiProviderNotFoundError({ provider });
 		}
@@ -340,16 +346,15 @@ export class AiManager {
 		const api = Object.hasOwn(this.apis, provider) ? this.apis[provider] : undefined;
 
 		if (api === undefined) {
-			throw new Error(
-				`AI provider "${provider}" was registered without an API: call() needs ` +
+			throw new InvalidConfigError({
+				reason:
+					`AI provider "${provider}" was registered without an API: call() needs ` +
 					`registerProvider(name, provider, { api: { baseURL, … } })`,
-			);
+			});
 		}
 
-		// 2. The registered API as `request()` takes it — the key as a bearer token, the API's headers over it, a
-		//    provider with another scheme setting its own — and errors named after the registered provider.
-		//    `request()` checks the URL against the hosts before the credentials are attached and keeps them out of
-		//    every error
+		// The API's headers go over the bearer key, so a provider with another auth scheme can set its own. `request()`
+		// checks the URL against the hosts before the credentials are attached and keeps them out of every error
 		const http: HttpApi = {
 			provider,
 			baseUrl: api.baseURL,
@@ -370,10 +375,10 @@ export class AiManager {
 	 * @internal
 	 */
 	private resolve(model: string): AiModelId {
-		// 1. An alias wins over an id of the same spelling, so the configuration always has the last word
+		// An alias wins over an id of the same spelling, so the configuration always has the last word
 		const id = Object.hasOwn(this.aliases, model) ? this.aliases[model]! : model;
 
-		// 2. The provider is everything before the first colon; the model id after it may hold colons of its own
+		// Only the first colon separates the provider: the model id may hold colons of its own
 		const separator = id.indexOf(':');
 
 		if (separator <= 0 || separator === id.length - 1 || !this.hasProvider(id.slice(0, separator))) {
@@ -392,7 +397,7 @@ export class AiManager {
  * @internal
  */
 const isHttpUrl = (value: string): boolean => {
-	// 1. `new URL` throws on anything that is not an absolute URL; the protocol check keeps `file:` and the like out
+	// `new URL` throws on anything that is not an absolute URL; the protocol check keeps `file:` and the like out
 	try {
 		const { protocol } = new URL(value);
 

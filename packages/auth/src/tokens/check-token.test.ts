@@ -31,7 +31,7 @@ const storage = (): {
 } => {
 	const records = new Map<string, TokenRecord>();
 
-	// 1. The same match as `DELETE … WHERE id = $id AND purpose = $purpose RETURNING *`: gone once taken
+	// The same match as `DELETE … WHERE id = $id AND purpose = $purpose RETURNING *`: gone once taken
 	const spend = async (id: string, purpose: string): Promise<TokenRecord | null> => {
 		const record = records.get(id);
 
@@ -64,10 +64,8 @@ describe('checkToken', () => {
 
 		records.set(record.id, record);
 
-		// 1. The very record, with its user and data
 		await expect(checkToken({ purpose: 'password-reset', token, spend })).resolves.toBe(record);
 
-		// 2. Spent: the same token again finds nothing
 		await expect(checkToken({ purpose: 'password-reset', token, spend })).rejects.toMatchObject(INVALID);
 	});
 
@@ -77,7 +75,6 @@ describe('checkToken', () => {
 
 		records.set(record.id, record);
 
-		// 1. Without the user, or with another one, the code matches nothing — and stays for the right user
 		await expect(checkToken({ purpose: 'sign-in', token, spend })).rejects.toMatchObject(INVALID);
 		await expect(checkToken({ purpose: 'sign-in', token, userId: 'user-2', spend })).rejects.toMatchObject(INVALID);
 		await expect(checkToken({ purpose: 'sign-in', token, userId: 'user-1', spend })).resolves.toBe(record);
@@ -86,17 +83,14 @@ describe('checkToken', () => {
 	test('Refuses a missing record, another purpose and an expired one alike', async () => {
 		const { records, spend } = storage();
 
-		// 1. Nothing matched
 		await expect(checkToken({ purpose: 'password-reset', token: 'nope', spend })).rejects.toMatchObject(INVALID);
 
-		// 2. A record of another purpose, even if the callback hands it back, cannot stand in
 		const other = createToken({ purpose: 'email-confirm' });
 
 		await expect(
 			checkToken({ purpose: 'password-reset', token: other.token, spend: async () => other.record }),
 		).rejects.toMatchObject(INVALID);
 
-		// 3. At its deadline the token is dead
 		const expiring = createToken({ purpose: 'password-reset', ttl: 60_000 });
 
 		records.set(expiring.record.id, expiring.record);
@@ -119,18 +113,15 @@ describe('checkToken', () => {
 			return checkToken({ purpose, token, userId, spend });
 		};
 
-		// 1. A miss costs a point under the purpose and the user
 		await expect(attempt('wrong')).rejects.toMatchObject(INVALID);
 		expect(consume).toHaveBeenLastCalledWith('sign-in:user-1');
 
-		// 2. A hit costs a point too, then clears the count
 		const first = createToken({ purpose: 'sign-in', userId: 'user-1', format: 'code' });
 
 		records.set(first.record.id, first.record);
 		await expect(attempt(first.token)).resolves.toBe(first.record);
 		expect(reset).toHaveBeenCalledWith('sign-in:user-1');
 
-		// 3. Two misses spend the budget: even a right code is refused now
 		const second = createToken({ purpose: 'sign-in', userId: 'user-1', format: 'code' });
 
 		records.set(second.record.id, second.record);
@@ -138,7 +129,6 @@ describe('checkToken', () => {
 		await expect(attempt('wrong')).rejects.toMatchObject(INVALID);
 		await expect(attempt(second.token)).rejects.toMatchObject({ code: 'REQUESTS_EXCEEDED' });
 
-		// 4. Another user and another purpose have budgets of their own
 		await expect(attempt('wrong', 'user-2')).rejects.toMatchObject(INVALID);
 		await expect(attempt('wrong', 'user-1', 'email-confirm')).rejects.toMatchObject(INVALID);
 	});
@@ -150,7 +140,7 @@ describe('checkToken', () => {
 
 		useAuth().registerSettings({ limiters: { code } });
 
-		// 1. No user given means a link: 256 bits need no limiter
+		// No user given means a link: 256 bits need no limiter
 		await expect(checkToken({ purpose: 'password-reset', token: 'a', spend })).rejects.toMatchObject(INVALID);
 		await expect(checkToken({ purpose: 'password-reset', token: 'b', spend })).rejects.toMatchObject(INVALID);
 

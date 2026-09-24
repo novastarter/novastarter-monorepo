@@ -150,7 +150,6 @@ export const toMailMessage = async (
 	payload: MailSendPayload,
 	render?: TemplateRenderer | undefined,
 ): Promise<MailMessage> => {
-	// 1. The job-only fields are split off; what remains is a message as the drivers take it
 	const { template, props, locale, route, location: _location, subject, html, text, ...rest } = payload;
 
 	let body: RenderedTemplate | { subject: string | undefined; html: string | undefined; text: string | undefined } = {
@@ -159,7 +158,7 @@ export const toMailMessage = async (
 		text,
 	};
 
-	// 2. A template is rendered here, in the job, so the request that enqueued it never waited for the renderer
+	// A template is rendered here, in the job, so the request that enqueued it never waited for the renderer
 	if (template !== undefined) {
 		if (!render) {
 			throw new InvalidPayloadError({
@@ -169,11 +168,10 @@ export const toMailMessage = async (
 
 		const rendered = await render(template, props ?? {}, { locale });
 
-		// 3. An explicit subject wins over the template's
 		body = { ...rendered, subject: subject ?? rendered.subject };
 	}
 
-	// 4. Bodies are only set when present, so a driver can tell "no text" from "empty text"
+	// Bodies are only set when present, so a driver can tell "no text" from "empty text"
 	return {
 		...rest,
 		subject: body.subject ?? '',
@@ -193,10 +191,10 @@ export const toMailMessage = async (
  * @returns The handler.
  */
 export const createMailSendHandler = (options: MailSendHandlerOptions = {}): JobHandler<typeof mailSend> => {
-	// 1. The options are captured here, so the bootstrap registers a ready-made handler and a test can hand in its
-	//    own renderer
+	// The options are captured here, so the bootstrap registers a ready-made handler and a test can hand in its own
+	// renderer
 	return async (payload: MailSendPayload): Promise<void> => {
-		// 1. The template is rendered and the message sent inside the job, so a failure of either is retried
+		// The template is rendered and the message sent inside the job, so a failure of either is retried
 		const message = await toMailMessage(payload, options.render);
 
 		await sendMail(message, { location: payload.location });

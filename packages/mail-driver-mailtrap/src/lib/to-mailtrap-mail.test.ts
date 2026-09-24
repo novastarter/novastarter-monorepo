@@ -1,6 +1,7 @@
 /**
  * Tests of `to-mailtrap-mail`: how a message, its addresses and its attachments become Mailtrap's `send()` payload.
  */
+import { InvalidPayloadError } from '@novastarter/errors';
 import { describe, expect, test } from 'vitest';
 import {
 	MAILTRAP_CUSTOM_VARIABLES_MAX_BYTES,
@@ -11,7 +12,7 @@ import {
 
 describe('toMailtrapAddress', () => {
 	test('Splits a name from an address and keeps the name of a formatted string', () => {
-		// 1. An object keeps its name; a display-name string is parsed, so the name reaches Mailtrap either way
+		// A display-name string is parsed, so the name reaches Mailtrap either way
 		expect(toMailtrapAddress({ name: 'Ada', address: 'ada@example.com' })).toStrictEqual({
 			email: 'ada@example.com',
 			name: 'Ada',
@@ -26,7 +27,6 @@ describe('toMailtrapAddress', () => {
 
 describe('toMailtrapAttachment', () => {
 	test('Marks an attachment with a content id as inline', async () => {
-		// 1. The SDK takes the Buffer as is; the content id sets the disposition
 		expect(
 			await toMailtrapAttachment({
 				filename: 'logo.png',
@@ -44,7 +44,7 @@ describe('toMailtrapAttachment', () => {
 	});
 
 	test('Reads a path', async () => {
-		// 1. This very file is the attachment; a Buffer proves the path was read
+		// A Buffer proves the path was read
 		const attachment = await toMailtrapAttachment({ filename: 'self.ts', path: new URL(import.meta.url).pathname });
 
 		expect(attachment.disposition).toBe('attachment');
@@ -52,14 +52,13 @@ describe('toMailtrapAttachment', () => {
 	});
 
 	test('Throws without content or path', async () => {
-		// 1. An attachment without a source is refused by name
 		await expect(toMailtrapAttachment({ filename: 'x' })).rejects.toThrow('neither content nor path');
 	});
 });
 
 describe('toMailtrapMail', () => {
 	test('Maps the message into Mailtrap shape with the tags as a custom variable', async () => {
-		// 1. Every field finds its Mailtrap name; text content is read into a Buffer like every attachment
+		// Text content is read into a Buffer like every attachment
 		expect(
 			await toMailtrapMail({
 				to: [{ name: 'Ada', address: 'ada@example.com' }],
@@ -94,7 +93,6 @@ describe('toMailtrapMail', () => {
 	});
 
 	test('Defaults the category and leaves the optional fields out', async () => {
-		// 1. Nothing optional given: nothing optional sent
 		expect(await toMailtrapMail({ to: 'a@example.com', from: 'me@acme.test', subject: 'S', text: 'T' })).toStrictEqual({
 			from: { email: 'me@acme.test' },
 			to: [{ email: 'a@example.com' }],
@@ -105,8 +103,8 @@ describe('toMailtrapMail', () => {
 	});
 
 	test('Cuts the joined tags until the custom_variables payload fits Mailtrap limit', async () => {
-		// 1. Mailtrap caps the custom_variables payload at MAILTRAP_CUSTOM_VARIABLES_MAX_BYTES of JSON, so a tag list
-		//    past it is cut rather than having the variables dropped whole
+		// Mailtrap caps the custom_variables payload at MAILTRAP_CUSTOM_VARIABLES_MAX_BYTES of JSON, so a tag list
+		// past it is cut rather than having the variables dropped whole
 		const tags = Array.from({ length: 40 }, (_, index) => `onboarding-sequence-step-${index}`);
 
 		const mail = await toMailtrapMail({ to: 'a@example.com', from: 'me@acme.test', subject: 'S', tags });
@@ -120,7 +118,6 @@ describe('toMailtrapMail', () => {
 	});
 
 	test('Leaves the custom variable out when only empty tags are given', async () => {
-		// 1. Tags that record nothing send no custom variable at all
 		expect(await toMailtrapMail({ to: 'a@example.com', from: 'me@acme.test', subject: 'S', tags: [''] })).toStrictEqual(
 			{
 				from: { email: 'me@acme.test' },
@@ -132,7 +129,7 @@ describe('toMailtrapMail', () => {
 	});
 
 	test('Requires a sender', async () => {
-		// 1. A message without a sender is refused by name
 		await expect(toMailtrapMail({ to: 'a@example.com', subject: 'S' })).rejects.toThrow('"from"');
+		await expect(toMailtrapMail({ to: 'a@example.com', subject: 'S' })).rejects.toThrow(InvalidPayloadError);
 	});
 });

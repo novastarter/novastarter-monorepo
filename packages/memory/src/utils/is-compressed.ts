@@ -8,11 +8,11 @@
  * @returns `true` when the bytes start with a gzip header.
  */
 export const isCompressed = (array: Uint8Array): boolean => {
-	// 1. A gzip stream is at least 19 bytes: 10-byte header, 8-byte footer and one byte of payload
+	// A gzip stream is at least 19 bytes: 10-byte header, 8-byte footer and one byte of payload
 	if (array.byteLength < 19) {
 		return false;
 	}
 
-	// 2. The header opens with the magic number `1f 8b` followed by `08`, the deflate method gzip always uses
+	// The header opens with the magic number `1f 8b` followed by `08`, the deflate method gzip always uses
 	return array[0] === 0x1f && array[1] === 0x8b && array[2] === 0x08;
 };

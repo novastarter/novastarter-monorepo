@@ -7,7 +7,6 @@ import { SmsDriverConsole } from './console.js';
 
 describe('SmsDriverConsole', () => {
 	test('Logs the message and answers a logged status', async () => {
-		// 1. A recording logger stands in for the application's
 		const logger = { info: vi.fn() };
 		const driver = new SmsDriverConsole({ logger: logger as unknown as Logger });
 
@@ -18,7 +17,7 @@ describe('SmsDriverConsole', () => {
 			category: 'transactional',
 		});
 
-		// 2. No provider answers, so the result only says the line was written
+		// No provider answers, so the result only says the line was written.
 		expect(result).toStrictEqual({ status: 'logged' });
 
 		expect(logger.info).toHaveBeenCalledWith(
@@ -28,7 +27,6 @@ describe('SmsDriverConsole', () => {
 	});
 
 	test('Leaves the optional fields out of the line when unset', async () => {
-		// 1. A message without sender or category logs only what it has, so the line carries no `undefined` keys
 		const logger = { info: vi.fn() };
 		const driver = new SmsDriverConsole({ logger: logger as unknown as Logger });
 
@@ -40,7 +38,6 @@ describe('SmsDriverConsole', () => {
 	test('Logs a call with its method and parameters, files by name, and answers nothing', async () => {
 		const logger = { info: vi.fn() };
 
-		// 1. The same call a provider's driver takes, written to the log; the options are not logged
 		await expect(
 			new SmsDriverConsole({ logger: logger as unknown as Logger }).call(
 				'POST /v1/files',
@@ -56,7 +53,7 @@ describe('SmsDriverConsole', () => {
 	});
 
 	test('Answers a plain 200 with no headers and no body', async () => {
-		// 1. Code that reads the status of a real provider's answer runs against the console too
+		// Code that reads the status of a real provider's answer runs against the console too.
 		await expect(
 			new SmsDriverConsole({ logger: { info: vi.fn() } as unknown as Logger }).call('GET /v1/x'),
 		).resolves.toStrictEqual({

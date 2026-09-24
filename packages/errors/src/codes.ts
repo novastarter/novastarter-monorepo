@@ -5,6 +5,8 @@
  * match against in `isNovastarterError(error, code)`.
  */
 export enum ErrorCode {
+	/** A driver, manager or location is set up wrong; see `InvalidConfigError`. */
+	InvalidConfig = 'INVALID_CONFIG',
 	/** Credentials did not verify; see `InvalidCredentialsError`. */
 	InvalidCredentials = 'INVALID_CREDENTIALS',
 	/** A payload failed a check; see `InvalidPayloadError`. */

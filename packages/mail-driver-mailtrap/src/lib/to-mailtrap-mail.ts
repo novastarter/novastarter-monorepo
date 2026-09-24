@@ -1,3 +1,4 @@
+import { InvalidPayloadError } from '@novastarter/errors';
 import {
 	type MailAddress,
 	type MailAttachment,
@@ -23,7 +24,7 @@ export const MAILTRAP_CUSTOM_VARIABLES_MAX_BYTES = 1000;
  * @returns `{ email, name? }`.
  */
 export const toMailtrapAddress = (address: MailAddress): Address => {
-	// 1. The object APIs take name and address apart, so a display-name string is parsed, not flattened to the address
+	// The object APIs take name and address apart, so a display-name string is parsed, not flattened to the address
 	const parsed = parseMailAddress(address);
 
 	return { email: parsed.address, ...(parsed.name !== undefined ? { name: parsed.name } : {}) };
@@ -34,13 +35,13 @@ export const toMailtrapAddress = (address: MailAddress): Address => {
  *
  * @param attachment - Ours.
  * @returns Mailtrap's.
- * @throws Error when the attachment has neither content nor a path to read.
+ * @throws InvalidPayloadError when the attachment has neither content nor a path to read.
  */
 export const toMailtrapAttachment = async (attachment: MailAttachment): Promise<Attachment> => {
-	// 1. The SDK base64-encodes a Buffer itself; a path is read here, like the siblings do
+	// The SDK base64-encodes a Buffer itself; a path is read here, like the siblings do
 	const content = await readAttachment(attachment);
 
-	// 2. A content id makes the attachment inline, for `cid:` references from the html
+	// A content id makes the attachment inline, for `cid:` references from the html
 	return {
 		filename: attachment.filename,
 		content,
@@ -59,26 +60,26 @@ export const toMailtrapAttachment = async (attachment: MailAttachment): Promise<
  *
  * @param message - Ours, with `from` set (`sendMail()` fills it in).
  * @returns Mailtrap's.
- * @throws Error when `from` is missing — Mailtrap requires it.
+ * @throws InvalidPayloadError when `from` is missing — Mailtrap requires it.
  */
 export const toMailtrapMail = async (message: MailMessage): Promise<Mail> => {
-	// 1. The API refuses a message without a sender; say so before the request goes out
+	// The API refuses a message without a sender; say so before the request goes out
 	if (!message.from) {
-		throw new Error('Mailtrap needs a "from" address');
+		throw new InvalidPayloadError({ reason: 'Mailtrap needs a "from" address' });
 	}
 
-	// 2. The tags ride in the `tags` custom variable: Mailtrap caps the whole `custom_variables` payload at
-	//    MAILTRAP_CUSTOM_VARIABLES_MAX_BYTES of JSON, so the joined value is cut until the serialized object fits —
-	//    a label past the cap would have the variables dropped rather than read
+	// Mailtrap caps the whole `custom_variables` payload at MAILTRAP_CUSTOM_VARIABLES_MAX_BYTES of JSON, so the
+	// joined tags are cut until the serialized object fits: a label past the cap would have the variables dropped
+	// rather than read
 	const joined = (message.tags ?? []).join(',');
 	let tags = joined;
 
 	while (tags !== '' && Buffer.byteLength(JSON.stringify({ tags }), 'utf8') > MAILTRAP_CUSTOM_VARIABLES_MAX_BYTES) {
-		// 3. Drop the last code point — a multi-byte one is never split — until the payload fits
+		// Whole code points are dropped, so a multi-byte one is never split
 		tags = [...tags].slice(0, -1).join('');
 	}
 
-	// 4. Optional fields are only set when present, so the request carries no `undefined` keys
+	// Optional fields are only set when present, so the request carries no `undefined` keys
 	const mail = {
 		from: toMailtrapAddress(message.from),
 		to: toMailAddressList(message.to).map(toMailtrapAddress),
@@ -93,7 +94,6 @@ export const toMailtrapMail = async (message: MailMessage): Promise<Mail> => {
 		...(tags !== '' ? { custom_variables: { tags } } : {}),
 	} as Mail;
 
-	// 5. Attachments are read in parallel: every one is complete before the request is built
 	if (message.attachments?.length) {
 		mail.attachments = await Promise.all(message.attachments.map(toMailtrapAttachment));
 	}

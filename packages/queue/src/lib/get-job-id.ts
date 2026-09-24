@@ -36,14 +36,14 @@ export const JOB_ID_HASH_LENGTH = 32;
  * @internal
  */
 const sortPayloadKeys = (value: unknown): unknown => {
-	// 1. Only plain objects are reordered; primitives, `null`, arrays and class instances pass through, so `Date`
-	//    and friends still serialise through their own `toJSON` exactly as plain `JSON.stringify` has them
+	// Only plain objects are reordered; primitives, `null`, arrays and class instances pass through, so `Date`
+	// and friends still serialise through their own `toJSON` exactly as plain `JSON.stringify` has them
 	if (typeof value !== 'object' || value === null || Array.isArray(value) || value.constructor !== Object) {
 		return value;
 	}
 
-	// 2. A fresh object with the entries in sorted order; `JSON.stringify` writes keys in insertion order, so the
-	//    sorted copy stringifies canonically. Nested objects are sorted the same way, deepest first
+	// `JSON.stringify` writes keys in insertion order, so a sorted copy stringifies canonically. Nested objects are
+	// sorted the same way, deepest first
 	return Object.fromEntries(
 		Object.keys(value)
 			.sort()
@@ -62,8 +62,8 @@ const sortPayloadKeys = (value: unknown): unknown => {
  * @internal
  */
 const stableStringify = (payload: unknown): string => {
-	// 1. Sorting on a copy, then stringifying: the caller's object is untouched and `undefined` as a whole becomes
-	//    `null`, matching the digest the id has always had for an absent payload
+	// Sorting on a copy, then stringifying: the caller's object is untouched and `undefined` as a whole becomes
+	// `null`, matching the digest the id has always had for an absent payload
 	return JSON.stringify(sortPayloadKeys(payload) ?? null);
 };
 
@@ -85,18 +85,17 @@ const stableStringify = (payload: unknown): string => {
  * tests reports it the same way the queue would.
  */
 export const getJobId = (contract: JobContract, payload: unknown, options: JobOptions & EnqueueOptions): string => {
-	// 1. Explicit, derived or random: which one is the options' business, the check below is every id's
 	const id = deriveJobId(contract, payload, options);
 
-	// 2. Refused before any driver sees it, so a `unique` function that leaks a colon fails in tests on the `local`
-	//    driver too, not only in production on BullMQ
+	// Refused before any driver sees it, so a `unique` function that leaks a colon fails in tests on the `local`
+	// driver too, not only in production on BullMQ
 	if (id.includes(':')) {
 		throw new Error(`The id "${id}" of job "${contract.name}" must not contain ":" — BullMQ reserves it`);
 	}
 
-	// 3. BullMQ refuses a custom id that reads as an integer (`"123"`, `"0"`), since it hands out integer ids itself.
-	//    Only an explicit id can hit this — derived ids start with the job name and random ones are UUIDs — and
-	//    `String(order.id)` is a natural pick, so it is refused here rather than only once BullMQ runs in production
+	// BullMQ refuses a custom id that reads as an integer (`"123"`, `"0"`), since it hands out integer ids itself.
+	// Only an explicit id can hit this — derived ids start with the job name and random ones are UUIDs — and
+	// `String(order.id)` is a natural pick, so it is refused here rather than only once BullMQ runs in production
 	if (`${Number.parseInt(id, 10)}` === id) {
 		throw new Error(
 			`The id "${id}" of job "${contract.name}" must not be an integer — BullMQ refuses integer custom ids`,
@@ -116,23 +115,20 @@ export const getJobId = (contract: JobContract, payload: unknown, options: JobOp
  * @internal
  */
 const deriveJobId = (contract: JobContract, payload: unknown, options: JobOptions & EnqueueOptions): string => {
-	// 1. The caller named the job; nothing is derived
 	if (options.jobId) return options.jobId;
 
-	// 2. A custom function knows which fields identify the work — a customer id, say
 	if (typeof options.unique === 'function') {
 		return `${contract.name}${JOB_ID_SEPARATOR}${options.unique(payload)}`;
 	}
 
-	// 3. Otherwise the whole payload identifies it, through a real digest over a key-sorted serialisation: a 32-bit
-	//    hash collides between payloads that differ by little, and a collision here silently drops the second job as
-	//    a duplicate of the first
+	// Otherwise the whole payload identifies it, through a real digest over a key-sorted serialisation: a 32-bit
+	// hash collides between payloads that differ by little, and a collision here silently drops the second job as
+	// a duplicate of the first
 	if (options.unique === true) {
 		const digest = createHash('sha256').update(stableStringify(payload)).digest('hex');
 
 		return `${contract.name}${JOB_ID_SEPARATOR}${digest.slice(0, JOB_ID_HASH_LENGTH)}`;
 	}
 
-	// 4. Nothing collapses: every enqueue is its own job
 	return randomUUID();
 };

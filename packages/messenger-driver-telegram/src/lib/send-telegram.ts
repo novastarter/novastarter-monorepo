@@ -20,14 +20,15 @@ export type SendTelegramOptions = MessengerDriverTelegramConfig &
  * @param options - The token, the chat, and the message.
  * @returns The id of the message Telegram made, and its answer.
  * @throws MessengerTargetGoneError when the bot was blocked or the chat is gone.
- * @throws Error when Telegram refused the message or could not be reached.
+ * @throws ProviderCallError when Telegram refused the message — its status and answer in `extensions`.
+ * @throws Error when Telegram could not be reached.
  * @example
  * ```ts
  * await sendTelegram({ token: process.env.ALERTS_BOT_TOKEN!, chatId: '-1001234', text: 'Deploy finished' });
  * ```
  */
 export const sendTelegram = async (options: SendTelegramOptions): Promise<MessengerResult> => {
-	// 1. The bot's options and the message's are one object here; split, since the driver takes them apart
+	// The bot's options and the message's are one object here, so they are split for the driver
 	const { token, apiUrl, timeout, defaultFormat, chatId, ...message } = options;
 
 	return new MessengerDriverTelegram({ token, apiUrl, timeout, defaultFormat }).send({ ...message, to: chatId });

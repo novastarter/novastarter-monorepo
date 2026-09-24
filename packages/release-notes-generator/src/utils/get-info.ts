@@ -24,19 +24,19 @@ export async function getInfo(changesets: Changesets): Promise<{
 	for (const { summary, notice, commit, releases } of changesets.values()) {
 		const change: Change = { summary, commit };
 
-		// 1. Notices are kept apart from the change list, as they are rendered under the notice section on their own
+		// Notices are kept apart from the change list, as they are rendered under the notice section on their own
 		if (notice) {
 			notices.push({ notice, change });
 		}
 
 		for (const { type, name } of releases) {
-			// 2. The main package only carries the headline version, and a changeset without summary has nothing to
-			//    show
+			// The main package only carries the headline version, and a changeset without summary has nothing to
+			// show
 			if (name === config.mainPackage || !summary) {
 				continue;
 			}
 
-			// 3. Untyped packages are listed under their own title instead of the version type sections
+			// Untyped packages are listed under their own title instead of the version type sections
 			const untypedTitle = config.untypedPackageTitles[name];
 
 			if (untypedTitle) {
@@ -54,7 +54,6 @@ export async function getInfo(changesets: Changesets): Promise<{
 				continue;
 			}
 
-			// 4. File the change under the version type section and package, creating both on first use
 			const typeTitle = config.typedTitles[type];
 			const typeInTypes = types.find((t) => t.title === typeTitle);
 
@@ -75,7 +74,6 @@ export async function getInfo(changesets: Changesets): Promise<{
 		}
 	}
 
-	// 5. Order the sections the way the config lists the titles, and the packages the way the config pins them
 	types.sort(sortByObjectValues(config.typedTitles, 'title'));
 
 	for (const { packages } of types) {

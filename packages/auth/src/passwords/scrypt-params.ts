@@ -73,7 +73,7 @@ export interface ParsedHash {
  * @internal
  */
 export const formatHash = (params: ScryptParams, salt: Buffer, key: Buffer): string => {
-	// 1. PHC uses standard base64 without the padding
+	// PHC uses standard base64 without the padding
 	const encode = (bytes: Buffer): string => bytes.toString('base64').replace(/=+$/, '');
 
 	return `$scrypt$ln=${params.ln},r=${params.r},p=${params.p}$${encode(salt)}$${encode(key)}`;
@@ -90,15 +90,15 @@ export const formatHash = (params: ScryptParams, salt: Buffer, key: Buffer): str
  * @internal
  */
 export const parseHash = (hash: string): ParsedHash => {
-	// 1. Exactly the shape `formatHash` writes; anything else is not a hash of this package
+	// Exactly the shape `formatHash` writes; anything else is not a hash of this package
 	const match = /^\$scrypt\$ln=(\d+),r=(\d+),p=(\d+)\$([A-Za-z0-9+/]+)\$([A-Za-z0-9+/]+)$/.exec(hash);
 
 	if (!match) {
-		throw new Error('The password hash is not a scrypt hash in the PHC format');
+		throw new Error('@novastarter/auth: the password hash is not a scrypt hash in the PHC format');
 	}
 
-	// 2. Each factor bounded, and their product too: scrypt needs `128 · N · r · p` bytes, and the factors alone would
-	//    let a tampered hash ask for tens of gigabytes; the ceiling keeps one verification at a gigabyte at most
+	// Each factor bounded, and their product too: scrypt needs `128 · N · r · p` bytes, and the factors alone would let
+	// a tampered hash ask for tens of gigabytes; the ceiling keeps one verification at a gigabyte at most
 	const params = { ln: Number(match[1]), r: Number(match[2]), p: Number(match[3]) };
 
 	if (
@@ -110,7 +110,7 @@ export const parseHash = (hash: string): ParsedHash => {
 		params.p > 16 ||
 		128 * 2 ** params.ln * params.r * params.p > MAX_SCRYPT_MEMORY
 	) {
-		throw new Error('The password hash has a scrypt cost out of bounds');
+		throw new Error('@novastarter/auth: the password hash has a scrypt cost out of bounds');
 	}
 
 	return { params, salt: Buffer.from(match[4]!, 'base64'), key: Buffer.from(match[5]!, 'base64') };
@@ -124,6 +124,6 @@ export const parseHash = (hash: string): ParsedHash => {
  * @internal
  */
 export const maxmem = (params: ScryptParams): number => {
-	// 1. Node refuses when `128 · N · r` exceeds `maxmem`; twice that leaves room for its own bookkeeping
+	// Node refuses when `128 · N · r` exceeds `maxmem`; twice that leaves room for its own bookkeeping
 	return 2 * 128 * 2 ** params.ln * params.r * params.p;
 };

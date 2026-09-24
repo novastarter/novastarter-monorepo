@@ -9,7 +9,7 @@ import {
 	type TokenFormat,
 	type TokenRecord,
 } from '@novastarter/auth';
-import { InvalidPayloadError } from '@novastarter/errors';
+import { InvalidConfigError, InvalidPayloadError } from '@novastarter/errors';
 
 /**
  * The purpose every token of the driver is made and spent under, so a sign-in link cannot be used as a password reset
@@ -114,13 +114,13 @@ export class AuthDriverMagicLink implements AuthDriver {
 	 * Create the driver from its location options.
 	 *
 	 * @param config - The application's lookup, storage and sender.
-	 * @throws Error when a callback is missing: the driver cannot work without any of them.
+	 * @throws InvalidConfigError when a callback is missing: the driver cannot work without any of them.
 	 */
 	constructor(config: AuthDriverMagicLinkConfig) {
-		// 1. Checked here, since the options come from a location config typed loosely enough to leave one out
+		// Checked here, since the options come from a location config typed loosely enough to leave one out
 		for (const name of ['findUser', 'issue', 'spend', 'send'] as const) {
 			if (typeof config[name] !== 'function') {
-				throw new Error(`The magic-link driver needs a "${name}" function`);
+				throw new InvalidConfigError({ reason: `The magic-link driver needs a "${name}" function` });
 			}
 		}
 
@@ -139,7 +139,6 @@ export class AuthDriverMagicLink implements AuthDriver {
 	 * @throws InvalidPayloadError when the address is missing or the format is not one of the two.
 	 */
 	async begin(input: ChallengeInput): Promise<ChallengeBegun> {
-		// 1. The address and the format, refused when they are not what the form should send
 		const email = typeof input.identifier === 'string' ? input.identifier.trim() : '';
 		const format = input['format'] ?? 'link';
 
@@ -151,14 +150,14 @@ export class AuthDriverMagicLink implements AuthDriver {
 			throw new InvalidPayloadError({ reason: 'The format must be "link" or "code"' });
 		}
 
-		// 2. Nobody to send to: the same empty answer as a success, so the response does not reveal the account
+		// The same empty answer as a success, so the response does not reveal the account
 		const user = await this.config.findUser(email);
 
 		if (!user && (format === 'code' || !this.config.signUp)) {
 			return {};
 		}
 
-		// 3. The token, with the address in its data so the second step knows who it was for
+		// The address goes in the token's data, so the second step knows who it was for
 		const { token, record } = createToken({
 			purpose: MAGIC_LINK_PURPOSE,
 			userId: user?.id,
@@ -167,12 +166,12 @@ export class AuthDriverMagicLink implements AuthDriver {
 			ttl: format === 'code' ? this.config.codeTtl : this.config.ttl,
 		});
 
-		// 4. Stored before it is sent, so a quick click never finds the token missing
+		// Stored before it is sent, so a quick click never finds the token missing
 		await this.config.issue(record);
 
-		// 5. The mail is not awaited: a whole mail-provider round trip only for real accounts would let the response time
-		//    tell which addresses have them; the async wrappers turn a synchronous throw into a rejection too, and the
-		//    last catch drops a reporter that throws or rejects itself, so neither becomes an unhandled rejection
+		// The mail is not awaited: a whole mail-provider round trip only for real accounts would let the response time
+		// tell which addresses have them. The async wrappers turn a synchronous throw into a rejection too, and the
+		// last catch drops a reporter that throws or rejects itself, so neither becomes an unhandled rejection
 		void (async () => this.config.send({ email, token, format, userId: user?.id, expiresAt: record.expiresAt }))()
 			.catch(async (error: unknown) => this.config.onSendError?.(error, email))
 			.catch(() => {});
@@ -190,15 +189,14 @@ export class AuthDriverMagicLink implements AuthDriver {
 	 * @throws HitRateLimitError when a code's user tried too many codes.
 	 */
 	async complete(input: ChallengeInput): Promise<AuthIdentity> {
-		// 1. A token of some kind is the least a second step has to bring
 		const token = input['token'];
 
 		if (typeof token !== 'string' || token.length === 0) {
 			throw new AuthInvalidTokenError();
 		}
 
-		// 2. With an address it is a code, keyed by the account and checked against the `code` limiter; without one it
-		//    is a link, keyed by the token alone
+		// With an address it is a code, keyed by the account and checked against the `code` limiter; without one it is
+		// a link, keyed by the token alone
 		let record: TokenRecord;
 
 		if (typeof input.identifier === 'string') {
@@ -213,8 +211,8 @@ export class AuthDriverMagicLink implements AuthDriver {
 			record = await checkToken({ purpose: MAGIC_LINK_PURPOSE, token, spend: this.config.spend });
 		}
 
-		// 3. The address reached the mailbox, so it is verified; a link made without an account is a sign-up — the
-		//    application's storage may hand the missing user back as `null`, hence the falsy check
+		// The address reached the mailbox, so it is verified; a link made without an account is a sign-up, and the
+		// application's storage may hand the missing user back as `null`, hence the falsy check
 		const email = String(record.data?.['email'] ?? '');
 
 		if (!record.userId) {

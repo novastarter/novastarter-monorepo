@@ -79,17 +79,64 @@ const noExportRename = {
 			 * @param {import('estree').ExportSpecifier} node - The export specifier being visited.
 			 */
 			ExportSpecifier(node) {
-				// 1. Either side may be a string literal (`export { a as 'b' }`), so read `name` or `value`
+				// Either side may be a string literal (`export { a as 'b' }`), so read `name` or `value`
 				const local = node.local.type === 'Identifier' ? node.local.name : String(node.local.value);
 				const exported = node.exported.type === 'Identifier' ? node.exported.name : String(node.exported.value);
 
-				// 2. Only a differing pair is a rename; `export { a }` and `export { a as a }` are fine
+				// `export { a as a }` names the symbol once, so only a differing pair is a rename
 				if (local !== exported) {
 					context.report({ node, messageId: 'rename', data: { local, exported } });
 				}
 			},
 		};
 	},
+};
+
+/**
+ * Local rule that forbids numbered line comments (`// 1. Parse the input`) inside code.
+ *
+ * Numbered step comments retell the code and go stale; the step order is already visible from the code itself. See
+ * `docs/decisions/0006-comments-explain-why.md`.
+ */
+const noNumberedComments = {
+	meta: {
+		type: 'suggestion',
+		docs: { description: 'Disallow numbered step comments' },
+		schema: [],
+		messages: {
+			numbered:
+				'Drop the step number: keep the comment only if it explains why, a constraint or a non-obvious consequence.',
+		},
+	},
+	/**
+	 * Build the visitor that reports every line comment starting with `<digits>.`.
+	 *
+	 * @param {import('eslint').Rule.RuleContext} context - Rule context used to report problems.
+	 * @returns {import('eslint').Rule.RuleListener} The AST visitor.
+	 */
+	create(context) {
+		return {
+			/**
+			 * Scan all comments once per file; comments are not AST nodes, so no node visitor would reach them.
+			 */
+			Program() {
+				for (const comment of context.sourceCode.getAllComments()) {
+					if (comment.type === 'Line' && /^\s*\d+\.\s/.test(comment.value)) {
+						context.report({ loc: comment.loc ?? { line: 1, column: 0 }, messageId: 'numbered' });
+					}
+				}
+			},
+		};
+	},
+};
+
+/**
+ * Plugin holding the repository's own rules, registered once under the `local` prefix.
+ *
+ * Flat config refuses to redefine a plugin name with a different object, so every config block reuses this one.
+ */
+const localPlugin = {
+	rules: { 'no-export-rename': noExportRename, 'no-numbered-comments': noNumberedComments },
 };
 
 /**
@@ -226,12 +273,13 @@ export default typescriptEslint.config(
 
 	// AGENTS.md "comment all code": JSDoc above every module-level function and function-valued `const`, every class
 	// and method, and every exported type or `const`, in every file of the repository. Helpers declared inside a
-	// function body and callbacks passed as arguments (`it(() => …)`, `.map(…)`) are covered by the numbered comments
-	// of the enclosing function instead
+	// function body and callbacks passed as arguments (`it(() => …)`, `.map(…)`) are part of the enclosing function
+	// and need none. Numbered step comments are banned everywhere
 	{
 		files: [SOURCE_FILES],
-		plugins: { jsdoc: eslintJsdocPlugin },
+		plugins: { jsdoc: eslintJsdocPlugin, local: localPlugin },
 		rules: {
+			'local/no-numbered-comments': 'error',
 			'jsdoc/require-jsdoc': [
 				'error',
 				{
@@ -251,7 +299,7 @@ export default typescriptEslint.config(
 					contexts: [
 						// A function stored in a module-level `const`; an exported one is covered by the
 						// `ExportNamedDeclaration` context below. A helper `const` inside a function body is a step of
-						// that function and is explained by its numbered comment, not by a JSDoc of its own
+						// that function and needs no JSDoc of its own
 						'Program > VariableDeclaration > VariableDeclarator > ArrowFunctionExpression',
 						'Program > VariableDeclaration > VariableDeclarator > FunctionExpression',
 						// A declared function at module level, exported or not; a function declared inside another one
@@ -280,7 +328,7 @@ export default typescriptEslint.config(
 	{
 		files: [`packages/${SOURCE_FILES}`, `apps/${SOURCE_FILES}`],
 		ignores: [...FRAMEWORK_FILES, ...TEST_FILES],
-		plugins: { local: { rules: { 'no-export-rename': noExportRename } } },
+		plugins: { local: localPlugin },
 		rules: {
 			'no-restricted-syntax': ['error', ...NAMED_EXPORT_SYNTAX, DYNAMIC_IMPORT_SYNTAX],
 			'local/no-export-rename': 'error',
@@ -291,7 +339,7 @@ export default typescriptEslint.config(
 	{
 		files: TEST_FILES.flatMap((pattern) => [`packages/${pattern}`, `apps/${pattern}`]),
 		ignores: FRAMEWORK_FILES,
-		plugins: { local: { rules: { 'no-export-rename': noExportRename } } },
+		plugins: { local: localPlugin },
 		rules: {
 			'no-restricted-syntax': ['error', ...NAMED_EXPORT_SYNTAX],
 			'local/no-export-rename': 'error',

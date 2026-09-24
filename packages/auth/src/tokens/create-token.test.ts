@@ -26,7 +26,6 @@ describe('createToken', () => {
 	test('Makes a link token by default, its record keyed by the token alone', () => {
 		const { token, record } = createToken({ purpose: 'password-reset', userId: 'user-1' });
 
-		// 1. 256 random bits as base64url, looked up without the user
 		expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
 
 		expect(record).toStrictEqual({
@@ -41,7 +40,6 @@ describe('createToken', () => {
 	test('Makes a link token without a user and keeps the data', () => {
 		const { record } = createToken({ purpose: 'email-confirm', data: { email: 'a@example.com' } });
 
-		// 1. No `userId` key at all, and the data as given
 		expect(record).not.toHaveProperty('userId');
 		expect(record.data).toStrictEqual({ email: 'a@example.com' });
 	});
@@ -49,7 +47,6 @@ describe('createToken', () => {
 	test('Makes a numeric code bound to its user, with the shorter default lifetime', () => {
 		const { token, record } = createToken({ purpose: 'sign-in', userId: 'user-1', format: 'code' });
 
-		// 1. Six digits, hashed together with the user
 		expect(token).toMatch(new RegExp(`^\\d{${CODE_DIGITS}}$`));
 		expect(record.id).toBe(oneTimeTokenId(token, 'user-1'));
 		expect(record.id).not.toBe(oneTimeTokenId(token));
@@ -59,17 +56,14 @@ describe('createToken', () => {
 	test('Takes the lifetimes from the settings, and a per-call one over them', () => {
 		useAuth().registerSettings({ tokens: { ttl: 5_000, codeTtl: 1_000 } });
 
-		// 1. Each format reads its own setting
 		expect(createToken({ purpose: 'p' }).record.expiresAt).toBe(NOW + 5_000);
 		expect(createToken({ purpose: 'p', userId: 'u', format: 'code' }).record.expiresAt).toBe(NOW + 1_000);
 
-		// 2. The call's own lifetime wins for either
 		expect(createToken({ purpose: 'p', ttl: 42 }).record.expiresAt).toBe(NOW + 42);
 		expect(createToken({ purpose: 'p', userId: 'u', format: 'code', ttl: 42 }).record.expiresAt).toBe(NOW + 42);
 	});
 
 	test('Refuses an empty purpose and a code without a user', () => {
-		// 1. Both are mistakes of the caller, reported as a bad payload
 		expect(() => createToken({ purpose: '' })).toThrow(expect.objectContaining({ code: 'INVALID_PAYLOAD' }));
 
 		expect(() => createToken({ purpose: 'sign-in', format: 'code' })).toThrow(

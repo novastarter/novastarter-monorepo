@@ -1,4 +1,5 @@
 import { createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
+import { InvalidConfigError, InvalidPayloadError } from '@novastarter/errors';
 import {
 	platformOf,
 	type PushDriver,
@@ -108,28 +109,31 @@ export class PushDriverWebPush implements PushDriver {
 	 * Create a driver on a VAPID key pair.
 	 *
 	 * @param config - Keys, subject and defaults.
-	 * @throws Error without a public key, a private key or a subject, or with a subject that is neither `mailto:`
+	 * @throws InvalidConfigError without a public key, a private key or a subject, or with a subject that is neither `mailto:`
 	 * nor `https:` — the push services refuse such a VAPID token.
-	 * @throws Error when a key is not URL-safe base64 of the right length (65 bytes decoded for the public key, 32
+	 * @throws InvalidConfigError when a key is not URL-safe base64 of the right length (65 bytes decoded for the public key, 32
 	 * for the private one) — a malformed key must fail here, at registration, not on every send with the library's
 	 * raw error.
 	 */
 	constructor(config: PushDriverWebPushConfig) {
-		// 1. Missing keys are a configuration error; reported by the options' names, with the command that makes a pair
+		// The error names the command that makes a pair
 		if (!config.publicKey || !config.privateKey) {
-			throw new Error(
-				'The webpush push driver needs a "publicKey" and a "privateKey" (generate them with `npx web-push generate-vapid-keys`)',
-			);
+			throw new InvalidConfigError({
+				reason:
+					'The webpush push driver needs a "publicKey" and a "privateKey" (generate them with `npx web-push generate-vapid-keys`)',
+			});
 		}
 
-		// 2. The subject is what a push service contacts about abuse; it takes exactly two forms
+		// The subject is what a push service contacts about abuse; it takes exactly two forms
 		if (!config.subject || !/^(mailto:|https:\/\/)/.test(config.subject)) {
-			throw new Error('The webpush push driver needs a "subject" that is a mailto: address or an https: URL');
+			throw new InvalidConfigError({
+				reason: 'The webpush push driver needs a "subject" that is a mailto: address or an https: URL',
+			});
 		}
 
-		// 3. The library's own decode-and-length check, exactly as `verify()` runs it: a key truncated or padded in
-		//    copy-paste built fine so far and failed every send with the library's raw error — the pair match of
-		//    `verify()` still needs a signature, this does not
+		// The library's own decode-and-length check, exactly as `verify()` runs it, so a key truncated or padded in
+		// copy-paste fails here rather than on every send with the library's raw error; the pair match of `verify()` still
+		// needs a signature, this does not
 		try {
 			webpush.getVapidHeaders(
 				VERIFY_AUDIENCE,
@@ -139,8 +143,10 @@ export class PushDriverWebPush implements PushDriver {
 				config.contentEncoding ?? 'aes128gcm',
 			);
 		} catch (error) {
-			throw new Error(
-				`The webpush push driver got a "publicKey" or a "privateKey" that is not valid URL-safe base64 of the right length: ${toErrorMessage(error)}`,
+			throw new InvalidConfigError(
+				{
+					reason: `The webpush push driver needs a "publicKey" and a "privateKey" that are URL-safe base64 of the right length (${toErrorMessage(error).replace(/\.$/, '')})`,
+				},
 				{ cause: error },
 			);
 		}
@@ -158,29 +164,31 @@ export class PushDriverWebPush implements PushDriver {
 	 * @throws InvalidPayloadError for a subscription `platformOf()` refuses — no `https:` endpoint, missing keys, or an
 	 * endpoint that is not on a known browser push service, so a direct caller cannot make the server post to an
 	 * internal host either.
+	 * @throws InvalidPayloadError for a message with a token instead of a subscription.
 	 * @throws PushTargetGoneError for a `404` / `410`.
 	 * @throws Error carrying the status and body for any other refusal, or the network error.
 	 */
 	async send(message: PushMessage): Promise<PushResult> {
 		const subscription = message.subscription;
 
-		// 1. A token cannot be delivered here; `sendPush()` routes by platform, but a direct caller may not
+		// `sendPush()` routes by platform, but a direct caller may not
 		if (!subscription) {
-			throw new Error('The webpush push driver needs a subscription; a token belongs to the fcm or apns driver');
+			throw new InvalidPayloadError({
+				reason: 'The webpush push driver needs a subscription; a token belongs to the fcm or apns driver',
+			});
 		}
 
-		// 2. The endpoint is client-supplied: the same check as `sendPush()`, since `location(name).send()` skips it and
-		//    this is where the request is made
+		// The endpoint is client-supplied: the same check as `sendPush()`, since `location(name).send()` skips it and this
+		// is where the request is made
 		platformOf(message);
 
-		// 3. The library's subscription shape: `expirationTime` only when known, as `exactOptionalPropertyTypes` wants
+		// `expirationTime` only when known, as `exactOptionalPropertyTypes` wants
 		const target: PushSubscription = {
 			endpoint: subscription.endpoint,
 			keys: subscription.keys,
 			...(subscription.expirationTime !== undefined ? { expirationTime: subscription.expirationTime } : {}),
 		};
 
-		// 4. The library encrypts the payload for the subscription and signs the request with the keys
 		try {
 			const result = await this.sendNotification(
 				target,
@@ -201,11 +209,11 @@ export class PushDriverWebPush implements PushDriver {
 	 * would pass and every push would then be refused with a 403 — the pair is proven by signing with the private key
 	 * and verifying with the public one.
 	 *
-	 * @throws Error when the keys do not decode, are not a pair, or the subject is refused.
+	 * @throws InvalidConfigError when the keys do not decode, are not a pair, or the subject is refused.
 	 */
 	async verify(): Promise<void> {
 		try {
-			// 1. The library's own checks: key lengths, the subject, a signed token
+			// The library's own checks: key lengths, the subject, a signed token
 			webpush.getVapidHeaders(
 				VERIFY_AUDIENCE,
 				this.config.subject,
@@ -214,7 +222,7 @@ export class PushDriverWebPush implements PushDriver {
 				this.config.contentEncoding ?? 'aes128gcm',
 			);
 
-			// 2. The pair: the public key is the uncompressed point `04 || x || y`, the private key the scalar `d`
+			// The public key is the uncompressed point `04 || x || y`, the private key the scalar `d`
 			const point = Buffer.from(this.config.publicKey, 'base64url');
 			const x = point.subarray(1, 33).toString('base64url');
 			const y = point.subarray(33, 65).toString('base64url');
@@ -227,12 +235,17 @@ export class PushDriverWebPush implements PushDriver {
 			const publicKey = createPublicKey({ key: { kty: 'EC', crv: 'P-256', x, y }, format: 'jwk' });
 			const challenge = Buffer.from(VERIFY_AUDIENCE);
 
-			// 3. A signature only verifies with the public half of the key that made it
+			// A signature only verifies with the public half of the key that made it
 			if (!verify('sha256', challenge, publicKey, sign('sha256', challenge, privateKey))) {
 				throw new Error('the public and the private key are not a pair');
 			}
 		} catch (error) {
-			throw new Error(`Web push VAPID keys are invalid: ${toErrorMessage(error)}`, { cause: error });
+			throw new InvalidConfigError(
+				{
+					reason: `The webpush push driver needs a valid VAPID key pair and subject (${toErrorMessage(error).replace(/\.$/, '')})`,
+				},
+				{ cause: error },
+			);
 		}
 	}
 }

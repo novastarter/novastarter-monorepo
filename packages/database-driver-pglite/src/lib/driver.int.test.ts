@@ -18,7 +18,7 @@ import { DatabaseDriverPglite, MEMORY_DATA_DIR } from './driver.js';
  * @returns The folder; the caller removes it.
  */
 const writeMigrations = async (): Promise<string> => {
-	// 1. A fresh folder per suite, so two suites of this file cannot share a journal
+	// A fresh folder per suite, so two suites of this file cannot share a journal
 	const folder = await mkdtemp(join(tmpdir(), 'novastarter-migrations-'));
 	await mkdir(join(folder, 'meta'));
 
@@ -31,7 +31,7 @@ const writeMigrations = async (): Promise<string> => {
 		}),
 	);
 
-	// 2. The migration itself: a probe table nothing reads — the migrator running it and journaling it is the point
+	// A probe table nothing reads: the migrator running it and journaling it is the point
 	await writeFile(join(folder, '0000_init.sql'), 'CREATE TABLE "probe" ("id" serial PRIMARY KEY NOT NULL);');
 
 	return folder;
@@ -46,8 +46,8 @@ describe('DatabaseDriverPglite in memory', { timeout: 30_000 }, () => {
 	beforeAll(async () => {
 		driver = new DatabaseDriverPglite({ connection: MEMORY_DATA_DIR, logger: logger as never });
 
-		// 1. The fixture table the transaction below writes is made here, not by the migration: every test must pass
-		//    run alone, under `vitest -t` as well as whole-file
+		// The fixture table the transaction below writes is made here, not by the migration: every test must pass
+		// run alone, under `vitest -t` as well as whole-file
 		await driver.db.execute(
 			sql`CREATE TABLE IF NOT EXISTS "notes" ("id" serial PRIMARY KEY NOT NULL, "text" text NOT NULL)`,
 		);
@@ -56,8 +56,8 @@ describe('DatabaseDriverPglite in memory', { timeout: 30_000 }, () => {
 	}, 60_000);
 
 	afterAll(async () => {
-		// 1. A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
-		//    real failure stays the one reported
+		// A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
+		// real failure stays the one reported
 		if (driver) {
 			await driver.close();
 		}
@@ -77,14 +77,14 @@ describe('DatabaseDriverPglite in memory', { timeout: 30_000 }, () => {
 		await driver.migrate({ migrationsFolder });
 		await driver.migrate({ migrationsFolder });
 
-		// 1. Drizzle's Postgres migrator keeps its journal under the `drizzle` schema
+		// Drizzle's Postgres migrator keeps its journal under the `drizzle` schema
 		const rows = await driver.db.execute(sql`SELECT count(*)::int AS count FROM "drizzle"."__drizzle_migrations"`);
 
 		expect(rows.rows).toStrictEqual([{ count: 1 }]);
 	});
 
 	test('A transaction rolls back on failure and commits otherwise', async () => {
-		// 1. The insert inside a failing transaction must not survive it
+		// The insert inside a failing transaction must not survive it
 		await expect(
 			driver.db.transaction(async (tx) => {
 				await tx.execute(sql`INSERT INTO "notes" ("text") VALUES ('rolled back')`);
@@ -96,7 +96,6 @@ describe('DatabaseDriverPglite in memory', { timeout: 30_000 }, () => {
 			{ count: 0 },
 		]);
 
-		// 2. A committed one is there afterwards
 		await driver.db.transaction(async (tx) => {
 			await tx.execute(sql`INSERT INTO "notes" ("text") VALUES ('committed')`);
 		});
@@ -118,15 +117,15 @@ describe('DatabaseDriverPglite on a directory', { timeout: 30_000 }, () => {
 	let migrationsFolder: string;
 
 	beforeAll(async () => {
-		// 1. The data directory sits under a parent that does not exist yet, so the recursive creation is proven
+		// The data directory sits under a parent that does not exist yet, so the recursive creation is proven
 		root = await mkdtemp(join(tmpdir(), 'novastarter-pglite-'));
 		directory = join(root, 'nested', 'pgdata');
 		migrationsFolder = await writeMigrations();
 	});
 
 	afterAll(async () => {
-		// 1. A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
-		//    real failure stays the one reported
+		// A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
+		// real failure stays the one reported
 		if (root) {
 			await rm(root, { recursive: true, force: true });
 		}
@@ -137,13 +136,13 @@ describe('DatabaseDriverPglite on a directory', { timeout: 30_000 }, () => {
 	});
 
 	test('The data survives the instance that wrote it', async () => {
-		// 1. A first instance creates the directory, migrates and writes; `initdb` runs here, hence the suite timeout
+		// `initdb` runs when the first instance boots, hence the suite timeout
 		const first = new DatabaseDriverPglite({ connection: directory, logger: logger as never });
 
 		await first.migrate({ migrationsFolder });
 
-		// 2. The fixture table is made here, not by the migration: the write below stands on its own, whatever the
-		//    migrator ran
+		// The fixture table is made here, not by the migration: the write below stands on its own, whatever the
+		// migrator ran
 		await first.db.execute(
 			sql`CREATE TABLE IF NOT EXISTS "notes" ("id" serial PRIMARY KEY NOT NULL, "text" text NOT NULL)`,
 		);
@@ -151,7 +150,6 @@ describe('DatabaseDriverPglite on a directory', { timeout: 30_000 }, () => {
 		await first.db.execute(sql`INSERT INTO "notes" ("text") VALUES ('kept')`);
 		await first.close();
 
-		// 3. A second instance on the same directory reads what the first one wrote
 		const second = new DatabaseDriverPglite({ connection: directory, logger: logger as never });
 
 		expect((await second.db.execute(sql`SELECT "text" FROM "notes"`)).rows).toStrictEqual([{ text: 'kept' }]);

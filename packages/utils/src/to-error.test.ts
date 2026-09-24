@@ -5,7 +5,7 @@ import { expect, test } from 'vitest';
 import { toError } from './to-error.js';
 
 test('Passes an Error through as the same instance', () => {
-	// 1. Identity and class survive, so `instanceof` checks and own fields downstream keep working
+	// Identity and class survive, so `instanceof` checks and own fields downstream keep working
 	const error = new RangeError('boom');
 
 	expect(toError(error)).toBe(error);
@@ -13,7 +13,7 @@ test('Passes an Error through as the same instance', () => {
 });
 
 test('Wraps a non-Error value, keeping it as cause', () => {
-	// 1. The message is what `toErrorMessage` makes of the value; the value itself is reachable as `cause`
+	// The message is what `toErrorMessage` makes of the value; the value itself is reachable as `cause`
 	const wrapped = toError('boom');
 
 	expect(wrapped).toBeInstanceOf(Error);
@@ -22,7 +22,7 @@ test('Wraps a non-Error value, keeping it as cause', () => {
 });
 
 test('Wraps objects and absent values', () => {
-	// 1. A vendor payload thrown as a plain object stays inspectable through `cause`
+	// A vendor payload thrown as a plain object stays inspectable through `cause`
 	const payload = { code: 'E_AUTH' };
 
 	expect(toError(payload).cause).toBe(payload);
@@ -34,7 +34,7 @@ test('Wraps objects and absent values', () => {
 });
 
 test('Wraps an object without a prototype instead of throwing', () => {
-	// 1. `String()` on such an object throws; the wrapper still gets a message and the value as cause
+	// `String()` on such an object throws; the wrapper still gets a message and the value as cause
 	const bare = Object.create(null);
 
 	expect(toError(bare).message).toBe('[object Object]');
@@ -42,7 +42,7 @@ test('Wraps an object without a prototype instead of throwing', () => {
 });
 
 test('Never throws, even for a revoked Proxy, and wraps it', () => {
-	// 1. `instanceof` on a revoked Proxy throws; the helper wraps the value instead, so a `catch` clause can rely on it
+	// `instanceof` on a revoked Proxy throws; the helper wraps the value instead, so a `catch` clause can rely on it
 	const revocable = Proxy.revocable({}, {});
 	revocable.revoke();
 

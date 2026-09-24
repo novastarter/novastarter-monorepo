@@ -6,12 +6,12 @@ import type { BusDriver } from './driver.js';
 import * as driver from './driver.js';
 
 test('ships no runtime code', () => {
-	// 1. The interface describes the backends; nothing here may end up in a consumer's bundle
+	// The interface describes the backends; nothing here may end up in a consumer's bundle
 	expect(Object.keys(driver)).toEqual([]);
 });
 
 test('a backend satisfies the contract with three methods', () => {
-	// 1. The interface is the whole surface a backend needs to implement; `close` and `onReconnect` are optional
+	// The interface is the whole surface a backend needs to implement; `close` and `onReconnect` are optional
 	const backend: BusDriver = {
 		publish: async () => {},
 		subscribe: async (_channel, _callback) => {},

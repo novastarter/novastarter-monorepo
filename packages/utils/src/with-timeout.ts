@@ -18,7 +18,7 @@ export class TimeoutError extends Error {
 	 * @param ms - The deadline that passed, in milliseconds.
 	 */
 	constructor(ms: number) {
-		// 1. The name matches the `DOMException` of `AbortSignal.timeout()`, so one `error.name` check covers both
+		// The name matches the `DOMException` of `AbortSignal.timeout()`, so one `error.name` check covers both
 		super(`Timed out after ${ms} ms`);
 		this.name = 'TimeoutError';
 		this.ms = ms;
@@ -76,9 +76,9 @@ export const withTimeout = <T>(
 	ms: number,
 	{ signal, error = (limit) => new TimeoutError(limit) }: WithTimeoutOptions = {},
 ): Promise<T> => {
-	// 1. A deadline the timer cannot hold is refused rather than turned into a 1 ms one: Node arms 1 ms for a
-	//    negative, `NaN` or overlong delay, which would fail every operation at once instead of never. A promise
-	//    handed in is already running; its outcome is observed so a late rejection is not reported as unhandled
+	// A deadline the timer cannot hold is refused rather than turned into a 1 ms one: Node arms 1 ms for a
+	// negative, `NaN` or overlong delay, which would fail every operation at once instead of never. A promise
+	// handed in is already running; its outcome is observed so a late rejection is not reported as unhandled
 	if (!(ms >= 0 && ms <= MAX_TIMER_DELAY)) {
 		if (typeof operation !== 'function') {
 			operation.catch(() => {});
@@ -87,8 +87,8 @@ export const withTimeout = <T>(
 		return Promise.reject(new RangeError(`withTimeout: "ms" must be between 0 and ${MAX_TIMER_DELAY}, got ${ms}`));
 	}
 
-	// 2. A signal aborted before the call: fail right away rather than starting work nobody waits for; the promise
-	//    form is observed for the same reason as above
+	// A signal aborted before the call: fail right away rather than starting work nobody waits for; the promise
+	// form is observed for the same reason as above
 	if (signal?.aborted) {
 		if (typeof operation !== 'function') {
 			operation.catch(() => {});
@@ -97,16 +97,14 @@ export const withTimeout = <T>(
 		return Promise.reject(signal.reason);
 	}
 
-	// 3. One controller serves the function form: its signal carries the timeout or the outer abort to the operation
+	// One controller serves the function form: its signal carries the timeout or the outer abort to the operation
 	const controller = new AbortController();
 
-	// 4. The race itself lives in the executor, whose steps are numbered on their own
 	return new Promise<T>((resolve, reject) => {
-		// 1. The deadline: reject the caller and abort the operation's signal with the same error, so a function
-		//    operation that watches its signal sees why it was stopped. A factory that throws rejects with what it
-		//    threw: inside a timer callback the exception would otherwise be uncaught and take the process down
+		// The deadline: reject the caller and abort the operation's signal with the same error, so a function
+		// operation that watches its signal sees why it was stopped. A factory that throws rejects with what it
+		// threw: inside a timer callback the exception would otherwise be uncaught and take the process down
 		const timer = setTimeout(() => {
-			// 1. The error comes from the factory, or is what the factory threw
 			let reason: unknown;
 
 			try {
@@ -115,33 +113,33 @@ export const withTimeout = <T>(
 				reason = thrown;
 			}
 
-			// 2. Nothing else may fire now; the operation's signal and the caller get the same reason
+			// Nothing else may fire now; the operation's signal and the caller get the same reason
 			cleanup();
 			controller.abort(reason);
 			reject(reason);
 		}, ms);
 
-		// 2. An outer abort ends the wait with the signal's reason and passes it on to the operation's signal
+		// An outer abort ends the wait with the signal's reason and passes it on to the operation's signal
 		function onAbort(): void {
-			// 1. Nothing else may fire now; the operation's signal and the caller get the outer signal's reason
+			// Nothing else may fire now; the operation's signal and the caller get the outer signal's reason
 			cleanup();
 			controller.abort(signal?.reason);
 			reject(signal?.reason);
 		}
 
-		// 3. Whichever way the wait ends, the timer and the listener go, so nothing fires on a settled promise and a
-		//    long-lived signal keeps no reference to this call
+		// Whichever way the wait ends, the timer and the listener go, so nothing fires on a settled promise and a
+		// long-lived signal keeps no reference to this call
 		function cleanup(): void {
-			// 1. Both are safe to repeat: a cleared timer and a removed listener are no-ops the second time
+			// Both are safe to repeat: a cleared timer and a removed listener are no-ops the second time
 			clearTimeout(timer);
 			signal?.removeEventListener('abort', onAbort);
 		}
 
 		signal?.addEventListener('abort', onAbort, { once: true });
 
-		// 4. Start the work — a function gets the controller's signal; one that throws before returning a promise
-		//    fails the call at once, with the timer already gone. `Promise.resolve` covers a function that answers with
-		//    a plain value despite its type, so the settle below always has a `then` and the timer never leaks
+		// Start the work — a function gets the controller's signal; one that throws before returning a promise
+		// fails the call at once, with the timer already gone. `Promise.resolve` covers a function that answers with
+		// a plain value despite its type, so the settle below always has a `then` and the timer never leaks
 		let pending: Promise<T>;
 
 		try {
@@ -152,16 +150,14 @@ export const withTimeout = <T>(
 			return;
 		}
 
-		// 5. Settle with the operation's outcome when it comes in time; a settle after the deadline or the abort is
-		//    a no-op on an already rejected promise
+		// Settle with the operation's outcome when it comes in time; a settle after the deadline or the abort is
+		// a no-op on an already rejected promise
 		pending.then(
 			(value) => {
-				// 1. In time: the timer goes, the caller gets the value
 				cleanup();
 				resolve(value);
 			},
 			(cause: unknown) => {
-				// 1. Failed in time: the timer goes, the caller gets the operation's own error
 				cleanup();
 				reject(cause);
 			},

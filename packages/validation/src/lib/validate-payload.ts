@@ -32,18 +32,16 @@ export function validatePayload(
 	payload: Record<string, unknown>,
 	options?: JoiOptions,
 ): InstanceType<typeof FailedValidationError>[] {
-	// 1. The errors every branch below collects into; shared, so the branches read as one accumulation
 	const errors: InstanceType<typeof FailedValidationError>[] = [];
 
-	// 2. Only the first key of a level is evaluated, so a sibling (`{ _and: [...], role: {...} }` or two fields side
-	//    by side) would be dropped silently and its rule never enforced; fail on it instead
+	// Only the first key of a level is evaluated, so a sibling (`{ _and: [...], role: {...} }` or two fields side
+	// by side) would be dropped silently and its rule never enforced; fail on it instead
 	if (Object.keys(filter).length > 1) {
 		throw new Error(
-			`[validatePayload] Filter level contains more than one key; combine them with "_and". Passed filter: ${JSON.stringify(filter)}`,
+			`[@novastarter/validation] validatePayload: Filter level contains more than one key; combine them with "_and". Passed filter: ${JSON.stringify(filter)}`,
 		);
 	}
 
-	// 3. `_and`: every member must pass, so the errors of all members are collected
 	if (Object.keys(filter)[0] === '_and') {
 		const subValidation = Object.values(filter)[0] as FieldFilter[];
 
@@ -55,8 +53,8 @@ export function validatePayload(
 
 		errors.push(...nestedErrors);
 	} else if (Object.keys(filter)[0] === '_or') {
-		// 4. `_or`: stop at the first passing member; the errors gathered so far are only surfaced when none passes,
-		//    since the caller then needs to see why each branch was rejected
+		// The errors gathered so far surface only when no member passes, since the caller then needs to see why each
+		// branch was rejected
 		const subValidation = Object.values(filter)[0] as FieldFilter[];
 
 		const swallowErrors: InstanceType<typeof FailedValidationError>[] = [];
@@ -76,8 +74,7 @@ export function validatePayload(
 			errors.push(...swallowErrors);
 		}
 	} else {
-		// 5. Leaf: build the schema and run it; each Joi detail becomes one error with structured extensions, so the
-		//    caller never sees Joi
+		// Each Joi detail becomes one error with structured extensions, so the caller never sees Joi
 		const schema = generateJoi(filter as FieldFilter, options);
 
 		const { error } = schema.validate(payload, { abortEarly: false });

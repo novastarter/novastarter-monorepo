@@ -21,17 +21,17 @@ import { toErrorMessage } from './to-error-message.js';
  * ```
  */
 export const toError = (value: unknown): Error => {
-	// 1. An `Error` is answered with as it is: wrapping it would hide its class from `instanceof` checks downstream.
-	//    The check itself may throw — a revoked `Proxy` refuses every operation — and a value like that is wrapped
-	//    like any other, since a helper for `catch` clauses must never throw itself
+	// An `Error` is answered with as it is: wrapping it would hide its class from `instanceof` checks downstream.
+	// The check itself may throw — a revoked `Proxy` refuses every operation — and a value like that is wrapped
+	// like any other, since a helper for `catch` clauses must never throw itself
 	try {
 		if (value instanceof Error) {
 			return value;
 		}
 	} catch {
-		// 2. Not an `Error` that can be told apart; falls through to the wrapping below
+		// Not an `Error` that can be told apart; falls through to the wrapping below
 	}
 
-	// 3. Anything else is wrapped; the original stays reachable as `cause` for a handler that knows the vendor's shape
+	// Anything else is wrapped; the original stays reachable as `cause` for a handler that knows the vendor's shape
 	return new Error(toErrorMessage(value), { cause: value });
 };

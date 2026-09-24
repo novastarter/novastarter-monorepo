@@ -45,8 +45,8 @@ export class BusManager extends DriverManager<BusDriver, BusDrivers> {
 	constructor() {
 		super();
 
-		// 1. The drivers of the package are known up front; registering them here spares every application the same
-		//    lines, and a replacement under the same name still wins
+		// The drivers of the package are known up front; registering them here spares every application the same lines,
+		// and a replacement under the same name still wins
 		this.registerDriver('local', BusDriverLocal);
 		this.registerDriver('redis', BusDriverRedis);
 	}

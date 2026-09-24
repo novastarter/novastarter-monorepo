@@ -16,9 +16,8 @@ import type { DatabaseDriverCommonConfig } from '../types.js';
  * ```
  */
 export const resolveLogger = (config: Pick<DatabaseDriverCommonConfig, 'logger' | 'label'>): Logger => {
-	// 1. The location's own logger when given, the process one otherwise
 	const logger = config.logger ?? useLogger();
 
-	// 2. A child only for a labelled location; the manager labels every location it builds, a caller need not
+	// The manager labels every location it builds; a caller need not
 	return config.label === undefined ? logger : logger.child({ database: config.label });
 };

@@ -1,3 +1,4 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import { authSettings } from '../../lib/settings-access.js';
 import { useAuth } from '../../lib/use-auth.js';
 import type { AuthIdentity, Credentials } from '../types.js';
@@ -16,7 +17,7 @@ import { completeSignIn, failSignIn } from './events.js';
  * @returns The identity.
  * @throws InvalidCredentialsError when the credentials do not match or a filter refused.
  * @throws HitRateLimitError when the identifier tried too often.
- * @throws Error when the location does not exist or its driver cannot check credentials.
+ * @throws InvalidConfigError when the location does not exist or its driver cannot check credentials.
  * @example
  * ```ts
  * const identity = await signIn('credentials', { identifier: form.email, password: form.password });
@@ -24,21 +25,23 @@ import { completeSignIn, failSignIn } from './events.js';
  * ```
  */
 export const signIn = async (location: string, credentials: Credentials): Promise<AuthIdentity> => {
-	// 1. The driver first, so a configuration mistake is reported before anything is charged
+	// The driver first, so a configuration mistake is reported before anything is charged
 	const driver = useAuth().location(location);
 
 	if (!driver.authenticate) {
-		throw new Error(`Auth location "${location}" does not sign in with credentials`);
+		throw new InvalidConfigError({
+			reason: `Auth location "${location}" does not sign in with credentials, register it with a driver that does`,
+		});
 	}
 
-	// 2. Charged per account rather than per client, so spreading the guesses over many IP addresses does not help;
-	//    the identifier is folded to one case since addresses compare that way
+	// Charged per account rather than per client, so spreading the guesses over many IP addresses does not help; the
+	// identifier is folded to one case since addresses compare that way
 	const limiter = authSettings().limiters?.signIn;
 	const key = `${location}:${String(credentials.identifier).trim().toLowerCase()}`;
 
 	await limiter?.consume(key);
 
-	// 3. The driver's verdict; a refusal is announced and rethrown as the driver made it
+	// The driver's verdict; a refusal is announced and rethrown as the driver made it
 	let identity: AuthIdentity;
 
 	try {
@@ -47,7 +50,7 @@ export const signIn = async (location: string, credentials: Credentials): Promis
 		throw failSignIn(location, error);
 	}
 
-	// 4. A success clears the count before the filter runs, so a typo or two earlier does not linger
+	// A success clears the count before the filter runs, so a typo or two earlier does not linger
 	await limiter?.delete(key);
 
 	return completeSignIn(location, identity);

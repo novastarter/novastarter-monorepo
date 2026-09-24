@@ -38,7 +38,7 @@ export interface ExchangeCodeParams {
  * ```
  */
 export const exchangeCode = async (context: RequestContext, params: ExchangeCodeParams): Promise<OAuthTokens> => {
-	// 1. A form post, as OAuth prescribes, asking for JSON back
+	// A form post, as OAuth prescribes, asking for JSON back
 	const response = await request(context, TOKEN_URL, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
@@ -51,7 +51,7 @@ export const exchangeCode = async (context: RequestContext, params: ExchangeCode
 		}).toString(),
 	});
 
-	// 2. A refusal hides in a 200 as often as it comes with an error status; either way its OAuth error is the reason
+	// A refusal hides in a 200 as often as it comes with an error status; either way its OAuth error is the reason
 	const body = response.body as
 		| {
 				access_token?: unknown;
@@ -70,7 +70,7 @@ export const exchangeCode = async (context: RequestContext, params: ExchangeCode
 		);
 	}
 
-	// 3. An answer without a token cannot sign anyone in, whatever its status
+	// An answer without a token cannot sign anyone in, whatever its status
 	if (typeof body?.access_token !== 'string' || !body.access_token) {
 		throw new AuthProviderFailedError(
 			{ provider: PROVIDER, reason: 'the token response carried no access_token' },
@@ -78,8 +78,8 @@ export const exchangeCode = async (context: RequestContext, params: ExchangeCode
 		);
 	}
 
-	// 4. The rest only when GitHub sent it: the expiry turned from seconds left into a moment, the scopes — which GitHub
-	//    lists comma-separated — into a list, so the application does not parse GitHub's formats
+	// The expiry becomes a moment and the comma-separated scopes a list, so the application does not parse GitHub's
+	// formats
 	const scope = typeof body.scope === 'string' ? body.scope.split(/[\s,]+/).filter(Boolean) : undefined;
 
 	return {

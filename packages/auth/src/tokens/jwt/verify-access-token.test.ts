@@ -29,7 +29,7 @@ const INVALID = { code: 'AUTH_INVALID_TOKEN' };
  * @param settings - The auth settings of the test.
  */
 const setup = (settings: AuthSettings): void => {
-	// 1. The settings are all the signing reads; nothing is stored, so nothing else needs setting up
+	// The settings are all the signing reads; nothing is stored, so nothing else needs setting up
 	useAuth().registerSettings(settings);
 };
 
@@ -39,7 +39,7 @@ const setup = (settings: AuthSettings): void => {
  * @returns The PKCS#8 private and SPKI public PEM.
  */
 const es256Pair = async (): Promise<{ privateKey: string; publicKey: string }> => {
-	// 1. Extractable, since the settings take the keys as PEM text
+	// Extractable, since the settings take the keys as PEM text
 	const pair = await generateKeyPair('ES256', { extractable: true });
 
 	return { privateKey: await exportPKCS8(pair.privateKey), publicKey: await exportSPKI(pair.publicKey) };
@@ -52,7 +52,7 @@ const es256Pair = async (): Promise<{ privateKey: string; publicKey: string }> =
  * @returns The encoded part.
  */
 const part = (value: unknown): string => {
-	// 1. What jose would write, without jose, so a token it would never sign can be built
+	// What jose would write, without jose, so a token it would never sign can be built
 	return Buffer.from(JSON.stringify(value)).toString('base64url');
 };
 
@@ -76,7 +76,6 @@ describe('verifyAccessToken', () => {
 
 		const verified = await verifyAccessToken(accessToken);
 
-		// 1. The subject becomes the user; custom and registered claims are all there
 		expect(verified.userId).toBe('user-1');
 		expect(verified.claims).toMatchObject({ sub: 'user-1', role: 'admin', iss: 'https://auth.example', aud: 'api' });
 	});
@@ -88,7 +87,6 @@ describe('verifyAccessToken', () => {
 			pair: { accessToken },
 		} = await issueTokenPair('user-1');
 
-		// 1. Signed with the private half, verified with the public half
 		expect((await verifyAccessToken(accessToken)).userId).toBe('user-1');
 	});
 
@@ -99,7 +97,6 @@ describe('verifyAccessToken', () => {
 			pair: { accessToken },
 		} = await issueTokenPair('user-1');
 
-		// 1. A new pair verifies with another public key
 		useAuth().registerSettings({ jwt: { algorithm: 'ES256', ...(await es256Pair()) } });
 
 		await expect(verifyAccessToken(accessToken)).rejects.toMatchObject(INVALID);
@@ -115,7 +112,6 @@ describe('verifyAccessToken', () => {
 		const [header, , signature] = accessToken.split('.');
 		const forged = [header, part({ sub: 'admin', exp: NOW / 1000 + 900 }), signature].join('.');
 
-		// 1. Another subject under the old signature fails the signature check
 		const failure = verifyAccessToken(forged);
 
 		await expect(failure).rejects.toMatchObject(INVALID);
@@ -129,7 +125,6 @@ describe('verifyAccessToken', () => {
 			pair: { accessToken },
 		} = await issueTokenPair('user-1');
 
-		// 1. Past `exp` the token is dead, whatever its signature
 		vi.setSystemTime(NOW + 61_000);
 
 		await expect(verifyAccessToken(accessToken)).rejects.toMatchObject(INVALID);
@@ -142,11 +137,9 @@ describe('verifyAccessToken', () => {
 			pair: { accessToken },
 		} = await issueTokenPair('user-1');
 
-		// 1. The same secret, another expected issuer
 		useAuth().registerSettings({ jwt: { secret: SECRET, issuer: 'https://other.example', audience: 'api' } });
 		await expect(verifyAccessToken(accessToken)).rejects.toMatchObject(INVALID);
 
-		// 2. The same secret, another expected audience
 		useAuth().registerSettings({ jwt: { secret: SECRET, issuer: 'https://auth.example', audience: 'admin' } });
 		await expect(verifyAccessToken(accessToken)).rejects.toMatchObject(INVALID);
 	});
@@ -154,7 +147,7 @@ describe('verifyAccessToken', () => {
 	test('Refuses an unsigned token claiming alg none', async () => {
 		setup({ jwt: { secret: SECRET } });
 
-		// 1. A token with an empty signature must never be taken at its word
+		// A token with an empty signature must never be taken at its word
 		const unsigned = `${part({ alg: 'none', typ: ACCESS_TOKEN_TYPE })}.${part({ sub: 'user-1', exp: NOW / 1000 + 900 })}.`;
 
 		await expect(verifyAccessToken(unsigned)).rejects.toMatchObject(INVALID);
@@ -165,7 +158,7 @@ describe('verifyAccessToken', () => {
 
 		setup({ jwt: { algorithm: 'ES256', ...pair } });
 
-		// 1. HMAC keyed with the public PEM — the classic algorithm confusion — is refused by the pinned algorithm
+		// HMAC keyed with the public PEM — the classic algorithm confusion — is refused by the pinned algorithm
 		const confused = await new SignJWT({})
 			.setProtectedHeader({ alg: 'HS256', typ: ACCESS_TOKEN_TYPE })
 			.setSubject('user-1')
@@ -178,7 +171,6 @@ describe('verifyAccessToken', () => {
 	test('Refuses a JWT of another type signed with the same key', async () => {
 		setup({ jwt: { secret: SECRET } });
 
-		// 1. An ID token or any other JWT under the same secret is not an access token
 		const idToken = await new SignJWT({})
 			.setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
 			.setSubject('user-1')
@@ -191,7 +183,6 @@ describe('verifyAccessToken', () => {
 	test('Refuses a token without a subject', async () => {
 		setup({ jwt: { secret: SECRET } });
 
-		// 1. Every other check passes; the missing `sub` alone refuses it
 		const anonymous = await new SignJWT({})
 			.setProtectedHeader({ alg: 'HS256', typ: ACCESS_TOKEN_TYPE })
 			.setExpirationTime(NOW / 1000 + 900)
@@ -203,7 +194,6 @@ describe('verifyAccessToken', () => {
 	test('Refuses garbage', async () => {
 		setup({ jwt: { secret: SECRET } });
 
-		// 1. Not a JWT at all, and an empty string, come back as the same error
 		await expect(verifyAccessToken('not-a-jwt')).rejects.toMatchObject(INVALID);
 		await expect(verifyAccessToken('')).rejects.toMatchObject(INVALID);
 	});
@@ -211,7 +201,7 @@ describe('verifyAccessToken', () => {
 	test('Throws the configuration error itself when the jwt settings are missing', async () => {
 		setup({});
 
-		// 1. Not hidden behind an invalid token: the operator has to see it
+		// Not hidden behind an invalid token: the operator has to see it
 		await expect(verifyAccessToken('anything')).rejects.toThrow('JWT tokens need the "jwt" auth settings');
 	});
 });

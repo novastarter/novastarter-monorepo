@@ -27,6 +27,7 @@
 	"dependencies": {
 		"@libsql/client": "catalog:",
 		"@novastarter/database": "workspace:*",
+		"@novastarter/errors": "workspace:*",
 		"@novastarter/utils": "workspace:*",
 		"drizzle-orm": "catalog:"
 	},

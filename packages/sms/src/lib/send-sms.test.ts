@@ -5,7 +5,7 @@
  * `@novastarter/memory`.
  */
 import { useEmitter } from '@novastarter/emitter';
-import { createError } from '@novastarter/errors';
+import { createError, InvalidConfigError } from '@novastarter/errors';
 import { useLogger } from '@novastarter/logger';
 import { LimiterDriverLocal } from '@novastarter/memory';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -53,7 +53,6 @@ class OkDriver implements SmsDriver {
 	 * @returns A fixed id, so the tests can tell the result apart from the location.
 	 */
 	async send(message: SmsMessage): Promise<SmsResult> {
-		// 1. Recorded for the assertions, accepted as given
 		sent.push(message);
 
 		return { messageId: 'ok-1', status: 'queued', segments: 1 };
@@ -70,7 +69,7 @@ class BrokenDriver implements SmsDriver {
 	 * @throws Always.
 	 */
 	async send(): Promise<SmsResult> {
-		// 1. An `Error` with a fixed message, so the tests can match it as the `cause` of the send failure
+		// A fixed message lets the tests match it as the `cause` of the send failure.
 		throw new Error('provider is down');
 	}
 }
@@ -85,7 +84,7 @@ class RudeDriver implements SmsDriver {
 	 * @throws Always, a string.
 	 */
 	async send(): Promise<SmsResult> {
-		// 1. Not an `Error` on purpose: pino would take a string for the message and drop the location from the line
+		// Not an `Error` on purpose: pino would take a string for the message and drop the location from the line.
 		throw 'rate limited';
 	}
 }
@@ -111,7 +110,7 @@ class PartialDriver implements SmsDriver {
 	 * @throws Always, the `SmsPartialDeliveryError`-shaped error above.
 	 */
 	async send(): Promise<SmsResult> {
-		// 1. The shape `@novastarter/sms-driver-vonage` throws for a half-accepted text
+		// The shape `@novastarter/sms-driver-vonage` throws for a half-accepted text.
 		throw new SmsPartialDeliveryError({ delivered: 1, parts: 2, reason: '9: Partner quota violation' });
 	}
 }
@@ -122,7 +121,6 @@ class PartialDriver implements SmsDriver {
  * @param locations - Location name to driver name.
  */
 const register = (locations: Record<string, 'ok' | 'broken' | 'rude' | 'partial'>): void => {
-	// 1. Every fake driver is always known; the test decides which locations exist and in which order
 	const manager = useSms();
 
 	manager.registerDriver('ok', OkDriver);
@@ -161,13 +159,10 @@ describe('sendSms', () => {
 
 		const result = await sendSms(message);
 
-		// 1. The answer names the location that delivered, on top of what the driver said
 		expect(result).toStrictEqual({ messageId: 'ok-1', status: 'queued', segments: 1, location: 'main' });
 
-		// 2. The driver saw the message with the sender filled in
 		expect(sent[0]).toStrictEqual({ to: '+14155550123', text: 'Your code is 123456', from: 'Acme' });
 
-		// 3. The filter ran before, the action after
 		expect(emitter.emitFilter).toHaveBeenCalledWith(SMS_SEND_FILTER, message, { category: 'transactional' });
 		expect(emitter.emitAction).toHaveBeenCalledWith(SMS_SENT_EVENT, expect.objectContaining({ location: 'main' }));
 	});
@@ -175,16 +170,15 @@ describe('sendSms', () => {
 	test('Normalises the recipient and refuses one that is not E.164, or a blank text', async () => {
 		register({ main: 'ok' });
 
-		// 1. Separators and the `00` prefix are cleaned up before the driver sees the number
 		await sendSms({ ...message, to: '0044 (7700) 900-123' });
 
 		expect(sent[0]?.to).toBe('+447700900123');
 
-		// 2. A national number would need a country to be guessed; refused by name instead
+		// A national number would need its country guessed.
 		await expect(sendSms({ ...message, to: '4155550123' })).rejects.toMatchObject({ code: 'INVALID_PAYLOAD' });
 		await expect(sendSms({ ...message, to: '4155550123' })).rejects.toThrow(/not a phone number in E.164/);
 
-		// 3. A text of whitespace would be billed for nothing
+		// A text of whitespace would be billed for nothing.
 		await expect(sendSms({ ...message, text: '  ' })).rejects.toThrow(/no text/);
 		expect(sent).toHaveLength(1);
 	});
@@ -193,13 +187,11 @@ describe('sendSms', () => {
 		register({ main: 'ok' });
 		useSms().registerRoutes({ from: 'Acme' });
 
-		// 1. The message's own sender is kept as given
 		await sendSms({ ...message, from: '+14155550100' });
 
 		expect(sent[0]?.from).toBe('+14155550100');
 
-		// 2. Without a sender anywhere the message still goes out: the location's provider may supply one, and a
-		//    driver that cannot refuses it by name
+		// The location's provider may supply a sender, and a driver that cannot refuses the message by name.
 		useSms().registerRoutes({});
 		await sendSms(message);
 
@@ -210,18 +202,15 @@ describe('sendSms', () => {
 		register({ main: 'ok' });
 		useSms().registerRoutes({ from: 'Acme' });
 
-		// 1. A rewrite reaches the driver, its recipient normalised the same way
 		emitter.emitFilter.mockResolvedValueOnce({ ...message, to: '+1 415 555 0199', text: 'Redirected' });
 		await sendSms(message);
 
 		expect(sent[0]).toMatchObject({ to: '+14155550199', text: 'Redirected' });
 
-		// 2. A handler that broke the number is refused here rather than by a provider
 		emitter.emitFilter.mockResolvedValueOnce({ ...message, to: 'test-phone' });
 
 		await expect(sendSms(message)).rejects.toMatchObject({ code: 'INVALID_PAYLOAD' });
 
-		// 3. A veto answers `null` and sends nothing
 		emitter.emitFilter.mockResolvedValueOnce(null);
 
 		expect(await sendSms(message)).toBeNull();
@@ -232,12 +221,10 @@ describe('sendSms', () => {
 		register({ first: 'broken', second: 'ok' });
 		useSms().registerRoutes({ from: 'Acme', transactional: ['first', 'second'] });
 
-		// 1. The broken location is logged and skipped; the next one delivers
 		expect(await sendSms(message)).toMatchObject({ location: 'second' });
 
 		expect(logger.warn).toHaveBeenCalledWith(expect.any(Error), 'Sms location "first" failed to send to +14155550123');
 
-		// 2. An explicit location ignores the routes — and, being broken, fails the send with its error as cause
 		const failure = sendSms(message, { location: 'first' });
 
 		await expect(failure).rejects.toThrow('Every sms location failed (first)');
@@ -253,12 +240,10 @@ describe('sendSms', () => {
 		register({ first: 'partial', second: 'ok' });
 		useSms().registerRoutes({ from: 'Acme', transactional: ['first', 'second'] });
 
-		// 1. The part the provider accepted is already on its way: the chain must not hand the message to the next
-		//    location, which would deliver that part again
+		// The accepted part is already on its way: the next location would deliver it again.
 		const error = await sendSms(message).catch((thrown: unknown) => thrown);
 
-		// 2. The driver's error passes untouched: not wrapped in 'Every sms location failed', not logged as a failed
-		//    location, and no sms.failed event — a partial delivery is neither a send nor a refusal
+		// A partial delivery is neither a send nor a refusal.
 		expect(error).toBeInstanceOf(SmsPartialDeliveryError);
 
 		expect(error).toMatchObject({
@@ -275,7 +260,7 @@ describe('sendSms', () => {
 		register({ first: 'rude', second: 'ok' });
 		useSms().registerRoutes({ from: 'Acme', transactional: ['first', 'second'] });
 
-		// 1. The string is wrapped, so pino keeps the kit's line and the location; the raw value stays as the cause
+		// The string is wrapped so pino keeps the kit's line and the location.
 		expect(await sendSms(message)).toMatchObject({ location: 'second' });
 
 		expect(logger.warn).toHaveBeenCalledWith(
@@ -290,8 +275,11 @@ describe('sendSms', () => {
 		register({ main: 'ok' });
 		useSms().registerRoutes({ from: 'Acme' });
 
-		// 1. A typo in the location name is a configuration mistake, named as such: no warning, no `sms.failed`
-		await expect(sendSms(message, { location: 'mian' })).rejects.toThrow('Sms location "mian" doesn\'t exist.');
+		// A typo in the location name is a configuration mistake, not a failed delivery.
+		const refused = sendSms(message, { location: 'mian' });
+
+		await expect(refused).rejects.toThrow(InvalidConfigError);
+		await expect(refused).rejects.toThrow('Sms location "mian" doesn\'t exist');
 
 		expect(sent).toHaveLength(0);
 		expect(logger.warn).not.toHaveBeenCalled();
@@ -308,19 +296,20 @@ describe('sendSms', () => {
 			},
 		});
 
-		// 1. The first message spends the budget of `main`; the second is routed past it
 		expect(await sendSms(message)).toMatchObject({ location: 'main' });
 		expect(await sendSms(message)).toMatchObject({ location: 'backup' });
 		expect(logger.warn).toHaveBeenCalledWith('Sms location "main" is over its rate limit; trying the next one');
 
-		// 2. Only limited locations in the chain: the limiter's own error tells the caller when to retry
+		// Only limited locations in the chain: the limiter's own error tells the caller when to retry.
 		await expect(sendSms(message, { location: 'main' })).rejects.toMatchObject({ code: 'REQUESTS_EXCEEDED' });
 	});
 
 	test('Throws when no location is registered', async () => {
-		// 1. Routes without locations: the chain is empty before any driver is asked
 		useSms().registerRoutes({ from: 'Acme' });
 
-		await expect(sendSms(message)).rejects.toThrow('No sms location is registered');
+		const refused = sendSms(message);
+
+		await expect(refused).rejects.toThrow(InvalidConfigError);
+		await expect(refused).rejects.toThrow('No sms location is registered');
 	});
 });

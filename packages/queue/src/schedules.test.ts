@@ -11,10 +11,9 @@ afterEach(() => {
 
 describe('getSchedules', () => {
 	test('Starts empty and resolves a rule and a switch against the environment', () => {
-		// 1. The package ships no schedule of its own; the application registers every one
+		// The package ships no schedule of its own; the application registers every one
 		expect(getSchedules({})).toStrictEqual([]);
 
-		// 2. A fixed rule with a switch read from the environment
 		registerSchedule({
 			job: 'test.ping',
 			cron: '*/5 * * * *',
@@ -30,7 +29,7 @@ describe('getSchedules', () => {
 			{ job: 'test.ping', cron: '*/5 * * * *', payload: { message: 'scheduled ping' }, enabled: true },
 		]);
 
-		// 3. The rule may be a function of the environment too
+		// The rule may be a function of the environment too
 		registerSchedule({
 			job: 'test.ping',
 			cron: (env: ScheduleEnv) => String(env['PING_SCHEDULE']),

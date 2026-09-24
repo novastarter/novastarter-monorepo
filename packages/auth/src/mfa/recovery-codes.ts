@@ -39,7 +39,7 @@ export interface VerifyRecoveryCodeOptions {
  * @returns The id.
  */
 export const recoveryCodeId = (code: string): string => {
-	// 1. People type codes with or without the dash and in any case; none of it is part of the code
+	// People type codes with or without the dash and in any case; none of it is part of the code
 	return hashToken(String(code).replace(/[\s-]/g, '').toLowerCase());
 };
 
@@ -58,7 +58,7 @@ export const recoveryCodeId = (code: string): string => {
  * ```
  */
 export const generateRecoveryCodes = (): RecoveryCodes => {
-	// 1. Ten base32 characters from 50 random bits, split in two for reading; far beyond guessing with a limiter on
+	// Ten base32 characters from 50 random bits, split in two for reading; far beyond guessing with a limiter on
 	const codes = Array.from({ length: RECOVERY_CODE_COUNT }, () => {
 		const text = encodeBase32(randomBytes(7)).slice(0, 10).toLowerCase();
 
@@ -81,14 +81,13 @@ export const generateRecoveryCodes = (): RecoveryCodes => {
 export const verifyRecoveryCode = async (options: VerifyRecoveryCodeOptions): Promise<void> => {
 	const limiter = authSettings().limiters?.mfa;
 
-	// 1. Charged before the lookup, so a wrong guess costs as much as a right one
+	// Charged before the lookup, so a wrong guess costs as much as a right one
 	await limiter?.consume(options.userId);
 
-	// 2. The application's atomic delete decides: of two requests with the same code, one spends it
+	// The application's atomic delete decides: of two requests with the same code, one spends it
 	if (!(await options.spend(recoveryCodeId(options.code)))) {
 		throw new InvalidCredentialsError();
 	}
 
-	// 3. A right code clears the count
 	await limiter?.delete(options.userId);
 };

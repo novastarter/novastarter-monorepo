@@ -47,7 +47,7 @@ export default function RootLayout({
 }: Readonly<{
 	children: React.ReactNode;
 }>) {
-	// 1. Both font variables land on the body, so every font rule in globals.css applies without a per-page setup
+	// Both font variables land on the body, so every font rule in globals.css applies without a per-page setup
 	return (
 		<html lang="en">
 			<body className={`${geistSans.variable} ${geistMono.variable}`}>{children}</body>

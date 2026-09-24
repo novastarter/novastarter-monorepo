@@ -24,13 +24,13 @@ describe.skipIf(!SUPABASE_DATABASE_URL)('DatabaseDriverSupabase on Supabase', ()
 
 	// The pool is opened inside the hook: the describe body runs at collection even when the suite is skipped
 	beforeAll(async () => {
-		// 1. The certificate comes from a file, the way a deployment mounts it
+		// The certificate comes from a file, the way a deployment mounts it
 		const ca = SUPABASE_DATABASE_CA ? await readFile(SUPABASE_DATABASE_CA, 'utf8') : undefined;
 
 		driver = new DatabaseDriverSupabase({ url: SUPABASE_DATABASE_URL!, ca, logger: logger as never });
 
-		// 2. The fixture table the queries below write is made here, not by the migration: every test must pass run
-		//    alone, under `vitest -t` as well as whole-file
+		// The fixture table the queries below write is made here, not by the migration: every test must pass run
+		// alone, under `vitest -t` as well as whole-file
 		await driver.db.execute(sql.raw(`CREATE SCHEMA IF NOT EXISTS "${schema}"`));
 
 		await driver.db.execute(
@@ -39,12 +39,12 @@ describe.skipIf(!SUPABASE_DATABASE_URL)('DatabaseDriverSupabase on Supabase', ()
 			),
 		);
 
-		// 3. A drizzle-kit folder of one migration, written per run: the schema name carries the pid, so two runs on
-		//    the same project never touch each other's tables
+		// The drizzle-kit folder is written per run: the schema name carries the pid, so two runs on the same project
+		// never touch each other's tables
 		migrationsFolder = await mkdtemp(join(tmpdir(), 'novastarter-migrations-'));
 		await mkdir(join(migrationsFolder, 'meta'));
 
-		// 4. The journal is what the migrator reads to find what to apply: one entry tagging the migration below
+		// The migrator reads the journal to find what to apply
 		await writeFile(
 			join(migrationsFolder, 'meta', '_journal.json'),
 			JSON.stringify({
@@ -54,7 +54,7 @@ describe.skipIf(!SUPABASE_DATABASE_URL)('DatabaseDriverSupabase on Supabase', ()
 			}),
 		);
 
-		// 5. The migration itself: a probe table nothing reads — the migrator running it and journaling it is the point
+		// A probe table nothing reads: the migrator running it and journaling it is the point
 		await writeFile(
 			join(migrationsFolder, '0000_init.sql'),
 			`CREATE TABLE "${schema}"."probe" ("id" serial PRIMARY KEY NOT NULL);`,
@@ -62,8 +62,8 @@ describe.skipIf(!SUPABASE_DATABASE_URL)('DatabaseDriverSupabase on Supabase', ()
 	});
 
 	afterAll(async () => {
-		// 1. A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
-		//    real failure stays the one reported
+		// A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
+		// real failure stays the one reported
 		if (driver) {
 			await driver.db.execute(sql.raw(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`));
 			await driver.close();

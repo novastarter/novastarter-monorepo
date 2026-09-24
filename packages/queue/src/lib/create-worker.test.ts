@@ -2,6 +2,7 @@
  * Tests of `queue/lib/create-worker` with `bullmq` and the Redis client of `@novastarter/redis` mocked.
  */
 import { EventEmitter } from 'node:events';
+import { InvalidConfigError } from '@novastarter/errors';
 import type { Logger } from '@novastarter/logger';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { z } from 'zod';
@@ -117,19 +118,23 @@ describe('createWorker', () => {
 			{ logger: logger as unknown as Logger },
 		);
 
-		// 1. The worker shares the location's client, prefix and telemetry with the producer of the process
+		// The worker shares the location's client, prefix and telemetry with the producer of the process
 		expect(FakeWorker.instances[0]).toMatchObject({
 			name: 'test',
 			opts: { connection: (useQueue().location('test') as QueueDriverBullmq).connection, prefix: 'acme', telemetry },
 		});
 
-		await expect(
-			createWorker(
-				'other',
-				vi.fn(async () => {}),
-				{ logger: logger as unknown as Logger },
-			),
-		).rejects.toThrow('Queue "other" is not on a "bullmq" location; a worker needs one');
+		const refused = createWorker(
+			'other',
+			vi.fn(async () => {}),
+			{ logger: logger as unknown as Logger },
+		);
+
+		await expect(refused).rejects.toThrow(InvalidConfigError);
+
+		await expect(refused).rejects.toThrow(
+			'Invalid config. Queue "other" is not on a "bullmq" location; a worker needs one, or a "connection" of its own.',
+		);
 	});
 
 	test('Runs the processor with the rebuilt name and context, logging completions and failures', async () => {
@@ -146,7 +151,7 @@ describe('createWorker', () => {
 
 		expect(running.queue).toBe('test');
 
-		// 1. The worker opens with the telemetry add-on, so its runs continue the producer's trace
+		// The worker opens with the telemetry add-on, so its runs continue the producer's trace
 		expect(FakeWorker.instances[0]).toMatchObject({
 			name: 'test',
 			opts: { connection: { host: 'redis' }, concurrency: 3, telemetry },

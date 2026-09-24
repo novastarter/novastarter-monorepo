@@ -9,7 +9,7 @@ import { toEvent } from './to-event.js';
 
 describe('toEvent', () => {
 	test('Maps the subscription and transaction events, drops the rest', () => {
-		// 1. A created subscription carries the event's own id and time, and the subscription mapped in full
+		// A created subscription carries the event's own id and time, and the subscription mapped in full
 		expect(toEvent(parsed('subscription.created'))).toMatchObject({
 			id: 'evt_01h7zcgmdc8n1v3ypn6pkqtb5a',
 			type: 'subscription.created',
@@ -18,7 +18,7 @@ describe('toEvent', () => {
 			subscription: { id: 'sub_01h7zcgmdc8n1v3ypn6pkqtb3s', status: 'active' },
 		});
 
-		// 2. Every change of an existing subscription is one `subscription.updated`, the status telling them apart
+		// Every change of an existing subscription is one `subscription.updated`, the status telling them apart
 		expect(toEvent(parsed('subscription.updated'))).toMatchObject({ type: 'subscription.updated' });
 
 		expect(toEvent(parsed('subscription.past_due'))).toMatchObject({
@@ -26,13 +26,13 @@ describe('toEvent', () => {
 			subscription: { status: 'past_due' },
 		});
 
-		// 3. A cancellation is the kit's deletion, the subscription still attached so the app can close it out
+		// A cancellation is the kit's deletion, the subscription still attached so the app can close it out
 		expect(toEvent(parsed('subscription.canceled'))).toMatchObject({
 			type: 'subscription.deleted',
 			subscription: { status: 'canceled' },
 		});
 
-		// 4. Transactions are the invoices: completed is paid, a failed payment is a failed invoice still open
+		// Transactions are the invoices: completed is paid, a failed payment is a failed invoice still open
 		expect(toEvent(parsed('transaction.completed'))).toMatchObject({
 			type: 'invoice.paid',
 			invoice: { id: 'txn_01h7zcgmdc8n1v3ypn6pkqtb3t', status: 'paid' },
@@ -43,13 +43,13 @@ describe('toEvent', () => {
 			invoice: { id: 'txn_01h7zcgmdc8n1v3ypn6pkqtb3z', status: 'open' },
 		});
 
-		// 5. A verified event of a type the kit does not track is dropped rather than refused
+		// A verified event of a type the kit does not track is dropped rather than refused
 		expect(toEvent(parsed('customer.updated'))).toBeNull();
 	});
 
 	test('Drops a subscription.updated that carries the canceled status', () => {
-		// 1. Paddle fires subscription.updated with status canceled alongside subscription.canceled for one
-		//    cancellation; the canceled event owns the deletion, so the update must not arrive as a change
+		// Paddle fires subscription.updated with status canceled alongside subscription.canceled for one
+		// cancellation; the canceled event owns the deletion, so the update must not arrive as a change
 		const body = JSON.parse(fixtureText('subscription.updated')) as Parameters<typeof Webhooks.fromJson>[0] & {
 			data: { status: string };
 		};

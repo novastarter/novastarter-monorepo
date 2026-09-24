@@ -125,7 +125,7 @@ export const DEFAULT_RETRY_OPTIONS: Readonly<Required<Omit<RetryOptions, 'signal
  * ```
  */
 export const retry = async <T>(fn: (attempt: number) => Promise<T>, options: RetryOptions = {}): Promise<T> => {
-	// 1. Each option falls back to its default; `signal` and `onRetry` have none and are read as given
+	// `signal` and `onRetry` have no default and are read as given.
 	const {
 		retries = DEFAULT_RETRY_OPTIONS.retries,
 		delay = DEFAULT_RETRY_OPTIONS.delay,
@@ -137,54 +137,51 @@ export const retry = async <T>(fn: (attempt: number) => Promise<T>, options: Ret
 		signal,
 	} = options;
 
-	// 2. A budget that is not a whole number of zero or more is refused before any attempt: `attempt > NaN` is never
-	//    true, so a `NaN` budget would retry forever, and a fraction or a negative number is a mistake as well
+	// A budget that is not a whole number of zero or more is refused before any attempt: `attempt > NaN` is never
+	// true, so a `NaN` budget would retry forever, and a fraction or a negative number is a mistake as well
 	if (!Number.isInteger(retries) || retries < 0) {
 		throw new RangeError(`retry: "retries" must be a whole number of zero or more, got ${retries}`);
 	}
 
-	// 3. A jitter above one would let a pause come out negative, which `setTimeout` silently rounds up to zero, and
-	//    `NaN` would poison every pause; written so that `NaN` fails the check too, the misconfiguration is refused
-	//    before any attempt rather than turned into a busy retry loop or a `RangeError` from `sleep` after the first
+	// A jitter above one would let a pause come out negative, which `setTimeout` silently rounds up to zero, and
+	// `NaN` would poison every pause; written so that `NaN` fails the check too, the misconfiguration is refused
+	// before any attempt rather than turned into a busy retry loop or a `RangeError` from `sleep` after the first
 	if (!(jitter >= 0 && jitter <= 1)) {
 		throw new RangeError(`retry: "jitter" must be between 0 and 1, got ${jitter}`);
 	}
 
-	// 4. A signal aborted before the call: fail right away rather than running an attempt nobody waits for
+	// A signal aborted before the call: fail right away rather than running an attempt nobody waits for
 	if (signal?.aborted) {
 		throw signal.reason;
 	}
 
-	// 5. Attempts are numbered from one, so the first retry is attempt two and the last allowed is `retries + 1`
+	// Attempts are numbered from one, so the first retry is attempt two and the last allowed is `retries + 1`
 	for (let attempt = 1; ; attempt++) {
 		try {
 			return await fn(attempt);
 		} catch (error) {
-			// 6. Out of budget, or an error not worth retrying: hand it over untouched
 			if (attempt > retries || !shouldRetry(error, attempt)) {
 				throw error;
 			}
 
-			// 7. Aborted while the attempt ran: there will be no pause, so `onRetry` is not told of one; the abort
-			//    reason ends the loop the way it would have ended the pause
+			// Aborted while the attempt ran: there will be no pause, so `onRetry` is not told of one; the abort
+			// reason ends the loop the way it would have ended the pause
 			if (signal?.aborted) {
 				throw signal.reason;
 			}
 
-			// 8. The base pause: a function decides itself from the number of the failed attempt, a number grows by
-			//    `factor` per retry
 			const base = typeof delay === 'function' ? delay(attempt) : delay * factor ** (attempt - 1);
 
-			// 9. Spread it by `jitter` — a factor drawn evenly between `1 - jitter` and `1 + jitter`, never below zero
-			//    since `jitter` is at most one, so the mean pause stays what the caller asked for — and cap the result
-			//    by `maxDelay` and by what a timer can hold, so the cap bounds the spread as well as the growth and an
-			//    overgrown pause never collapses into Node's 1 ms fallback
+			// The pause is spread by `jitter` — a factor drawn evenly between `1 - jitter` and `1 + jitter`, never below zero
+			// since `jitter` is at most one, so the mean pause stays what the caller asked for — and cap the result
+			// by `maxDelay` and by what a timer can hold, so the cap bounds the spread as well as the growth and an
+			// overgrown pause never collapses into Node's 1 ms fallback
 			const spread = jitter === 0 ? base : base * (1 + (Math.random() * 2 - 1) * jitter);
 			const pause = Math.min(spread, maxDelay, MAX_TIMER_DELAY);
 
-			// 10. A pause that is negative or `NaN` — a `delay` function or a `factor` gone wrong — is a misconfiguration
-			//    named as such, with the attempt's error as `cause`, rather than a `RangeError` out of `sleep` that
-			//    reads as if the wait itself were at fault
+			// A pause that is negative or `NaN` — a `delay` function or a `factor` gone wrong — is a misconfiguration
+			// named as such, with the attempt's error as `cause`, rather than a `RangeError` out of `sleep` that
+			// reads as if the wait itself were at fault
 			if (!(pause >= 0)) {
 				throw new RangeError(
 					`retry: the pause before attempt ${attempt + 1} is ${pause}; "delay", "factor" and "maxDelay" must give zero or more`,
@@ -192,7 +189,7 @@ export const retry = async <T>(fn: (attempt: number) => Promise<T>, options: Ret
 				);
 			}
 
-			// 11. Report, then wait: the callback sees the pause that is about to happen
+			// The callback runs before the wait, so it sees the pause that is about to happen.
 			onRetry?.(error, attempt, pause);
 
 			await sleep(pause, signal);

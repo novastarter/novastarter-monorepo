@@ -40,7 +40,7 @@ export interface TotpEnrolment {
  *
  * @param options - The account name for the app.
  * @returns The secret, the URI for the QR code and the encrypted secret to store.
- * @throws Error without a usable `mfa.encryptionKey` in the settings.
+ * @throws InvalidConfigError without a usable `mfa.encryptionKey` in the settings.
  * @example
  * ```ts
  * const { uri, secret, encryptedSecret } = enrollTotp({ accountName: user.email });
@@ -49,7 +49,7 @@ export interface TotpEnrolment {
  * ```
  */
 export const enrollTotp = (options: EnrollTotpOptions): TotpEnrolment => {
-	// 1. A fresh 160-bit secret, encrypted for storage; the plain one only travels to the user's screen
+	// The plain secret only travels to the user's screen; storage gets it encrypted
 	const secret = encodeBase32(randomBytes(TOTP_SECRET_BYTES));
 
 	return {

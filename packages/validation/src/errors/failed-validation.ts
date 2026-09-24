@@ -35,11 +35,9 @@ export interface FailedValidationErrorExtensions {
  * @returns Message such as `Validation failed for field "age". Value has to be greater than "18".`
  */
 export const messageConstructor = (extensions: FailedValidationErrorExtensions): string => {
-	// 1. Name the field, with the nested path when the value sits inside an object
 	const atPath = extensions.path.length > 0 ? ` at "${extensions.path.join('.')}"` : '';
 	let message = `Validation failed for field "${extensions.field}"${atPath}.`;
 
-	// 2. Rules that carry the expected value(s)
 	if ('valid' in extensions) {
 		switch (extensions.type) {
 			case 'eq':
@@ -70,7 +68,6 @@ export const messageConstructor = (extensions: FailedValidationErrorExtensions):
 		}
 	}
 
-	// 3. Rules that carry the forbidden value(s)
 	if ('invalid' in extensions) {
 		switch (extensions.type) {
 			case 'neq':
@@ -85,8 +82,8 @@ export const messageConstructor = (extensions: FailedValidationErrorExtensions):
 		}
 	}
 
-	// 4. Rules that carry a substring; `icontains` reads the same as `contains` and the case-insensitive affixes the
-	//    same as their plain forms, since the case is a detail the client renders on its own
+	// `icontains` reads the same as `contains`, and the case-insensitive affixes the same as their plain forms, since
+	// the case is a detail the client renders on its own
 	if ('substring' in extensions) {
 		switch (extensions.type) {
 			case 'contains':
@@ -115,7 +112,6 @@ export const messageConstructor = (extensions: FailedValidationErrorExtensions):
 		}
 	}
 
-	// 5. Rules whose message needs no compared value
 	switch (extensions.type) {
 		case 'null':
 			message += ` Value has to be null.`;

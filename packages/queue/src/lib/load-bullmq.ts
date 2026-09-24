@@ -1,3 +1,5 @@
+import { InvalidConfigError } from '@novastarter/errors';
+
 /**
  * The memoised `bullmq` import, shared by every consumer of this module.
  *
@@ -14,13 +16,16 @@ let bullmq: Promise<typeof import('bullmq')> | undefined;
  * mid-process — so every queue and worker of the process shares one load.
  *
  * @returns The module.
- * @throws Error naming the missing package when it is not installed.
+ * @throws InvalidConfigError naming the missing package when it is not installed.
  */
 export const loadBullmq = (): Promise<typeof import('bullmq')> => {
-	// 1. Memoised, so a process that opens several queues and workers pays for the import once
+	// Memoised, so a process that opens several queues and workers pays for the import once
 	// eslint-disable-next-line no-restricted-syntax -- optional peer: a static import would crash without it
 	bullmq ??= import('bullmq').catch((error: unknown) => {
-		throw new Error('Queue driver "bullmq" needs the "bullmq" package: pnpm add bullmq', { cause: error });
+		throw new InvalidConfigError(
+			{ reason: 'The bullmq queue driver needs the "bullmq" package; install it with `pnpm add bullmq`' },
+			{ cause: error },
+		);
 	});
 
 	return bullmq;

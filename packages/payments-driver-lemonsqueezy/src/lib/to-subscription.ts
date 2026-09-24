@@ -51,8 +51,7 @@ export const toSubscription = (
 	subscription: LsResource<LsSubscriptionAttributes>,
 	context: SubscriptionContext,
 ): Subscription => {
-	// 1. The attributes and the status are read first: an unknown status is a change on Lemon Squeezy's side, better
-	//    loud than silently wrong
+	// An unknown status is a change on Lemon Squeezy's side, better loud than silently wrong.
 	const attributes = subscription.attributes;
 	const status = LS_STATUSES[attributes.status];
 
@@ -62,11 +61,11 @@ export const toSubscription = (
 		);
 	}
 
-	// 2. A cancelled subscription ends at `ends_at`; an expired one ended there
+	// A cancelled subscription ends at `ends_at`; an expired one ended there.
 	const cancelled = attributes.status === 'cancelled';
 	const endsAt = attributes.ends_at ? new Date(attributes.ends_at) : null;
 
-	// 3. The period start is not reported; the seat count defaults to one for a subscription without items
+	// The period start is not reported; the seat count defaults to one for a subscription without items.
 	return {
 		id: subscription.id,
 		customerId: String(attributes.customer_id),

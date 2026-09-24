@@ -1,4 +1,5 @@
 import { useEmitter } from '@novastarter/emitter';
+import { InvalidConfigError } from '@novastarter/errors';
 import type { NotificationChannel } from '../channel.js';
 import {
 	type Notification,
@@ -81,15 +82,16 @@ export class Notifications {
 	 * Create the notifications from the application's options.
 	 *
 	 * @param options - The channels and the application's callbacks.
-	 * @throws Error when two channels share a name: which one delivers would depend on the order.
+	 * @throws InvalidConfigError when two channels share a name: which one delivers would depend on the order.
 	 */
 	constructor(private readonly options: NotificationsOptions) {
 		this.channels = new Map();
 
 		for (const channel of options.channels) {
-			// 1. A duplicate name is a configuration mistake, caught at start-up
 			if (this.channels.has(channel.name)) {
-				throw new Error(`Notification channel "${channel.name}" is registered twice`);
+				throw new InvalidConfigError({
+					reason: `Notification channel "${channel.name}" is registered twice; give each channel its own name`,
+				});
 			}
 
 			this.channels.set(channel.name, channel);
@@ -112,10 +114,10 @@ export class Notifications {
 	 * @param notification - The notification.
 	 * @returns The channel names, in registration order; none for a user that no longer exists.
 	 * @throws ZodError for a notification that is not one.
-	 * @throws Error when the notification names a channel nobody registered.
+	 * @throws InvalidConfigError when the notification names a channel nobody registered.
 	 */
 	async plan(notification: Notification): Promise<string[]> {
-		// 1. Checked here, where the application creates it, so a broken notification never reaches the queue
+		// Checked here, where the application creates it, so a broken notification never reaches the queue
 		const valid = notificationSchema.parse(notification);
 		const wanted = valid.channels ?? this.channelNames();
 
@@ -123,7 +125,7 @@ export class Notifications {
 			this.channel(name);
 		}
 
-		// 2. The user's addresses and preferences, once for all channels
+		// Read once for all channels
 		const recipient = await this.options.findRecipient(valid.userId);
 
 		if (!recipient) {
@@ -152,15 +154,15 @@ export class Notifications {
 	 * @param options - The channel to deliver on.
 	 * @returns `sent`, or `skipped` with the reason.
 	 * @throws ZodError for a notification that is not one.
-	 * @throws Error when the channel is not registered.
+	 * @throws InvalidConfigError when the channel is not registered.
 	 * @throws What the channel throws when it fails, for the job to retry.
 	 */
 	async send(notification: Notification, options: { channel: string }): Promise<NotificationSendResult> {
-		// 1. The notification and the channel, so a broken job fails for good rather than retrying
+		// Checked first, so a broken job fails for good rather than retrying
 		const valid = notificationSchema.parse(notification);
 		const channel = this.channel(options.channel);
 
-		// 2. The application's last word: a handler may rewrite the notification or drop it
+		// A handler may rewrite the notification or drop it
 		const filtered = await useEmitter().emitFilter<Notification | null>(NOTIFICATION_SEND_FILTER, valid, {
 			channel: channel.name,
 		});
@@ -169,7 +171,7 @@ export class Notifications {
 			return { status: 'skipped', reason: 'filter' };
 		}
 
-		// 3. Read at delivery, not at planning: the user may be gone, or have changed their mind, since
+		// Read at delivery, not at planning: the user may be gone, or have changed their mind, since
 		const recipient = await this.options.findRecipient(filtered.userId);
 
 		if (!recipient) {
@@ -184,14 +186,14 @@ export class Notifications {
 			return { status: 'skipped', reason: 'preference' };
 		}
 
-		// 4. The text of the day, in the user's language
+		// Rendered at delivery, so the text is current and in the user's language
 		const content = await this.options.render(filtered, channel.name, recipient);
 
 		if (content === null || content === undefined) {
 			return { status: 'skipped', reason: 'content' };
 		}
 
-		// 5. The delivery; a failure is announced and rethrown as the channel made it
+		// A failure is announced, then rethrown as the channel made it
 		try {
 			await channel.send({ notification: filtered, recipient, content });
 		} catch (error) {
@@ -210,15 +212,17 @@ export class Notifications {
 	 *
 	 * @param name - Its name.
 	 * @returns The channel.
-	 * @throws Error when nobody registered it.
+	 * @throws InvalidConfigError when nobody registered it.
 	 * @internal
 	 */
 	private channel(name: string): NotificationChannel {
-		// 1. A name nobody registered is a mistake in the code that made the notification, not something to skip
+		// A name nobody registered is a mistake in the code that made the notification, not something to skip
 		const channel = this.channels.get(name);
 
 		if (!channel) {
-			throw new Error(`Notification channel "${name}" isn't registered`);
+			throw new InvalidConfigError({
+				reason: `Notification channel "${name}" isn't registered; register it in registerNotifications()`,
+			});
 		}
 
 		return channel;
@@ -233,7 +237,7 @@ export class Notifications {
 	 * @internal
 	 */
 	private async isEnabled(notification: Notification, channel: string): Promise<boolean> {
-		// 1. No preferences registered means everything is on
+		// No preferences registered means everything is on
 		return this.options.isEnabled ? this.options.isEnabled(notification.userId, notification.type, channel) : true;
 	}
 }

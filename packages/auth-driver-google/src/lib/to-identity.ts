@@ -11,7 +11,7 @@ import { PROVIDER } from './constants.js';
  * @internal
  */
 const stringClaim = (claims: JWTPayload, name: string): string | undefined => {
-	// 1. Only a non-empty string is worth passing on; a malformed claim is left out rather than trusted
+	// A malformed claim is left out rather than trusted
 	const value = claims[name];
 
 	return typeof value === 'string' && value ? value : undefined;
@@ -31,13 +31,13 @@ const stringClaim = (claims: JWTPayload, name: string): string | undefined => {
  * ```
  */
 export const toIdentity = (claims: JWTPayload): AuthIdentity => {
-	// 1. The fields a scope did not grant are simply absent: no `profile`, no name or picture
+	// The fields a scope did not grant are simply absent: no `profile`, no name or picture
 	const email = stringClaim(claims, 'email');
 	const name = stringClaim(claims, 'name');
 	const avatarUrl = stringClaim(claims, 'picture');
 	const verified = claims['email_verified'];
 
-	// 2. Verification only means something with an address to verify
+	// Verification only means something with an address to verify
 	return {
 		provider: PROVIDER,
 		subject: String(claims.sub),

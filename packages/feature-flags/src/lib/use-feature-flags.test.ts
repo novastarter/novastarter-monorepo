@@ -12,9 +12,9 @@ afterEach(() => {
 
 describe('useFeatureFlags', () => {
 	test('Throws before any registration', () => {
-		// 1. A forgotten registration fails loudly instead of switching every feature off
+		// A forgotten registration fails loudly instead of switching every feature off
 		expect(() => useFeatureFlags()).toThrowErrorMatchingInlineSnapshot(
-			`[Error: Feature flags are not registered; call registerFeatureFlags() at start-up.]`,
+			`[NovastarterError: Invalid config. Feature flags are not registered; call registerFeatureFlags() at start-up.]`,
 		);
 	});
 });
@@ -28,7 +28,6 @@ describe('registerFeatureFlags', () => {
 			],
 		});
 
-		// 1. One object for the process, with the rules of the flags applied
 		expect(useFeatureFlags()).toBeInstanceOf(FeatureFlags);
 		expect(useFeatureFlags()).toBe(useFeatureFlags());
 		await expect(useFeatureFlags().get('beta-ai')).resolves.toBe(true);
@@ -41,13 +40,12 @@ describe('registerFeatureFlags', () => {
 	});
 
 	test('Fails at registration on an invalid flag', () => {
-		// 1. The static driver is built by the registration, so a bad key fails the boot rather than a request
+		// The static driver is built by the registration, so a bad key fails the boot rather than a request
 		expect(() => registerFeatureFlags({ flags: [{ key: 'Bad Key', enabled: true }] })).toThrow();
 		expect(() => useFeatureFlags()).toThrow();
 	});
 
 	test('Serves a driver of the application and closes it on shutdown', async () => {
-		// 1. A stand-in for a table or a vendor, recording what the flags ask of it
 		const driver: FeatureFlagsDriver = {
 			get: vi.fn(async () => true),
 			getAll: vi.fn(async () => ({ vendor: true })),
@@ -57,7 +55,6 @@ describe('registerFeatureFlags', () => {
 
 		registerFeatureFlags({ driver });
 
-		// 2. Every call goes to the driver, with an empty context when the caller gave none
 		await expect(useFeatureFlags().get('vendor')).resolves.toBe(true);
 		expect(driver.get).toHaveBeenCalledWith('vendor', {});
 		await expect(useFeatureFlags().getAll()).resolves.toStrictEqual({ vendor: true });
@@ -73,7 +70,6 @@ describe('registerFeatureFlags', () => {
 
 		const first = useFeatureFlags();
 
-		// 1. The second set is the whole set: the flag of the first one is gone
 		registerFeatureFlags({ flags: [{ key: 'b', enabled: true }] });
 
 		expect(useFeatureFlags()).not.toBe(first);
@@ -84,7 +80,7 @@ describe('registerFeatureFlags', () => {
 	test('Closes nothing for a driver without close()', async () => {
 		registerFeatureFlags({ flags: [] });
 
-		// 1. The static driver holds nothing open, so shutdown has nothing to wait for
+		// The static driver holds nothing open, so shutdown has nothing to wait for
 		await expect(useFeatureFlags().close()).resolves.toBeUndefined();
 	});
 });

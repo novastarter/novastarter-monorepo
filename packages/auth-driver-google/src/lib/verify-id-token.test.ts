@@ -14,7 +14,7 @@ let privateKey: CryptoKey;
 let jwks: ReturnType<typeof createLocalJWKSet>;
 
 beforeAll(async () => {
-	// 1. One RS256 pair for the whole file: generating keys is the slow part
+	// One RS256 pair for the whole file: generating keys is the slow part
 	const pair = await generateKeyPair('RS256');
 
 	privateKey = pair.privateKey;
@@ -33,7 +33,7 @@ const sign = async (
 	claims: JWTPayload = {},
 	options: { issuer?: string; audience?: string; subject?: string; expires?: string | number; key?: CryptoKey } = {},
 ): Promise<string> => {
-	// 1. A token that passes every check unless an override breaks one
+	// A token that passes every check unless an override breaks one
 	const jwt = new SignJWT({ nonce: 'nonce-1', email: 'ada@example.com', ...claims })
 		.setProtectedHeader({ alg: 'RS256', kid: 'k1' })
 		.setIssuer(options.issuer ?? 'https://accounts.google.com')
@@ -41,7 +41,7 @@ const sign = async (
 		.setIssuedAt()
 		.setExpirationTime(options.expires ?? '5m');
 
-	// 2. An empty subject override leaves the claim out entirely
+	// An empty subject override leaves the claim out entirely
 	if (options.subject !== '') {
 		jwt.setSubject(options.subject ?? '1234567890');
 	}
@@ -53,7 +53,7 @@ describe('verifyIdToken', () => {
 	test('Answers the claims of a token that passes every check, with either issuer form', async () => {
 		const options = { jwks, audience: 'client-1', nonce: 'nonce-1' };
 
-		// 1. Google documents both issuer spellings, and either is accepted
+		// Google documents both issuer spellings, and either is accepted
 		expect(await verifyIdToken(await sign(), options)).toMatchObject({ sub: '1234567890', email: 'ada@example.com' });
 
 		expect(await verifyIdToken(await sign({}, { issuer: 'accounts.google.com' }), options)).toMatchObject({
@@ -65,7 +65,6 @@ describe('verifyIdToken', () => {
 		const options = { jwks, audience: 'client-1', nonce: 'nonce-1' };
 		const other = (await generateKeyPair('RS256')).privateKey;
 
-		// 1. Each check of `jose` surfaces as a provider failure with the `jose` error as the cause
 		for (const token of [
 			await sign({}, { key: other }),
 			await sign({}, { audience: 'client-2' }),
@@ -83,7 +82,6 @@ describe('verifyIdToken', () => {
 	test('Refuses a token with another nonce or without a subject', async () => {
 		const options = { jwks, audience: 'client-1', nonce: 'nonce-1' };
 
-		// 1. A token from another sign-in carries another nonce, even when its signature is good
 		await expect(verifyIdToken(await sign({ nonce: 'nonce-2' }), options)).rejects.toThrow(
 			'the ID token nonce does not match',
 		);
@@ -92,7 +90,6 @@ describe('verifyIdToken', () => {
 			'the ID token nonce does not match',
 		);
 
-		// 2. Without a subject there is nothing to link the account by
 		await expect(verifyIdToken(await sign({}, { subject: '' }), options)).rejects.toThrow(
 			'the ID token has no subject',
 		);
@@ -101,14 +98,13 @@ describe('verifyIdToken', () => {
 	test('Forgives a verifying clock a little ahead of Google, and nothing more', async () => {
 		const options = { jwks, audience: 'client-1', nonce: 'nonce-1' };
 
-		// 1. A token a few seconds expired still verifies: within the tolerance, the skew is forgiven
 		const recent = Math.floor(Date.now() / 1000) - 5;
 
 		await expect(verifyIdToken(await sign({}, { expires: recent }), options)).resolves.toMatchObject({
 			sub: '1234567890',
 		});
 
-		// 2. A token expired past the tolerance is still refused — the forgiveness is about skew, not validity
+		// The tolerance forgives skew, not an expired token
 		const stale = Math.floor(Date.now() / 1000) - 120;
 
 		await expect(verifyIdToken(await sign({}, { expires: stale }), options)).rejects.toThrow(

@@ -27,6 +27,7 @@
 	"dependencies": {
 		"@electric-sql/pglite": "catalog:",
 		"@novastarter/database": "workspace:*",
+		"@novastarter/errors": "workspace:*",
 		"@novastarter/logger": "workspace:*",
 		"drizzle-orm": "catalog:"
 	},

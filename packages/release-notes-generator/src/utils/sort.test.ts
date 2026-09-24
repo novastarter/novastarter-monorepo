@@ -25,8 +25,8 @@ describe('sortByExternalOrder', () => {
 	});
 
 	test('should put an unlisted item after a listed one', () => {
-		// 1. The mirror case, so the comparator is symmetric: unlisted items sort after the listed ones from
-		//    either direction
+		// The mirror case, so the comparator is symmetric: unlisted items sort after the listed ones from
+		// either direction
 		expect(compare({ name: 'other' }, { name: 'first' })).toBeGreaterThan(0);
 	});
 
@@ -41,7 +41,7 @@ describe('sortByExternalOrder', () => {
 	});
 
 	test('should leave everything untouched with an empty list', () => {
-		// 1. The config ships an empty package order, so this is the common case in this repo
+		// The config ships an empty package order, so this is the common case in this repo
 		const items: Item[] = [{ name: 'b' }, { name: 'a' }];
 
 		expect(items.sort(sortByExternalOrder<Item, string[], 'name'>([], 'name')).map((item) => item.name)).toEqual([
@@ -61,7 +61,7 @@ describe('sortByObjectValues', () => {
 	});
 
 	test('should put an unlisted item before a listed one', () => {
-		// 1. A missing value has index -1, which sorts ahead of every listed position
+		// A missing value has index -1, which sorts ahead of every listed position
 		expect(compare({ name: 'Other' }, { name: 'Major' })).toBeLessThan(0);
 		expect(compare({ name: 'Major' }, { name: 'Other' })).toBeGreaterThan(0);
 	});

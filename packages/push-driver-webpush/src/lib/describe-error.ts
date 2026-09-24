@@ -11,8 +11,8 @@ import { GONE_STATUSES } from './constants.js';
  * way the original is the cause.
  */
 export const describeError = (error: unknown): Error => {
-	// 1. The push service answered: 404 / 410 mean the subscription is gone for good. The library's error stays as the
-	//    cause, so the handler can reach the status code and the body
+	// 404 / 410 mean the subscription is gone for good. The library's error stays as the cause, so the handler can reach
+	// the status code and the body
 	if (error instanceof WebPushError) {
 		if (GONE_STATUSES.has(error.statusCode)) {
 			return new PushTargetGoneError(
@@ -28,6 +28,6 @@ export const describeError = (error: unknown): Error => {
 		});
 	}
 
-	// 2. Anything else — the network, a bad key — as is, prefixed
+	// Anything else is the network or a bad key
 	return new Error(`Web push: ${toErrorMessage(error)}`, { cause: error });
 };

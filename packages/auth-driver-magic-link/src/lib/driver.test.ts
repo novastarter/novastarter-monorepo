@@ -39,7 +39,7 @@ const sent: MagicLinkMessage[] = [];
  * @returns The driver.
  */
 const makeDriver = (overrides: Partial<AuthDriverMagicLinkConfig> = {}): AuthDriverMagicLink => {
-	// 1. The callbacks an application would write over its own tables and mailer
+	// The callbacks an application would write over its own tables and mailer
 	return new AuthDriverMagicLink({
 		findUser: async (email) => (email === 'alice@example.com' ? { id: 'user-1' } : null),
 		issue: async (record) => {
@@ -73,7 +73,6 @@ afterEach(() => {
 
 describe('constructor', () => {
 	test('Refuses options without one of the callbacks, and is exported by name from the entry point', () => {
-		// 1. Every callback is needed; a missing one fails at the location's first use
 		expect(() => makeDriver({ send: undefined as never })).toThrow('The magic-link driver needs a "send" function');
 		expect(entry.AuthDriverMagicLink).toBe(AuthDriverMagicLink);
 	});
@@ -83,7 +82,7 @@ describe('begin', () => {
 	test('Refuses a missing address and an unknown format', async () => {
 		const driver = makeDriver();
 
-		// 1. What a broken form would send
+		// What a broken form would send
 		await expect(driver.begin({})).rejects.toBeInstanceOf(InvalidPayloadError);
 		await expect(driver.begin({ identifier: '  ' })).rejects.toBeInstanceOf(InvalidPayloadError);
 
@@ -93,7 +92,6 @@ describe('begin', () => {
 	});
 
 	test('Stores and sends a link for an account, with the default lifetime', async () => {
-		// 1. The browser gets nothing; the token goes to the table and the mailer
 		await expect(makeDriver().begin({ identifier: ' alice@example.com ' })).resolves.toStrictEqual({});
 
 		expect(sent).toHaveLength(1);
@@ -112,7 +110,6 @@ describe('begin', () => {
 	test('Sends a six-digit code for an account, with the code lifetime', async () => {
 		await makeDriver().begin({ identifier: 'alice@example.com', format: 'code' });
 
-		// 1. Six digits, and the shorter lifetime of a code
 		expect(sent[0]!.token).toMatch(/^\d{6}$/);
 		expect(sent[0]!.expiresAt).toBe(NOW + DEFAULT_CODE_TTL);
 	});
@@ -120,7 +117,7 @@ describe('begin', () => {
 	test('Sends nothing to an unknown address, and the same empty answer', async () => {
 		const driver = makeDriver();
 
-		// 1. Neither a link nor a code, so the response does not reveal whether the account exists
+		// Neither a link nor a code, so the response does not reveal whether the account exists
 		await expect(driver.begin({ identifier: 'bob@example.com' })).resolves.toStrictEqual({});
 		await expect(driver.begin({ identifier: 'bob@example.com', format: 'code' })).resolves.toStrictEqual({});
 
@@ -131,25 +128,23 @@ describe('begin', () => {
 	test('Sends a sign-up link to an unknown address when allowed, but never a code', async () => {
 		const driver = makeDriver({ signUp: true, ttl: 5_000 });
 
-		// 1. A link without a user, with the configured lifetime
 		await driver.begin({ identifier: 'bob@example.com' });
 
 		expect(sent).toHaveLength(1);
 		expect(sent[0]).toMatchObject({ email: 'bob@example.com', userId: undefined, expiresAt: NOW + 5_000 });
 
-		// 2. A code needs an account whatever `signUp` says
+		// A code needs an account whatever `signUp` says
 		await driver.begin({ identifier: 'bob@example.com', format: 'code' });
 
 		expect(sent).toHaveLength(1);
 	});
 
 	test('Answers before the mail is sent, and reports a failed send without rejecting', async () => {
-		// 1. A mailer that never finishes: `begin()` must still answer, so the timing matches an unknown address
+		// `begin()` must still answer, so the timing matches an unknown address
 		const pending = makeDriver({ send: () => new Promise<void>(() => {}) });
 
 		await expect(pending.begin({ identifier: 'alice@example.com' })).resolves.toStrictEqual({});
 
-		// 2. A mailer that fails, asynchronously and synchronously: the answer is the same and the error is reported
 		const onSendError = vi.fn();
 		const error = new Error('SMTP down');
 
@@ -169,21 +164,19 @@ describe('begin', () => {
 		await vi.waitFor(() => expect(onSendError).toHaveBeenCalledTimes(2));
 		expect(onSendError).toHaveBeenCalledWith(error, 'alice@example.com');
 
-		// 3. Without a reporter a failure is dropped rather than left as an unhandled rejection
 		await expect(
 			makeDriver({ send: async () => Promise.reject(error) }).begin({ identifier: 'alice@example.com' }),
 		).resolves.toStrictEqual({});
 	});
 
 	test('Drops a reporter that throws or rejects instead of leaving an unhandled rejection', async () => {
-		// 1. Catch unhandled rejections for the duration of the test, since vitest would only report them after it
+		// Unhandled rejections are caught for the duration of the test, since vitest would only report them after it
 		const unhandled: unknown[] = [];
 		const listener = (reason: unknown): number => unhandled.push(reason);
 
 		process.on('unhandledRejection', listener);
 
 		try {
-			// 2. A reporter that throws synchronously and one that rejects, both behind a failing mailer
 			const failure = new Error('logger down');
 
 			const throwing = vi.fn(() => {
@@ -200,7 +193,6 @@ describe('begin', () => {
 				).resolves.toStrictEqual({});
 			}
 
-			// 3. Both reporters ran, and after a macrotask no rejection surfaced
 			await vi.waitFor(() => {
 				expect(throwing).toHaveBeenCalledOnce();
 				expect(rejecting).toHaveBeenCalledOnce();
@@ -209,7 +201,7 @@ describe('begin', () => {
 			await new Promise((resolve) => setTimeout(resolve, 10));
 			expect(unhandled).toStrictEqual([]);
 		} finally {
-			// 4. Restore the process so other tests see their own rejections
+			// Restored so other tests see their own rejections
 			process.off('unhandledRejection', listener);
 		}
 	});
@@ -221,7 +213,6 @@ describe('complete', () => {
 
 		await driver.begin({ identifier: 'alice@example.com' });
 
-		// 1. The link's token alone is enough, and the address counts as verified
 		await expect(driver.complete({ token: sent[0]!.token })).resolves.toStrictEqual({
 			provider: 'magic-link',
 			subject: 'user-1',
@@ -229,7 +220,6 @@ describe('complete', () => {
 			emailVerified: true,
 		});
 
-		// 2. Spent: the second click is refused
 		await expect(driver.complete({ token: sent[0]!.token })).rejects.toBeInstanceOf(AuthInvalidTokenError);
 	});
 
@@ -238,7 +228,7 @@ describe('complete', () => {
 
 		await driver.begin({ identifier: 'alice@example.com', format: 'code' });
 
-		// 1. Without the address a code is looked up as a link and not found
+		// Without the address a code is looked up as a link and not found
 		await expect(driver.complete({ token: sent[0]!.token })).rejects.toBeInstanceOf(AuthInvalidTokenError);
 
 		await driver.begin({ identifier: 'alice@example.com', format: 'code' });
@@ -253,7 +243,6 @@ describe('complete', () => {
 
 		await driver.begin({ identifier: 'bob@example.com' });
 
-		// 1. No account yet: the application creates one from the verified address
 		await expect(driver.complete({ token: sent[0]!.token })).resolves.toStrictEqual({
 			provider: 'magic-link',
 			subject: 'bob@example.com',
@@ -266,7 +255,6 @@ describe('complete', () => {
 	test('Refuses a missing, unknown or expired token, and a code for an unknown address', async () => {
 		const driver = makeDriver();
 
-		// 1. Nothing or nonsense
 		await expect(driver.complete({})).rejects.toBeInstanceOf(AuthInvalidTokenError);
 		await expect(driver.complete({ token: 'nope' })).rejects.toBeInstanceOf(AuthInvalidTokenError);
 
@@ -274,7 +262,6 @@ describe('complete', () => {
 			AuthInvalidTokenError,
 		);
 
-		// 2. A real link past its lifetime
 		await driver.begin({ identifier: 'alice@example.com' });
 		vi.setSystemTime(NOW + 60 * 60 * 1000);
 

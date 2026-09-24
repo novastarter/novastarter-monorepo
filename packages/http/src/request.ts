@@ -55,8 +55,9 @@ export interface HttpApi {
  * @throws ProviderCallError for an error status, with the provider's status and answer in `extensions`.
  * @throws HitRateLimitError for a 429, reset at `Retry-After`.
  * @throws TimeoutError when the call outlives its timeout; the abort reason when the signal aborts.
- * @throws Error when the method is malformed, a placeholder is left unfilled, a full URL is on another host, a
- * parameter takes the name of the driver's secret query, or the credentials could not be had.
+ * @throws InvalidPayloadError when a placeholder is left unfilled, or its parameter cannot go in a path.
+ * @throws Error when the method is malformed, a full URL is on another host, a parameter takes the name of the driver's
+ * secret query, or the credentials could not be had.
  * @example
  * ```ts
  * class PaymentsDriverPolar {
@@ -78,8 +79,8 @@ export const request = async <T = unknown>(
 	params: Record<string, unknown> = {},
 	options: CallOptions = {},
 ): Promise<CallResponse<T>> => {
-	// 1. The method, the caller's placeholders, then the driver's; the URL checked before any credential is touched, and
-	//    the driver's secret query added, a parameter of the same name refused
+	// The method, the caller's placeholders, then the driver's; the URL checked before any credential is touched, and
+	// the driver's secret query added, a parameter of the same name refused
 	const parsed = parseCallMethod(method, params);
 	let target = parsed.target;
 
@@ -91,22 +92,22 @@ export const request = async <T = unknown>(
 
 	for (const [name, value] of Object.entries(api.query ?? {})) {
 		if (Object.hasOwn(parsed.params, name)) {
-			throw new Error(`The call parameter "${name}" is reserved by the ${api.provider} driver`);
+			throw new Error(`@novastarter/http: the call parameter "${name}" is reserved by the ${api.provider} driver`);
 		}
 
 		url.searchParams.set(name, value);
 	}
 
-	// 2. The credentials — fetched under the same deadline when they are a token — and the caller's headers on top;
-	//    the request itself under that deadline too, so the timeout covers every step
+	// The credentials — fetched under the same deadline when they are a token — and the caller's headers on top;
+	// the request itself under that deadline too, so the timeout covers every step
 	const timeout = options.timeout ?? api.timeout ?? DEFAULT_REQUEST_TIMEOUT;
 
 	return withTimeout(
 		async (signal) => {
 			const credentials = typeof api.headers === 'function' ? await credentialsOf(api, signal) : (api.headers ?? {});
 
-			// 3. The request through `http()`, named in errors by the method as the caller wrote it — the URL may carry
-			//    the secret query — and judged by the driver's own refusals first
+			// The request through `http()`, named in errors by the method as the caller wrote it — the URL may carry
+			// the secret query — and judged by the driver's own refusals first
 			return http<T>(`${parsed.verb} ${url.href}`, parsed.params, {
 				headers: { ...credentials, ...options.headers },
 				bodyType: api.bodyType,
@@ -139,10 +140,10 @@ export const request = async <T = unknown>(
  */
 const credentialsOf = async (api: HttpApi, signal: AbortSignal): Promise<Record<string, string>> => {
 	try {
-		// 1. The driver's own way to a token
+		// The driver's own way to a token
 		return await (api.headers as (signal: AbortSignal) => Promise<Record<string, string>>)(signal);
 	} catch (error) {
-		// 2. An abort is the deadline's or the caller's, and says nothing secret; anything else is replaced
+		// An abort is the deadline's or the caller's, and says nothing secret; anything else is replaced
 		if (signal.aborted) {
 			throw error;
 		}

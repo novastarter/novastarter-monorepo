@@ -27,15 +27,15 @@ describe.skipIf(!MYSQL)('DatabaseDriverMysql on MySQL', () => {
 	beforeAll(async () => {
 		driver = new DatabaseDriverMysql({ connection: MYSQL!, logger: logger as never });
 
-		// 1. The fixture table the queries below write is made here, not by the migration: every test must pass run
-		//    alone, under `vitest -t` as well as whole-file
+		// The fixture table the queries below write is made here, not by the migration: every test must pass run
+		// alone, under `vitest -t` as well as whole-file
 		await driver.db.execute(
 			sql.raw(
 				`CREATE TABLE IF NOT EXISTS \`${table}\` (\`id\` int AUTO_INCREMENT NOT NULL, \`text\` text NOT NULL, PRIMARY KEY (\`id\`))`,
 			),
 		);
 
-		// 2. A drizzle-kit folder of one migration, written per run, since the table name carries the pid
+		// The drizzle-kit folder is written per run, since the table name carries the pid
 		migrationsFolder = await mkdtemp(join(tmpdir(), 'novastarter-migrations-'));
 		await mkdir(join(migrationsFolder, 'meta'));
 
@@ -48,7 +48,7 @@ describe.skipIf(!MYSQL)('DatabaseDriverMysql on MySQL', () => {
 			}),
 		);
 
-		// 3. The migration itself: a probe table nothing reads — the migrator running it and journaling it is the point
+		// A probe table nothing reads: the migrator running it and journaling it is the point
 		await writeFile(
 			join(migrationsFolder, '0000_init.sql'),
 			`CREATE TABLE \`${probeTable}\` (\`id\` int AUTO_INCREMENT NOT NULL, PRIMARY KEY (\`id\`));`,
@@ -56,10 +56,10 @@ describe.skipIf(!MYSQL)('DatabaseDriverMysql on MySQL', () => {
 	});
 
 	afterAll(async () => {
-		// 1. A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
-		//    real failure stays the one reported
+		// A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
+		// real failure stays the one reported
 		if (driver) {
-			// 2. The pid-scoped tables go, so two runs on the same database never meet each other's fixtures
+			// The pid-scoped tables go, so two runs on the same database never meet each other's fixtures
 			await driver.db.execute(sql.raw(`DROP TABLE IF EXISTS \`${table}\``));
 			await driver.db.execute(sql.raw(`DROP TABLE IF EXISTS \`${probeTable}\``));
 			await driver.db.execute(sql.raw(`DROP TABLE IF EXISTS \`${migrationsTable}\``));
@@ -94,7 +94,7 @@ describe.skipIf(!MYSQL)('DatabaseDriverMysql on MySQL', () => {
 			{ count: 1 },
 		]);
 
-		// 1. A second run finds nothing pending: the same migration is not applied again
+		// A second run finds nothing pending: the same migration is not applied again
 		await driver.migrate({ migrationsFolder, migrationsTable });
 
 		expect(await rows<{ count: number }>(`SELECT count(*) AS count FROM \`${migrationsTable}\``)).toEqual([

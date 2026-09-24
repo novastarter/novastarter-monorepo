@@ -8,6 +8,6 @@
  * @returns `Uint8Array` over the same bytes.
  */
 export const bufferToUint8Array = (buffer: Buffer): Uint8Array<ArrayBufferLike> => {
-	// 1. Reuse the buffer's backing store and honour its offset, since Node pools small buffers into one big slab
+	// Reuse the buffer's backing store and honour its offset, since Node pools small buffers into one big slab
 	return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
 };

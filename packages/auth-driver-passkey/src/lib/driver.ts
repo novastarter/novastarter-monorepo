@@ -1,5 +1,5 @@
 import { type AuthDriver, type AuthIdentity, AuthInvalidTokenError, type ChallengeBegun } from '@novastarter/auth';
-import { InvalidCredentialsError } from '@novastarter/errors';
+import { InvalidConfigError, InvalidCredentialsError } from '@novastarter/errors';
 import {
 	type AuthenticationResponseJSON,
 	generateAuthenticationOptions,
@@ -109,17 +109,17 @@ export class AuthDriverPasskey implements AuthDriver {
 	 * Create the driver from its location options.
 	 *
 	 * @param config - The relying party and the application's key lookup.
-	 * @throws Error when the relying party or a callback is missing.
+	 * @throws InvalidConfigError when the relying party or a callback is missing.
 	 */
 	constructor(config: AuthDriverPasskeyConfig) {
-		// 1. Checked here, since the options come from a location config typed loosely enough to leave one out
+		// Checked here, since the options come from a location config typed loosely enough to leave one out
 		if (!config.rpId || !config.rpName || !config.origin || config.origin.length === 0) {
-			throw new Error('The passkey driver needs "rpId", "rpName" and "origin"');
+			throw new InvalidConfigError({ reason: 'The passkey driver needs "rpId", "rpName" and "origin"' });
 		}
 
 		for (const name of ['findCredential', 'updateCounter'] as const) {
 			if (typeof config[name] !== 'function') {
-				throw new Error(`The passkey driver needs a "${name}" function`);
+				throw new InvalidConfigError({ reason: `The passkey driver needs a "${name}" function` });
 			}
 		}
 
@@ -132,7 +132,7 @@ export class AuthDriverPasskey implements AuthDriver {
 	 * @returns The options for `navigator.credentials.get()`, and the challenge as state.
 	 */
 	async begin(): Promise<ChallengeBegun> {
-		// 1. No allowed keys listed: the browser offers every key it holds for the site, so nobody types a name first
+		// No allowed keys listed: the browser offers every key it holds for the site, so nobody types a name first
 		const options = await generateAuthenticationOptions({
 			rpID: this.config.rpId,
 			userVerification: this.config.userVerification ?? 'preferred',
@@ -151,14 +151,13 @@ export class AuthDriverPasskey implements AuthDriver {
 	 * @throws InvalidCredentialsError for an unknown key, or an answer that does not check out.
 	 */
 	async complete(input: Record<string, unknown>, state: Record<string, unknown> | undefined): Promise<AuthIdentity> {
-		// 1. The challenge is what makes the answer fresh; without the cookie there is nothing to check it against
+		// The challenge is what makes the answer fresh; without the cookie there is nothing to check it against
 		const challenge = state?.['challenge'];
 
 		if (typeof challenge !== 'string') {
 			throw new AuthInvalidTokenError();
 		}
 
-		// 2. The key the answer names, as stored; an unknown one is a plain refusal
 		const response = input['response'] as AuthenticationResponseJSON | undefined;
 		const credential = typeof response?.id === 'string' ? await this.config.findCredential(response.id) : null;
 
@@ -166,8 +165,7 @@ export class AuthDriverPasskey implements AuthDriver {
 			throw new InvalidCredentialsError();
 		}
 
-		// 3. The signature, the challenge, the origin and the relying party; the library throws on a malformed answer,
-		//    which is a refusal like any other
+		// The library throws on a malformed answer, which is a refusal like any other
 		let verified: Awaited<ReturnType<typeof verifyAuthenticationResponse>>;
 
 		try {
@@ -192,7 +190,7 @@ export class AuthDriverPasskey implements AuthDriver {
 			throw new InvalidCredentialsError();
 		}
 
-		// 4. The new counter is stored before the sign-in completes, so a cloned key replaying an old one is caught next
+		// The new counter is stored before the sign-in completes, so a cloned key replaying an old one is caught next
 		await this.config.updateCounter(credential.id, verified.authenticationInfo.newCounter);
 
 		return { provider: 'passkey', subject: credential.userId };
@@ -206,8 +204,8 @@ export class AuthDriverPasskey implements AuthDriver {
 	 * {@link verifyRegistration}.
 	 */
 	async registrationOptions(params: PasskeyRegistrationParams): Promise<PublicKeyCredentialCreationOptionsJSON> {
-		// 1. A discoverable key, so it can sign in without a name typed first; the account id becomes the key's user
-		//    handle, bytes as WebAuthn wants them
+		// A discoverable key, so it can sign in without a name typed first; the user handle is bytes, as WebAuthn wants
+		// it
 		return generateRegistrationOptions({
 			rpName: this.config.rpName,
 			rpID: this.config.rpId,
@@ -239,7 +237,7 @@ export class AuthDriverPasskey implements AuthDriver {
 		challenge: string,
 		userId: string,
 	): Promise<PasskeyCredential> {
-		// 1. The attestation, the challenge, the origin and the relying party; a malformed answer is a refusal too
+		// A malformed answer is a refusal too
 		let verified: Awaited<ReturnType<typeof verifyRegistrationResponse>>;
 
 		try {
@@ -258,7 +256,7 @@ export class AuthDriverPasskey implements AuthDriver {
 			throw new InvalidCredentialsError();
 		}
 
-		// 2. The public key as text, so the application stores the record as it is
+		// The public key as text, so the application stores the record as it is
 		const { credential, credentialDeviceType, credentialBackedUp } = verified.registrationInfo;
 
 		return {

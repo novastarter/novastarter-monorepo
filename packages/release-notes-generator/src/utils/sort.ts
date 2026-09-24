@@ -13,23 +13,21 @@
  */
 export function sortByExternalOrder<T, O extends T[K][], K extends keyof T>(order: O, key: K): (a: T, b: T) => number {
 	return (a, b) => {
-		// 1. Both listed: the list decides
 		const indexOfA = order.indexOf(a[key]);
 		const indexOfB = order.indexOf(b[key]);
 		if (indexOfA >= 0 && indexOfB >= 0) return indexOfA - indexOfB;
 
-		// 2. Only `a` listed: it goes first
 		if (indexOfA >= 0) {
 			return -1;
 		}
 
-		// 3. Only `b` listed: the mirror image, so the comparator stays symmetric and sorts unlisted items after
-		//    the listed ones no matter which side they arrive on
+		// The mirror image keeps the comparator symmetric: unlisted items sort after the listed ones no matter which
+		// side they arrive on
 		if (indexOfB >= 0) {
 			return 1;
 		}
 
-		// 4. Neither listed: keep the existing order, so unlisted items are never shuffled
+		// Unlisted items keep their order, so they are never shuffled
 		return 0;
 	};
 }
@@ -50,7 +48,7 @@ export function sortByObjectValues<T, O extends Record<PropertyKey, T[K]>, K ext
 	object: O,
 	key: K,
 ): (a: T, b: T) => number {
-	// 1. Object values keep insertion order, which is the order the config lists the titles in
+	// Object values keep insertion order, which is the order the config lists the titles in
 	const order = Object.values(object);
 	return (a, b) => order.indexOf(a[key]) - order.indexOf(b[key]);
 }

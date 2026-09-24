@@ -24,12 +24,12 @@ declare module './database-manager.js' {
 
 describe('#registerDriver', () => {
 	test('Saves registered drivers locally', () => {
-		// 1. A bare mock stands in for a driver class: registration only stores it and never instantiates it
+		// A bare mock stands in for a driver class: registration only stores it and never instantiates it
 		const manager = new DatabaseManager();
 		const mockDriver = vi.fn();
 		manager.registerDriver('test-driver', mockDriver);
 
-		// 2. Inspect the private map directly, since the public API offers no way to list registrations
+		// Inspect the private map directly, since the public API offers no way to list registrations
 		expect(manager['drivers'].size).toBe(1);
 		expect(manager['drivers'].get('test-driver')).toBe(mockDriver);
 	});
@@ -39,17 +39,19 @@ describe('#registerLocation', () => {
 	test('Throws error when registering location with missing driver', () => {
 		const manager = new DatabaseManager();
 
-		// 1. No driver was registered, so the lookup by name must fail before any instantiation happens
+		// No driver was registered, so the lookup by name must fail before any instantiation happens
 		expect(() =>
 			manager.registerLocation('test-driver', {
 				driver: 'test-driver',
 				options: {},
 			}),
-		).toThrowErrorMatchingInlineSnapshot(`[Error: Driver "test-driver" isn't registered.]`);
+		).toThrowErrorMatchingInlineSnapshot(
+			`[NovastarterError: Invalid config. The "test-driver" driver isn't registered; call registerDriver() with it before a location uses it.]`,
+		);
 	});
 
 	test('Instantiates the driver with the passed options on first use', () => {
-		// 1. `vi.fn()` is constructible, so it records how the manager calls `new Driver(...)`
+		// `vi.fn()` is constructible, so it records how the manager calls `new Driver(...)`
 		const mockDriver = vi.fn();
 
 		const manager = new DatabaseManager();
@@ -63,12 +65,12 @@ describe('#registerLocation', () => {
 			},
 		});
 
-		// 2. Registration keeps the configuration only; the first use builds the driver from `options` alone
+		// Registration keeps the configuration only; the first use builds the driver from `options` alone
 		expect(mockDriver).not.toHaveBeenCalled();
 
 		manager.location('test-location');
 
-		// 3. The options arrive with the location's name as their label, what the driver's log lines carry
+		// The location's name arrives as the label the driver's log lines carry
 		expect(mockDriver).toHaveBeenCalledOnce();
 		expect(mockDriver).toHaveBeenCalledWith({ connection: 'postgresql://localhost/app', label: 'test-location' });
 		expect(manager.instantiated().get('test-location')).toBeInstanceOf(mockDriver);
@@ -80,7 +82,7 @@ describe('#registerLocation', () => {
 
 		manager.registerDriver('test-driver', mockDriver);
 
-		// 1. The caller's config is not mutated: a config object reused for two locations must not carry the first name
+		// The caller's config is not mutated: a config object reused for two locations must not carry the first name
 		const config = { driver: 'test-driver' as const, options: { label: 'primary' } };
 
 		manager.registerLocation('test-location', config);
@@ -95,9 +97,9 @@ describe('#location', () => {
 	test(`Throws error if location is used that wasn't registered`, () => {
 		const manager = new DatabaseManager();
 
-		// 1. An unknown name must throw rather than return `undefined`, since callers chain `.db` on the result
+		// An unknown name must throw rather than return `undefined`, since callers chain `.db` on the result
 		expect(() => manager.location('missing')).toThrowErrorMatchingInlineSnapshot(
-			`[Error: Location "missing" doesn't exist.]`,
+			`[NovastarterError: Invalid config. Location "missing" doesn't exist; register it with registerLocation() before using it.]`,
 		);
 	});
 
@@ -113,10 +115,11 @@ describe('#location', () => {
 			options: {},
 		});
 
-		// 1. The public getter must hand back the same instance that registration created, and the default location
-		//    is what a call without a name asks for
 		expect(manager.location('test-location')).toBeInstanceOf(mockDriver);
-		expect(() => manager.location()).toThrowErrorMatchingInlineSnapshot(`[Error: Location "default" doesn't exist.]`);
+
+		expect(() => manager.location()).toThrowErrorMatchingInlineSnapshot(
+			`[NovastarterError: Invalid config. Location "default" doesn't exist; register it with registerLocation() before using it.]`,
+		);
 	});
 
 	test('Types the db of a location by the augmented map, unknown for the others', () => {
@@ -124,13 +127,13 @@ describe('#location', () => {
 
 		manager.registerDriver('test-driver', vi.fn());
 
-		// 1. Three locations on the one driver, so every call below resolves at runtime as well as at the type level
+		// Three locations on the one driver, so every call below resolves at runtime as well as at the type level
 		for (const name of ['typed', 'other', 'default']) {
 			manager.registerLocation(name, { driver: 'test-driver', options: {} });
 		}
 
-		// 2. A name in the map narrows `db`; a name outside it, and the default one, stay `unknown` — the manager
-		//    changes nothing at runtime, so only the types are checked
+		// A name in the map narrows `db`; a name outside it, and the default one, stay `unknown` — the manager
+		// changes nothing at runtime, so only the types are checked
 		expectTypeOf(manager.location('typed')).toEqualTypeOf<DatabaseDriver<TypedDb>>();
 		expectTypeOf(manager.location('typed').db).toEqualTypeOf<TypedDb>();
 		expectTypeOf(manager.location('other').db).toEqualTypeOf<unknown>();

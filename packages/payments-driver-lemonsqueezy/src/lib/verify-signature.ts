@@ -18,7 +18,8 @@ export const SIGNATURE_HEADER = 'x-signature';
  * @returns `true` for a body the secret signed.
  */
 export const verifySignature = (rawBody: string, signature: string, secret: string): boolean => {
-	// 1. Both sides as the bytes of their hex text; a signature of another length cannot match and must not throw
+	// Both sides are compared as the bytes of their hex text; a signature of another length cannot match and must not
+	// throw.
 	const expected = Buffer.from(createHmac('sha256', secret).update(rawBody).digest('hex'), 'utf8');
 	const given = Buffer.from(signature, 'utf8');
 

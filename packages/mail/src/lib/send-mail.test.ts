@@ -5,6 +5,7 @@
  * `@novastarter/memory`.
  */
 import { type Emitter, useEmitter } from '@novastarter/emitter';
+import { InvalidConfigError } from '@novastarter/errors';
 import { type Logger, useLogger } from '@novastarter/logger';
 import { LimiterDriverLocal } from '@novastarter/memory';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -51,7 +52,6 @@ class OkDriver implements MailDriver {
 	 * @returns Every recipient as accepted.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
-		// 1. Recorded for the assertions, accepted as given
 		sent.push(message);
 
 		return { messageId: 'ok-1', accepted: [String(message.to)], rejected: [] };
@@ -68,7 +68,7 @@ class BrokenDriver implements MailDriver {
 	 * @throws Always.
 	 */
 	async send(): Promise<MailResult> {
-		// 1. An `Error` with a fixed message, so the tests can match it as the `cause` of the send failure
+		// An `Error` with a fixed message, so the tests can match it as the `cause` of the send failure
 		throw new Error('provider is down');
 	}
 }
@@ -83,7 +83,7 @@ class RudeDriver implements MailDriver {
 	 * @throws Always, a string.
 	 */
 	async send(): Promise<MailResult> {
-		// 1. Not an `Error` on purpose: pino would take a string for the message and drop the location from the line
+		// Not an `Error` on purpose: pino would take a string for the message and drop the location from the line
 		throw 'rate limited';
 	}
 }
@@ -94,7 +94,6 @@ class RudeDriver implements MailDriver {
  * @param locations - Location name to driver name.
  */
 const register = (locations: Record<string, 'ok' | 'broken' | 'rude'>): void => {
-	// 1. Every fake driver is always known; the test decides which locations exist and in which order
 	const manager = useMail();
 
 	manager.registerDriver('ok', OkDriver);
@@ -115,16 +114,15 @@ const register = (locations: Record<string, 'ok' | 'broken' | 'rude'>): void => 
 const message: MailMessage = { to: 'ada@example.com', subject: 'Hi', text: 'Hello' };
 
 beforeEach(() => {
-	// 1. The doubles replace the process-wide logger and emitter, so the manager the test builds works without them
+	// The doubles replace the process-wide logger and emitter, so the manager the test builds works without them
 	vi.mocked(useLogger).mockReturnValue(logger as unknown as Logger);
 	vi.mocked(useEmitter).mockReturnValue(emitter as unknown as Emitter);
 });
 
 afterEach(() => {
-	// 1. The manager is process-wide: reset it, so registrations of one test never leak into the next
+	// The manager is process-wide: reset it, so registrations of one test never leak into the next
 	useMail.reset();
 
-	// 2. The recorded messages and the mocks' call history go with the test that wrote them
 	sent.length = 0;
 	vi.clearAllMocks();
 });
@@ -136,13 +134,10 @@ describe('sendMail', () => {
 
 		const result = await sendMail(message);
 
-		// 1. The answer names the location that delivered, on top of what the driver said
 		expect(result).toStrictEqual({ messageId: 'ok-1', accepted: ['ada@example.com'], rejected: [], location: 'main' });
 
-		// 2. The driver saw the message with the sender filled in
 		expect(sent[0]).toMatchObject({ from: { name: 'Acme', address: 'no-reply@acme.test' }, subject: 'Hi' });
 
-		// 3. The filter ran before, the action after
 		expect(emitter.emitFilter).toHaveBeenCalledWith(MAIL_SEND_FILTER, message, { category: 'transactional' });
 		expect(emitter.emitAction).toHaveBeenCalledWith(MAIL_SENT_EVENT, expect.objectContaining({ location: 'main' }));
 	});
@@ -150,13 +145,10 @@ describe('sendMail', () => {
 	test('Lets the message sender win over the routes and refuses a message without any', async () => {
 		register({ main: 'ok' });
 
-		// 1. No sender anywhere: refused before any driver runs
 		await expect(sendMail(message)).rejects.toMatchObject({ code: 'INVALID_PAYLOAD' });
 
-		// 2. A half-filled object is refused too, by name
 		await expect(sendMail({ ...message, from: { name: '', address: 'x@y.z' } })).rejects.toThrow(/name and address/);
 
-		// 3. The message's own sender is kept as given
 		useMail().registerRoutes({ from: 'no-reply@acme.test' });
 		await sendMail({ ...message, from: 'ada@acme.test' });
 
@@ -167,13 +159,11 @@ describe('sendMail', () => {
 		register({ main: 'ok' });
 		useMail().registerRoutes({ from: 'no-reply@acme.test' });
 
-		// 1. A rewrite reaches the driver; the html is trimmed line by line on the way
 		emitter.emitFilter.mockResolvedValueOnce({ ...message, html: '  <p>\n   hi\n</p>  ' });
 		await sendMail(message);
 
 		expect(sent[0]?.html).toBe('<p>\nhi\n</p>');
 
-		// 2. A veto answers `null` and sends nothing
 		emitter.emitFilter.mockResolvedValueOnce(null);
 
 		expect(await sendMail(message)).toBeNull();
@@ -184,11 +174,9 @@ describe('sendMail', () => {
 		register({ first: 'broken', second: 'ok' });
 		useMail().registerRoutes({ from: 'no-reply@acme.test', transactional: ['first', 'second'] });
 
-		// 1. The broken location is logged and skipped; the next one delivers
 		expect(await sendMail(message)).toMatchObject({ location: 'second' });
 		expect(logger.warn).toHaveBeenCalledWith(expect.any(Error), 'Mail location "first" failed to send "Hi"');
 
-		// 2. An explicit location ignores the routes — and, being broken, fails the send with its error as cause
 		const failure = sendMail(message, { location: 'first' });
 
 		await expect(failure).rejects.toThrow('Every mail location failed (first)');
@@ -204,7 +192,7 @@ describe('sendMail', () => {
 		register({ first: 'rude', second: 'ok' });
 		useMail().registerRoutes({ from: 'no-reply@acme.test', transactional: ['first', 'second'] });
 
-		// 1. The string is wrapped, so pino keeps the kit's line and the location; the raw value stays as the cause
+		// The string is wrapped, so pino keeps the kit's line and the location; the raw value stays as the cause
 		expect(await sendMail(message)).toMatchObject({ location: 'second' });
 
 		expect(logger.warn).toHaveBeenCalledWith(
@@ -219,8 +207,8 @@ describe('sendMail', () => {
 		register({ main: 'ok' });
 		useMail().registerRoutes({ from: 'no-reply@acme.test' });
 
-		// 1. A typo in the location name is a configuration mistake, named as such: no warning, no `mail.failed`
-		await expect(sendMail(message, { location: 'mian' })).rejects.toThrow('Mail location "mian" doesn\'t exist.');
+		await expect(sendMail(message, { location: 'mian' })).rejects.toThrow(InvalidConfigError);
+		await expect(sendMail(message, { location: 'mian' })).rejects.toThrow('Mail location "mian" doesn\'t exist');
 
 		expect(sent).toHaveLength(0);
 		expect(logger.warn).not.toHaveBeenCalled();
@@ -237,26 +225,23 @@ describe('sendMail', () => {
 			},
 		});
 
-		// 1. The first message spends the budget of `main`; the second is routed past it
 		expect(await sendMail(message)).toMatchObject({ location: 'main' });
 		expect(await sendMail(message)).toMatchObject({ location: 'backup' });
 		expect(logger.warn).toHaveBeenCalledWith('Mail location "main" is over its rate limit; trying the next one');
 
-		// 2. Only limited locations in the chain: the limiter's own error tells the caller when to retry
 		await expect(sendMail(message, { location: 'main' })).rejects.toMatchObject({ code: 'REQUESTS_EXCEEDED' });
 	});
 
 	test('Throws when no location is registered', async () => {
-		// 1. Routes without locations: the chain is empty before any driver is asked
 		useMail().registerRoutes({ from: 'no-reply@acme.test' });
 
+		await expect(sendMail(message)).rejects.toThrow(InvalidConfigError);
 		await expect(sendMail(message)).rejects.toThrow('No mail location is registered');
 	});
 });
 
 describe('normalizeHtml', () => {
 	test('Trims every line', () => {
-		// 1. Leading and trailing whitespace of every line goes; the line breaks stay
 		expect(normalizeHtml('  <p>\n\t\thi  \n</p>')).toBe('<p>\nhi\n</p>');
 	});
 });

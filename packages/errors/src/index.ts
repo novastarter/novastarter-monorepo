@@ -9,6 +9,8 @@ export { createError } from './create-error.js';
 export type { NovastarterError, NovastarterErrorConstructor } from './create-error.js';
 export {
 	HitRateLimitError,
+	InvalidConfigError,
+	invalidConfigMessage,
 	InvalidCredentialsError,
 	InvalidPayloadError,
 	MAX_RETRY_AFTER,
@@ -20,6 +22,7 @@ export {
 } from './errors/index.js';
 export type {
 	HitRateLimitErrorExtensions,
+	InvalidConfigErrorExtensions,
 	InvalidPayloadErrorExtensions,
 	ProviderCallErrorExtensions,
 	ProviderCallHeaders,

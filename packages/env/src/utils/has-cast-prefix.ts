@@ -19,16 +19,16 @@ import { ENV_TYPES } from '../constants/env-types.js';
  * ```
  */
 export const getCastFlag = (value: unknown): (typeof ENV_TYPES)[number] | null => {
-	// 1. Prefixes only exist in strings; numbers and objects from a JS/YAML config are already typed
+	// Prefixes only exist in strings; numbers and objects from a JS/YAML config are already typed
 	if (typeof value !== 'string') return null;
 
-	// 2. Without a colon there is nothing that could be a prefix
+	// Without a colon there is nothing that could be a prefix
 	if (value.includes(':') === false) return null;
 
-	// 3. The first segment is the candidate; the tuple cast tells TS a split always yields at least one element
+	// The tuple cast tells TS a split always yields at least one element
 	const castPrefix = (value.split(':') as [string])[0];
 
-	// 4. Unknown words before a colon (`https`, `redis`) are plain data, not a cast flag
+	// Unknown words before a colon (`https`, `redis`) are plain data, not a cast flag
 	if (isIn(castPrefix, ENV_TYPES) === false) return null;
 
 	return castPrefix;

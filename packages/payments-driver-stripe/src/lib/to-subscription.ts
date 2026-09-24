@@ -32,22 +32,22 @@ export const STRIPE_STATUSES: readonly SubscriptionStatus[] = [
  * changed something the mapping has to learn, better loud than silently wrong.
  */
 export const toSubscription = (subscription: Stripe.Subscription): Subscription => {
-	// 1. One item per subscription; a subscription with several would need a model the kit does not have
+	// A subscription with several items would need a model the kit does not have.
 	const item = subscription.items.data[0];
 
 	if (!item) {
 		throw new Error(`Stripe subscription "${subscription.id}" has no items`);
 	}
 
-	// 2. Stripe's status set is the kit's; an unknown one is a change on Stripe's side
+	// Stripe's status set is the kit's; an unknown one is a change on Stripe's side.
 	if (!STRIPE_STATUSES.includes(subscription.status as SubscriptionStatus)) {
 		throw new Error(`Stripe subscription "${subscription.id}" has an unknown status "${subscription.status}"`);
 	}
 
-	// 3. The period comes from the item since API version 2025-03-31, with the subscription itself as the fallback:
-	//    a webhook endpoint pinned to an earlier API version still carries the period there, and silently mapping no
-	//    period at all would hide that version drift. The subscription's fields are gone from the current types —
-	//    removed with the move to the item — so the older shape is read through a cast
+	// The period comes from the item since API version 2025-03-31, with the subscription itself as the fallback: a
+	// webhook endpoint pinned to an earlier API version still carries the period there, and silently mapping no period
+	// at all would hide that version drift. The subscription's fields are gone from the current types, so the older
+	// shape is read through a cast.
 	const legacyPeriod = subscription as { current_period_start?: number; current_period_end?: number };
 
 	return {

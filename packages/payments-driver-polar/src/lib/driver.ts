@@ -1,4 +1,4 @@
-import { InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
+import { InvalidConfigError, InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
 import { type CallOptions, type CallResponse, type HttpApi, request } from '@novastarter/http';
 import type {
 	CancelSubscriptionInput,
@@ -142,20 +142,20 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	 * Create a driver from its location options.
 	 *
 	 * @param config - Access token, webhook secret, environment.
-	 * @throws Error without a token or a webhook secret — a deployment that cannot verify webhooks would drift from
-	 * Polar silently.
+	 * @throws InvalidConfigError without a token or a webhook secret — a deployment that cannot verify webhooks would
+	 * drift from Polar silently.
 	 */
 	constructor(config: PaymentsDriverPolarConfig) {
-		// 1. Fail at registration for the two values nothing works without, rather than on the first request
+		// Fail at registration for the two values nothing works without, rather than on the first request
 		if (!config.accessToken) {
-			throw new Error('The polar payments driver needs an "accessToken"');
+			throw new InvalidConfigError({ reason: 'The polar payments driver needs an "accessToken"' });
 		}
 
 		if (!config.webhookSecret) {
-			throw new Error('The polar payments driver needs a "webhookSecret"');
+			throw new InvalidConfigError({ reason: 'The polar payments driver needs a "webhookSecret"' });
 		}
 
-		// 2. The SDK's client for the chosen server; the sandbox has its own tokens and products
+		// The sandbox has its own tokens and products
 		this.client =
 			config.client ??
 			new Polar({
@@ -165,7 +165,7 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 
 		this.webhookSecret = config.webhookSecret;
 
-		// 3. `call()` makes its own request with the same token against the same server, the SDK having no raw one
+		// `call()` makes its own request with the same token against the same server, the SDK having no raw one
 		this.api = {
 			provider: 'polar',
 			baseUrl: POLAR_API_URLS[config.server ?? 'production'],
@@ -182,14 +182,14 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	 * @throws Polar's `PolarError` when the request is refused, or its `HTTPClientError` when Polar cannot be reached.
 	 */
 	async createCustomer(input: CreateCustomerInput): Promise<PaymentsCustomer> {
-		// 1. Optional fields are only sent when given, so Polar keeps its defaults otherwise
+		// Optional fields are only sent when given, so Polar keeps its defaults otherwise
 		const customer = await this.client.customers.create({
 			email: input.email,
 			...(input.name !== undefined ? { name: input.name } : {}),
 			...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
 		});
 
-		// 2. Polar's metadata may hold numbers and booleans; the kit's is flat strings
+		// Polar's metadata may hold numbers and booleans; the kit's is flat strings
 		return {
 			id: customer.id,
 			email: customer.email ?? input.email,
@@ -209,8 +209,8 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	 * @throws Polar's `PolarError` when the request is refused, or its `HTTPClientError` when Polar cannot be reached.
 	 */
 	async createCheckoutSession(input: CreateCheckoutSessionInput): Promise<CheckoutSession> {
-		// 1. One product per checkout; the trial is expressed in days and the cancel URL is Polar's return URL. Without
-		//    a positive trial `allowTrial: false` is sent, because Polar otherwise falls back to the product's own trial
+		// One product per checkout; the trial is expressed in days and the cancel URL is Polar's return URL. Without
+		// a positive trial `allowTrial: false` is sent, because Polar otherwise falls back to the product's own trial
 		const checkout = await this.client.checkouts.create({
 			products: [input.priceId],
 			customerId: input.customerId,
@@ -224,7 +224,6 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 			...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
 		});
 
-		// 2. The hosted page and when Polar stops honouring it
 		return { id: checkout.id, url: checkout.url, expiresAt: checkout.expiresAt };
 	}
 
@@ -236,7 +235,7 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	 * @throws Polar's `PolarError` when the request is refused, or its `HTTPClientError` when Polar cannot be reached.
 	 */
 	async createPortalSession(input: CreatePortalSessionInput): Promise<PortalSession> {
-		// 1. A customer session is what opens the portal; the URL is all the caller needs
+		// A customer session is what opens the portal; the URL is all the caller needs
 		const session = await this.client.customerSessions.create({
 			customerId: input.customerId,
 			returnUrl: input.returnUrl,
@@ -253,7 +252,7 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	 * @throws Polar's `PolarError` when the request is refused, or its `HTTPClientError` when Polar cannot be reached.
 	 */
 	async getSubscription(subscriptionId: string): Promise<Subscription> {
-		// 1. The model carries the product and the periods, which is all the mapping reads
+		// The model carries the product and the periods, which is all the mapping reads
 		return toSubscription(await this.client.subscriptions.get({ id: subscriptionId }));
 	}
 
@@ -265,16 +264,15 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	 *
 	 * @param input - Subscription, new product and/or seats, proration.
 	 * @returns The subscription after the change.
-	 * @throws Error when neither a price nor a seat count is given.
+	 * @throws InvalidPayloadError when neither a price nor a seat count is given.
 	 * @throws Polar's `PolarError` when the request is refused, or its `HTTPClientError` when Polar cannot be reached.
 	 */
 	async updateSubscription(input: UpdateSubscriptionInput): Promise<Subscription> {
-		// 1. The proration behavior holds whichever request carries the change, so it is resolved once; the
-		//    accumulator keeps the last update's result, which is the state that comes back
+		// The proration behavior holds whichever request carries the change, so it is resolved once; the
+		// accumulator keeps the last update's result, which is the state that comes back
 		const prorationBehavior = PRORATION[input.proration ?? 'prorate'];
 		let subscription;
 
-		// 2. A product change is one update
 		if (input.priceId !== undefined) {
 			subscription = await this.client.subscriptions.update({
 				id: input.subscriptionId,
@@ -282,7 +280,7 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 			});
 		}
 
-		// 3. A seat change is another; its result is the later state, so it is the one returned
+		// The seat change's result is the later state, so it is the one returned
 		if (input.quantity !== undefined) {
 			subscription = await this.client.subscriptions.update({
 				id: input.subscriptionId,
@@ -290,11 +288,11 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 			});
 		}
 
-		// 4. Neither given: a caller's mistake, reported rather than answered with an unchanged subscription
+		// Neither given: a caller's mistake, reported rather than answered with an unchanged subscription
 		if (!subscription) {
-			throw new Error(
-				`Nothing to update on Polar subscription "${input.subscriptionId}": give a priceId or a quantity`,
-			);
+			throw new InvalidPayloadError({
+				reason: `Nothing to update on Polar subscription "${input.subscriptionId}": give a priceId or a quantity`,
+			});
 		}
 
 		return toSubscription(subscription);
@@ -308,10 +306,10 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	 * @throws Polar's `PolarError` when the request is refused, or its `HTTPClientError` when Polar cannot be reached.
 	 */
 	async cancelSubscription(input: CancelSubscriptionInput): Promise<Subscription> {
-		// 1. The reason is recorded on Polar's side either way, as the customer's cancellation comment
+		// The reason is recorded on Polar's side either way, as the customer's cancellation comment
 		const comment = input.reason !== undefined ? { customerCancellationComment: input.reason } : {};
 
-		// 2. Right away is a revoke; at period end is a flag on the subscription
+		// Right away is a revoke; at period end is a flag on the subscription
 		const subscription = input.immediately
 			? await this.client.subscriptions.update({
 					id: input.subscriptionId,
@@ -333,7 +331,6 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	 * @throws Polar's `PolarError` when the request is refused, or its `HTTPClientError` when Polar cannot be reached.
 	 */
 	async listInvoices(input: ListInvoicesInput): Promise<Invoice[]> {
-		// 1. Newest first, one page; the limit is passed through when given
 		const page = await this.client.orders.list({
 			customerId: input.customerId,
 			sorting: ['-created_at'],
@@ -356,7 +353,7 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	 * @throws InvalidCredentialsError when the signature does not verify, or the timestamp is outside the tolerance.
 	 */
 	async parseWebhook(rawBody: string, headers: WebhookHeaders): Promise<PaymentsEvent | null> {
-		// 1. All three Standard Webhooks headers have to be there; a missing one is a malformed delivery, not a forged one
+		// All three Standard Webhooks headers have to be there; a missing one is a malformed delivery, not a forged one
 		const present: Record<string, string> = {};
 
 		for (const name of WEBHOOK_HEADERS) {
@@ -369,20 +366,20 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 			present[name] = value;
 		}
 
-		// 2. The SDK verifies the signature and the timestamp, then parses the body — in that order. Every header is
-		//    checked present above, so the delivery id is there
+		// The SDK verifies the signature and the timestamp, then parses the body — in that order. Every header is
+		// checked present above, so the delivery id is there
 		try {
 			return toEvent(validateEvent(rawBody, present, this.webhookSecret), deliveryIdOf(present));
 		} catch (error) {
-			// 3. A signature that does not match, or a stale timestamp, is a credentials problem
+			// A signature that does not match, or a stale timestamp, is a credentials problem
 			if (error instanceof WebhookVerificationError) {
 				throw new InvalidCredentialsError();
 			}
 
-			// 4. The SDK verifies before it parses, so a validation error here is a verified event this SDK cannot
-			//    read. Only an event of a type the SDK does not know is dropped — Polar adds types over time; a known
-			//    type whose payload fails the schema is refused, since dropping it would silently lose every delivery
-			//    of that type until the SDK is updated, and a body that is not an event at all is refused as well
+			// The SDK verifies before it parses, so a validation error here is a verified event this SDK cannot
+			// read. Only an event of a type the SDK does not know is dropped — Polar adds types over time; a known
+			// type whose payload fails the schema is refused, since dropping it would silently lose every delivery
+			// of that type until the SDK is updated, and a body that is not an event at all is refused as well
 			if (error instanceof SDKValidationError) {
 				const type = eventTypeOf(rawBody);
 
@@ -399,8 +396,8 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 				);
 			}
 
-			// 5. The verifier parses the body once the signature matched, so a body that is not JSON surfaces here as
-			//    a bare SyntaxError: a payload problem the sender has to fix, not a failure of the driver
+			// The verifier parses the body once the signature matched, so a body that is not JSON surfaces here as
+			// a bare SyntaxError: a payload problem the sender has to fix, not a failure of the driver
 			if (error instanceof SyntaxError) {
 				throw new InvalidPayloadError({ reason: 'The body is not JSON' }, { cause: error });
 			}
@@ -441,8 +438,8 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 		params?: Record<string, unknown>,
 		options?: CallOptions,
 	): Promise<CallResponse<T>> {
-		// 1. The shared request does it all: placeholders, Polar's hosts only — so the token never travels elsewhere —
-		//    the deadline, and an error status turned into the kit's error with Polar's answer
+		// The shared request does it all: placeholders, Polar's hosts only — so the token never travels elsewhere —
+		// the deadline, and an error status turned into the kit's error with Polar's answer
 		return request<T>(this.api, method, params, options);
 	}
 
@@ -452,7 +449,7 @@ export class PaymentsDriverPolar implements PaymentsDriver {
 	 * @throws Polar's authentication error when it does not.
 	 */
 	async verify(): Promise<void> {
-		// 1. One customer is the smallest authenticated read; an invalid token fails here with Polar's own error
+		// One customer is the smallest authenticated read; an invalid token fails here with Polar's own error
 		await this.client.customers.list({ limit: 1 });
 	}
 }
@@ -465,7 +462,7 @@ export class PaymentsDriverPolar implements PaymentsDriver {
  * @returns The event type, or `undefined` for a body that is not event-shaped.
  */
 const eventTypeOf = (rawBody: string): string | undefined => {
-	// 1. A body that is not JSON, or not an object with a string `type`, is not an event of any version
+	// A body that is not JSON, or not an object with a string `type`, is not an event of any version
 	try {
 		const parsed: unknown = JSON.parse(rawBody);
 		const type = typeof parsed === 'object' && parsed !== null ? (parsed as { type?: unknown }).type : undefined;
@@ -488,6 +485,6 @@ const eventTypeOf = (rawBody: string): string | undefined => {
  * @returns `true` for an unknown event type.
  */
 const isUnknownEventType = (error: SDKValidationError): boolean => {
-	// 1. The inner error's `rawMessage` is the SDK's message before it appends the cause, so the prefix is stable
+	// The inner error's `rawMessage` is the SDK's message before it appends the cause, so the prefix is stable
 	return error.cause instanceof SDKValidationError && String(error.cause.rawMessage).startsWith('Unknown event type');
 };

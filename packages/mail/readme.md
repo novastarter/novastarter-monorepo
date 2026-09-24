@@ -97,8 +97,8 @@ releases the drivers built so far at shutdown — the pooled SMTP connections, s
 6. Emits `mail.sent` with the location and the result, or `mail.failed` and throws: the limiter's `HitRateLimitError`
    when the limit was all that stood in the way, otherwise an `Error` with the last failure as `cause`.
 
-An explicit `location` short-circuits the routes; it has to be registered, a name nobody registered throws before
-anything is sent or logged. The routes carry everything the chain needs:
+An explicit `location` short-circuits the routes; it has to be registered, a name nobody registered throws
+`InvalidConfigError` before anything is sent or logged. The routes carry everything the chain needs:
 
 ```ts
 import { useLimiter } from '@novastarter/memory';

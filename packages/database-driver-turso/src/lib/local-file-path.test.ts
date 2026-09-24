@@ -6,7 +6,6 @@ import { localFilePath } from './local-file-path.js';
 
 describe('localFilePath', () => {
 	test('Reads the path of every file: form libsql accepts', () => {
-		// 1. Relative, absolute with one slash, absolute with the empty host, and with `localhost`
 		expect(localFilePath('file:./data/app.db')).toBe('./data/app.db');
 		expect(localFilePath('file:app.db')).toBe('app.db');
 		expect(localFilePath('file:/var/lib/app.db')).toBe('/var/lib/app.db');
@@ -20,8 +19,8 @@ describe('localFilePath', () => {
 	});
 
 	test('Answers nothing for a file:// URL with a remote host', () => {
-		// 1. libsql rejects a non-localhost host in a file: URL itself; a path here would create a bogus directory
-		//    for a database the client refuses to open
+		// libsql rejects a non-localhost host in a file: URL itself; a path here would create a bogus directory
+		// for a database the client refuses to open
 		expect(localFilePath('file://example.com/x')).toBeUndefined();
 	});
 

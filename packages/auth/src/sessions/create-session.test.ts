@@ -26,12 +26,10 @@ describe('createSession', () => {
 	test('Returns a random token and a record keyed by its hash, with the default lifetime', () => {
 		const { token, session } = createSession('user-1');
 
-		// 1. 256 random bits as base64url; the record keeps only the hash
 		expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
 		expect(session.id).toBe(hashToken(token));
 		expect(session.id).not.toBe(token);
 
-		// 2. Without an idle lifetime both deadlines are the hard one, and no metadata key appears
 		expect(session).toStrictEqual({
 			id: hashToken(token),
 			userId: 'user-1',
@@ -42,24 +40,20 @@ describe('createSession', () => {
 	});
 
 	test('Makes a new token on every call', () => {
-		// 1. Two sessions of one user never share a token
 		expect(createSession('user-1').token).not.toBe(createSession('user-1').token);
 	});
 
 	test('Uses the lifetimes of the settings, the idle deadline capped by the hard one', () => {
-		// 1. An idle lifetime shorter than the hard one sets the first deadline
 		useAuth().registerSettings({ session: { ttl: 60_000, idleTtl: 10_000 } });
 
 		expect(createSession('user-1').session).toMatchObject({ expiresAt: NOW + 10_000, absoluteExpiresAt: NOW + 60_000 });
 
-		// 2. One longer than the hard one never outlives it
 		useAuth().registerSettings({ session: { ttl: 60_000, idleTtl: 120_000 } });
 
 		expect(createSession('user-1').session).toMatchObject({ expiresAt: NOW + 60_000, absoluteExpiresAt: NOW + 60_000 });
 	});
 
 	test('Keeps the metadata with the record', () => {
-		// 1. Stored as given, for the application to show on a sessions page
 		const { session } = createSession('user-1', { metadata: { userAgent: 'test' } });
 
 		expect(session.metadata).toStrictEqual({ userAgent: 'test' });

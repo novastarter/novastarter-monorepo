@@ -16,7 +16,6 @@ const invoiceOf = (name: string): Stripe.Invoice => fixture(name).data.object as
 
 describe('toInvoice', () => {
 	test('Maps amounts, the subscription of the parent and the links', () => {
-		// 1. Amounts stay in minor units; the subscription comes from `parent.subscription_details`, the links as is
 		expect(toInvoice(invoiceOf('invoice.paid'))).toStrictEqual({
 			id: 'in_1S5abcDEF12345',
 			number: 'A1B2C3D4-0001',
@@ -35,15 +34,12 @@ describe('toInvoice', () => {
 	});
 
 	test('Reads a draft for an invoice without a status and null for what is unset', () => {
-		// 1. Stripe leaves `status` null on an invoice still being built; a draft is the honest reading
 		const invoice = invoiceOf('invoice.payment_failed');
 
 		expect(toInvoice({ ...invoice, status: null })).toMatchObject({ status: 'draft' });
 
-		// 2. A failed payment leaves the invoice open, unpaid and without a paid-at or a number of its own
 		expect(toInvoice(invoice)).toMatchObject({ status: 'open', amountPaid: 0, paidAt: null });
 
-		// 3. Nothing to link to, nothing to expand: the nullable fields answer null rather than empty strings
 		expect(
 			toInvoice({
 				...invoice,
@@ -57,9 +53,9 @@ describe('toInvoice', () => {
 	});
 
 	test('Falls back to the top-level subscription of a delivery pinned to an older API version', () => {
-		// 1. Before API version 2025-03-31 the subscription sat on the invoice, not on the parent: an endpoint pinned
-		//    to an earlier version receives deliveries without a parent, and the subscription must map instead of
-		//    failing silently. A distinct id proves the value is read from the invoice itself, not from the parent
+		// Before API version 2025-03-31 the subscription sat on the invoice, not on the parent: an endpoint pinned to
+		// an earlier version receives deliveries without a parent, and the subscription must map instead of failing
+		// silently. A distinct id proves the value is read from the invoice itself.
 		const invoice = invoiceOf('invoice.paid');
 
 		const legacy = {

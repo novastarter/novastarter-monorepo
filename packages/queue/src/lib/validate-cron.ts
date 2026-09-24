@@ -9,7 +9,7 @@ import { Cron } from 'croner';
  */
 export const validateCron = (rule: string): boolean => {
 	try {
-		// 1. Parsing is the check; the job is never started
+		// Parsing is the check; the job is never started
 		new Cron(rule, { paused: true, mode: '5-or-6-parts' });
 
 		return true;

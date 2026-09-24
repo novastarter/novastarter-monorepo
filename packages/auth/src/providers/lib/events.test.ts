@@ -44,7 +44,7 @@ afterEach(() => {
 
 describe('event names', () => {
 	test('Are the documented ones', () => {
-		// 1. Applications subscribe by these strings, so they are part of the API
+		// Applications subscribe by these strings, so they are part of the API
 		expect(AUTH_SIGN_IN_FILTER).toBe('auth.sign-in');
 		expect(AUTH_SIGNED_IN_EVENT).toBe('auth.signed-in');
 		expect(AUTH_SIGN_IN_FAILED_EVENT).toBe('auth.sign-in-failed');
@@ -53,7 +53,6 @@ describe('event names', () => {
 
 describe('completeSignIn', () => {
 	test('Runs the filter and announces the identity it returned', async () => {
-		// 1. The filter's result is what the caller and the listeners get
 		emitter.emitFilter.mockResolvedValueOnce({ ...identity, name: 'Filtered' });
 
 		const result = await completeSignIn('github', identity);
@@ -64,7 +63,6 @@ describe('completeSignIn', () => {
 	});
 
 	test('Throws wrong credentials on a veto and announces the failure', async () => {
-		// 1. `null` refuses, and the reason says a filter did it
 		emitter.emitFilter.mockResolvedValueOnce(null);
 
 		await expect(completeSignIn('github', identity)).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
@@ -83,7 +81,6 @@ describe('failSignIn', () => {
 	test('Announces the error code as the reason and hands the error back', () => {
 		const error = Object.assign(new Error('nope'), { code: 'SOME_CODE' });
 
-		// 1. The same error comes back for rethrowing
 		expect(failSignIn('github', error)).toBe(error);
 
 		expect(emitter.emitAction).toHaveBeenCalledWith(AUTH_SIGN_IN_FAILED_EVENT, {
@@ -93,7 +90,6 @@ describe('failSignIn', () => {
 	});
 
 	test('Falls back to a generic reason for errors without a code, null included', () => {
-		// 1. A plain error and a thrown `null` both count as `error`
 		failSignIn('github', new Error('plain'));
 		failSignIn('github', null);
 

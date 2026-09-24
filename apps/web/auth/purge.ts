@@ -27,7 +27,7 @@ export const purgeExpiredAuthRows = async (now: number = Date.now()): Promise<Pu
 	const db = useDb();
 	const cutoff = new Date(now);
 
-	// 1. Three independent deletes, in parallel: each touches only rows no read would accept any more
+	// Three independent deletes, in parallel: each touches only rows no read would accept any more
 	const [sessions, tokens, refreshTokens] = await Promise.all([
 		db.delete(authSessions).where(lte(authSessions.expiresAt, cutoff)).returning({ id: authSessions.id }),
 		db.delete(authTokens).where(lte(authTokens.expiresAt, cutoff)).returning({ id: authTokens.id }),

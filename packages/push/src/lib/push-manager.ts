@@ -70,8 +70,7 @@ export class PushManager extends DriverManager<PushDriver, PushDrivers> {
 	constructor() {
 		super();
 
-		// 1. The driver of the package is known up front; registering it here spares every application the same line,
-		//    and a replacement under the same name still wins
+		// Registered here to spare every application the same line; a replacement under the same name still wins
 		this.registerDriver('console', PushDriverConsole);
 	}
 
@@ -84,7 +83,7 @@ export class PushManager extends DriverManager<PushDriver, PushDrivers> {
 	 * @param routes - The location of each platform; see {@link PushRoutes}.
 	 */
 	registerRoutes(routes: PushRoutes): void {
-		// 1. Replace rather than merge, like `registerLocation`: a second bootstrap gets exactly what it registered
+		// Replace rather than merge, like `registerLocation`: a second bootstrap gets exactly what it registered
 		this.pushRoutes = routes;
 	}
 
@@ -94,7 +93,7 @@ export class PushManager extends DriverManager<PushDriver, PushDrivers> {
 	 * @returns The routes; an empty object when none were registered.
 	 */
 	routes(): PushRoutes {
-		// 1. Handed out as is, not copied: the routes are replaced whole by `registerRoutes()`, never mutated in place
+		// Not copied: the routes are replaced whole by `registerRoutes()`, never mutated in place
 		return this.pushRoutes;
 	}
 }

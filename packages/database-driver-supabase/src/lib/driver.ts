@@ -60,11 +60,11 @@ export class DatabaseDriverSupabase<
 	 * Create a driver over a pool on the project's connection string.
 	 *
 	 * @param config - URL, TLS, pool, schema and logging options.
-	 * @throws Error when `url` is missing, is not a valid URL, or carries a TLS parameter (`ssl`, `sslmode`,
+	 * @throws InvalidConfigError when `url` is missing, is not a valid URL, or carries a TLS parameter (`ssl`, `sslmode`,
 	 * `sslcert`, `sslkey`, `sslrootcert`, `sslnegotiation`).
 	 */
 	constructor(config: DatabaseDriverSupabaseConfig<Schema>) {
-		// 1. The mapping checks the URL and throws before any pool exists; the Postgres driver does the rest
+		// The mapping checks the URL and throws before any pool exists
 		super(toPostgresConfig(config));
 	}
 }

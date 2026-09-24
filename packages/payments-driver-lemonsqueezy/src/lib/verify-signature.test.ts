@@ -22,13 +22,12 @@ describe('verifySignature', () => {
 	test('Accepts the body’s digest under the secret, refuses anything else without throwing', () => {
 		const body = '{"a":1}';
 
-		// 1. The digest Lemon Squeezy would send is the one accepted
 		expect(verifySignature(body, sign(body), WEBHOOK_SECRET)).toBe(true);
 
-		// 2. Another secret's digest has the right length and still fails the constant-time comparison
+		// The digest has the right length and still fails the constant-time comparison.
 		expect(verifySignature(body, sign(body, 'other'), WEBHOOK_SECRET)).toBe(false);
 
-		// 3. A signature of another length cannot match; `timingSafeEqual` would throw on it, the check must not
+		// `timingSafeEqual` would throw on a signature of another length; the check must not.
 		expect(verifySignature(body, 'short', WEBHOOK_SECRET)).toBe(false);
 	});
 });

@@ -24,7 +24,7 @@ class NullDriver implements SmsDriver {
 	 * @returns An empty result.
 	 */
 	async send(): Promise<SmsResult> {
-		// 1. The router only reads names; a driver that never delivers keeps the tests about routing
+		// The router only reads names; a driver that never delivers keeps the tests about routing.
 		return {};
 	}
 }
@@ -36,7 +36,7 @@ class NullDriver implements SmsDriver {
  * @returns The manager.
  */
 const managerWith = (...names: string[]): SmsManager => {
-	// 1. One driver, several locations: the chain is about names, not about transports
+	// The chain is about names, not about transports, so one driver serves several locations.
 	const manager = new SmsManager();
 
 	manager.registerDriver('null', NullDriver);
@@ -68,7 +68,7 @@ describe('resolveSmsChain', () => {
 	test('Routes by category, transactional unless said otherwise, dropping unknown names', () => {
 		const message = { to: '+14155550123', text: 'Hi' };
 
-		// 1. No category means transactional; `typo` is not a location and silently leaves the marketing chain
+		// No category means transactional; `typo` is not a location and silently leaves the marketing chain.
 		expect(resolveSmsChain(routes, message, manager)).toStrictEqual(['main', 'backup']);
 		expect(resolveSmsChain(routes, { ...message, category: 'marketing' }, manager)).toStrictEqual(['bulk']);
 	});
@@ -76,12 +76,13 @@ describe('resolveSmsChain', () => {
 	test('Passes a rule made only of unknown names over for every registered location', () => {
 		const message = { to: '+14155550123', text: 'Hi', category: 'marketing' as const };
 
-		// 1. A category rule of typos is no rule: registration order applies instead of an empty chain failing every send
+		// A category rule of typos is no rule, so registration order applies instead of an empty chain failing every
+		// send.
 		expect(resolveSmsChain({ marketing: ['blk'] }, message, manager)).toStrictEqual(['main', 'backup', 'bulk']);
 	});
 
 	test('Falls back to every location without routes, and to nothing without locations', () => {
-		// 1. Empty routes: registration order is the chain, so one location needs no routes at all
+		// With empty routes registration order is the chain, so one location needs no routes at all.
 		expect(resolveSmsChain({}, { to: '+14155550123', text: 'x' }, manager)).toStrictEqual(['main', 'backup', 'bulk']);
 		expect(resolveSmsChain({}, { to: '+14155550123', text: 'x' }, managerWith())).toStrictEqual([]);
 	});

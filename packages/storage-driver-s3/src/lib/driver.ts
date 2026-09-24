@@ -34,7 +34,7 @@ import {
 	UploadPartCommand,
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
-import { toProviderCallError } from '@novastarter/errors';
+import { InvalidConfigError, InvalidPayloadError, toProviderCallError } from '@novastarter/errors';
 import { type CallOptions, type CallResponse, DEFAULT_REQUEST_TIMEOUT } from '@novastarter/http';
 import { useLogger } from '@novastarter/logger';
 import {
@@ -162,7 +162,7 @@ class PartsMismatchError extends Error {
 	 * @param expected - Total size of the upload.
 	 */
 	constructor(listed: number, expected: number) {
-		// 1. Named, so `shouldRetry` and the `catch` of `finishChunkedUpload` tell it from a failing `ListParts` call
+		// Named, so `shouldRetry` and the `catch` of `finishChunkedUpload` tell it from a failing `ListParts` call
 		super(`S3 lists ${listed} of ${expected} bytes`);
 		this.name = 'PartsMismatchError';
 	}
@@ -267,37 +267,38 @@ export class StorageDriverS3 implements TusDriver {
 	 * Create a driver and its SDK client.
 	 *
 	 * @param config - Connection and behaviour options.
-	 * @throws Error when `bucket` is missing, when only one of `key` and `secret` is given, or when `tus.chunkSize` is
-	 * below {@link StorageDriverS3.minPartSize}.
+	 * @throws InvalidConfigError when `bucket` is missing, when only one of `key` and `secret` is given, or when
+	 * `tus.chunkSize` is below {@link StorageDriverS3.minPartSize}.
 	 */
 	constructor(config: StorageDriverS3Config) {
-		// 1. Every command targets the bucket, so a missing one would only fail on the first request, with an SDK
-		//    error that does not name the option
+		// Every command targets the bucket, so a missing one would only fail on the first request, with an SDK
+		// error that does not name the option
 		if (!config.bucket) {
-			throw new Error('The s3 storage driver needs a "bucket"');
+			throw new InvalidConfigError({ reason: 'The s3 storage driver needs a "bucket"' });
 		}
 
-		// 2. Build the client up front, so credential mistakes fail at construction instead of on the first request
+		// Credential mistakes fail at construction instead of on the first request
 		this.config = config;
 		this.client = this.getClient();
 
-		// 3. Store the root without a leading slash: S3 keys are not paths, and a leading `/` would become part of
-		//    the key and produce objects nobody can find by the expected name
-		//    `confinePath` also resolves `.` and `..` in the root, the way every key is resolved, so a root of `./media`
-		//    strips from listed keys as `media` does, and a root of `/` means the top of the bucket
+		// S3 keys are not paths: a leading `/` would become part of the key and produce objects nobody can find by the
+		// expected name. `confinePath` resolves `.` and `..` in the root the way every key is resolved, so a root of
+		// `./media` strips from listed keys as `media` does, and a root of `/` means the top of the bucket
 		this.root = this.config.root ? confinePath(this.config.root) : '';
 
-		// 4. A preferred part size below the S3 minimum would make the splitter cut every part but the last too small
-		//    to be sent, so no upload could ever advance; refused here, with the minimum named, rather than on the
-		//    first PATCH. Written so that `NaN` fails the check too
+		// A preferred part size below the S3 minimum would make the splitter cut every part but the last too small
+		// to be sent, so no upload could ever advance; refused here, with the minimum named, rather than on the
+		// first PATCH. Written so that `NaN` fails the check too
 		const chunkSize = config.tus?.chunkSize;
 
 		if (chunkSize !== undefined && !(chunkSize >= this.minPartSize)) {
-			throw new Error(`The s3 storage driver needs a "tus.chunkSize" of at least ${this.minPartSize} bytes`);
+			throw new InvalidConfigError({
+				reason: `The s3 storage driver needs a "tus.chunkSize" of at least ${this.minPartSize} bytes`,
+			});
 		}
 
-		// 5. Sixty concurrent part uploads is the tus-node-server default, a balance between throughput and the
-		//    number of open sockets and temp files
+		// Sixty concurrent part uploads is the tus-node-server default, a balance between throughput and the
+		// number of open sockets and temp files
 		this.preferredPartSize = chunkSize ?? this.minPartSize;
 		this.partUploadSemaphore = new Semaphore(60);
 	}
@@ -306,13 +307,13 @@ export class StorageDriverS3 implements TusDriver {
 	 * Build the SDK client from the driver options.
 	 *
 	 * @returns A configured client.
-	 * @throws Error when only one of `key` and `secret` is given.
+	 * @throws InvalidConfigError when only one of `key` and `secret` is given.
 	 * @internal
 	 */
 	private getClient() {
-		// 1. Replace the SDK's default request handler: its agent caps at 50 sockets, so bursts of requests queue
-		//    behind that limit. Timeouts pass through `ms`, which accepts both plain milliseconds and duration
-		//    strings, so values from untyped configuration still resolve to a number
+		// The SDK's default agent caps at 50 sockets, so bursts of requests would queue behind that limit. `ms` accepts
+		// both plain milliseconds and duration strings, so timeouts from untyped configuration still resolve to a
+		// number
 		const connectionTimeout = ms(String(this.config.connectionTimeout ?? 5000) as StringValue);
 		const socketTimeout = ms(String(this.config.socketTimeout ?? 120000) as StringValue);
 		const maxSockets = this.config.maxSockets ?? 500;
@@ -327,13 +328,12 @@ export class StorageDriverS3 implements TusDriver {
 			}),
 		};
 
-		// 2. Half a credential pair is a configuration error, never an intent to fall back to the SDK provider chain
+		// Half a credential pair is a configuration error, never an intent to fall back to the SDK provider chain
 		if ((this.config.key && !this.config.secret) || (this.config.secret && !this.config.key)) {
-			throw new Error('The s3 storage driver needs "key" and "secret" together');
+			throw new InvalidConfigError({ reason: 'The s3 storage driver needs "key" and "secret" together' });
 		}
 
-		// 3. Pass explicit credentials only when both halves exist; otherwise the SDK resolves them from the
-		//    environment, shared config or instance metadata
+		// Without explicit credentials the SDK resolves them from the environment, shared config or instance metadata
 		if (this.config.key && this.config.secret) {
 			s3ClientConfig.credentials = {
 				accessKeyId: this.config.key,
@@ -341,9 +341,9 @@ export class StorageDriverS3 implements TusDriver {
 			};
 		}
 
-		// 4. Parse a custom endpoint with the URL parser so a service mounted under a path prefix keeps the prefix and a
-		//    port lands in the SDK's own `port` field instead of inside `hostname`. `https` is assumed when no scheme is
-		//    given, because only local setups run S3-compatible services over plain `http`
+		// The URL parser keeps the path prefix of a service mounted under one and puts a port in the SDK's own `port`
+		// field instead of inside `hostname`. `https` is assumed when no scheme is given, because only local setups run
+		// S3-compatible services over plain `http`
 		if (this.config.endpoint) {
 			const endpoint = new URL(
 				this.config.endpoint.startsWith('http://') || this.config.endpoint.startsWith('https://')
@@ -359,8 +359,7 @@ export class StorageDriverS3 implements TusDriver {
 			};
 		}
 
-		// 5. Region and path style are only set when configured, so the SDK keeps its own defaults and environment
-		//    lookups otherwise
+		// Unset, region and path style leave the SDK its own defaults and environment lookups
 		if (this.config.region) {
 			s3ClientConfig.region = this.config.region;
 		}
@@ -369,8 +368,8 @@ export class StorageDriverS3 implements TusDriver {
 			s3ClientConfig.forcePathStyle = this.config.forcePathStyle;
 		}
 
-		// 6. Checksum policies are forwarded only when configured, so AWS proper keeps the SDK's integrity defaults
-		//    and only services that lack flexible checksums (Cloudflare R2, older MinIO/Ceph) opt out
+		// Checksum policies are forwarded only when configured, so AWS proper keeps the SDK's integrity defaults
+		// and only services that lack flexible checksums (Cloudflare R2, older MinIO/Ceph) opt out
 		if (this.config.requestChecksumCalculation) {
 			s3ClientConfig.requestChecksumCalculation = this.config.requestChecksumCalculation;
 		}
@@ -390,9 +389,9 @@ export class StorageDriverS3 implements TusDriver {
 	 * @internal
 	 */
 	private fullPath(filepath: string) {
-		// 1. Pin the caller path under the root before joining: resolved against `/` first, a leading `..` has nothing
-		//    to climb and is dropped by `confinePath`, so `../other/secret` cannot address a key outside the location. `joinPath`
-		//    copes with an empty root and doubled slashes and always produces the forward slashes S3 keys use
+		// The caller path is confined before joining: resolved against `/` first, a leading `..` has nothing to climb
+		// and is dropped, so `../other/secret` cannot address a key outside the location. `joinPath` copes with an
+		// empty root and doubled slashes and always produces the forward slashes S3 keys use
 		return joinPath(this.root, confinePath(filepath));
 	}
 
@@ -414,14 +413,14 @@ export class StorageDriverS3 implements TusDriver {
 			Bucket: this.config.bucket,
 		};
 
-		// 1. Translate the range into the HTTP header form: an omitted start is `0` — `{ end }` alone asks for the
-		//    first bytes up to `end`, where `bytes=-N` would mean the last N bytes — and an omitted end is left open
+		// An omitted start is `0`: `{ end }` alone asks for the first bytes up to `end`, where `bytes=-N` would mean
+		// the last N bytes. An omitted end is left open
 		if (range) {
 			commandInput.Range = `bytes=${range.start ?? 0}-${range.end ?? ''}`;
 		}
 
-		// 2. A 404 — `NoSuchKey` — is the error every backend shares, so a caller tells a missing object from a denied
-		//    or failed read; anything else says nothing about the object and is rethrown
+		// A 404 — `NoSuchKey` — is the error every backend shares, so a caller tells a missing object from a denied
+		// or failed read; anything else says nothing about the object and is rethrown
 		let stream: GetObjectCommandOutput['Body'];
 
 		try {
@@ -434,10 +433,10 @@ export class StorageDriverS3 implements TusDriver {
 			throw error;
 		}
 
-		// 3. The SDK types the body as a union of Node, Web and blob streams; only a Node readable is usable by the
-		//    rest of the storage layer, so anything else counts as a failed read
+		// The SDK types the body as a union of Node, Web and blob streams; only a Node readable is usable by the
+		// rest of the storage layer, so anything else counts as a failed read
 		if (!stream || !isReadableStream(stream)) {
-			throw new Error(`No stream returned for file "${filepath}"`);
+			throw new Error(`The s3 storage driver got no stream for file "${filepath}"`);
 		}
 
 		return stream as Readable;
@@ -454,9 +453,9 @@ export class StorageDriverS3 implements TusDriver {
 	async stat(filepath: string): Promise<Stat> {
 		let head: HeadObjectCommandOutput;
 
-		// 1. HEAD returns the metadata without transferring the body, which is all this call needs. A HEAD response has
-		//    no body, so 404 is the only answer that confirms the object is missing; it becomes the error every backend
-		//    shares, anything else says nothing about the object and is rethrown
+		// HEAD returns the metadata without transferring the body, which is all this call needs. A HEAD response has
+		// no body, so 404 is the only answer that confirms the object is missing; it becomes the error every backend
+		// shares, anything else says nothing about the object and is rethrown
 		try {
 			head = await this.client.send(
 				new HeadObjectCommand({
@@ -472,10 +471,10 @@ export class StorageDriverS3 implements TusDriver {
 			throw error;
 		}
 
-		// 2. Both fields are optional in the SDK's types; a HEAD response without one is a broken answer and is refused
-		//    here rather than handed out as `undefined` under the non-optional `Stat` type
+		// Both fields are optional in the SDK's types; a HEAD response without one is a broken answer and is refused
+		// here rather than handed out as `undefined` under the non-optional `Stat` type
 		if (head.ContentLength === undefined || head.LastModified === undefined) {
-			throw new Error(`No stat returned for file "${filepath}"`);
+			throw new Error(`The s3 storage driver got no stat for file "${filepath}"`);
 		}
 
 		return {
@@ -492,13 +491,13 @@ export class StorageDriverS3 implements TusDriver {
 	 * @throws Any other failure, such as denied credentials or a timeout, since it says nothing about the object.
 	 */
 	async exists(filepath: string): Promise<boolean> {
-		// 1. Reuse the HEAD request behind `stat`; a successful answer is proof of existence
+		// A successful HEAD is proof of existence
 		try {
 			await this.stat(filepath);
 			return true;
 		} catch (error) {
-			// 2. `stat` already reduced a 404 to the kit's "not found"; treating any other failure as missing would make
-			//    callers act on a wrong answer
+			// `stat` already reduced a 404 to the kit's "not found"; treating any other failure as missing would make
+			// callers act on a wrong answer
 			if (error instanceof StorageFileNotFoundError) return false;
 
 			throw error;
@@ -515,11 +514,11 @@ export class StorageDriverS3 implements TusDriver {
 	 * @param dest - Path to move the object to.
 	 */
 	async move(src: string, dest: string): Promise<void> {
-		// 1. Paths such as `a.png` and `./a.png` resolve to the same key; with encryption configured S3 accepts the
-		//    copy onto itself, and the delete that follows would then remove the only copy, so such a move is a no-op
+		// Paths such as `a.png` and `./a.png` resolve to the same key; with encryption configured S3 accepts the
+		// copy onto itself, and the delete that follows would then remove the only copy, so such a move is a no-op
 		if (this.fullPath(src) === this.fullPath(dest)) return;
 
-		// 2. Copy before deleting, so a failure at any point never loses the data
+		// Copying before deleting means a failure at any point never loses the data
 		await this.copy(src, dest);
 		await this.delete(src);
 	}
@@ -531,16 +530,16 @@ export class StorageDriverS3 implements TusDriver {
 	 * @param dest - Path of the copy.
 	 */
 	async copy(src: string, dest: string): Promise<void> {
-		// 1. `CopySource` is a URL-style `/bucket/key` reference, unlike the plain `Key` used for the target, and S3
-		//    reads it URL-encoded: a `+` would be taken for a space, a `%` for an escape, a `?` for the version query,
-		//    so every segment of the key is encoded — the slashes between them stay
+		// `CopySource` is a URL-style `/bucket/key` reference, unlike the plain `Key` used for the target, and S3
+		// reads it URL-encoded: a `+` would be taken for a space, a `%` for an escape, a `?` for the version query,
+		// so every segment of the key is encoded — the slashes between them stay
 		const params: CopyObjectCommandInput = {
 			Key: this.fullPath(dest),
 			Bucket: this.config.bucket,
 			CopySource: `/${this.config.bucket}/${this.fullPath(src).split('/').map(encodeURIComponent).join('/')}`,
 		};
 
-		// 2. S3 does not carry encryption or ACL over from the source object; both have to be restated on the copy
+		// S3 does not carry encryption or ACL over from the source object; both have to be restated on the copy
 		if (this.config.serverSideEncryption) {
 			params.ServerSideEncryption = this.config.serverSideEncryption;
 
@@ -570,7 +569,7 @@ export class StorageDriverS3 implements TusDriver {
 			Bucket: this.config.bucket,
 		};
 
-		// 1. Set the optional headers only when configured, so the bucket defaults apply otherwise
+		// Unset headers leave the bucket defaults in place
 		if (type) {
 			params.ContentType = type;
 		}
@@ -587,8 +586,8 @@ export class StorageDriverS3 implements TusDriver {
 			}
 		}
 
-		// 2. `Upload` from lib-storage streams a body of unknown length as a multipart upload; a plain
-		//    `PutObjectCommand` needs the content length up front, which a stream cannot provide
+		// `Upload` from lib-storage streams a body of unknown length as a multipart upload; a plain
+		// `PutObjectCommand` needs the content length up front, which a stream cannot provide
 		const upload = new Upload({
 			client: this.client,
 			params,
@@ -605,7 +604,7 @@ export class StorageDriverS3 implements TusDriver {
 	 * @param filepath - Object path relative to the root.
 	 */
 	async delete(filepath: string): Promise<void> {
-		// 1. No `VersionId` is passed: the driver never enables versioning, so the plain delete removes the current object
+		// No `VersionId` is passed: the driver never enables versioning, so the plain delete removes the current object
 		await this.client.send(
 			new DeleteObjectCommand({
 				Key: this.fullPath(filepath),
@@ -634,7 +633,7 @@ export class StorageDriverS3 implements TusDriver {
 	 * `extensions`.
 	 * @throws HitRateLimitError when S3 answers 429 or asks to slow down — a 503 `SlowDown`.
 	 * @throws TimeoutError when the command outlives its timeout.
-	 * @throws Error when the SDK has no command of that name, or headers are given.
+	 * @throws InvalidPayloadError when the SDK has no command of that name, or headers are given.
 	 * @example
 	 * ```ts
 	 * const { data } = await s3.call<{ Status?: string }>('GetBucketVersioning');
@@ -649,14 +648,14 @@ export class StorageDriverS3 implements TusDriver {
 		params: Record<string, unknown> = {},
 		options: CallOptions = {},
 	): Promise<CallResponse<T>> {
-		// 1. Headers — the call's or the location's `call.headers` — cannot reach the SDK's signed request; refused
-		//    rather than silently dropped
+		// Headers — the call's or the location's `call.headers` — cannot reach the SDK's signed request; refused
+		// rather than silently dropped
 		if (Object.keys(options.headers ?? {}).length > 0) {
-			throw new Error('S3 call() sends no extra headers; use the SDK client');
+			throw new InvalidPayloadError({ reason: 'The s3 call() sends no extra headers; use the SDK client' });
 		}
 
-		// 2. The command class by its name, looked up among the SDK's exports only: a name that is not a command there
-		//    is refused before anything is sent
+		// Only the SDK's own exports are looked up, so a name that is not a command there is refused before anything is
+		// sent
 		const name = method.trim().replace(/Command$/, '');
 
 		const Command = /^[A-Z][A-Za-z0-9]*$/.test(name)
@@ -664,13 +663,15 @@ export class StorageDriverS3 implements TusDriver {
 			: undefined;
 
 		if (typeof Command !== 'function') {
-			throw new Error(`The s3 call method "${method}" is not a command of @aws-sdk/client-s3`);
+			throw new InvalidPayloadError({
+				reason: `The s3 call method "${method}" is not a command of @aws-sdk/client-s3`,
+			});
 		}
 
-		// 3. The location's bucket unless the caller names another one; a command without a bucket ignores the field
+		// A command without a bucket ignores the field
 		const command = new (Command as S3CommandConstructor)({ Bucket: this.config.bucket, ...params });
 
-		// 4. The command under the deadline; the SDK takes the abort signal, so a timed-out request really stops
+		// The SDK takes the abort signal, so a timed-out request really stops
 		let output: Record<string, unknown>;
 
 		try {
@@ -680,10 +681,9 @@ export class StorageDriverS3 implements TusDriver {
 				options.signal ? { signal: options.signal } : {},
 			)) as unknown as Record<string, unknown>;
 		} catch (error) {
-			// 5. An answer of S3 becomes the kit's error with its status. S3 says "slow down" with a 503 `SlowDown`,
-			//    other AWS services with throttling codes: each is the kit's 429. The SDK's error is not kept as the
-			//    cause — nothing of the request goes into the error; a timeout, an abort or a network failure is passed
-			//    on as it is
+			// S3 says "slow down" with a 503 `SlowDown`, other AWS services with throttling codes: each becomes the
+			// kit's 429. The SDK's error is not kept as the cause, so nothing of the request goes into the error; a
+			// timeout, an abort or a network failure is passed on as it is
 			if (error instanceof S3ServiceException) {
 				const status = error.$metadata?.httpStatusCode ?? 500;
 
@@ -698,8 +698,7 @@ export class StorageDriverS3 implements TusDriver {
 			throw error;
 		}
 
-		// 6. The output as the command's documentation describes it; the SDK's request metadata is not part of it, but
-		//    its status is the answer's
+		// The SDK's request metadata is not part of the documented output, but its status is the answer's
 		const { $metadata: metadata, ...data } = output as { $metadata?: { httpStatusCode?: number } };
 
 		return { status: metadata?.httpStatusCode ?? 200, headers: {}, data: data as T };
@@ -711,7 +710,7 @@ export class StorageDriverS3 implements TusDriver {
 	 * @returns Once the client is destroyed.
 	 */
 	async close(): Promise<void> {
-		// 1. The SDK keeps sockets alive between calls, which keeps the process up once nothing else does
+		// The SDK keeps sockets alive between calls, which keeps the process up once nothing else does
 		this.client.destroy();
 	}
 
@@ -722,14 +721,14 @@ export class StorageDriverS3 implements TusDriver {
 	 * @returns Object paths relative to the root. Keys ending in `/` (folder placeholders) are skipped.
 	 */
 	async *list(prefix = ''): AsyncGenerator<string, void, unknown> {
-		// 1. The whole root, or a caller folder, is asked for with its trailing slash, so `media` does not match
-		//    `media-archive/…`; no root and no prefix give an empty string, which lists the whole bucket
+		// The trailing slash keeps `media` from matching `media-archive/…`; no root and no prefix give an empty string,
+		// which lists the whole bucket
 		const Prefix = toListPrefix(this.fullPath(prefix), prefix);
 
 		let continuationToken: string | undefined = undefined;
 
-		// 2. S3 returns at most 1000 keys per call; keep requesting with the continuation token until it runs out.
-		//    Yielding inside the loop keeps memory flat for large buckets
+		// S3 returns at most 1000 keys per call, hence the continuation token. Yielding inside the loop keeps memory
+		// flat for large buckets
 		do {
 			const listObjectsV2CommandInput: ListObjectsV2CommandInput = {
 				Bucket: this.config.bucket,
@@ -745,7 +744,7 @@ export class StorageDriverS3 implements TusDriver {
 
 			continuationToken = response.NextContinuationToken;
 
-			// 3. Skip folder placeholder objects and strip the root, so callers get paths in the form they pass in
+			// Folder placeholders are skipped and the root stripped, so callers get paths in the form they pass in
 			if (response.Contents) {
 				for (const object of response.Contents) {
 					if (!object.Key) continue;
@@ -766,11 +765,11 @@ export class StorageDriverS3 implements TusDriver {
 	 * @returns The extension names in the order the TUS server advertises them.
 	 */
 	get tusExtensions(): string[] {
-		// 1. Only the extensions the chunked-upload methods back are advertised: `creation` maps to
-		//    `createChunkedUpload`, `termination` to `deleteChunkedUpload`, and `expiration` lets the server announce
-		//    when an unfinished multipart upload may be discarded. Checksum and concatenation are left out because a
-		//    part checksum is verified only when the upload is completed, and parts of several uploads cannot be
-		//    joined into one
+		// Only the extensions the chunked-upload methods back are advertised: `creation` maps to
+		// `createChunkedUpload`, `termination` to `deleteChunkedUpload`, and `expiration` lets the server announce
+		// when an unfinished multipart upload may be discarded. Checksum and concatenation are left out because a
+		// part checksum is verified only when the upload is completed, and parts of several uploads cannot be
+		// joined into one
 		return ['creation', 'termination', 'expiration'];
 	}
 
@@ -785,12 +784,12 @@ export class StorageDriverS3 implements TusDriver {
 	 * @throws The SDK error when S3 refuses to create the multipart upload.
 	 */
 	async createChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<ChunkedUploadContext> {
-		// 1. A POST without `Upload-Metadata` arrives with no map at all; it is created before the request, so the
-		//    upload id always has a place to go and an upload S3 already opened is never lost to a `TypeError`
+		// A POST without `Upload-Metadata` arrives with no map at all; it is created before the request, so the
+		// upload id always has a place to go and an upload S3 already opened is never lost to a `TypeError`
 		const metadata = (context.metadata ??= {});
 
-		// 2. Tag the object with the TUS version and copy the client's content headers into the create request: S3
-		//    only accepts them when the multipart upload is created, not when it is completed
+		// S3 only accepts the TUS tag and the content headers when the multipart upload is created, not when it is
+		// completed
 		const params: CreateMultipartUploadCommandInput = {
 			Bucket: this.config.bucket,
 			Key: this.fullPath(filepath),
@@ -799,7 +798,7 @@ export class StorageDriverS3 implements TusDriver {
 			...(metadata['cacheControl'] ? { CacheControl: metadata['cacheControl'] } : {}),
 		};
 
-		// 3. Same encryption rules as a plain write; the KMS key id is only valid for the KMS modes
+		// The KMS key id is only valid for the KMS modes, as in a plain write
 		if (this.config.serverSideEncryption) {
 			params.ServerSideEncryption = this.config.serverSideEncryption;
 
@@ -808,18 +807,16 @@ export class StorageDriverS3 implements TusDriver {
 			}
 		}
 
-		// 4. Same canned ACL as a plain write: S3 takes it only when the multipart upload is created, not when it is
-		//    completed, so it has to go on this request
+		// S3 takes the canned ACL only when the multipart upload is created, not when it is completed
 		if (this.config.acl) {
 			params.ACL = this.config.acl;
 		}
 
-		// 5. Open the multipart upload now: S3 assigns the id every later part refers to, so nothing can be sent
-		//    before it exists
+		// S3 assigns the id every later part refers to, so nothing can be sent before it exists
 		const res = await this.client.send(new CreateMultipartUploadCommand(params));
 
-		// 6. Keep the upload id in the context: it is the only handle S3 gives for adding parts, and the context is
-		//    what the TUS server hands back on every later call
+		// The upload id is the only handle S3 gives for adding parts, and the context is what the TUS server hands back
+		// on every later call
 		metadata['upload-id'] = res.UploadId!;
 
 		return context;
@@ -843,8 +840,7 @@ export class StorageDriverS3 implements TusDriver {
 		const key = this.fullPath(filepath);
 		const uploadId = context.metadata?.['upload-id'];
 
-		// 1. Abort the multipart upload first: S3 keeps (and bills for) uploaded parts until the upload is completed
-		//    or aborted. Skipped when no upload id was ever recorded
+		// S3 keeps (and bills for) uploaded parts until the upload is completed or aborted
 		if (uploadId) {
 			try {
 				await this.client.send(
@@ -855,14 +851,14 @@ export class StorageDriverS3 implements TusDriver {
 					}),
 				);
 
-				// 2. The upload was still open, so it never wrote the key: an object there predates the upload and
-				//    deleting it would destroy the file a cancelled replacement was meant to overwrite
+				// The upload was still open, so it never wrote the key: an object there predates the upload and
+				// deleting it would destroy the file a cancelled replacement was meant to overwrite
 				return;
 			} catch (error) {
-				// 3. The S3 "missing" family of errors means the upload was completed or aborted before, which leaves
-				//    only the object to remove; anything else is a real failure. The SDK names the error in `name` —
-				//    `NoSuchUpload`, `NoSuchKey`, or `NotFound` for a bodiless 404 — and reports the status in
-				//    `$metadata`; it never sets a lowercase `code`
+				// The S3 "missing" family of errors means the upload was completed or aborted before, which leaves
+				// only the object to remove; anything else is a real failure. The SDK names the error in `name` —
+				// `NoSuchUpload`, `NoSuchKey`, or `NotFound` for a bodiless 404 — and reports the status in
+				// `$metadata`; it never sets a lowercase `code`
 				const { name, $metadata } = error as { name?: string; $metadata?: { httpStatusCode?: number } };
 
 				if ($metadata?.httpStatusCode !== 404 && !['NotFound', 'NoSuchKey', 'NoSuchUpload'].includes(name ?? '')) {
@@ -871,15 +867,15 @@ export class StorageDriverS3 implements TusDriver {
 			}
 		}
 
-		// 4. With no upload to abort, the object under the key is all that can be left; when that is missing too,
-		//    the TUS server answers 404. The delete cannot tell, since S3 reports a missing key as deleted
+		// With no upload to abort, the object under the key is all that can be left; when that is missing too,
+		// the TUS server answers 404. The delete cannot tell, since S3 reports a missing key as deleted
 		if (!(await this.exists(filepath))) {
 			throw ERRORS.FILE_NOT_FOUND;
 		}
 
-		// 5. Remove the object under the key, so a termination after a completed upload does not leave the file behind.
-		//    The single-object delete is used because it throws on a failure such as AccessDenied, where the batch
-		//    `DeleteObjects` answers 200 and only lists the failure in `Errors`, which would report a false success
+		// Removing the object keeps a termination after a completed upload from leaving the file behind. The
+		// single-object delete is used because it throws on a failure such as AccessDenied, where the batch
+		// `DeleteObjects` answers 200 and only lists the failure in `Errors`, which would report a false success
 		await this.client.send(
 			new DeleteObjectCommand({
 				Bucket: this.config.bucket,
@@ -910,27 +906,31 @@ export class StorageDriverS3 implements TusDriver {
 	async finishChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<void> {
 		const key = this.fullPath(filepath);
 
-		// 1. The upload id and the total size are put into the context by `createChunkedUpload`; a context without
-		//    them means the calls arrived out of order, and an explicit error says so where a non-null assertion
-		//    would surface a `TypeError` naming nothing
+		// The upload id and the total size are put into the context by `createChunkedUpload`; a context without
+		// them means the calls arrived out of order, and an explicit error says so where a non-null assertion
+		// would surface a `TypeError` naming nothing
 		const uploadId = context.metadata?.['upload-id'];
 
 		if (uploadId === undefined || uploadId === null) {
-			throw new Error(`Cannot finish the chunked upload of "${filepath}": the context has no upload id`);
+			throw new Error(
+				`The s3 storage driver cannot finish the chunked upload of "${filepath}": the context has no upload id`,
+			);
 		}
 
 		const size = context.size;
 
 		if (size === undefined) {
-			throw new Error(`Cannot finish the chunked upload of "${filepath}": the context has no upload size`);
+			throw new Error(
+				`The s3 storage driver cannot finish the chunked upload of "${filepath}": the context has no upload size`,
+			);
 		}
 
-		// 2. A zero-length upload produces no parts, and S3 refuses `CompleteMultipartUpload` with an empty `Parts`
-		//    list (400 MalformedXML): the multipart upload is aborted and the empty object is written directly,
-		//    restating the headers the create request carried
+		// A zero-length upload produces no parts, and S3 refuses `CompleteMultipartUpload` with an empty `Parts`
+		// list (400 MalformedXML): the multipart upload is aborted and the empty object is written directly,
+		// restating the headers the create request carried
 		if (size === 0) {
-			// 1. The multipart upload is abandoned before the object exists, so no part can land in it afterwards and
-			//    S3 stops holding (and billing for) stored parts
+			// The multipart upload is abandoned before the object exists, so no part can land in it afterwards and
+			// S3 stops holding (and billing for) stored parts
 			await this.client.send(
 				new AbortMultipartUploadCommand({
 					Bucket: this.config.bucket,
@@ -945,9 +945,9 @@ export class StorageDriverS3 implements TusDriver {
 				Body: Buffer.alloc(0),
 			};
 
-			// 2. The client-sent headers travel with the create request on the multipart path, so they are copied out
-			//    of the context here; a key sent without a value is `null` and is skipped, like `createChunkedUpload`
-			//    skips it
+			// The client-sent headers travel with the create request on the multipart path, so they are copied out
+			// of the context here; a key sent without a value is `null` and is skipped, like `createChunkedUpload`
+			// skips it
 			const contentType = context.metadata?.['contentType'];
 
 			if (contentType) {
@@ -960,7 +960,7 @@ export class StorageDriverS3 implements TusDriver {
 				params.CacheControl = cacheControl;
 			}
 
-			// 3. Same encryption rules as `createChunkedUpload`: the KMS key id is only valid for the KMS modes
+			// The KMS key id is only valid for the KMS modes, as in `createChunkedUpload`
 			if (this.config.serverSideEncryption) {
 				params.ServerSideEncryption = this.config.serverSideEncryption;
 
@@ -969,29 +969,27 @@ export class StorageDriverS3 implements TusDriver {
 				}
 			}
 
-			// 4. Same canned ACL as `createChunkedUpload`: the object is created by this request, so the ACL goes here
+			// The object is created by this request, so the canned ACL goes here, as in `createChunkedUpload`
 			if (this.config.acl) {
 				params.ACL = this.config.acl;
 			}
 
-			// 5. Write the empty object in place of the abandoned multipart upload
 			await this.client.send(new PutObjectCommand(params));
 
 			return;
 		}
 
-		// 3. The listing may not yet show the last parts; poll with growing pauses (0.5 s, 1 s, 1.5 s) before giving up.
-		//    Only a listing that does not add up is retried: a failing `ListParts` call is a real error and goes out at
-		//    once
+		// The listing may not yet show the last parts, hence the growing pauses (0.5 s, 1 s, 1.5 s). Only a listing
+		// that does not add up is retried: a failing `ListParts` call is a real error and goes out at once
 		let parts: Part[];
 
 		try {
 			parts = await retry(
 				async () => {
-					// 1. Parts are checked by their bytes, not their count: a client whose requests do not line up with
-					//    the part size leaves parts of uneven sizes, so only the byte total says whether every part is in.
-					//    Only the unbroken run from part 1 counts: parts past it are leftovers of a chunk that failed
-					//    half-way, and completing without them makes S3 discard them
+					// Parts are checked by their bytes, not their count: a client whose requests do not line up with
+					// the part size leaves parts of uneven sizes, so only the byte total says whether every part is in.
+					// Only the unbroken run from part 1 counts: parts past it are leftovers of a chunk that failed
+					// half-way, and completing without them makes S3 discard them
 					const stored = this.storedPrefix(await this.retrieveParts(key, uploadId), size);
 
 					if (stored.bytes !== size) {
@@ -1007,8 +1005,8 @@ export class StorageDriverS3 implements TusDriver {
 				},
 			);
 		} catch (error) {
-			// 4. Completing with a part missing would produce a truncated object, so refuse in the shape the TUS server
-			//    turns into an HTTP response and let the client retry
+			// Completing with a part missing would produce a truncated object, so refuse in the shape the TUS server
+			// turns into an HTTP response and let the client retry
 			if (error instanceof PartsMismatchError) {
 				throw {
 					status_code: 500,
@@ -1019,7 +1017,7 @@ export class StorageDriverS3 implements TusDriver {
 			throw error;
 		}
 
-		// 5. Every byte is accounted for, so S3 can assemble the object from the parts in the order of the listing
+		// Every byte is accounted for, so S3 can assemble the object from the parts in the order of the listing
 		await this.finishMultipartUpload(key, uploadId, parts);
 	}
 
@@ -1052,24 +1050,24 @@ export class StorageDriverS3 implements TusDriver {
 	): Promise<number> {
 		const key = this.fullPath(filepath);
 
-		// 1. The upload id is put into the context by `createChunkedUpload`; a context without it means the calls
-		//    arrived out of order, and an explicit error says so where a non-null assertion would surface a `TypeError`
-		//    naming nothing. The size stays `undefined` for a deferred-length upload: parts are then sized for the
-		//    largest object S3 allows, and only the chunk that arrives after the client declared the length is
-		//    recognised as the final one
+		// The upload id is put into the context by `createChunkedUpload`; a context without it means the calls
+		// arrived out of order, and an explicit error says so where a non-null assertion would surface a `TypeError`
+		// naming nothing. The size stays `undefined` for a deferred-length upload: parts are then sized for the
+		// largest object S3 allows, and only the chunk that arrives after the client declared the length is
+		// recognised as the final one
 		const uploadId = context.metadata?.['upload-id'];
 
 		if (uploadId === undefined || uploadId === null) {
-			throw new Error(`Cannot write a chunk of "${filepath}": the context has no upload id`);
+			throw new Error(`The s3 storage driver cannot write a chunk of "${filepath}": the context has no upload id`);
 		}
 
 		const size = context.size;
 
-		// 2. Part numbers must be increasing within an upload; ask S3 which parts exist instead of keeping a counter,
-		//    so a resumed upload continues from the right number. The number follows the parts that hold exactly the
-		//    bytes before `offset`: a chunk that failed half-way may have left parts past that point, and uploading
-		//    under their numbers overwrites them instead of storing the resent bytes a second time. Only when the
-		//    listing does not reach `offset` (a lagging listing) does the number follow the highest listed part
+		// Part numbers must be increasing within an upload; ask S3 which parts exist instead of keeping a counter,
+		// so a resumed upload continues from the right number. The number follows the parts that hold exactly the
+		// bytes before `offset`: a chunk that failed half-way may have left parts past that point, and uploading
+		// under their numbers overwrites them instead of storing the resent bytes a second time. Only when the
+		// listing does not reach `offset` (a lagging listing) does the number follow the highest listed part
 		const parts = await this.retrieveParts(key, uploadId);
 		const stored = this.storedPrefix(parts, offset);
 
@@ -1079,8 +1077,8 @@ export class StorageDriverS3 implements TusDriver {
 		const nextPartNumber = partNumber + 1;
 		const requestedOffset = offset;
 
-		// 3. Report what actually reached S3 rather than the chunk length: a chunk that ended mid-part is not counted,
-		//    and the client resends those bytes on its next request
+		// Report what actually reached S3 rather than the chunk length: a chunk that ended mid-part is not counted,
+		// and the client resends those bytes on its next request
 		const bytesUploaded = await this.uploadParts(key, uploadId, size, content, nextPartNumber, offset);
 
 		return requestedOffset + bytesUploaded;
@@ -1103,8 +1101,8 @@ export class StorageDriverS3 implements TusDriver {
 		readStream: fs.ReadStream | Readable,
 		partNumber: number,
 	): Promise<string> {
-		// 1. The body is a stream over the temp file rather than the network chunk: the SDK sizes the request from the
-		//    file, which a live stream cannot provide
+		// The body is a stream over the temp file rather than the network chunk: the SDK sizes the request from the
+		// file, which a live stream cannot provide
 		const data = await this.client.send(
 			new UploadPartCommand({
 				Bucket: this.config.bucket,
@@ -1155,64 +1153,63 @@ export class StorageDriverS3 implements TusDriver {
 		let permit: Permit | undefined = undefined;
 		let aborted = false;
 
-		// 1. The splitter emits an event per part; the handlers below upload each part as soon as it is on disk, while
-		//    later parts are still being written
+		// The handlers below upload each part as soon as it is on disk, while later parts are still being written
 		const splitterStream = new StreamSplitter({
 			chunkSize: this.calcOptimalPartSize(size),
 			directory: os.tmpdir(),
 		})
 			.on('beforeChunkStarted', async () => {
-				// 1. Take a semaphore permit before a part is buffered, so disk usage stays bounded along with the
-				//    number of in-flight uploads
+				// The permit comes before a part is buffered, so disk usage stays bounded along with the number of
+				// in-flight uploads
 				const granted = await this.partUploadSemaphore.acquire();
 
-				// 2. The pipeline may have failed while the permit was pending: no handler will ever consume this
-				//    part, so the permit goes straight back and the splitter is stopped here, before it opens a temp
-				//    file nobody would close or remove. The error only reaches a stream that is already destroyed
+				// The pipeline may have failed while the permit was pending: no handler will ever consume this
+				// part, so the permit goes straight back and the splitter is stopped here, before it opens a temp
+				// file nobody would close or remove. The error only reaches a stream that is already destroyed
 				if (aborted) {
 					await granted.release();
 
-					throw new Error('The upload failed while a part waited for a permit');
+					throw new Error('The s3 storage driver upload failed while a part waited for a permit');
 				}
 
 				permit = granted;
 			})
 			.on('chunkStarted', (filepath) => {
-				// 1. Remember the file being written, so it can be removed if the pipeline fails mid-part
+				// Remembered so the file can be removed if the pipeline fails mid-part
 				pendingChunkFilepath = filepath;
 			})
 			.on('chunkFinished', ({ path, size: partSize }) => {
-				// 1. The part file is complete, so the error path no longer has anything to clean up for it
+				// The part file is complete, so the error path no longer has anything to clean up for it
 				pendingChunkFilepath = null;
 
-				// 2. Capture the part number and permit now: this handler runs once per part, and the shared
-				//    variables move on before the upload below finishes
+				// Capture the part number and permit now: this handler runs once per part, and the shared
+				// variables move on before the upload below finishes
 				const partNumber = currentPartNumber++;
 				const acquiredPermit = permit;
 
-				// 3. The shared slot is cleared the moment the permit is captured: `chunkError` releases whatever sits
-				//    in it, and a permit already handed to an in-flight upload would be released a second time from
-				//    there, inflating the semaphore past its cap
+				// The shared slot is cleared the moment the permit is captured: `chunkError` releases whatever sits
+				// in it, and a permit already handed to an in-flight upload would be released a second time from
+				// there, inflating the semaphore past its cap
 				permit = undefined;
 
 				offset += partSize;
 				bytesReceived += partSize;
 
-				// 4. A part is the final one only when the declared size is reached: while the client defers the length
-				//    no part can be recognised as final, so a trailing part under the S3 minimum is skipped like any
-				//    other non-final one and the client resends those bytes once the length is known
+				// A part is the final one only when the declared size is reached: while the client defers the length
+				// no part can be recognised as final, so a trailing part under the S3 minimum is skipped like any
+				// other non-final one and the client resends those bytes once the length is known
 				const isFinalPart = size !== undefined && size === offset;
 
-				// 5. Upload in the background and collect the promise; awaiting here would serialise the parts
+				// Awaiting here would serialise the parts
 				// eslint-disable-next-line no-async-promise-executor
 				const deferred = new Promise<void>(async (resolve, reject) => {
 					let readable: fs.ReadStream | undefined;
 
 					try {
-						// 1. S3 rejects a part under the minimum size unless it is the last one, so a short trailing
-						//    part is skipped and left uncounted: the returned offset then makes the client resend it.
-						//    The file is opened only for a part that is sent, since a stream nobody reads would hold
-						//    its descriptor until the process exits
+						// S3 rejects a part under the minimum size unless it is the last one, so a short trailing
+						// part is skipped and left uncounted: the returned offset then makes the client resend it.
+						// The file is opened only for a part that is sent, since a stream nobody reads would hold
+						// its descriptor until the process exits
 						if (partSize >= this.minPartSize || isFinalPart) {
 							readable = fs.createReadStream(path);
 							readable.on('error', reject);
@@ -1225,9 +1222,9 @@ export class StorageDriverS3 implements TusDriver {
 					} catch (error) {
 						reject(error);
 					} finally {
-						// 2. A rejected `UploadPart` leaves the body half-read, so the stream is destroyed to close its
-						//    descriptor before the file goes; a failed removal is not worth failing the upload over.
-						//    Releasing the permit lets the next part start
+						// A rejected `UploadPart` leaves the body half-read, so the stream is destroyed to close its
+						// descriptor before the file goes; a failed removal is not worth failing the upload over.
+						// Releasing the permit lets the next part start
 						readable?.destroy();
 						fsProm.rm(path).catch(() => {});
 						acquiredPermit?.release();
@@ -1236,48 +1233,46 @@ export class StorageDriverS3 implements TusDriver {
 
 				promises.push(deferred);
 
-				// 6. Handle a rejection the moment it happens instead of leaving the promise bare until `Promise.all`
-				//    subscribes in the `finally` below: the chunk can keep streaming for many event-loop turns before
-				//    the pipeline settles, and Node's default `unhandledRejection: 'throw'` would crash the process on
-				//    the first part-upload failure long before that. This catch only marks the rejection as handled on
-				//    its own chain — `Promise.all` still rethrows the error to the caller once every upload has settled
+				// Handle a rejection the moment it happens instead of leaving the promise bare until `Promise.all`
+				// subscribes in the `finally` below: the chunk can keep streaming for many event-loop turns before
+				// the pipeline settles, and Node's default `unhandledRejection: 'throw'` would crash the process on
+				// the first part-upload failure long before that. This catch only marks the rejection as handled on
+				// its own chain — `Promise.all` still rethrows the error to the caller once every upload has settled
 				deferred.catch(() => {});
 			})
 			.on('chunkError', () => {
-				// 1. A splitter failure never reaches `chunkFinished`, so the permit taken for the part being written is
-				//    still in the shared slot and is freed here; a permit already captured by `chunkFinished` is no
-				//    longer in the slot and is released by that part's own upload, and one still pending is turned back
-				//    by `beforeChunkStarted` once it is granted
+				// A splitter failure never reaches `chunkFinished`, so the permit taken for the part being written is
+				// still in the shared slot and is freed here; a permit already captured by `chunkFinished` is no
+				// longer in the slot and is released by that part's own upload, and one still pending is turned back
+				// by `beforeChunkStarted` once it is granted
 				aborted = true;
 				permit?.release();
 			});
 
-		// 2. Drive the incoming stream through the splitter; every part upload is queued by the time this resolves
+		// Every part upload is queued by the time this resolves
 		try {
 			await streamProm.pipeline(readStream, splitterStream);
 		} catch (error) {
-			// 3. Stop any part still waiting for a permit and clean up the half-written part file, then surface the
-			//    pipeline error together with the upload results
 			aborted = true;
 
 			if (pendingChunkFilepath !== null) {
 				try {
 					await fsProm.rm(pendingChunkFilepath);
 				} catch (cleanupError) {
-					// 4. The pipeline error is the one worth throwing; a temp file left behind is only worth a warning
+					// The pipeline error is the one worth throwing; a temp file left behind is only worth a warning
 					useLogger().warn(cleanupError, `Failed to remove chunk "${pendingChunkFilepath}" after an upload error`);
 				}
 			}
 
 			promises.push(Promise.reject(error));
 		} finally {
-			// 5. Wait for every queued upload, so the returned byte count reflects what actually reached S3
+			// Every queued upload is awaited, so the returned byte count reflects what actually reached S3
 			await Promise.all(promises);
 		}
 
-		// 6. A chunk that finished cleanly with every byte left unsent would come back unchanged, since the offset
-		//    does not move; refuse it in the shape the TUS server turns into an HTTP response, naming the size a
-		//    request has to reach
+		// A chunk that finished cleanly with every byte left unsent would come back unchanged, since the offset
+		// does not move; refuse it in the shape the TUS server turns into an HTTP response, naming the size a
+		// request has to reach
 		if (bytesReceived > 0 && bytesUploaded === 0) {
 			throw {
 				status_code: 400,
@@ -1298,8 +1293,7 @@ export class StorageDriverS3 implements TusDriver {
 	 * @internal
 	 */
 	private async retrieveParts(key: string, uploadId: string, partNumberMarker?: string): Promise<Part[]> {
-		// 1. Ask S3 for the page after the marker; S3 is the only record of which parts exist, since the driver keeps
-		//    no counter of its own between calls
+		// S3 is the only record of which parts exist, since the driver keeps no counter of its own between calls
 		const data = await this.client.send(
 			new ListPartsCommand({
 				Bucket: this.config.bucket,
@@ -1311,14 +1305,14 @@ export class StorageDriverS3 implements TusDriver {
 
 		let parts = data.Parts ?? [];
 
-		// 2. S3 pages the listing; recurse with the marker so callers always see the complete set
+		// S3 pages the listing; recursing with the marker gives callers the complete set
 		if (data.IsTruncated) {
 			const rest = await this.retrieveParts(key, uploadId, data.NextPartNumberMarker);
 			parts = [...parts, ...rest];
 		}
 
-		// 3. Sort once at the outermost call: `CompleteMultipartUpload` requires ascending part numbers, and
-		//    `storedPrefix` and `writeChunk` walk the parts in that order
+		// Sort once at the outermost call: `CompleteMultipartUpload` requires ascending part numbers, and
+		// `storedPrefix` and `writeChunk` walk the parts in that order
 		if (!partNumberMarker) {
 			parts.sort((a, b) => a.PartNumber! - b.PartNumber!);
 		}
@@ -1343,8 +1337,8 @@ export class StorageDriverS3 implements TusDriver {
 		const run: Part[] = [];
 		let bytes = 0;
 
-		// 1. Stop at the first gap in the numbering: bytes after a missing part are not in upload order, so they cannot
-		//    count towards the offset
+		// Stop at the first gap in the numbering: bytes after a missing part are not in upload order, so they cannot
+		// count towards the offset
 		for (const part of parts) {
 			if (bytes >= limit || part.PartNumber !== run.length + 1) {
 				break;
@@ -1367,8 +1361,8 @@ export class StorageDriverS3 implements TusDriver {
 	 * @internal
 	 */
 	private async finishMultipartUpload(key: string, uploadId: string, parts: Part[]) {
-		// 1. The completion request takes only ETag and PartNumber per part; the size and timestamps from the listing
-		//    are dropped
+		// The completion request takes only ETag and PartNumber per part; the size and timestamps from the listing
+		// are dropped
 		const command = new CompleteMultipartUploadCommand({
 			Bucket: this.config.bucket,
 			Key: key,
@@ -1396,23 +1390,21 @@ export class StorageDriverS3 implements TusDriver {
 	 * @internal
 	 */
 	private calcOptimalPartSize(size?: number): number {
-		// 1. Without a known length, plan for the largest object S3 allows so the part count can never overflow
+		// Without a known length, plan for the largest object S3 allows so the part count can never overflow
 		if (size === undefined) {
 			size = this.maxUploadSize;
 		}
 
 		let optimalPartSize: number;
 
-		// 2. A small upload goes in a single part; the S3 minimum only applies to parts that are not the last
+		// A small upload goes in a single part; the S3 minimum only applies to parts that are not the last
 		if (size <= this.preferredPartSize) {
 			optimalPartSize = size;
 		}
-		// 3. The preferred size works as long as the upload fits in the maximum number of parts
+		// The preferred size works as long as the upload fits in the maximum number of parts
 		else if (size <= this.preferredPartSize * this.maxMultipartParts) {
 			optimalPartSize = this.preferredPartSize;
-		}
-		// 4. Otherwise grow the parts just enough to fit: size divided by the part limit, rounded up
-		else {
+		} else {
 			optimalPartSize = Math.ceil(size / this.maxMultipartParts);
 		}
 

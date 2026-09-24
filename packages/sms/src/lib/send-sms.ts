@@ -1,5 +1,5 @@
 import { useEmitter } from '@novastarter/emitter';
-import { ErrorCode, InvalidPayloadError, isNovastarterError } from '@novastarter/errors';
+import { ErrorCode, InvalidConfigError, InvalidPayloadError, isNovastarterError } from '@novastarter/errors';
 import { type Logger, useLogger } from '@novastarter/logger';
 import type { LimiterDriver } from '@novastarter/memory';
 import { toError } from '@novastarter/utils';
@@ -80,11 +80,11 @@ export interface SmsSendOptions {
  * @returns The driver's result and the location that delivered, or `null` when an `sms.send` filter dropped the
  * message.
  * @throws InvalidPayloadError for a recipient that is not E.164 or a blank text — as it came in, or as an `sms.send`
- * handler rewrote it; Error when `options.location` names a location nobody registered, before anything is sent;
- * HitRateLimitError when every location of the chain is over its limit; the driver's partial-delivery error as-is,
- * with {@link SMS_PARTIAL_DELIVERY_CODE}, when a location delivered the message in part — the chain does not fall
- * back, the delivered parts already went out; Error when every location failed, the last failure as `cause`, or when
- * no location is registered.
+ * handler rewrote it; InvalidConfigError when `options.location` names a location nobody registered, before anything
+ * is sent, or when no location is registered; HitRateLimitError when every location of the chain is over its limit;
+ * the driver's partial-delivery error as-is, with {@link SMS_PARTIAL_DELIVERY_CODE}, when a location delivered the
+ * message in part — the chain does not fall back, the delivered parts already went out; Error when every location
+ * failed, the last failure as `cause`.
  *
  * @example
  * ```ts
@@ -100,18 +100,16 @@ export const sendSms = async (message: SmsMessage, options: SmsSendOptions = {})
 	const routes = manager.routes();
 	const logger = useLogger();
 
-	// 1. The recipient and the text are checked before any work is done, so a broken message never reaches a handler
+	// Checked before any work, so a broken message never reaches a handler.
 	const incoming = normalize(message);
 
-	// 2. A filter handler may rewrite the message — a prefix, a redirect to a test phone — or veto it
 	const filtered = await useEmitter().emitFilter<SmsMessage | null>(SMS_SEND_FILTER, incoming, {
 		category: incoming.category ?? 'transactional',
 	});
 
 	if (!filtered) return null;
 
-	// 3. The rewrite is checked like the original, and the sender completed from the routes before any driver sees
-	//    the message; a sender stays optional, since a provider may supply it from the location's own settings
+	// A sender stays optional, since a provider may supply it from the location's own settings.
 	const from = filtered.from ?? routes.from;
 
 	const prepared: SmsMessage = {
@@ -119,23 +117,23 @@ export const sendSms = async (message: SmsMessage, options: SmsSendOptions = {})
 		...(from !== undefined ? { from } : {}),
 	};
 
-	// 4. An explicit location short-circuits the routes; otherwise the chain comes from the category. A name nobody
-	//    registered is a configuration mistake, named here rather than logged as a delivery failure below
+	// A name nobody registered is a configuration mistake, named here rather than logged as a delivery failure below.
 	if (options.location && !manager.hasLocation(options.location)) {
-		throw new Error(`Sms location "${options.location}" doesn't exist.`);
+		throw new InvalidConfigError({
+			reason: `Sms location "${options.location}" doesn't exist; register it with registerLocation()`,
+		});
 	}
 
 	const chain = options.location ? [options.location] : resolveSmsChain(routes, prepared, manager);
 
 	if (chain.length === 0) {
-		throw new Error('No sms location is registered');
+		throw new InvalidConfigError({ reason: 'No sms location is registered; register one with registerLocation()' });
 	}
 
 	let lastError: unknown;
 	let lastLimit: unknown;
 	let limited = 0;
 
-	// 5. Down the chain: the first location with budget that accepts the message wins
 	for (const location of chain) {
 		const limit = await consume(location, routes.limiters?.[location], logger);
 
@@ -153,20 +151,20 @@ export const sendSms = async (message: SmsMessage, options: SmsSendOptions = {})
 
 			return sent;
 		} catch (error) {
-			// 6. A partial delivery is not a failed location: the parts the provider accepted already went out and are
-			//    billed, so the error passes to the caller untouched — the next location would send those parts again
+			// The parts the provider accepted already went out and are billed, so the error passes to the caller
+			// untouched; the next location would send those parts again.
 			if (isNovastarterError(error, SMS_PARTIAL_DELIVERY_CODE)) {
 				throw error;
 			}
 
-			// 7. pino takes a non-object first argument as the message, so a driver rejecting with a string would replace
-			//    the line and drop the location; `toError` keeps both
+			// pino takes a non-object first argument as the message, so a driver rejecting with a string would replace
+			// the line and drop the location; `toError` keeps both.
 			lastError = error;
 			logger.warn(toError(error), `Sms location "${location}" failed to send to ${prepared.to}`);
 		}
 	}
 
-	// 8. Nobody took it: the reason is the limit when that is all that stood in the way, the last failure otherwise
+	// The reason is the limit when that is all that stood in the way, the last failure otherwise.
 	useEmitter().emitAction(SMS_FAILED_EVENT, { locations: chain, to: prepared.to });
 
 	if (limited === chain.length) {
@@ -185,15 +183,14 @@ export const sendSms = async (message: SmsMessage, options: SmsSendOptions = {})
  * whitespace only.
  */
 const normalize = (message: SmsMessage): SmsMessage => {
-	// 1. Separators and the `00` prefix go; what is left has to be E.164, since every provider refuses anything else
-	//    and a bare national number would be a guess at its country
+	// Every provider refuses anything but E.164, and a bare national number would be a guess at its country.
 	const to = typeof message.to === 'string' ? normalizePhoneNumber(message.to) : '';
 
 	if (!isPhoneNumber(to)) {
 		throw new InvalidPayloadError({ reason: `The recipient "${String(message.to)}" is not a phone number in E.164` });
 	}
 
-	// 2. An empty text is refused as the payload's fault: a provider would either refuse it or bill for nothing
+	// An empty text is refused as the payload's fault: a provider would either refuse it or bill for nothing.
 	if (typeof message.text !== 'string' || !message.text.trim()) {
 		throw new InvalidPayloadError({ reason: 'The SMS message has no text' });
 	}
@@ -212,7 +209,6 @@ const normalize = (message: SmsMessage): SmsMessage => {
  * @throws Whatever a broken limiter store throws — a limit that cannot be checked is not silently ignored.
  */
 const consume = async (location: string, limiter: LimiterDriver | undefined, logger: Logger): Promise<unknown> => {
-	// 1. No limiter, no budget to spend
 	if (!limiter) return undefined;
 
 	try {
@@ -220,7 +216,7 @@ const consume = async (location: string, limiter: LimiterDriver | undefined, log
 
 		return undefined;
 	} catch (error) {
-		// 2. A hit is the expected outcome of a busy location; anything else is the store failing
+		// A hit is the expected outcome of a busy location; anything else is the store failing.
 		if (isNovastarterError(error, ErrorCode.RequestsExceeded)) {
 			logger.warn(`Sms location "${location}" is over its rate limit; trying the next one`);
 

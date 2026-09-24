@@ -1,3 +1,4 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import { MAX_TIMER_DELAY, withTimeout } from '@novastarter/utils';
 import { LRUCache } from 'lru-cache';
 import { deserialize, serialize } from '../../../utils/index.js';
@@ -76,24 +77,23 @@ export class KvDriverLocal implements KvDriver {
 	 * Create the store with optional size and time limits.
 	 *
 	 * @param config - Local configuration.
-	 * @throws RangeError when `lockTimeout` is not between `0` and what a timer can hold.
+	 * @throws InvalidConfigError when `lockTimeout` is not between `0` and what a timer can hold.
 	 */
 	constructor(config: KvDriverLocalConfig = {}) {
-		// 1. `LRUCache` refuses to be constructed without `max` or `ttl`, so fall back to a plain `Map` when neither
-		//    limit is configured
+		// `LRUCache` refuses to be constructed without `max` or `ttl`, hence the plain `Map` when neither limit is
+		// configured
 		if (config.maxKeys || config.ttl) {
-			// 2. The lru-cache types model the options as a union that requires whichever limit is configured, so the
-			//    object is built per combination, typed against the library's own options instead of an untyped record
+			// The lru-cache types model the options as a union that requires whichever limit is configured, so the object
+			// is built per combination, typed against the library's own options instead of an untyped record
 			let options: LRUCache.Options<string, Uint8Array, unknown>;
 
 			if (config.maxKeys) {
-				// 3. With a ttl, purge expired entries on a timer; by default the LRU only drops them lazily on access,
-				//    which would let a write-heavy store grow until reads happen
+				// By default the LRU drops expired entries only lazily on access, which would let a write-heavy store grow
+				// until reads happen
 				options = config.ttl ? { max: config.maxKeys, ttl: config.ttl, ttlAutopurge: true } : { max: config.maxKeys };
 			} else {
-				// 4. Only a ttl reaches this branch — the outer condition rules a bare `maxKeys` out — and the
-				//    lru-cache types demand the purge flag alongside a ttl; the assertion states what the condition
-				//    guarantees
+				// The outer condition rules a bare `maxKeys` out, and the lru-cache types demand the purge flag alongside a
+				// ttl; the assertion states what the condition guarantees
 				options = { ttl: config.ttl!, ttlAutopurge: true };
 			}
 
@@ -102,14 +102,14 @@ export class KvDriverLocal implements KvDriver {
 			this.store = new Map();
 		}
 
-		// 5. The same wait budget as the Redis store's retries, so a busy key fails the same way on both backends; a
-		//    budget a timer cannot hold is refused here rather than failing every `acquireLock` later
+		// The same wait budget as the Redis store's retries, so a busy key fails the same way on both backends; a
+		// budget a timer cannot hold is refused here rather than failing every `acquireLock` later
 		this.lockTimeout = config.lockTimeout ?? 5000;
 
 		if (!(this.lockTimeout >= 0 && this.lockTimeout <= MAX_TIMER_DELAY)) {
-			throw new RangeError(
-				`KvDriverLocal: "lockTimeout" must be between 0 and ${MAX_TIMER_DELAY} ms, got ${config.lockTimeout}`,
-			);
+			throw new InvalidConfigError({
+				reason: `The local kv driver needs a "lockTimeout" between 0 and ${MAX_TIMER_DELAY} ms, got ${config.lockTimeout}`,
+			});
 		}
 	}
 
@@ -121,7 +121,7 @@ export class KvDriverLocal implements KvDriver {
 	 * @returns Stored value, or `undefined` when the key does not exist.
 	 */
 	get<T = unknown>(key: string): T | undefined {
-		// 1. Deserialize a fresh copy, so callers never share a reference with the store
+		// A fresh copy on every read, so callers never share a reference with the store
 		const value = this.store.get(key);
 
 		if (value !== undefined) {
@@ -138,7 +138,7 @@ export class KvDriverLocal implements KvDriver {
 	 * @param value - Value to save. Can be any JavaScript primitive, plain object or array.
 	 */
 	set(key: string, value: unknown): void {
-		// 1. Store bytes rather than the object itself, matching the Redis store's copy semantics
+		// Bytes rather than the object itself, matching the Redis store's copy semantics
 		const serialized = serialize(value);
 		this.store.set(key, serialized);
 	}
@@ -149,7 +149,6 @@ export class KvDriverLocal implements KvDriver {
 	 * @param key - Key to remove.
 	 */
 	delete(key: string): void {
-		// 1. Both backing stores share the `Map` delete signature
 		this.store.delete(key);
 	}
 
@@ -160,7 +159,7 @@ export class KvDriverLocal implements KvDriver {
 	 * @returns `true` when the key exists.
 	 */
 	has(key: string): boolean {
-		// 1. The LRU's `has` does not refresh recency, so a probe does not keep a key alive
+		// The LRU's `has` does not refresh recency, so a probe does not keep a key alive
 		return this.store.has(key);
 	}
 
@@ -177,25 +176,25 @@ export class KvDriverLocal implements KvDriver {
 	 * @throws Error when the stored value is not an integer.
 	 */
 	increment(key: string, amount: number = 1): number {
-		// 1. A fractional or non-finite amount is refused before the store is touched, as Redis refuses it for
-		//    `INCRBY`; a counter that works without a server and fails with one is worse than one failing in both
+		// Refused before the store is touched, as Redis refuses it for `INCRBY`; a counter that works without a server
+		// and fails with one is worse than one failing in both
 		if (!Number.isInteger(amount)) {
 			throw new RangeError(`The amount for key "${key}" must be an integer, got ${amount}`);
 		}
 
-		// 2. Only a missing key counts as zero, so counters need no initialisation; a stored `null` or an empty
-		//    payload — `set(key, undefined)` — deserializes to something the next step refuses, the way `INCRBY`
-		//    refuses it on Redis, instead of being silently overwritten with a fresh counter
+		// Only a missing key counts as zero, so counters need no initialisation; a stored `null` or an empty payload —
+		// `set(key, undefined)` — deserializes to something the next check refuses, the way `INCRBY` refuses it on
+		// Redis, instead of being silently overwritten with a fresh counter
 		const stored = this.store.get(key);
 		const currentVal = stored === undefined ? 0 : deserialize(stored);
 
-		// 3. Refuse to add to anything but an integer — a string, `null`, a fraction — instead of producing `NaN`, a
-		//    concatenation or a value Redis could not hold; the key keeps its value and its expiry
+		// Refused rather than producing `NaN`, a concatenation or a value Redis could not hold; the key keeps its value
+		// and its expiry
 		if (typeof currentVal !== 'number' || !Number.isInteger(currentVal)) {
 			throw new Error(`The value for key "${key}" is not an integer.`);
 		}
 
-		// 4. Everything runs synchronously, so concurrent callers cannot interleave between read and write
+		// Everything runs synchronously, so concurrent callers cannot interleave between read and write
 		const newVal = currentVal + amount;
 
 		this.set(key, newVal);
@@ -213,16 +212,16 @@ export class KvDriverLocal implements KvDriver {
 	 * @throws Error when the stored value is not a number.
 	 */
 	setMax(key: string, value: number): boolean {
-		// 1. `NaN` and the infinities compare with nothing and would be stored as JSON `null`, which every later
-		//    `setMax` on the key would then refuse as "not a number"; refused up front, as the Redis store refuses them
+		// `NaN` and the infinities compare with nothing and would be stored as JSON `null`, which every later `setMax`
+		// on the key would then refuse as "not a number"; refused up front, as the Redis store refuses them
 		if (!Number.isFinite(value)) {
 			throw new RangeError(`The value for key "${key}" must be a finite number, got ${value}`);
 		}
 
-		// 2. A missing key has nothing to beat, so any number — zero or negative included — is stored, the way the
-		//    Redis script does it; a `0` baseline would refuse `setMax('k', -5)` on one backend and take it on the other.
-		//    Read from the store rather than through `get`, so an empty payload counts as a stored value to refuse, not
-		//    as a missing key, as it does on Redis
+		// A missing key has nothing to beat, so any number — zero or negative included — is stored, the way the Redis
+		// script does it; a `0` baseline would refuse `setMax('k', -5)` on one backend and take it on the other. Read
+		// from the store rather than through `get`, so an empty payload counts as a stored value to refuse, not as a
+		// missing key, as it does on Redis
 		const stored = this.store.get(key);
 
 		if (stored === undefined) {
@@ -231,14 +230,13 @@ export class KvDriverLocal implements KvDriver {
 			return true;
 		}
 
-		// 3. Comparing against a non-number would be meaningless, so refuse it
 		const currentVal = deserialize(stored);
 
 		if (typeof currentVal !== 'number') {
 			throw new Error(`The value for key "${key}" is not a number.`);
 		}
 
-		// 4. Equal values are not "larger", so they are rejected as well
+		// Equal values are not "larger", so they are rejected as well
 		if (currentVal >= value) {
 			return false;
 		}
@@ -262,8 +260,8 @@ export class KvDriverLocal implements KvDriver {
 	 * @throws Error when the key is still held once `lockTimeout` passed.
 	 */
 	async acquireLock(key: string): Promise<Lock> {
-		// 1. Queue behind whoever holds or waits for the key; `released` is what the next caller will wait for, and
-		//    this caller counts as one more on the key until it releases or gives up
+		// `released` is what the next caller will wait for, and this caller counts as one more on the key until it
+		// releases or gives up
 		const entry = this.locks.get(key) ?? { tail: Promise.resolve(), callers: 0 };
 		const previous = entry.tail;
 		let release!: () => void;
@@ -276,8 +274,8 @@ export class KvDriverLocal implements KvDriver {
 		entry.callers += 1;
 		this.locks.set(key, entry);
 
-		// 2. Whether this caller releases or gives up, it lets the next one in and leaves the key; the entry goes with
-		//    the last caller, whatever order the callers left in
+		// The entry goes with the last caller, whatever order the callers left in, so the map never keeps keys nobody
+		// locks any more
 		const leave = (): void => {
 			release();
 			entry.callers -= 1;
@@ -289,9 +287,9 @@ export class KvDriverLocal implements KvDriver {
 
 		let left = false;
 
-		// 3. The lock is held once every earlier holder released — within the wait budget. A caller that gives up
-		//    resolves its own turn at once, so the ones queued behind it wait only for the holders before it; the turn
-		//    stays in the chain, since removing it would let the next caller skip the holder still in place
+		// A caller that gives up resolves its own turn at once, so the ones queued behind it wait only for the holders
+		// before it; the turn stays in the chain, since removing it would let the next caller skip the holder still in
+		// place
 		try {
 			await withTimeout(previous, this.lockTimeout, {
 				error: () => new Error(`Lock "${key}" was not acquired within ${this.lockTimeout} ms`),
@@ -302,10 +300,9 @@ export class KvDriverLocal implements KvDriver {
 			throw error;
 		}
 
-		// 4. Releasing lets the next holder in
 		return {
 			release: async () => {
-				// 1. Once only: a second release must not let a further caller in or count the holder out twice
+				// Once only: a second release must not let a further caller in or count the holder out twice
 				if (!left) {
 					left = true;
 					leave();
@@ -326,7 +323,7 @@ export class KvDriverLocal implements KvDriver {
 	 * @throws Error when the key is still held once `lockTimeout` passed; whatever the callback throws.
 	 */
 	async usingLock<T>(key: string, callback: () => Promise<T>): Promise<T> {
-		// 1. Take the lock, run, and release whatever happened, so a throwing callback does not block the key for good
+		// Released whatever happened, so a throwing callback does not block the key for good
 		const lock = await this.acquireLock(key);
 
 		try {
@@ -340,7 +337,6 @@ export class KvDriverLocal implements KvDriver {
 	 * Remove all keys from the store.
 	 */
 	clear(): void {
-		// 1. Both backing stores share the `Map` clear signature
 		this.store.clear();
 	}
 }

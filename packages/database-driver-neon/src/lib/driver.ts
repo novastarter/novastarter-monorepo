@@ -9,6 +9,7 @@ import {
 	toMigrationConfig,
 	toUnavailableError,
 } from '@novastarter/database';
+import { InvalidConfigError } from '@novastarter/errors';
 import type { Logger } from '@novastarter/logger';
 import { hasMethods } from '@novastarter/utils';
 import { sql } from 'drizzle-orm';
@@ -113,36 +114,35 @@ export class DatabaseDriverNeon<
 	 * Create a driver over a pool, opening one when given a connection string or options.
 	 *
 	 * @param config - Connection, schema and logging options.
-	 * @throws Error when `connection` is missing.
+	 * @throws InvalidConfigError when `connection` is missing.
 	 */
 	constructor(config: DatabaseDriverNeonConfig<Schema>) {
-		// 1. Refuse a missing connection up front: the pool would silently fall back to node-postgres's `PG*`
-		//    environment variables and connect somewhere the configuration never named
+		// The pool would otherwise silently fall back to node-postgres's `PG*` environment variables and connect
+		// somewhere the configuration never named
 		if (!config.connection) {
-			throw new Error('The neon database driver needs a "connection"');
+			throw new InvalidConfigError({ reason: 'The neon database driver needs a "connection"' });
 		}
 
 		this.label = config.label;
 		this.logger = resolveLogger(config);
 
-		// 2. A given pool belongs to whoever created it — told by the methods the driver calls, since a pool from
-		//    another copy of the SDK fails `instanceof`; a string or options become a pool of the driver's own
+		// A given pool belongs to whoever created it. It is told by the methods the driver calls, since a pool from
+		// another copy of the SDK fails `instanceof`
 		this.ownsPool = !hasMethods<Pool>(config.connection, ['connect', 'end']);
 
 		this.pool = hasMethods<Pool>(config.connection, ['connect', 'end'])
 			? config.connection
 			: new Pool(typeof config.connection === 'string' ? { connectionString: config.connection } : config.connection);
 
-		// 3. The pool is node-postgres's: an idle client losing its connection emits `error` on it, and an unhandled
-		//    `error` event crashes the process; the pool of the driver's own gets its listener here, a caller's pool
-		//    keeps the caller's
+		// The pool is node-postgres's: an idle client losing its connection emits `error` on it, and an unhandled
+		// `error` event crashes the process; the pool of the driver's own gets its listener here, a caller's pool
+		// keeps the caller's
 		if (this.ownsPool) {
 			this.pool.on('error', (error: Error) => {
 				this.logger.error(error, 'Neon pool error');
 			});
 		}
 
-		// 4. Drizzle over the pool, with the schema and, when asked for, the query logger
 		this.db = drizzle(this.pool, toDrizzleOptions(config, this.logger));
 	}
 
@@ -153,11 +153,11 @@ export class DatabaseDriverNeon<
 	 * @throws DatabaseUnavailableError naming the location, with what the connection raised as its `cause`.
 	 */
 	async ping(): Promise<void> {
-		// 1. The cheapest statement a server answers; through Drizzle, so the same path the queries take is proven
+		// Through Drizzle, so the same path the queries take is proven
 		try {
 			await this.db.execute(sql`select 1`);
 		} catch (error) {
-			// 2. One error for every backend, 503, naming the location; the backend's error stays as `cause`
+			// One error for every backend; the backend's error stays as `cause`
 			throw toUnavailableError(error, this.label);
 		}
 	}
@@ -167,10 +167,10 @@ export class DatabaseDriverNeon<
 	 *
 	 * @param options - The folder and, optionally, the journal table and schema.
 	 * @returns Once every pending migration ran.
-	 * @throws Error when `migrationsFolder` is missing; what the migrator raised otherwise.
+	 * @throws InvalidConfigError when `migrationsFolder` is missing; what the migrator raised otherwise.
 	 */
 	async migrate(options: MigrateOptions): Promise<void> {
-		// 1. The migrator takes a dedicated client from the pool and runs the pending files in one transaction
+		// The migrator runs the pending files in one transaction on a dedicated client
 		await migrate(this.db, toMigrationConfig(options));
 	}
 
@@ -180,7 +180,7 @@ export class DatabaseDriverNeon<
 	 * @returns Once every connection of the pool is closed.
 	 */
 	async close(): Promise<void> {
-		// 1. A pool the caller handed in is theirs to end; one opened here would otherwise keep the process alive
+		// A pool the caller handed in is theirs to end; one opened here would otherwise keep the process alive
 		if (this.ownsPool) {
 			await this.pool.end();
 		}

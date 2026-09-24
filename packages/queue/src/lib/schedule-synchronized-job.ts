@@ -62,13 +62,13 @@ export const scheduleSynchronizedJob = (
 	callback: (fireDate: Date) => void | Promise<void>,
 	options: ScheduleSynchronizedJobOptions,
 ): ScheduledJob => {
-	// 1. The clock is keyed by id and rule, so every instance of the cluster running this schedule shares it and
-	//    two schedules of one job on different rules do not
+	// The clock is keyed by id and rule, so every instance of the cluster running this schedule shares it and
+	// two schedules of one job on different rules do not
 	const clock = new SynchronizedClock(`${id}:${rule}`, options.kv);
 
-	// 2. The croner job: unreferenced, so a schedule never keeps a process alive that is otherwise done; unprotected,
-	//    since overlapping runs are the callback's business (the queue dedupes) and croner would silently skip them;
-	//    a throwing callback is reported through `catch` rather than stopping the schedule
+	// Unreferenced, so a schedule never keeps a process alive that is otherwise done; unprotected,
+	// since overlapping runs are the callback's business (the queue dedupes) and croner would silently skip them;
+	// a throwing callback is reported through `catch` rather than stopping the schedule
 	const job = new Cron(
 		rule,
 		{
@@ -79,13 +79,13 @@ export const scheduleSynchronizedJob = (
 			catch: (error) => options.onError?.(error),
 		},
 		async (self: Cron) => {
-			// 1. The next fire time is the ticket: the instance that writes it first runs this tick
+			// The next fire time is the ticket: the instance that writes it first runs this tick
 			const next = self.nextRun();
 
 			if (!next) return;
 
-			// 2. `setMax` on the shared store decides; a reading not greater than the stored one means another instance
-			//    already claimed this tick
+			// `setMax` on the shared store decides; a reading not greater than the stored one means another instance
+			// already claimed this tick
 			const wasSet = await clock.set(next.getTime());
 
 			if (wasSet) {
@@ -94,9 +94,9 @@ export const scheduleSynchronizedJob = (
 		},
 	);
 
-	// 3. The handle: `stop` ends the timer alone, leaving the clock's reading in place — a tick already claimed stays
-	//    claimed, so an instance stopped mid-restart cannot let a peer re-run that tick; `reset` is the explicit opt-in
-	//    to a fresh start, forgetting the clock for the next instance
+	// `stop` ends the timer alone, leaving the clock's reading in place — a tick already claimed stays
+	// claimed, so an instance stopped mid-restart cannot let a peer re-run that tick; `reset` is the explicit opt-in
+	// to a fresh start, forgetting the clock for the next instance
 	return {
 		stop: async () => {
 			job.stop();

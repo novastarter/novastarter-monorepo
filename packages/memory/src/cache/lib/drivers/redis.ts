@@ -78,7 +78,7 @@ export class CacheDriverRedis implements CacheDriver {
 	 * database above 15, where Redlock cannot lock.
 	 */
 	constructor(config: CacheDriverRedisConfig) {
-		// 1. The cache reuses the Kv store, so serialization, compression and locking live in one place
+		// The cache reuses the Kv store, so serialization, compression and locking live in one place
 		this.store = new KvDriverRedis(config);
 	}
 
@@ -90,8 +90,7 @@ export class CacheDriverRedis implements CacheDriver {
 	 * @returns Cached value, or `undefined` when the key does not exist.
 	 */
 	async get<T = unknown>(key: string): Promise<T | undefined> {
-		// 1. The store reads the raw bytes, gunzips what was compressed and parses the JSON; the cache adds no step, so
-		//    a value a Kv wrote under the same namespace reads the same
+		// The cache adds no step over the store, so a value a Kv wrote under the same namespace reads the same
 		return await this.store.get<T>(key);
 	}
 
@@ -103,8 +102,8 @@ export class CacheDriverRedis implements CacheDriver {
 	 * @param value - Value to save. Can be any JavaScript primitive, plain object or array.
 	 */
 	async set<T = unknown>(key: string, value: T): Promise<void> {
-		// 1. The store namespaces the key, gzips a value above `compressionMinSize` and sets the `PX` expiry in the same
-		//    round trip as the write
+		// The store namespaces the key, gzips a value above `compressionMinSize` and sets the `PX` expiry in the same
+		// round trip as the write
 		return await this.store.set(key, value);
 	}
 
@@ -114,8 +113,8 @@ export class CacheDriverRedis implements CacheDriver {
 	 * @param key - Key to remove.
 	 */
 	async delete(key: string): Promise<void> {
-		// 1. The store unlinks the key off the Redis main thread; this cache holds no local copy that would need
-		//    dropping alongside
+		// The store unlinks the key off the Redis main thread; this cache holds no local copy that would need dropping
+		// alongside
 		return await this.store.delete(key);
 	}
 
@@ -126,8 +125,8 @@ export class CacheDriverRedis implements CacheDriver {
 	 * @returns `true` when the key exists.
 	 */
 	async has(key: string): Promise<boolean> {
-		// 1. An `EXISTS` round trip is the only truth about a key shared between processes; there is no local copy to
-		//    answer from
+		// An `EXISTS` round trip is the only truth about a key shared between processes; there is no local copy to
+		// answer from
 		return await this.store.has(key);
 	}
 
@@ -135,8 +134,8 @@ export class CacheDriverRedis implements CacheDriver {
 	 * Remove all keys in this cache's namespace.
 	 */
 	async clear(): Promise<void> {
-		// 1. The store scans its namespace and unlinks in one pipeline; held locks live under `<namespace>-locks` and
-		//    survive it
+		// The store scans its namespace and unlinks in one pipeline; held locks live under `<namespace>-locks` and
+		// survive it
 		await this.store.clear();
 	}
 
@@ -148,8 +147,8 @@ export class CacheDriverRedis implements CacheDriver {
 	 * @throws Error when the lock is still held once the retry budget — about `lockTimeout` — is spent.
 	 */
 	async acquireLock(key: string): Promise<Lock> {
-		// 1. The lock is the store's Redlock lock: visible to every process on the server, held for `lockTimeout` and
-		//    extendable, which a lock in this process's memory could not offer
+		// The lock is the store's Redlock lock: visible to every process on the server, held for `lockTimeout` and
+		// extendable, which a lock in this process's memory could not offer
 		return await this.store.acquireLock(key);
 	}
 
@@ -164,8 +163,8 @@ export class CacheDriverRedis implements CacheDriver {
 	 * callback throws.
 	 */
 	async usingLock<T>(key: string, callback: () => Promise<T>): Promise<T> {
-		// 1. The store's Redlock `using` renews the lock while the callback runs and releases it afterwards, so a long
-		//    callback keeps its exclusivity without the cache tracking the expiry
+		// The store's Redlock `using` renews the lock while the callback runs and releases it afterwards, so a long
+		// callback keeps its exclusivity without the cache tracking the expiry
 		return await this.store.usingLock(key, callback);
 	}
 }

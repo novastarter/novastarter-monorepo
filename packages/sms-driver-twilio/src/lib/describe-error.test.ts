@@ -18,7 +18,7 @@ const restException = (body: Record<string, unknown>, statusCode = 400): twilio.
 
 describe('describeError', () => {
 	test('Names the status, the error code and the help URL of a refused request', () => {
-		// 1. The code is what an application matches on (21211 is an unusable number), the URL what a developer opens
+		// The code is what an application matches on (21211 is an unusable number).
 		const refusal = restException({
 			message: 'The "To" number is not a valid phone number.',
 			code: 21211,
@@ -33,24 +33,23 @@ describe('describeError', () => {
 	});
 
 	test('Names the status alone when Twilio sent no code or help URL', () => {
-		// 1. A body without a code still has a status worth reporting; `unknown` stands in for the missing code
+		// `unknown` stands in for the missing code.
 		const refusal = restException({ message: 'Service unavailable' }, 503);
 
 		expect(describeError(refusal).message).toBe('Twilio: 503 unknown: Service unavailable');
 	});
 
 	test('Prefixes anything that is not an answered request and passes it on as the cause', () => {
-		// 1. A network failure never reached the API, so there is no status to report: only the message
+		// A network failure never reached the API, so there is no status to report.
 		const socket = new Error('ETIMEDOUT');
 
 		expect(describeError(socket)).toMatchObject({ message: 'Twilio: ETIMEDOUT', cause: socket });
 
-		// 2. A thrown non-error is still described rather than crashing the description
 		expect(describeError('boom')).toMatchObject({ message: 'Twilio: boom', cause: 'boom' });
 	});
 
 	test('Describes an axios error without keeping it as the cause', () => {
-		// 1. The config of an axios error carries the `Authorization` header; only the code and message survive
+		// The config of an axios error carries the `Authorization` header.
 		const axiosError = Object.assign(new Error('connect ECONNREFUSED'), {
 			isAxiosError: true,
 			code: 'ECONNREFUSED',
@@ -65,8 +64,7 @@ describe('describeError', () => {
 	});
 
 	test('Maps the axios timeout to the kit TimeoutError, without keeping the config', () => {
-		// 1. The SDK aborts a slow request with ECONNABORTED; the caller matches the kit's TimeoutError, and the
-		//    deadline reported is the one the request config carried
+		// The SDK aborts a slow request with ECONNABORTED.
 		const axiosError = Object.assign(new Error('timeout of 5000ms exceeded'), {
 			isAxiosError: true,
 			code: 'ECONNABORTED',

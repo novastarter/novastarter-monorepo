@@ -133,7 +133,7 @@ describe('notices', () => {
 	});
 
 	test('should render a notice-only changeset with the commit link as its title', () => {
-		// 1. Only the notice block was in the changeset, so the summary is empty and the commit link stands alone
+		// Only the notice block was in the changeset, so the summary is empty and the commit link stands alone
 		const markdown = generateMarkdown(
 			[{ notice: 'Drop Node 18.', change: { summary: '', commit: 'abcd123' } }],
 			[],
@@ -150,7 +150,7 @@ describe('notices', () => {
 	});
 
 	test('should render a notice-only changeset without a commit as the notice alone', () => {
-		// 1. Nothing is left for a title, so no bold wrapper must be printed around the empty string
+		// Nothing is left for a title, so no bold wrapper must be printed around the empty string
 		const markdown = generateMarkdown(
 			[{ notice: 'Drop Node 18.', change: { summary: '', commit: undefined } }],
 			[],

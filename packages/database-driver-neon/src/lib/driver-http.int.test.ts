@@ -24,8 +24,8 @@ describe.skipIf(!NEON_DATABASE_URL)('DatabaseDriverNeonHttp on Neon', () => {
 	beforeAll(async () => {
 		driver = new DatabaseDriverNeonHttp({ connection: NEON_DATABASE_URL!, logger: logger as never });
 
-		// 1. The fixture table the batch below writes is made here, not by the migration: every test must pass run
-		//    alone, under `vitest -t` as well as whole-file
+		// The fixture table the batch below writes is made here, not by the migration: every test must pass run
+		// alone, under `vitest -t` as well as whole-file
 		await driver.db.execute(sql.raw(`CREATE SCHEMA IF NOT EXISTS "${schema}"`));
 
 		await driver.db.execute(
@@ -34,11 +34,11 @@ describe.skipIf(!NEON_DATABASE_URL)('DatabaseDriverNeonHttp on Neon', () => {
 			),
 		);
 
-		// 2. A drizzle-kit folder of one migration, written per run: the schema name carries the pid
+		// The drizzle-kit folder is written per run, since the schema name carries the pid
 		migrationsFolder = await mkdtemp(join(tmpdir(), 'novastarter-migrations-'));
 		await mkdir(join(migrationsFolder, 'meta'));
 
-		// 3. The journal is what the migrator reads to find what to apply: one entry tagging the migration below
+		// The migrator reads the journal to find what to apply
 		await writeFile(
 			join(migrationsFolder, 'meta', '_journal.json'),
 			JSON.stringify({
@@ -48,7 +48,7 @@ describe.skipIf(!NEON_DATABASE_URL)('DatabaseDriverNeonHttp on Neon', () => {
 			}),
 		);
 
-		// 4. The migration itself: a probe table nothing reads — the migrator running it and journaling it is the point
+		// A probe table nothing reads: the migrator running it and journaling it is the point
 		await writeFile(
 			join(migrationsFolder, '0000_init.sql'),
 			`CREATE TABLE "${schema}"."probe" ("id" serial PRIMARY KEY NOT NULL);`,
@@ -56,8 +56,8 @@ describe.skipIf(!NEON_DATABASE_URL)('DatabaseDriverNeonHttp on Neon', () => {
 	});
 
 	afterAll(async () => {
-		// 1. A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
-		//    real failure stays the one reported. There is no `close`: a fetch per query holds no connection
+		// A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
+		// real failure stays the one reported. There is no `close`: a fetch per query holds no connection
 		if (driver) {
 			await driver.db.execute(sql.raw(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`));
 		}
@@ -83,10 +83,10 @@ describe.skipIf(!NEON_DATABASE_URL)('DatabaseDriverNeonHttp on Neon', () => {
 	});
 
 	test('A transaction is refused while a batch goes through', async () => {
-		// 1. No session over HTTP, so Drizzle refuses the callback form up front
+		// No session over HTTP, so Drizzle refuses the callback form up front
 		await expect(driver.db.transaction(async () => {})).rejects.toThrow(/No transactions support/);
 
-		// 2. A batch is one request and one non-interactive transaction
+		// A batch is one request and one non-interactive transaction
 		const [, rows] = await driver.db.batch([
 			driver.db.execute(sql.raw(`INSERT INTO "${schema}"."notes" ("text") VALUES ('batched')`)),
 			driver.db.execute(sql.raw(`SELECT "text" FROM "${schema}"."notes"`)),

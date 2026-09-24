@@ -15,7 +15,7 @@ export const DEFAULT_TOKEN_BYTES = 32;
  * @internal
  */
 export const randomToken = (bytes: number = DEFAULT_TOKEN_BYTES): string => {
-	// 1. base64url needs no escaping in a URL, a cookie or a header, so the token travels as it is
+	// base64url needs no escaping in a URL, a cookie or a header, so the token travels as it is
 	return randomBytes(bytes).toString('base64url');
 };
 
@@ -27,7 +27,7 @@ export const randomToken = (bytes: number = DEFAULT_TOKEN_BYTES): string => {
  * @internal
  */
 export const randomDigits = (digits: number): string => {
-	// 1. `randomInt` draws without modulo bias, which a byte reduced `% 10` would carry
+	// `randomInt` draws without modulo bias, which a byte reduced `% 10` would carry
 	let code = '';
 
 	for (let index = 0; index < digits; index++) {

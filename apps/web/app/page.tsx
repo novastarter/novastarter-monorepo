@@ -18,10 +18,10 @@ type Props = Omit<ImageProps, 'src'> & {
  * @returns Both variants; the stylesheet hides the one that does not match the active theme.
  */
 const ThemeImage = (props: Props) => {
-	// 1. The theme sources are split off, so every other prop reaches both images unchanged
+	// The theme sources are split off, so every other prop reaches both images unchanged
 	const { srcLight, srcDark, ...rest } = props;
 
-	// 2. Both variants render into the page; globals.css keeps only the matching one visible
+	// Both variants render into the page; globals.css keeps only the matching one visible
 	return (
 		<>
 			<Image {...rest} src={srcLight} className="imgLight" />
@@ -38,8 +38,8 @@ const ThemeImage = (props: Props) => {
  * @returns The whole page as one static tree.
  */
 export default function Home() {
-	// 1. The "Deploy now" link points Vercel at this app's directory in the monorepo template, so the clone builds
-	//    the web app rather than its sibling
+	// The "Deploy now" link points Vercel at this app's directory in the monorepo template, so the clone builds the web
+	// app rather than its sibling
 	return (
 		<div className={styles.page}>
 			<main className={styles.main}>

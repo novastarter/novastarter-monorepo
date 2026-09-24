@@ -8,6 +8,7 @@ import {
 	toMigrationConfig,
 	toUnavailableError,
 } from '@novastarter/database';
+import { InvalidConfigError } from '@novastarter/errors';
 import { hasMethods } from '@novastarter/utils';
 import { sql } from 'drizzle-orm';
 import type { Mode } from 'drizzle-orm/mysql-core';
@@ -111,31 +112,30 @@ export class DatabaseDriverMysql<
 	 * Create a driver over a pool, opening one when given a connection URI or options.
 	 *
 	 * @param config - Connection, mode, schema and logging options.
-	 * @throws Error when `connection` is missing.
+	 * @throws InvalidConfigError when `connection` is missing.
 	 */
 	constructor(config: DatabaseDriverMysqlConfig<Schema>) {
-		// 1. Refuse a missing connection up front: mysql2 would silently open a pool on `localhost:3306` as `root`,
-		//    a server the configuration never named
+		// mysql2 would otherwise silently open a pool on `localhost:3306` as `root`, a server the configuration never
+		// named
 		if (!config.connection) {
-			throw new Error('The mysql database driver needs a "connection"');
+			throw new InvalidConfigError({ reason: 'The mysql database driver needs a "connection"' });
 		}
 
 		this.label = config.label;
 
 		const logger = resolveLogger(config);
 
-		// 2. A given pool belongs to whoever created it — told by the methods the driver calls, since a pool from
-		//    another copy of `mysql2` fails `instanceof`; a URI or options become a pool of the driver's own. The URI
-		//    goes in as the `uri` option, the one form `createPool` takes for both shapes
+		// A given pool belongs to whoever created it. It is told by the methods the driver calls, since a pool from
+		// another copy of `mysql2` fails `instanceof`. The URI goes in as the `uri` option, the one form `createPool`
+		// takes for both shapes
 		this.ownsPool = !hasMethods<Pool>(config.connection, ['getConnection', 'end']);
 
 		this.pool = hasMethods<Pool>(config.connection, ['getConnection', 'end'])
 			? config.connection
 			: createPool(typeof config.connection === 'string' ? { uri: config.connection } : config.connection);
 
-		// 3. Drizzle over the pool, with the schema and, when asked for, the query logger. `mode` is mandatory next to
-		//    a schema, so it is always given; Drizzle types the two shapes — with and without a schema — as separate
-		//    options objects, hence the two calls
+		// `mode` is mandatory next to a schema, so it is always given; Drizzle types the two shapes — with and without
+		// a schema — as separate options objects, hence the two calls
 		const { schema, ...options } = toDrizzleOptions(config, logger);
 		const mode = config.mode ?? 'default';
 
@@ -152,11 +152,11 @@ export class DatabaseDriverMysql<
 	 * @throws DatabaseUnavailableError naming the location, with what the connection raised as its `cause`.
 	 */
 	async ping(): Promise<void> {
-		// 1. The cheapest statement a server answers; through Drizzle, so the same path the queries take is proven
+		// Through Drizzle, so the same path the queries take is proven
 		try {
 			await this.db.execute(sql`select 1`);
 		} catch (error) {
-			// 2. One error for every backend, 503, naming the location; the backend's error stays as `cause`
+			// One error for every backend; the backend's error stays as `cause`
 			throw toUnavailableError(error, this.label);
 		}
 	}
@@ -166,10 +166,10 @@ export class DatabaseDriverMysql<
 	 *
 	 * @param options - The folder and, optionally, the journal table; `migrationsSchema` means nothing to MySQL.
 	 * @returns Once every pending migration ran.
-	 * @throws Error when `migrationsFolder` is missing; what the migrator raised otherwise.
+	 * @throws InvalidConfigError when `migrationsFolder` is missing; what the migrator raised otherwise.
 	 */
 	async migrate(options: MigrateOptions): Promise<void> {
-		// 1. The migrator takes a connection from the pool and runs the pending files in one transaction
+		// The migrator runs the pending files in one transaction
 		await migrate(this.db, toMigrationConfig(options));
 	}
 
@@ -179,7 +179,7 @@ export class DatabaseDriverMysql<
 	 * @returns Once every connection of the pool is closed.
 	 */
 	async close(): Promise<void> {
-		// 1. A pool the caller handed in is theirs to end; one opened here would otherwise keep the process alive
+		// A pool the caller handed in is theirs to end; one opened here would otherwise keep the process alive
 		if (this.ownsPool) {
 			await this.pool.end();
 		}

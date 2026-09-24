@@ -22,8 +22,8 @@ import type { FailedValidationErrorExtensions } from '../errors/failed-validatio
  */
 export const zodErrorToErrorExtensions = (error: z.ZodError): FailedValidationErrorExtensions[] => {
 	return error.issues.map((issue) => {
-		// 1. The first path segment is the field; the rest is where the value sits inside it. An issue on the root of
-		//    the payload has no field, which the empty string stands for
+		// The first path segment is the field; the rest is where the value sits inside it. An issue on the root of
+		// the payload has no field, which the empty string stands for
 		const [field = '', ...path] = issue.path.map((segment) =>
 			typeof segment === 'symbol' ? String(segment) : segment,
 		);
@@ -41,31 +41,30 @@ export const zodErrorToErrorExtensions = (error: z.ZodError): FailedValidationEr
  */
 const describeIssue = (issue: z.core.$ZodIssue): Omit<FailedValidationErrorExtensions, 'field' | 'path'> => {
 	switch (issue.code) {
-		// 1. A missing value and a value of the wrong type read the same to the caller: the field is not usable
+		// A missing value and a value of the wrong type read the same to the caller: the field is not usable
 		case 'invalid_type':
 			return { type: 'required' };
 
-		// 2. Bounds carry whether they are inclusive; bigints are stringified since the shape only holds numbers and
-		//    strings
+		// Bigints are stringified, since the shape holds only numbers and strings
 		case 'too_small':
 			return { type: issue.inclusive ? 'gte' : 'gt', valid: comparable(issue.minimum) };
 
 		case 'too_big':
 			return { type: issue.inclusive ? 'lte' : 'lt', valid: comparable(issue.maximum) };
 
-		// 3. String formats: the ones with an operator of their own keep it, the rest are reported as the pattern
-		//    that failed
+		// String formats: the ones with an operator of their own keep it, the rest are reported as the pattern
+		// that failed
 		case 'invalid_format':
 			return describeFormat(issue);
 
-		// 4. A literal or an enum: one allowed value, or a list of them
+		// A literal or an enum: one allowed value, or a list of them
 		case 'invalid_value': {
 			const values = issue.values.map(comparable);
 
 			return values.length > 1 ? { type: 'in', valid: values } : { type: 'eq', valid: values[0] ?? '' };
 		}
 
-		// 5. Refinements, unions, unknown keys and the like have no operator form
+		// Refinements, unions, unknown keys and the like have no operator form
 		default:
 			return { type: 'unsafe' };
 	}
@@ -82,7 +81,7 @@ const describeFormat = (
 	issue: z.core.$ZodIssueInvalidStringFormat,
 ): Omit<FailedValidationErrorExtensions, 'field' | 'path'> => {
 	switch (issue.format) {
-		// 1. The formats the shape has an operator for keep it, with the text the value had to carry
+		// The formats the shape has an operator for keep it, with the text the value had to carry
 		case 'email':
 			return { type: 'email' };
 
@@ -95,8 +94,8 @@ const describeFormat = (
 		case 'includes':
 			return { type: 'contains', substring: (issue as z.core.$ZodIssueStringIncludes).includes };
 
-		// 2. Every other format — a UUID, a URL, a date, an explicit regex — is a pattern the value did not match;
-		//    zod names it on the issue when it has one
+		// Every other format — a UUID, a URL, a date, an explicit regex — is a pattern the value did not match;
+		// zod names it on the issue when it has one
 		default:
 			return { type: 'regex', invalid: issue.pattern ?? issue.format };
 	}
@@ -110,6 +109,6 @@ const describeFormat = (
  * @internal
  */
 const comparable = (value: unknown): number | string => {
-	// 1. Bigints, booleans and null are stringified rather than dropped, so the caller still sees what was expected
+	// Bigints, booleans and null are stringified rather than dropped, so the caller still sees what was expected
 	return typeof value === 'number' || typeof value === 'string' ? value : String(value);
 };

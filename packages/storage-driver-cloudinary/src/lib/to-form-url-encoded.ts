@@ -13,13 +13,13 @@
 export function toFormUrlEncoded(obj: Record<string, string>, options?: { sort: boolean }): string {
 	let entries = Object.entries(obj);
 
-	// 1. Sorting is opt-in: request bodies keep insertion order unless the caller needs a canonical form
+	// Sorting is opt-in: request bodies keep insertion order unless the caller needs a canonical form
 	if (options?.sort) {
 		entries = entries.sort(([keyA], [keyB]) => keyA.localeCompare(keyB));
 	}
 
-	// 2. `URLSearchParams` escapes every reserved character, which keeps a `+`, `&`, `=` or `%` in a value from being
-	//    read as a space, a separator or a broken escape on the server; decoding the whole string afterwards would undo
-	//    exactly that, so only the slash is put back, since it needs no escaping in a body
+	// `URLSearchParams` escapes every reserved character, which keeps a `+`, `&`, `=` or `%` in a value from being
+	// read as a space, a separator or a broken escape on the server; decoding the whole string afterwards would undo
+	// exactly that, so only the slash is put back, since it needs no escaping in a body
 	return new URLSearchParams(entries).toString().replace(/%2F/gi, '/');
 }

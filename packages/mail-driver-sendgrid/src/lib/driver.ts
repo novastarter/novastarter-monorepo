@@ -1,3 +1,4 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import { type CallOptions, type CallResponse, type HttpApi, request } from '@novastarter/http';
 import {
 	bareMailAddress,
@@ -95,16 +96,15 @@ export class MailDriverSendgrid implements MailDriver {
 	 * Create a driver on a client of its own for the given key.
 	 *
 	 * @param config - API key and sandbox switch.
-	 * @throws Error without an API key.
+	 * @throws InvalidConfigError without an API key.
 	 */
 	constructor(config: MailDriverSendgridConfig) {
-		// 1. A missing key is a configuration error; report it by the option's name
 		if (!config.apiKey) {
-			throw new Error('The sendgrid mail driver needs an "apiKey"');
+			throw new InvalidConfigError({ reason: 'The sendgrid mail driver needs an "apiKey"' });
 		}
 
-		// 2. A client per location, so two keys never share the package-level default; the key also goes to the API of
-		//    raw calls, which bypass the SDK
+		// A client per location, so two keys never share the package-level default; raw calls bypass the SDK, so the key
+		// goes to their API too
 		this.client = new MailService();
 		this.client.setApiKey(config.apiKey);
 		this.sandbox = Boolean(config.sandbox);
@@ -126,23 +126,23 @@ export class MailDriverSendgrid implements MailDriver {
 	 * when the API refuses; the mapper's own error unchanged when the message cannot be built.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
-		// 1. The message is translated before the request, so a failure of the mapper (no sender, unreadable
-		//    attachment) surfaces the kit's own error instead of a re-wrapped API error
+		// Translated before the request, so a mapper failure (no sender, unreadable attachment) surfaces the kit's own
+		// error instead of a re-wrapped API error
 		const mail = await toSendgridMail(message, this.sandbox);
 
-		// 2. The API answers with headers only; the message id lives in one of them
+		// The API answers with headers only; the message id lives in one of them
 		let response: ClientResponse;
 
 		try {
 			[response] = await this.client.send(mail);
 		} catch (error) {
-			// 3. The SDK throws its `ResponseError` on a refusal; wrapped so the log names the provider
+			// The SDK throws its `ResponseError` on a refusal; wrapped so the log names the provider
 			throw describeError(error);
 		}
 
 		const messageId = response.headers['x-message-id'];
 
-		// 4. SendGrid takes a message whole or refuses it, so every recipient counts as accepted
+		// SendGrid takes a message whole or refuses it, so every recipient counts as accepted
 		return {
 			messageId: typeof messageId === 'string' ? messageId : undefined,
 			accepted: toMailAddressList(message.to).map(bareMailAddress),
@@ -184,8 +184,6 @@ export class MailDriverSendgrid implements MailDriver {
 		params?: Record<string, unknown>,
 		options?: CallOptions,
 	): Promise<CallResponse<T>> {
-		// 1. `request()` does the whole of it — placeholders, the host check before the key is sent, the deadline, the
-		//    kit's errors without the key — over the API the constructor described
 		return request<T>(this.api, method, params, options);
 	}
 }

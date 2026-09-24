@@ -19,7 +19,7 @@ describe('buildAuthorizeUrl', () => {
 	test('Carries the client, the redirect, the scopes, the state and the S256 challenge, and no nonce', () => {
 		const url = buildAuthorizeUrl(params, 'client-1', DEFAULT_SCOPES);
 
-		// 1. GitHub issues no ID token, so the nonce has no place in the URL
+		// GitHub issues no ID token, so the nonce has no place in the URL
 		expect(`${url.origin}${url.pathname}`).toBe(AUTHORIZE_URL);
 
 		expect(Object.fromEntries(url.searchParams)).toStrictEqual({
@@ -33,7 +33,7 @@ describe('buildAuthorizeUrl', () => {
 	});
 
 	test('Lets the call scopes win over the location', () => {
-		// 1. The call's list replaces the location's as it is; nothing is added to it
+		// The call's list replaces the location's as it is; nothing is added to it
 		expect(
 			buildAuthorizeUrl({ ...params, scopes: ['read:user'] }, 'client-1', DEFAULT_SCOPES).searchParams.get('scope'),
 		).toBe('read:user');

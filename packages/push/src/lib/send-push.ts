@@ -1,5 +1,5 @@
 import { useEmitter } from '@novastarter/emitter';
-import { InvalidPayloadError } from '@novastarter/errors';
+import { InvalidConfigError, InvalidPayloadError } from '@novastarter/errors';
 import { useLogger } from '@novastarter/logger';
 import { toError } from '@novastarter/utils';
 import { PushTargetGoneError } from '../errors/index.js';
@@ -75,9 +75,11 @@ export interface PushSendOptions {
  * @throws InvalidPayloadError for a message without a title, without a target, or with an unusable subscription — as
  * it came in, or as a `push.send` handler rewrote it.
  * @throws PushTargetGoneError when the caller's own target no longer exists — delete it, do not retry.
- * @throws Error when no location delivers to the target's platform, when the chosen location does not, or when the
- * push service refused or could not be reached, the driver's error as `cause`; also when a `push.send` handler
- * redirected the message to another target and that one is gone, the `PushTargetGoneError` as `cause`.
+ * @throws InvalidConfigError when the named location is not registered, when no location delivers to the target's
+ * platform, or when the chosen location does not.
+ * @throws Error when the push service refused or could not be reached, the driver's error as `cause`; also when a
+ * `push.send` handler redirected the message to another target and that one is gone, the `PushTargetGoneError` as
+ * `cause`.
  *
  * @example
  * ```ts
@@ -95,40 +97,41 @@ export const sendPush = async (message: PushMessage, options: PushSendOptions = 
 	const manager = usePush();
 	const logger = useLogger();
 
-	// 1. The title and the target are checked before any work is done, so a broken message never reaches a handler
+	// Checked before any work is done, so a broken message never reaches a handler
 	assertTitle(message);
 
 	const incoming = platformOf(message);
 
-	// 2. The caller's target is read now, before any handler runs: a handler may rewrite the message in place and
-	//    return nothing, and the target read afterwards would then be the redirected one, not the caller's
+	// Read before any handler runs: a handler may rewrite the message in place and return nothing, and the target read
+	// afterwards would then be the redirected one, not the caller's
 	const originalTarget = targetOf(message, incoming);
 
-	// 3. A filter handler may rewrite the message — a prefix, a redirect to a test device — or veto it; the meta names
-	//    the platform the message came in with
+	// A filter handler may rewrite the message (a prefix, a redirect to a test device) or veto it; the meta names the
+	// platform the message came in with
 	const prepared = await useEmitter().emitFilter<PushMessage | null>(PUSH_SEND_FILTER, message, {
 		platform: incoming,
 	});
 
 	if (!prepared) return null;
 
-	// 4. The rewrite is checked and routed by its own target, not by the original's: a redirect to a test phone has to
-	//    go through the token location, and a handler that dropped the target or blanked the title is refused here
-	//    rather than by a driver of the wrong platform
+	// The rewrite is checked and routed by its own target, not by the original's: a redirect to a test phone has to go
+	// through the token location, and a handler that dropped the target or blanked the title is refused here rather than
+	// by a driver of the wrong platform
 	assertTitle(prepared);
 
 	const platform = platformOf(prepared);
 
-	// 5. One location, resolved for the platform; a token cannot go through a web push location, so a wrong one is
-	//    refused rather than tried
+	// A token cannot go through a web push location, so a wrong one is refused rather than tried
 	const location = resolveLocation(manager, options.location ?? prepared.location, platform);
 	const driver = manager.location(location);
 
 	if (!driver.platforms.includes(platform)) {
-		throw new Error(`Push location "${location}" does not deliver to ${platform}`);
+		throw new InvalidConfigError({
+			reason: `Push location "${location}" does not deliver to ${platform}; route ${platform} to a location that does`,
+		});
 	}
 
-	// 6. One send, then `push.sent` with the target and the title, so a listener can log without re-deriving them
+	// `push.sent` carries the target and the title, so a listener can log without re-deriving them
 	const target = targetOf(prepared, platform);
 
 	try {
@@ -139,15 +142,15 @@ export const sendPush = async (message: PushMessage, options: PushSendOptions = 
 
 		return sent;
 	} catch (error) {
-		// 7. A gone target is not a failure to retry: reported as its own event, which carries the target that was
-		//    actually contacted
+		// A gone target is not a failure to retry: it is reported as its own event, which carries the target that was
+		// actually contacted
 		if (error instanceof PushTargetGoneError) {
 			logger.info(`Push target on "${location}" is gone (${error.extensions.reason}): ${target}`);
 			useEmitter().emitAction(PUSH_GONE_EVENT, { location, platform, target, reason: error.extensions.reason });
 
-			// 8. The error itself carries no target, and callers delete the subscription they passed in when they catch
-			//    it; so it is passed on as is only when that subscription is the one that is gone. A redirect to a test
-			//    device whose token expired must not make the caller delete the real user's subscription
+			// The error itself carries no target, and callers delete the subscription they passed in when they catch it; so
+			// it is passed on as is only when that subscription is the one that is gone. A redirect to a test device whose
+			// token expired must not make the caller delete the real user's subscription
 			if (target === originalTarget) {
 				throw error;
 			}
@@ -157,9 +160,9 @@ export const sendPush = async (message: PushMessage, options: PushSendOptions = 
 			});
 		}
 
-		// 9. Anything else is the push service refusing or being unreachable; the driver's error travels as the cause.
-		//    pino takes a non-object first argument as the message, so a driver rejecting with a string would replace
-		//    the line and drop the location; `toError` keeps both
+		// Anything else is the push service refusing or being unreachable; the driver's error travels as the cause. pino
+		// takes a non-object first argument as the message, so a driver rejecting with a string would replace the line and
+		// drop the location; `toError` keeps both
 		logger.warn(toError(error), `Push location "${location}" failed to send to ${target}`);
 		useEmitter().emitAction(PUSH_FAILED_EVENT, { location, platform, target, title: prepared.title });
 
@@ -176,7 +179,7 @@ export const sendPush = async (message: PushMessage, options: PushSendOptions = 
  * @internal
  */
 const targetOf = (message: PushMessage, platform: PushPlatform): string | undefined =>
-	// 1. `platformOf()` guarantees the one target the platform implies is present
+	// `platformOf()` guarantees the one target the platform implies is present
 	platform === 'webpush' ? message.subscription?.endpoint : message.token;
 
 /**
@@ -186,7 +189,7 @@ const targetOf = (message: PushMessage, platform: PushPlatform): string | undefi
  * @throws InvalidPayloadError for a title that is not a string or is whitespace only.
  */
 const assertTitle = (message: PushMessage): void => {
-	// 1. A notification without a title shows as an empty box on every platform; refused as the payload's fault
+	// A notification without a title shows as an empty box on every platform
 	if (typeof message.title !== 'string' || !message.title.trim()) {
 		throw new InvalidPayloadError({ reason: 'The push message has no title' });
 	}
@@ -199,25 +202,29 @@ const assertTitle = (message: PushMessage): void => {
  * @param named - The location the call or the message asked for, when any.
  * @param platform - The target's platform.
  * @returns The location name.
- * @throws Error when the named location does not exist, or when no route and no location of the platform's name
- * serves the platform.
+ * @throws InvalidConfigError when the named location does not exist, or when no route and no location of the
+ * platform's name serves the platform.
  */
 const resolveLocation = (manager: PushManager, named: string | undefined, platform: PushPlatform): string => {
-	// 1. An explicit location wins; a name nobody registered is a configuration mistake worth naming
+	// A name nobody registered is a configuration mistake worth naming
 	if (named) {
 		if (!manager.hasLocation(named)) {
-			throw new Error(`Push location "${named}" doesn't exist.`);
+			throw new InvalidConfigError({
+				reason: `Push location "${named}" doesn't exist; register it or name another one`,
+			});
 		}
 
 		return named;
 	}
 
-	// 2. The route of the platform, else the location named after it — the one-location-per-platform setup needs no
-	//    routes at all
+	// Falling back to the location named after the platform means the one-location-per-platform setup needs no routes at
+	// all
 	const location = manager.routes()[platform] ?? platform;
 
 	if (!manager.hasLocation(location)) {
-		throw new Error(`No push location delivers to ${platform}`);
+		throw new InvalidConfigError({
+			reason: `No push location delivers to ${platform}; register a location named "${platform}" or route ${platform} to one`,
+		});
 	}
 
 	return location;

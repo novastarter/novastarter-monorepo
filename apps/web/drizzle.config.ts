@@ -14,7 +14,7 @@ export default defineConfig({
 	dialect: 'postgresql',
 	schema: './db/schema.ts',
 	out: './drizzle',
-	// 1. A server when `DATABASE_URL` is set, PGlite on its directory otherwise — what `config/database.ts` registers
+	// A server when `DATABASE_URL` is set, PGlite on its directory otherwise — what `config/database.ts` registers
 	...(env.DATABASE_URL
 		? { dbCredentials: { url: env.DATABASE_URL } }
 		: { driver: 'pglite', dbCredentials: { url: env.DATABASE_PGLITE_DIR } }),

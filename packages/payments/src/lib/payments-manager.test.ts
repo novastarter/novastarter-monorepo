@@ -15,12 +15,12 @@ declare module './payments-manager.js' {
 
 describe('#registerDriver', () => {
 	test('Saves registered drivers locally', () => {
-		// 1. A bare mock stands in for a driver class: registration only stores it and never instantiates it
+		// Registration only stores the class and never instantiates it, so a bare mock is enough.
 		const manager = new PaymentsManager();
 		const mockDriver = vi.fn();
 		manager.registerDriver('test-driver', mockDriver);
 
-		// 2. Inspect the private map directly, since the public API offers no way to list registrations
+		// The public API offers no way to list registrations, so the private map is read directly.
 		expect(manager['drivers'].size).toBe(1);
 		expect(manager['drivers'].get('test-driver')).toBe(mockDriver);
 	});
@@ -30,17 +30,18 @@ describe('#registerLocation', () => {
 	test('Throws error when registering location with missing driver', () => {
 		const manager = new PaymentsManager();
 
-		// 1. No driver was registered, so the lookup by name must fail before any instantiation happens
 		expect(() =>
 			manager.registerLocation(DEFAULT_LOCATION, {
 				driver: 'test-driver',
 				options: {},
 			}),
-		).toThrowErrorMatchingInlineSnapshot(`[Error: Driver "test-driver" isn't registered.]`);
+		).toThrowErrorMatchingInlineSnapshot(
+			`[NovastarterError: Invalid config. The "test-driver" driver isn't registered; call registerDriver() with it before a location uses it.]`,
+		);
 	});
 
 	test('Instantiates the driver with the passed options on first use', () => {
-		// 1. `vi.fn()` is constructible, so it records how the manager calls `new Driver(...)`
+		// `vi.fn()` is constructible, so it records how the manager calls `new Driver(...)`.
 		const mockDriver = vi.fn();
 
 		const manager = new PaymentsManager();
@@ -54,7 +55,7 @@ describe('#registerLocation', () => {
 			},
 		});
 
-		// 2. Registration keeps the configuration only; the first use builds the driver from `options` alone
+		// Registration keeps the configuration only; the first use builds the driver from `options` alone.
 		expect(mockDriver).not.toHaveBeenCalled();
 
 		manager.location(DEFAULT_LOCATION);
@@ -69,9 +70,9 @@ describe('#location', () => {
 	test('Throws error when a location is not registered', () => {
 		const manager = new PaymentsManager();
 
-		// 1. The message names the location, since a missing one is a configuration mistake the reader has to find
+		// A missing location is a configuration mistake the reader has to find, so the message names it.
 		expect(() => manager.location('nope')).toThrowErrorMatchingInlineSnapshot(
-			`[Error: Location "nope" doesn't exist.]`,
+			`[NovastarterError: Invalid config. Location "nope" doesn't exist; register it with registerLocation() before using it.]`,
 		);
 	});
 });

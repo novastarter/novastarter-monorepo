@@ -11,6 +11,8 @@ with a link to the note that replaces it.
 | 0003 | [Next.js and React only](0003-next-react-only.md)                          |
 | 0004 | [Named exports only](0004-named-exports-only.md)                           |
 | 0005 | [Versions only through the catalog](0005-catalog-versions.md)              |
+| 0006 | [Comments explain why, not what](0006-comments-explain-why.md)             |
+| 0007 | [Configuration errors are `InvalidConfigError`](0007-config-errors.md)     |
 
 ## Template
 

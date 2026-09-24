@@ -42,7 +42,7 @@ let sample: {
 const lastHandle = () => vi.mocked(Database).mock.results.at(-1)!.value as { pragma: ReturnType<typeof vi.fn> };
 
 beforeEach(() => {
-	// 1. Fresh values per test; the file sits in a directory, so the directory creation has something to do
+	// Fresh values per test; the file sits in a directory, so the directory creation has something to do
 	const directory = randDirectoryPath();
 
 	sample = {
@@ -54,29 +54,29 @@ beforeEach(() => {
 		db: { run: vi.fn() },
 	};
 
-	// 2. `drizzle` answers a bare object: only `run` is called, and the migrator is mocked whole
+	// `drizzle` answers a bare object: only `run` is called, and the migrator is mocked whole
 	vi.mocked(drizzle).mockReturnValue(sample.db as unknown as BetterSQLite3Database & { $client: Database.Database });
 	vi.mocked(useLogger).mockReturnValue(sample.processLogger as never);
 });
 
 afterEach(() => {
-	// 1. Clear the call history, so a handle built in one test cannot be read by the next; the implementations stay,
-	//    since the `better-sqlite3` factory above is what every test constructs its handle with
+	// Clear the call history, so a handle built in one test cannot be read by the next; the implementations stay,
+	// since the `better-sqlite3` factory above is what every test constructs its handle with
 	vi.clearAllMocks();
 });
 
 describe('#constructor', () => {
 	test('Throws when the file is missing', () => {
-		// 1. Without one better-sqlite3 would open an anonymous database whose writes vanish at exit
+		// Without one better-sqlite3 would open an anonymous database whose writes vanish at exit
 		expect(() => new DatabaseDriverSqlite({ file: '' })).toThrowErrorMatchingInlineSnapshot(
-			`[Error: The sqlite database driver needs a "file"]`,
+			`[NovastarterError: Invalid config. The sqlite database driver needs a "file".]`,
 		);
 	});
 
 	test('Creates the directory and opens the file', () => {
 		const driver = new DatabaseDriverSqlite({ file: sample.file, logger: sample.logger as never });
 
-		// 1. The directory first, recursively, since better-sqlite3 cannot create it; then the file without options
+		// better-sqlite3 cannot create the directory, so it comes first, recursively
 		expect(mkdirSync).toHaveBeenCalledExactlyOnceWith(sample.directory, { recursive: true });
 		expect(Database).toHaveBeenCalledExactlyOnceWith(sample.file);
 		expect(driver['database']).toBe(lastHandle());
@@ -111,26 +111,25 @@ describe('#constructor', () => {
 	});
 
 	test('Honours the pragma options either way', () => {
-		// 1. Both off for a file: no pragma at all
 		new DatabaseDriverSqlite({ file: sample.file, foreignKeys: false, wal: false, logger: sample.logger as never });
 
 		expect(lastHandle().pragma).not.toHaveBeenCalled();
 
-		// 2. WAL asked for in memory: the driver does what it is told
+		// WAL asked for in memory: the driver does what it is told
 		new DatabaseDriverSqlite({ file: MEMORY_FILE, wal: true, logger: sample.logger as never });
 
 		expect(lastHandle().pragma).toHaveBeenCalledWith('journal_mode = WAL');
 	});
 
 	test('Leaves WAL off for a file opened readonly', () => {
-		// 1. SQLite answers the WAL attempt on a read-only file with SQLITE_READONLY, so the default keeps it off there
+		// SQLite answers the WAL attempt on a read-only file with SQLITE_READONLY, so the default keeps it off there
 		new DatabaseDriverSqlite({ file: sample.file, options: { readonly: true }, logger: sample.logger as never });
 
 		expect(lastHandle().pragma).toHaveBeenCalledExactlyOnceWith('foreign_keys = ON');
 	});
 
 	test('Does what it is told when WAL is asked for on a read-only file', () => {
-		// 1. An explicit wal: true stands, as in memory: the driver's contract is to run the pragma it was given
+		// An explicit wal: true stands, as in memory: the driver's contract is to run the pragma it was given
 		new DatabaseDriverSqlite({
 			file: sample.file,
 			options: { readonly: true },
@@ -142,7 +141,7 @@ describe('#constructor', () => {
 	});
 
 	test('Closes the handle when a pragma throws', () => {
-		// 1. What SQLite answers on a read-only file asked for WAL
+		// What SQLite answers on a read-only file asked for WAL
 		const error = new Error('attempt to write a readonly database');
 
 		vi.mocked(Database).mockImplementationOnce(
@@ -155,8 +154,7 @@ describe('#constructor', () => {
 				}) as unknown as Database.Database,
 		);
 
-		// 2. The constructor rethrows the pragma's error; the handle opened a moment ago is closed with it. Foreign
-		//    keys stay off, so the throwing call is the WAL pragma itself
+		// Foreign keys stay off, so the throwing call is the WAL pragma itself
 		expect(
 			() =>
 				new DatabaseDriverSqlite({
@@ -182,7 +180,6 @@ describe('#constructor', () => {
 			logger: sample.logger as never,
 		});
 
-		// 1. Drizzle gets the handle and only the options that carry a value
 		expect(drizzle).toHaveBeenCalledExactlyOnceWith(driver['database'], { schema, casing: 'snake_case' });
 		expect(driver.db).toBe(sample.db);
 	});
@@ -190,12 +187,11 @@ describe('#constructor', () => {
 	test('Hands Drizzle a query logger on the process logger only when asked for', () => {
 		new DatabaseDriverSqlite({ file: sample.file });
 
-		// 1. Off by default: no logger key, so Drizzle makes no logger call per query
+		// Off by default: no logger key, so Drizzle makes no logger call per query
 		expect(vi.mocked(drizzle).mock.calls[0]![1]).toStrictEqual({});
 
 		new DatabaseDriverSqlite({ file: sample.file, queryLogging: true });
 
-		// 2. On, without a logger of its own: the query logger reports to the process logger
 		const options = vi.mocked(drizzle).mock.calls[1]![1]!;
 
 		(options.logger as { logQuery(query: string, params: unknown[]): void }).logQuery('select 1', []);
@@ -209,7 +205,7 @@ describe('#constructor', () => {
 
 describe('#capabilities', () => {
 	test('Declares whether transactions work', () => {
-		// 1. Sessions, so `db.transaction()` works; the flag is what an app reads instead of the driver name
+		// Sessions, so `db.transaction()` works; the flag is what an app reads instead of the driver name
 		const driver = new DatabaseDriverSqlite({ file: MEMORY_FILE, logger: sample.logger as never });
 
 		expect(driver.capabilities).toStrictEqual({ transactions: true });
@@ -218,7 +214,7 @@ describe('#capabilities', () => {
 
 describe('#label', () => {
 	test('Binds the label to the logger, so the query log names the location', () => {
-		// 1. A labelled driver logs through a child carrying `database`; the query logger inherits it
+		// A labelled driver logs through a child carrying `database`; the query logger inherits it
 		const child = { error: vi.fn(), debug: vi.fn() };
 		const logger = { ...sample.logger, child: vi.fn().mockReturnValue(child) };
 
@@ -249,7 +245,7 @@ describe('#ping', () => {
 
 		await driver.ping();
 
-		// 1. Through `db.run`, so the same path the application's statements take is what gets proven
+		// Through `db.run`, so the same path the application's statements take is what gets proven
 		expect(sample.db.run).toHaveBeenCalledExactlyOnceWith(sql`select 1`);
 	});
 
@@ -261,7 +257,7 @@ describe('#ping', () => {
 			throw error;
 		});
 
-		// 1. One error for every backend: recognisable, 503, the location in the message, the backend's error as cause
+		// One error for every backend: recognisable, 503, the location in the message, the backend's error as cause
 		const thrown: unknown = await driver.ping().catch((caught: unknown) => caught);
 
 		expect(thrown).toBeInstanceOf(DatabaseUnavailableError);
@@ -292,7 +288,6 @@ describe('#migrate', () => {
 
 		await driver.migrate({ migrationsFolder: sample.folder, migrationsTable: undefined });
 
-		// 1. The Drizzle database goes in as is, the options without their undefined keys
 		expect(migrate).toHaveBeenCalledExactlyOnceWith(sample.db, { migrationsFolder: sample.folder });
 	});
 
@@ -300,7 +295,7 @@ describe('#migrate', () => {
 		const driver = new DatabaseDriverSqlite({ file: MEMORY_FILE, logger: sample.logger as never });
 
 		await expect(driver.migrate({ migrationsFolder: '' })).rejects.toThrowErrorMatchingInlineSnapshot(
-			`[Error: DatabaseDriver.migrate needs a "migrationsFolder"]`,
+			`[NovastarterError: Invalid config. DatabaseDriver.migrate needs a "migrationsFolder".]`,
 		);
 
 		expect(migrate).not.toHaveBeenCalled();

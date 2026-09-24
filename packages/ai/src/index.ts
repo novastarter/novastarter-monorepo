@@ -5,7 +5,7 @@
  * application imports it from one place, plus the {@link AiManager} of {@link useAi}: the providers the application
  * registers at start-up and the aliases of their models, resolved into the model the AI SDK functions take.
  */
-// 1. The Vercel AI SDK, re-exported name by name so every symbol can be found by grep. Values first, then types.
+// The Vercel AI SDK, re-exported name by name so every symbol can be found by grep. Values first, then types.
 export {
 	AISDKError,
 	AI_SDK_TELEMETRY_TRACING_CHANNEL,
@@ -472,7 +472,7 @@ export type {
 	UserModelMessage,
 	Warning,
 } from 'ai';
-// 2. The package's own errors, the manager and its singleton.
+// The package's own errors, the manager and its singleton.
 export {
 	AiModelNotFoundError,
 	type AiModelNotFoundErrorExtensions,

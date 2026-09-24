@@ -18,10 +18,9 @@ describe('MessengerManager', () => {
 	test('Registers the built-in driver on construction and builds a location on first use', () => {
 		const manager = new MessengerManager();
 
-		// 1. The built-in is known without any registration by the application
 		expect([...manager['drivers'].keys()]).toStrictEqual(['console']);
 
-		// 2. Registering a location keeps the configuration only; the first `location()` builds the driver
+		// Registering a location keeps the configuration only; the first `location()` builds the driver
 		manager.registerLocation('default', { driver: 'console', options: {} });
 
 		expect(manager.instantiated().size).toBe(0);
@@ -33,7 +32,6 @@ describe('MessengerManager', () => {
 		const manager = new MessengerManager();
 		const mockDriver = vi.fn();
 
-		// 1. A bare mock stands in for a messenger's driver, recording how the manager calls `new Driver(...)`
 		manager.registerDriver('test-driver', mockDriver);
 		manager.registerLocation('telegram', { driver: 'test-driver', options: { token: 't' } });
 		manager.location('telegram');

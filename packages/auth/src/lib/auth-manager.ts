@@ -52,7 +52,7 @@ export class AuthManager extends DriverManager<AuthDriver, AuthDrivers> {
 	 * @param settings - Lifetimes, secrets and limiters; see {@link AuthSettings}.
 	 */
 	registerSettings(settings: AuthSettings): void {
-		// 1. Replace rather than merge, like `registerLocation`: a second bootstrap gets exactly what it registered
+		// Replace rather than merge, like `registerLocation`: a second bootstrap gets exactly what it registered
 		this.authSettings = settings;
 	}
 
@@ -62,8 +62,8 @@ export class AuthManager extends DriverManager<AuthDriver, AuthDrivers> {
 	 * @returns The settings; an empty object when none were registered.
 	 */
 	settings(): AuthSettings {
-		// 1. By reference, not copied: the functions read it on every call, so a later `registerSettings` is seen at
-		//    once and the limiters keep their identity
+		// By reference, not copied: the functions read it on every call, so a later `registerSettings` is seen at once
+		// and the limiters keep their identity
 		return this.authSettings;
 	}
 }

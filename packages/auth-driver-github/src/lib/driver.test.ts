@@ -4,7 +4,7 @@
  * the profile requests, the address pick and the mapping have their own tests next to their modules.
  */
 import { AuthProviderFailedError } from '@novastarter/auth';
-import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
+import { HitRateLimitError, InvalidConfigError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import { describe, expect, test, vi } from 'vitest';
 import * as entry from '../index.js';
@@ -20,7 +20,7 @@ import type { AuthFetch } from './request.js';
  */
 const routed = (routes: Record<string, { status: number; body: unknown }>) =>
 	vi.fn<AuthFetch>(async (url) => {
-		// 1. An unrouted URL is a test mistake, answered with a 599 so it cannot pass silently
+		// An unrouted URL is a test mistake, answered with a 599 so it cannot pass silently
 		const route = routes[url] ?? { status: 599, body: undefined };
 
 		return { status: route.status, ok: route.status < 300, text: async () => JSON.stringify(route.body) };
@@ -36,7 +36,7 @@ const routed = (routes: Record<string, { status: number; body: unknown }>) =>
  */
 const answer = (status: number, body?: unknown, headers: Record<string, string> = {}) =>
 	vi.fn<AuthFetch>(async () => {
-		// 1. No body at all for a 204, which `Response` refuses to give one
+		// `Response` refuses a body for a 204
 		if (body === undefined) {
 			return new Response(null, { status, headers });
 		}
@@ -89,8 +89,6 @@ describe('AuthDriverGithub', () => {
 
 		const driver = new AuthDriverGithub({ clientId: 'client-1', clientSecret: 'secret-1', fetch });
 
-		// 1. Three requests: the exchange, then the profile and the addresses with the token it bought, which comes back
-		//    beside the identity for `finishOAuth()` to hand on
 		expect(await driver.callback(callbackParams)).toMatchObject({
 			provider: 'github',
 			subject: '583231',
@@ -106,7 +104,7 @@ describe('AuthDriverGithub', () => {
 	});
 
 	test('Refuses a code GitHub refused, without reading the profile', async () => {
-		// 1. The refusal comes as a 200 with an error; no REST request follows it
+		// GitHub refuses a code with a 200 and an error in the body
 		const fetch = routed({ [TOKEN_URL]: { status: 200, body: { error: 'bad_verification_code' } } });
 		const driver = new AuthDriverGithub({ clientId: 'client-1', clientSecret: 'secret-1', fetch });
 
@@ -115,7 +113,6 @@ describe('AuthDriverGithub', () => {
 	});
 
 	test('Refuses missing credentials and a timeout a timer cannot hold', () => {
-		// 1. Each missing option is named, so the fix is obvious from the message
 		expect(() => new AuthDriverGithub({ clientId: '', clientSecret: 'secret-1' })).toThrow(
 			'The github auth driver needs a "clientId"',
 		);
@@ -124,10 +121,10 @@ describe('AuthDriverGithub', () => {
 			'The github auth driver needs a "clientSecret"',
 		);
 
-		// 2. Zero, fractions and values past the timer's bound would fail every request; they are refused up front
+		// Zero, fractions and values past the timer's bound would fail every request
 		for (const timeout of [0, 1.5, 2 ** 31, Number.NaN]) {
 			expect(() => new AuthDriverGithub({ clientId: 'client-1', clientSecret: 'secret-1', timeout })).toThrow(
-				RangeError,
+				InvalidConfigError,
 			);
 		}
 	});
@@ -145,7 +142,6 @@ describe('AuthDriverGithub', () => {
 				},
 			);
 
-			// 1. The parsed answer, from the API root, with the Bearer token and no body; no header of the token's own
 			expect(repos).toStrictEqual([{ id: 1, full_name: 'octo/hello' }]);
 
 			const [url, init] = fetch.mock.calls[0]!;
@@ -170,7 +166,6 @@ describe('AuthDriverGithub', () => {
 
 			await driver.call('POST /applications/{client_id}/token', { access_token: 'gho_checked' });
 
-			// 1. The placeholder is the app's client id, the credentials the app's own
 			const [url, init] = fetch.mock.calls[0]!;
 
 			expect(url).toBe('https://api.github.com/applications/client-1/token');
@@ -190,7 +185,7 @@ describe('AuthDriverGithub', () => {
 				{ accessToken: ACCESS_TOKEN },
 			);
 
-			// 1. `{owner}` and `{repo}` take their params, a `/` cannot reshape the path, and only `state` is left
+			// A `/` in a param must not reshape the path
 			expect(fetch.mock.calls[0]![0]).toBe('https://api.github.com/repos/acme/web%2Fapp/issues?state=open');
 		});
 
@@ -200,7 +195,7 @@ describe('AuthDriverGithub', () => {
 
 			await driver.call('POST /applications/{client_id}/token', { client_id: 'other', access_token: 'gho_x' });
 
-			// 1. The Basic credentials are this app's, so the path names this app; the param goes in the body as given
+			// The Basic credentials are this app's, so the path names this app
 			const [url, init] = fetch.mock.calls[0]!;
 
 			expect(url).toBe('https://api.github.com/applications/client-1/token');
@@ -211,7 +206,7 @@ describe('AuthDriverGithub', () => {
 			const fetch = answer(200, {});
 			const driver = new AuthDriverGithub({ ...credentials, fetch });
 
-			// 1. Sent, `{repo}` would reach GitHub as `%7Brepo%7D`
+			// Sent, `{repo}` would reach GitHub as `%7Brepo%7D`
 			await expect(driver.call('GET /repos/{owner}/{repo}', { owner: 'acme' })).rejects.toThrow(
 				'needs a "repo" parameter',
 			);
@@ -225,7 +220,6 @@ describe('AuthDriverGithub', () => {
 
 			const result = await driver.call('GET /user/repos', {}, { accessToken: ACCESS_TOKEN });
 
-			// 1. The `link` to the next page is read by its lower-case name
 			expect(result).toStrictEqual({
 				status: 200,
 				headers: {
@@ -240,7 +234,6 @@ describe('AuthDriverGithub', () => {
 			const fetch = answer(204);
 			const driver = new AuthDriverGithub({ ...credentials, fetch });
 
-			// 1. An empty answer is `undefined`, and the upload host is GitHub's own
 			await expect(
 				driver.call('DELETE https://uploads.github.com/repos/o/r/releases/assets/1', {}, { accessToken: ACCESS_TOKEN }),
 			).resolves.toMatchObject({ status: 204, data: undefined });
@@ -252,9 +245,9 @@ describe('AuthDriverGithub', () => {
 			const fetch = answer(200, {});
 			const driver = new AuthDriverGithub({ ...credentials, fetch });
 
-			// 1. The credentials would go to someone else; nothing is sent
+			// The credentials would go to someone else, so nothing is sent
 			await expect(driver.call('GET https://evil.example/user', {}, { accessToken: ACCESS_TOKEN })).rejects.toThrow(
-				'The call URL is not on a host of this provider: evil.example',
+				/the call URL is not on a host of this provider: evil\.example/i,
 			);
 
 			await expect(driver.call('FETCH /user')).rejects.toThrow('is not');
@@ -264,7 +257,6 @@ describe('AuthDriverGithub', () => {
 		test('Turns an error status into a ProviderCallError without a credential in its message', async () => {
 			const driver = new AuthDriverGithub({ ...credentials, fetch: answer(404, { message: 'Not Found' }) });
 
-			// 1. GitHub's status and answer are kept for the caller; the message names the method and the reason only
 			const error = (await driver
 				.call('GET /repos/o/private', {}, { accessToken: ACCESS_TOKEN })
 				.catch((thrown: unknown) => thrown)) as InstanceType<typeof ProviderCallError>;
@@ -279,7 +271,6 @@ describe('AuthDriverGithub', () => {
 				body: { message: 'Not Found' },
 			});
 
-			// 2. As the app, too: neither the secret nor its Basic encoding appears anywhere in the error
 			const appDriver = new AuthDriverGithub({ ...credentials, fetch: answer(401, { message: 'Bad credentials' }) });
 
 			const appError = (await appDriver
@@ -296,7 +287,6 @@ describe('AuthDriverGithub', () => {
 			const fetch = answer(429, { message: 'API rate limit exceeded' }, { 'retry-after': '60' });
 			const driver = new AuthDriverGithub({ ...credentials, fetch });
 
-			// 1. The wait GitHub names is when the limit resets
 			const before = Date.now();
 
 			const error = (await driver
@@ -318,7 +308,6 @@ describe('AuthDriverGithub', () => {
 
 			const driver = new AuthDriverGithub({ ...credentials, fetch });
 
-			// 1. The limit's end is GitHub's reset, not a second from now
 			const error = (await driver
 				.call('GET /user', {}, { accessToken: ACCESS_TOKEN })
 				.catch((thrown: unknown) => thrown)) as InstanceType<typeof HitRateLimitError>;
@@ -326,7 +315,6 @@ describe('AuthDriverGithub', () => {
 			expect(error).toBeInstanceOf(HitRateLimitError);
 			expect(Math.round(error.extensions.reset.getTime() / 1000)).toBe(reset);
 
-			// 2. A 403 without the limit headers stays the provider's refusal
 			const denied = new AuthDriverGithub({ ...credentials, fetch: answer(403, { message: 'Forbidden' }) });
 
 			await expect(denied.call('GET /user', {}, { accessToken: ACCESS_TOKEN })).rejects.toBeInstanceOf(
@@ -338,7 +326,6 @@ describe('AuthDriverGithub', () => {
 			const fetch = answer(403, { message: 'You have exceeded a secondary rate limit' }, { 'retry-after': '90' });
 			const driver = new AuthDriverGithub({ ...credentials, fetch });
 
-			// 1. The wait GitHub names in the header
 			const before = Date.now();
 
 			const error = (await driver
@@ -350,7 +337,7 @@ describe('AuthDriverGithub', () => {
 		});
 
 		test('Takes the caller headers over its own, and the caller timeout over the location one', async () => {
-			// 1. A fetch that never answers until aborted, so only the deadline can end it
+			// A fetch that never answers until aborted, so only the deadline can end it
 			const fetch = vi.fn<AuthFetch>(
 				(_url, init) =>
 					new Promise((_resolve, reject) => {

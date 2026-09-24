@@ -22,8 +22,8 @@ export const quoteUnsafeIntegers = (text: string): string => {
 	let found = false;
 	let parsed: unknown;
 
-	// 1. Parse with a reviver that swaps an unsafe integer for its source digits; a fraction or an exponent is left a
-	//    number, since only whole ids lose meaning when rounded
+	// Only whole ids lose meaning when rounded, so an unsafe integer becomes its source digits while a fraction or an
+	// exponent stays a number
 	try {
 		parsed = JSON.parse(text, (_key: string, value: unknown, context?: ReviverContext): unknown => {
 			if (
@@ -43,7 +43,7 @@ export const quoteUnsafeIntegers = (text: string): string => {
 		return text;
 	}
 
-	// 2. Nothing to quote keeps the text byte for byte, so the answer is read exactly as it would be without this
+	// Nothing to quote keeps the text byte for byte, so the answer is read exactly as it would be without this
 	return found ? JSON.stringify(parsed) : text;
 };
 
@@ -56,18 +56,17 @@ export const quoteUnsafeIntegers = (text: string): string => {
  * @returns The answer, its body rewritten when it is a 2xx with content.
  */
 export const mailjetFetch: HttpCallFetch = async (url, { body, ...init }) => {
-	// 1. `exactOptionalPropertyTypes` refuses an explicit `body: undefined`, so it is left out instead; the global is
-	//    read per call so a stub in tests is picked up
+	// `exactOptionalPropertyTypes` refuses an explicit `body: undefined`, so it is left out instead; the global is read
+	// per call so a stub in tests is picked up
 	const response = await fetch(url, body === undefined ? init : { ...init, body });
 
-	// 2. Only a successful answer with a body carries ids worth keeping; errors, redirects and empty answers go through
-	//    as they are, and a 204 or 205 cannot be rebuilt with a body anyway
+	// Only a successful answer with a body carries ids worth keeping; errors, redirects and empty answers go through as
+	// they are, and a 204 or 205 cannot be rebuilt with a body anyway
 	if (!response.ok || response.status === 204 || response.status === 205) {
 		return response;
 	}
 
-	// 3. The body is read under the request's signal and rebuilt; its length and encoding no longer describe the new
-	//    text, so those headers are dropped
+	// The body is rebuilt, so its length and encoding headers no longer describe the new text and are dropped
 	const text = quoteUnsafeIntegers(await response.text());
 	const headers = new Headers(response.headers);
 

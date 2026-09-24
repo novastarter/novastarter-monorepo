@@ -73,10 +73,10 @@ console.log(data.Status, status);
 The answer is `{ status, headers, data }`: the HTTP status, no headers — the SDK does not hand them out — and the
 command's output without the SDK's `$metadata`. There are no URLs, so no host list: every request goes to the location's
 S3 endpoint. Keys in the parameters are sent as given, not under `root`. A name that is not a command of
-`@aws-sdk/client-s3` is refused before anything is sent; a refusal of S3 throws `ProviderCallError` with its HTTP status
-and `{ name, message }`, a 429 or a throttling code — S3's 503 `SlowDown` — `HitRateLimitError`; the timeout is 30
-seconds unless `{ timeout }` names another. A `headers` option — the call's or the location's — is refused with an error
-rather than dropped: `call()` covers plain commands only.
+`@aws-sdk/client-s3` is refused with `InvalidPayloadError` before anything is sent; a refusal of S3 throws
+`ProviderCallError` with its HTTP status and `{ name, message }`, a 429 or a throttling code — S3's 503 `SlowDown` —
+`HitRateLimitError`; the timeout is 30 seconds unless `{ timeout }` names another. A `headers` option — the call's or
+the location's — is refused with `InvalidPayloadError` rather than dropped: `call()` covers plain commands only.
 
 ## The SDK client
 

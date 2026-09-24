@@ -53,7 +53,7 @@ export class QueueDriverLocal implements QueueDriver {
 	 * @param config - Logger for failures.
 	 */
 	constructor(config: QueueDriverLocalConfig = {}) {
-		// 1. The process logger is the fallback, so a location registered with `options: {}` still reports failures
+		// The process logger is the fallback, so a location registered with `options: {}` still reports failures
 		this.logger = config.logger ?? useLogger();
 	}
 
@@ -75,33 +75,33 @@ export class QueueDriverLocal implements QueueDriver {
 		options: JobOptions & EnqueueOptions,
 		id: string = randomUUID(),
 	): Promise<EnqueuedJob> {
-		// 1. A closed driver takes nothing: `close()` promised that no delayed job fires after shutdown, and a timer
-		//    armed now would outlive the set it was cleared from
+		// A closed driver takes nothing: `close()` promised that no delayed job fires after shutdown, and a timer
+		// armed now would outlive the set it was cleared from
 		if (this.closed) {
 			throw new Error('The local queue driver is closed');
 		}
 
-		// 2. Checked now rather than at run time, so the enqueuing request learns about a missing module
+		// Checked now rather than at run time, so the enqueuing request learns about a missing module
 		if (!getJobHandler(contract)) {
 			throw new Error(`No handler registered for job "${contract.name}"`);
 		}
 
-		// 3. A delay a timer could not honour — negative, `NaN` or not finite — is refused through the shared check, so
-		//    both drivers answer a bad delay identically: Node would arm 1 ms and run the job at once, or re-arm an
-		//    infinite delay for ever, which the caller who asked for a wait would never notice
+		// A delay a timer could not honour — negative, `NaN` or not finite — is refused through the shared check, so
+		// both drivers answer a bad delay identically: Node would arm 1 ms and run the job at once, or re-arm an
+		// infinite delay for ever, which the caller who asked for a wait would never notice
 		validateJobDelay(contract.name, options.delay);
 
 		const delay = options.delay ?? 0;
 
-		// 4. The identity and the enqueue time are fixed now, so a delayed run reports when it was queued, not when
-		//    it ran
+		// The identity and the enqueue time are fixed now, so a delayed run reports when it was queued, not when
+		// it ran
 		const job: EnqueuedJob = { id, name: contract.name, queue: contract.queue };
 		const enqueuedAt = new Date();
 
-		// 5. The same id still in flight — the same `unique` work or explicit `jobId` — collapses into the queued job:
-		//    its identity is answered and nothing runs, which is how the `bullmq` driver deduplicates, so a duplicate
-		//    never double-fires side effects. The id is registered before the run or the timer is armed, so a duplicate
-		//    racing in the same tick collapses too
+		// The same id still in flight — the same `unique` work or explicit `jobId` — collapses into the queued job:
+		// its identity is answered and nothing runs, which is how the `bullmq` driver deduplicates, so a duplicate
+		// never double-fires side effects. The id is registered before the run or the timer is armed, so a duplicate
+		// racing in the same tick collapses too
 		const pending = this.inFlight.get(id);
 
 		if (pending) return pending;
@@ -110,27 +110,27 @@ export class QueueDriverLocal implements QueueDriver {
 
 		const run = async (): Promise<void> => {
 			try {
-				// 1. The same path a delivered job takes (`runJob` → `runContract`), so both parse and dispatch alike
+				// The same path a delivered job takes (`runJob` → `runContract`), so both parse and dispatch alike
 				await runContract(contract, payload, { id, name: contract.name, attempt: 1, enqueuedAt });
 			} catch (error) {
-				// 2. A failing job is the handler's problem to log in detail; here it is recorded and dropped, no retries.
-				//    Wrapped through `toError`, so a thrown string is not taken for the message and the job's name lost
+				// A failing job is the handler's problem to log in detail; here it is recorded and dropped, no retries.
+				// Wrapped through `toError`, so a thrown string is not taken for the message and the job's name lost
 				this.logger.error(toError(error), `Job "${contract.name}" (${id}) failed`);
 			} finally {
-				// 3. The id leaves the map as the run settles — a local job never retries — so the next enqueue of the
-				//    same work runs again, as the contract documents; a delayed run holds its id until its timer fired
+				// The id leaves the map as the run settles — a local job never retries — so the next enqueue of the
+				// same work runs again, as the contract documents; a delayed run holds its id until its timer fired
 				this.inFlight.delete(id);
 			}
 		};
 
-		// 6. A delay becomes a timer that does not keep the process alive; the process ending is the queue ending
+		// A delay becomes a timer that does not keep the process alive; the process ending is the queue ending
 		if (delay > 0) {
 			this.schedule(delay, () => void run());
 
 			return job;
 		}
 
-		// 7. Without a delay the handler has run before the caller gets the identity back, so a test asserts right away
+		// Without a delay the handler has run before the caller gets the identity back, so a test asserts right away
 		await run();
 
 		return job;
@@ -140,18 +140,18 @@ export class QueueDriverLocal implements QueueDriver {
 	 * Cancel the delayed jobs that have not run yet.
 	 */
 	async close(): Promise<void> {
-		// 1. Closed first, so an `enqueue()` racing the shutdown is refused rather than arming a timer after the sweep
+		// Closed first, so an `enqueue()` racing the shutdown is refused rather than arming a timer after the sweep
 		this.closed = true;
 
-		// 2. Every pending timer goes, so a delayed job never fires after shutdown and nothing keeps the process alive;
-		//    the set is emptied along with them, since a cleared timer is nothing to clear again
+		// Every pending timer goes, so a delayed job never fires after shutdown and nothing keeps the process alive;
+		// the set is emptied along with them, since a cleared timer is nothing to clear again
 		for (const timer of this.timers) {
 			clearTimeout(timer);
 		}
 
 		this.timers.clear();
 
-		// 3. Delayed jobs went with their timers and will never settle on their own, so their ids leave the map with them
+		// Delayed jobs went with their timers and will never settle on their own, so their ids leave the map with them
 		this.inFlight.clear();
 	}
 
@@ -163,13 +163,13 @@ export class QueueDriverLocal implements QueueDriver {
 	 * @internal
 	 */
 	private schedule(delay: number, run: () => void): void {
-		// 1. A timer holds at most `MAX_TIMER_DELAY` (about 24.8 days); past that Node arms 1 ms and only warns, so the
-		//    job would run at once. The wait is taken in slices instead, each armed when the previous one fires, which
-		//    is how the `bullmq` driver's job waits for the same delay
+		// A timer holds at most `MAX_TIMER_DELAY` (about 24.8 days); past that Node arms 1 ms and only warns, so the
+		// job would run at once. The wait is taken in slices instead, each armed when the previous one fires, which
+		// is how the `bullmq` driver's job waits for the same delay
 		const slice = Math.min(delay, MAX_TIMER_DELAY);
 
 		const timer = setTimeout(() => {
-			// 1. A fired timer is nothing to clear; the next slice, when there is one, registers itself
+			// A fired timer is nothing to clear; the next slice, when there is one, registers itself
 			this.timers.delete(timer);
 
 			if (delay > slice) {
@@ -181,7 +181,7 @@ export class QueueDriverLocal implements QueueDriver {
 			run();
 		}, slice);
 
-		// 2. Unreferenced, so a pending job does not keep a finished process alive; kept, so `close()` can cancel it
+		// Unreferenced, so a pending job does not keep a finished process alive; kept, so `close()` can cancel it
 		timer.unref();
 		this.timers.add(timer);
 	}

@@ -50,10 +50,8 @@ export const SUBSCRIPTION_UPDATE_EVENTS: ReadonlySet<string> = new Set([
  * mapping has to learn.
  */
 export const toEvent = (event: EventEntity): PaymentsEvent | null => {
-	// 1. What every event shares: Paddle's event id, the driver name, when it happened, the raw event
 	const base = { id: event.eventId, provider: PROVIDER, occurredAt: new Date(event.occurredAt), raw: event };
 
-	// 2. One branch per Paddle event type the kit acts on; the status changes are matched by set
 	switch (event.eventType) {
 		case 'subscription.created':
 			return { ...base, type: 'subscription.created', subscription: toSubscription(event.data) };
@@ -68,13 +66,13 @@ export const toEvent = (event: EventEntity): PaymentsEvent | null => {
 			return { ...base, type: 'invoice.failed', invoice: toInvoice(event.data) };
 
 		default:
-			// 3. The status changes share one shape; the type narrowing above cannot express the set, so the data is
-			//    read through the notification shape they all carry
+			// The status changes share one shape; the type narrowing above cannot express the set, so the data is
+			// read through the notification shape they all carry
 			if (SUBSCRIPTION_UPDATE_EVENTS.has(event.eventType)) {
 				const data = event.data as SubscriptionNotification;
 
-				// 4. The canceled status is the `subscription.canceled` event's news, which maps to the kit's deletion:
-				//    dropping the update keeps a retried or late one from resurrecting a deleted subscription
+				// The canceled status is the `subscription.canceled` event's news, which maps to the kit's deletion:
+				// dropping the update keeps a retried or late one from resurrecting a deleted subscription
 				if (data.status === 'canceled') return null;
 
 				return { ...base, type: 'subscription.updated', subscription: toSubscription(data) };

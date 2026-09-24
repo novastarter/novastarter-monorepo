@@ -20,13 +20,13 @@ import { handleSpecialWords } from './utils/handle-special-words.js';
  * ```
  */
 export function formatTitle(title: string, separator: RegExp = new RegExp('\\s|-|_', 'g')): string {
-	// 1. Decamelize before splitting, so the separator regex only has to know about explicit delimiters. Consecutive,
-	//    leading or trailing separators leave empty strings behind; dropped here, since each would otherwise become a
-	//    spurious space and could count as the last word, letting a real minor word before it stay lower-cased
+	// Decamelizing before splitting means the separator regex only has to know about explicit delimiters. Consecutive,
+	// leading or trailing separators leave empty strings behind; they are dropped, since each would otherwise become a
+	// spurious space and could count as the last word, letting a real minor word before it stay lower-cased.
 	const words = decamelize(title)
 		.split(separator)
 		.filter((word) => word !== '');
 
-	// 2. Casing is per word, but the minor-word rules need the position, so the fixed-up list is joined only at the end
+	// Casing is per word, but the minor-word rules need the position, so the fixed-up list is joined only at the end
 	return words.map(capitalize).map(handleSpecialWords).join(' ');
 }

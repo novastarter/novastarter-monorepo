@@ -1,6 +1,7 @@
 import type { ConnectionOptions } from 'node:tls';
 import type { DatabaseDriverCommonConfig } from '@novastarter/database';
 import type { DatabaseDriverPostgresConfig } from '@novastarter/database-driver-postgres';
+import { InvalidConfigError } from '@novastarter/errors';
 import type { PoolConfig } from 'pg';
 
 /**
@@ -43,17 +44,17 @@ export type DatabaseDriverSupabaseConfig<Schema extends Record<string, unknown> 
  * @internal
  */
 const resolveSsl = (ssl: boolean | ConnectionOptions = true, ca?: string): boolean | ConnectionOptions => {
-	// 1. Off is off: a certificate given next to it would be a contradiction, and the CLI stack has no TLS to verify
+	// Off is off: a certificate given next to it would be a contradiction, and the CLI stack has no TLS to verify
 	if (ssl === false) {
 		return false;
 	}
 
-	// 2. Trim first: whitespace around a PEM is tolerated, but a whitespace-only value counts as absent — `ca`
-	//    replaces Node's default root store, so a blank one would verify against an empty trust store and fail
-	//    every connection with an issuer error
+	// Whitespace around a PEM is tolerated, but a whitespace-only value counts as absent: `ca` replaces Node's
+	// default root store, so a blank one would verify against an empty trust store and fail every connection with an
+	// issuer error
 	const trimmed = ca?.trim();
 
-	// 3. A certificate turns `true` into TLS options and joins the ones given, so verification runs against it
+	// A certificate turns `true` into TLS options and joins the ones given, so verification runs against it
 	if (trimmed) {
 		return { ...(typeof ssl === 'object' ? ssl : {}), ca: trimmed };
 	}
@@ -70,7 +71,7 @@ const resolveSsl = (ssl: boolean | ConnectionOptions = true, ca?: string): boole
  * @typeParam Schema - The Drizzle schema the database is typed with.
  * @param config - The Supabase options.
  * @returns The Postgres driver's options.
- * @throws Error when `url` is missing, is not a valid URL, or carries a TLS parameter (`ssl`, `sslmode`,
+ * @throws InvalidConfigError when `url` is missing, is not a valid URL, or carries a TLS parameter (`ssl`, `sslmode`,
  * `sslcert`, `sslkey`, `sslrootcert`, `sslnegotiation`).
  * @example
  * ```ts
@@ -80,34 +81,32 @@ const resolveSsl = (ssl: boolean | ConnectionOptions = true, ca?: string): boole
 export const toPostgresConfig = <Schema extends Record<string, unknown>>(
 	config: DatabaseDriverSupabaseConfig<Schema>,
 ): DatabaseDriverPostgresConfig<Schema> => {
-	// 1. Refuse a missing URL up front, in the words of this driver; the Postgres one would speak of a `connection`
-	//    nobody configured
+	// The Postgres driver would otherwise speak of a `connection` nobody configured
 	if (!config.url) {
-		throw new Error('The supabase database driver needs a "url"');
+		throw new InvalidConfigError({ reason: 'The supabase database driver needs a "url"' });
 	}
 
-	// 2. Parse the URL before anything else reads it, and refuse a malformed one in the words of this driver: `new
-	//    URL` would raise a bare `TypeError: Invalid URL`, naming nothing of the configuration at fault
+	// `new URL` would otherwise raise a bare `TypeError: Invalid URL`, naming nothing of the configuration at fault
 	let parsed: URL;
 
 	try {
 		parsed = new URL(config.url);
 	} catch {
-		throw new Error('The supabase database driver needs a "url" that is a valid URL');
+		throw new InvalidConfigError({ reason: 'The supabase database driver needs a "url" that is a valid URL' });
 	}
 
-	// 3. Refuse a URL carrying TLS parameters node-postgres reads out of the connection string: pg parses them over
-	//    the `ssl` option, so any of them would silently defeat the TLS set here — the misconfiguration that fails
-	//    open instead of refusing. `ssl` itself is among them: `ssl=0` turns TLS off and `ssl=1` replaces the `ca`
+	// pg parses these TLS parameters out of the connection string over the `ssl` option, so any of them would
+	// silently defeat the TLS set here — the misconfiguration that fails open instead of refusing. `ssl` itself is
+	// among them: `ssl=0` turns TLS off and `ssl=1` replaces the `ca`
 	const urlTlsParams = ['ssl', 'sslmode', 'sslcert', 'sslkey', 'sslrootcert', 'sslnegotiation'] as const;
 
 	if (urlTlsParams.some((param) => parsed.searchParams.has(param))) {
-		throw new Error(
-			'The supabase database driver needs a "url" without TLS parameters ("ssl", "sslmode", "sslcert", "sslkey", "sslrootcert", "sslnegotiation"): set TLS with "ssl" and "ca" instead',
-		);
+		throw new InvalidConfigError({
+			reason:
+				'The supabase database driver needs a "url" without TLS parameters ("ssl", "sslmode", "sslcert", "sslkey", "sslrootcert", "sslnegotiation"): set TLS with "ssl" and "ca" instead',
+		});
 	}
 
-	// 4. The shared options pass through untouched; the four of this driver become one pool config
 	const { url, ssl, ca, pool, ...common } = config;
 
 	return {

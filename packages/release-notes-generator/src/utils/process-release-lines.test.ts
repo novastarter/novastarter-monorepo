@@ -23,7 +23,7 @@ async function collect(summary: string): Promise<{ summary: string; notice: stri
 
 	await defaultChangelogFunctions.getReleaseLine(changeset, 'patch', null);
 
-	// 1. The map is keyed by id, so the single entry is the one just collected
+	// The map is keyed by id, so the single entry is the one just collected
 	const stored = changesets.get(changeset.id)!;
 
 	return { summary: stored.summary, notice: stored.notice };
@@ -48,7 +48,7 @@ test('should process release lines', async () => {
 
 	const result = Array.from(changesets, ([key, value]) => ({ key, value }));
 
-	// 1. Strict equality, so a `notice` key that goes missing or gets renamed fails the test instead of being ignored
+	// Strict equality, so a `notice` key that goes missing or gets renamed fails the test instead of being ignored
 	expect(result[0]).toStrictEqual({
 		key: 'random-changeset-name',
 		value: {
@@ -106,7 +106,7 @@ describe('notice extraction', () => {
 	});
 
 	test('should stop at the first closing line when the summary holds a later ::: line', async () => {
-		// 1. A greedy match would run on to the last `:::` and swallow the change text, dropping it from the notes
+		// A greedy match would run on to the last `:::` and swallow the change text, dropping it from the notes
 		const summary = '::: notice\nBreaking\n:::\n\nAdds a docs admonition:\n\n::: tip\nUse it\n:::';
 
 		await expect(collect(summary)).resolves.toStrictEqual({

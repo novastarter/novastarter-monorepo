@@ -26,6 +26,7 @@
 	},
 	"dependencies": {
 		"@novastarter/database": "workspace:*",
+		"@novastarter/errors": "workspace:*",
 		"@types/better-sqlite3": "catalog:",
 		"better-sqlite3": "catalog:",
 		"drizzle-orm": "catalog:"

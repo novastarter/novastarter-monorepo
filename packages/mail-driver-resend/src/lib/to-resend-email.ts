@@ -1,3 +1,4 @@
+import { InvalidPayloadError } from '@novastarter/errors';
 import {
 	formatMailAddress,
 	type MailAttachment,
@@ -29,9 +30,8 @@ export const RESEND_TAG_LENGTH = 256;
  * @returns The sanitised text, anything else replaced by `_` and the tail past the limit cut off.
  */
 export const toResendTag = (value: string): string =>
-	// 1. Resend matches a tag name against `^[A-Za-z0-9_-]+$`, refuses a whole send over one miss and caps a name at
-	//    256 characters — so anything outside the set becomes `_` and the tail past the limit is cut, the way the SES
-	//    driver's sanitiser works
+	// Resend matches a tag name against `^[A-Za-z0-9_-]+$`, refuses a whole send over one miss and caps a name at
+	// 256 characters; this works the way the SES driver's sanitiser does
 	value.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, RESEND_TAG_LENGTH);
 
 /**
@@ -42,16 +42,16 @@ export const toResendTag = (value: string): string =>
  *
  * @param attachment - Ours.
  * @returns Resend's.
- * @throws Error for an attachment with neither content nor path.
+ * @throws InvalidPayloadError for an attachment with neither content nor path.
  */
 export const toResendAttachment = async (
 	attachment: MailAttachment,
 ): Promise<NonNullable<CreateEmailOptions['attachments']>[number]> => {
-	// 1. Resend base64-decodes a string `content`, so text is turned into bytes first; a path is read since Resend
-	//    only fetches URLs
+	// Resend base64-decodes a string `content`, so text is turned into bytes first; a path is read since Resend only
+	// fetches URLs
 	const content = await readAttachment(attachment);
 
-	// 2. Optional fields are only set when present, so the request carries no `undefined` keys
+	// Optional fields are only set when present, so the request carries no `undefined` keys
 	return {
 		filename: attachment.filename,
 		content: content.toString('base64'),
@@ -69,17 +69,16 @@ export const toResendAttachment = async (
  *
  * @param message - Ours, with `from` set (`sendMail()` fills it in).
  * @returns Resend's.
- * @throws Error when `from` is missing — Resend requires it — or when an attachment has neither content nor path.
+ * @throws InvalidPayloadError when `from` is missing — Resend requires it — or when an attachment has neither content nor path.
  */
 export const toResendEmail = async (message: MailMessage): Promise<CreateEmailOptions> => {
-	// 1. The API refuses a message without a sender; say so before the request goes out
+	// The API refuses a message without a sender; say so before the request goes out
 	if (!message.from) {
-		throw new Error('Resend needs a "from" address');
+		throw new InvalidPayloadError({ reason: 'Resend needs a "from" address' });
 	}
 
-	// 2. Tags are sanitised and cut, since Resend refuses anything outside its character set and past its length
-	//    limit; one left with no name would be rejected and the list is capped at Resend's limit, so none can fail
-	//    the send
+	// Resend refuses a tag outside its character set, past its length limit or with no name, and caps the list, so
+	// none of them is allowed to fail the send
 	const tags = [
 		{ name: 'category', value: toResendTag(message.category ?? 'transactional') },
 		...(message.tags ?? [])
@@ -88,7 +87,7 @@ export const toResendEmail = async (message: MailMessage): Promise<CreateEmailOp
 			.slice(0, RESEND_TAG_COUNT - 1),
 	];
 
-	// 3. Resend takes `Name <address>` strings and needs one of html / text; both are optional on our side
+	// Resend needs one of html / text; both are optional on our side
 	const email: CreateEmailOptions = {
 		from: formatMailAddress(message.from),
 		to: toMailAddressList(message.to).map(formatMailAddress),
@@ -98,13 +97,12 @@ export const toResendEmail = async (message: MailMessage): Promise<CreateEmailOp
 		...(message.text !== undefined ? { text: message.text } : {}),
 	} as CreateEmailOptions;
 
-	// 4. Optional fields are only set when present, so the request carries no `undefined` keys
+	// Optional fields are only set when present, so the request carries no `undefined` keys
 	if (message.cc) email.cc = message.cc.map(formatMailAddress);
 	if (message.bcc) email.bcc = message.bcc.map(formatMailAddress);
 	if (message.replyTo) email.replyTo = formatMailAddress(message.replyTo);
 	if (message.headers) email.headers = message.headers;
 
-	// 5. Attachments are read in parallel: every one is encoded in full before the request is built
 	if (message.attachments) {
 		email.attachments = await Promise.all(message.attachments.map(toResendAttachment));
 	}

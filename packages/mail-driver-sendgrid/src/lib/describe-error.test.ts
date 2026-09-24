@@ -6,7 +6,7 @@ import { describeError } from './describe-error.js';
 
 describe('describeError', () => {
 	test('Names the provider and keeps the SDK error as the cause', () => {
-		// 1. A refusal is wrapped, not replaced: the cause keeps `response.body` and the status
+		// Wrapped, not replaced, so the cause keeps `response.body` and the status
 		const refusal = Object.assign(new Error('Forbidden'), {
 			code: 403,
 			response: { body: { errors: [{ message: 'Forbidden' }] } },
@@ -17,7 +17,7 @@ describe('describeError', () => {
 			cause: refusal,
 		});
 
-		// 2. A thrown non-error is still described rather than crashing the description
+		// A thrown non-error is still described rather than crashing the description
 		expect(describeError('boom')).toMatchObject({ message: 'SendGrid: boom', cause: 'boom' });
 	});
 });

@@ -11,8 +11,7 @@ import type { CustomData } from '@paddle/paddle-node-sdk';
  * @returns The same keys with string values.
  */
 export const toMetadata = (customData: CustomData | null | undefined): Record<string, string> =>
-	// 1. Paddle answers `null` for no custom data; an empty object keeps the kit's shapes free of nullable metadata.
-	//    Objects are written as their JSON text, everything else the way `String()` renders it
+	// Paddle answers `null` for no custom data; an empty object keeps the kit's shapes free of nullable metadata
 	Object.fromEntries(
 		Object.entries(customData ?? {}).map(([key, value]) => [
 			key,

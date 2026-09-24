@@ -100,7 +100,7 @@ test('should fail if main version is missing', async () => {
 });
 
 test('should name the environment variable when the forced version is invalid', async () => {
-	// 1. A malformed forced version is blamed on its source, never on an undefined main package
+	// A malformed forced version is blamed on its source, never on an undefined main package
 	await expect(() =>
 		processPackages({ workspaceRoot: 'mock-workspace', forcedVersion: 'not-a-version' }),
 	).rejects.toThrow(
@@ -135,8 +135,8 @@ test('should take the prerelease state from changesets without a main package', 
 });
 
 test('should not read a prerelease tag from a finished prerelease cycle', async () => {
-	// 1. `changesets pre exit` keeps `pre.json` on disk with `mode: "exit"`, so the stable release right after a
-	//    prerelease cycle must not be reported as a prerelease
+	// `changesets pre exit` keeps `pre.json` on disk with `mode: "exit"`, so the stable release right after a
+	// prerelease cycle must not be reported as a prerelease
 	delete mockConfig.mainPackage;
 	mockChangesetPreFile = JSON.stringify({ mode: 'exit', tag: 'beta' });
 	packages = [generatePackage('example', '1.1.0')];

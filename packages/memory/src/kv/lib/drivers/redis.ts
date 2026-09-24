@@ -1,3 +1,4 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import { MAX_TIMER_DELAY } from '@novastarter/utils';
 import { ExecutionError, Redlock, type Lock as RedlockLock } from '@sesamecare-oss/redlock';
 import type { Redis } from 'ioredis';
@@ -235,12 +236,12 @@ export class KvDriverRedis implements KvDriver {
 	 * Create the store on top of an existing Redis connection.
 	 *
 	 * @param config - Redis configuration.
-	 * @throws RangeError when `lockTimeout` is under 200 ms or above what a timer can hold, or the client sits on a
+	 * @throws InvalidConfigError when `lockTimeout` is under 200 ms or above what a timer can hold, or the client sits on a
 	 * database above 15, where Redlock cannot lock.
 	 */
 	constructor(config: KvDriverRedisConfig) {
-		// 1. Register the Lua commands once per client; a client shared between several stores already has them. Locks
-		//    need no command of their own: Redlock brings its own check-and-delete release script
+		// Once per client: a client shared between several stores already has the commands. Locks need no command of
+		// their own, since Redlock brings its own check-and-delete release script
 		if (!('setMax' in config.redis)) {
 			config.redis.defineCommand('setMax', {
 				numberOfKeys: 1,
@@ -255,9 +256,9 @@ export class KvDriverRedis implements KvDriver {
 			});
 		}
 
-		// 2. Apply the documented defaults: compress, but only from 1 kB up; hold locks for 5 s. Redlock renews a lock
-		//    `using` holds ahead of its expiry and needs 100 ms between renewal and expiry, so a timeout under 200 ms
-		//    leaves no room for that; a timeout a timer cannot hold — `Infinity` would retry for ever — is refused too
+		// Redlock renews a lock `using` holds ahead of its expiry and needs 100 ms between renewal and expiry, so a
+		// timeout under 200 ms leaves no room for that; a timeout a timer cannot hold — `Infinity` would retry for ever —
+		// is refused too
 		this.redis = config.redis as ExtendedRedis;
 		this.namespace = config.namespace;
 		this.compression = config.compression ?? true;
@@ -265,26 +266,27 @@ export class KvDriverRedis implements KvDriver {
 		this.lockTimeout = Math.floor(config.lockTimeout ?? 5000);
 
 		if (!(this.lockTimeout >= 200 && this.lockTimeout <= MAX_TIMER_DELAY)) {
-			throw new RangeError(
-				`KvDriverRedis: "lockTimeout" must be between 200 and ${MAX_TIMER_DELAY} ms, got ${config.lockTimeout}`,
-			);
+			throw new InvalidConfigError({
+				reason: `The redis kv driver needs a "lockTimeout" between 200 and ${MAX_TIMER_DELAY} ms, got ${config.lockTimeout}`,
+			});
 		}
 
-		// 3. Redlock's Lua runs `SELECT` on the database it is told, 0 unless told, so the client's own database is
-		//    passed along, or the locks would live in a different database than the values; a client without options
-		//    — a test double — counts as database 0. Redlock only knows databases 0 to 15 and would silently fall
-		//    back to 0 for a higher one, which is refused instead
+		// Redlock's Lua runs `SELECT` on the database it is told, 0 unless told, so the client's own database is passed
+		// along, or the locks would live in a different database than the values; a client without options — a test
+		// double — counts as database 0. Redlock only knows databases 0 to 15 and would silently fall back to 0 for a
+		// higher one, which is refused instead
 		const db = this.redis.options?.db ?? 0;
 
 		if (db > 15) {
-			throw new RangeError(`KvDriverRedis: Redlock can only lock in databases 0 to 15, the client is on ${db}`);
+			throw new InvalidConfigError({
+				reason: `The redis kv driver needs a client on database 0 to 15, since Redlock can only lock there, got ${db}`,
+			});
 		}
 
-		// 4. Retry every ~50 ms for about `lockTimeout`, so `acquireLock` waits for a busy lock as long as the local
-		//    store does before giving up. `using` renews a lock `automaticExtensionThreshold` ms before it expires and
-		//    refuses a duration less than 100 ms above that threshold, which is 500 ms unless told: for a short lock
-		//    timeout the threshold moves down to `lockTimeout - 100`, so a `lockTimeout` of 300 ms works instead of
-		//    throwing
+		// The retries span about `lockTimeout`, so `acquireLock` waits for a busy lock as long as the local store does
+		// before giving up. `using` renews a lock `automaticExtensionThreshold` ms before it expires and refuses a
+		// duration less than 100 ms above that threshold, which is 500 ms unless told: for a short lock timeout the
+		// threshold moves down to `lockTimeout - 100`, so a `lockTimeout` of 300 ms works instead of throwing
 		this.redlock = new Redlock([this.redis], {
 			retryDelay: 50,
 			driftFactor: 0.01,
@@ -306,15 +308,15 @@ export class KvDriverRedis implements KvDriver {
 	 * @returns Stored value, or `undefined` when the key does not exist.
 	 */
 	async get<T = unknown>(key: string): Promise<T | undefined> {
-		// 1. Read raw bytes; the string API would mangle compressed payloads
+		// Raw bytes, since the string API would mangle compressed payloads
 		const value = await this.redis.getBuffer(withNamespace(key, this.namespace));
 
 		if (value === null) {
 			return undefined;
 		}
 
-		// 2. Compression is decided per value on write, so detect it from the gzip header alone: a value gzipped by
-		//    another process under the same namespace must read back fine for one with compression off
+		// Compression is decided per value on write, so it is detected from the gzip header alone: a value gzipped by
+		// another process under the same namespace must read back fine for one with compression off
 		let binaryArray = bufferToUint8Array(value);
 
 		if (isCompressed(binaryArray)) {
@@ -332,10 +334,10 @@ export class KvDriverRedis implements KvDriver {
 	 * @param value - Value to save. Can be any JavaScript primitive, plain object or array.
 	 */
 	async set<T = unknown>(key: string, value: T): Promise<void> {
-		// 1. Finite numbers are written as plain Redis numbers, so `INCRBY` and the `setMax` script can read them. A
-		//    `NaN` or infinity written that way would be the text `NaN` or `Infinity`, which is not JSON: every later
-		//    `get` of the key would throw until it is deleted. Those take the JSON path below and land as `null`,
-		//    as `JSON.stringify` makes them in the local store
+		// Finite numbers are written as plain Redis numbers, so `INCRBY` and the `setMax` script can read them. A `NaN`
+		// or infinity written that way would be the text `NaN` or `Infinity`, which is not JSON: every later `get` of
+		// the key would throw until it is deleted. Those take the JSON path below and land as `null`, as
+		// `JSON.stringify` makes them in the local store
 		if (typeof value === 'number' && Number.isFinite(value)) {
 			if (this.ttl) {
 				await this.redis.set(withNamespace(key, this.namespace), value, 'PX', this.ttl);
@@ -343,14 +345,13 @@ export class KvDriverRedis implements KvDriver {
 				await this.redis.set(withNamespace(key, this.namespace), value);
 			}
 		} else {
-			// 2. Everything else is serialized and, when large enough to be worth it, compressed
 			let binaryArray = serialize(value);
 
 			if (this.compression === true && binaryArray.byteLength >= this.compressionMinSize) {
 				binaryArray = await compress(binaryArray);
 			}
 
-			// 3. `PX` sets the expiry in the same round trip as the write
+			// `PX` sets the expiry in the same round trip as the write
 			if (this.ttl) {
 				await this.redis.set(withNamespace(key, this.namespace), uint8ArrayToBuffer(binaryArray), 'PX', this.ttl);
 			} else {
@@ -365,7 +366,7 @@ export class KvDriverRedis implements KvDriver {
 	 * @param key - Key to remove.
 	 */
 	async delete(key: string): Promise<void> {
-		// 1. `UNLINK` frees the memory on a background thread, unlike `DEL`, which blocks on large values
+		// `UNLINK` frees the memory on a background thread, unlike `DEL`, which blocks on large values
 		await this.redis.unlink(withNamespace(key, this.namespace));
 	}
 
@@ -376,7 +377,6 @@ export class KvDriverRedis implements KvDriver {
 	 * @returns `true` when the key exists.
 	 */
 	async has(key: string): Promise<boolean> {
-		// 1. `EXISTS` answers with the number of matching keys
 		const exists = await this.redis.exists(withNamespace(key, this.namespace));
 
 		return exists !== 0;
@@ -393,15 +393,15 @@ export class KvDriverRedis implements KvDriver {
 	 * `INCRBY` reply error as `cause`; the key keeps its value and its expiry.
 	 */
 	async increment(key: string, amount = 1): Promise<number> {
-		// 1. `INCRBY` takes integers only; a fraction or `NaN` is refused here, before the round trip, with the error
-		//    the local store throws, instead of as a reply error whose wording depends on the Redis version
+		// `INCRBY` takes integers only; a fraction or `NaN` is refused here, before the round trip, with the error the
+		// local store throws, instead of as a reply error whose wording depends on the Redis version
 		if (!Number.isInteger(amount)) {
 			throw new RangeError(`The amount for key "${key}" must be an integer, got ${amount}`);
 		}
 
-		// 2. The script runs `INCRBY` — atomic, so concurrent processes never lose an increment — and sets the expiry
-		//    only once the increment went through, so a key created here never lives for good and a refused increment
-		//    does not renew the key it could not touch
+		// `INCRBY` is atomic, so concurrent processes never lose an increment, and the script sets the expiry only once
+		// the increment went through, so a key created here never lives for good and a refused increment does not renew
+		// the key it could not touch
 		const namespaced = withNamespace(key, this.namespace);
 
 		try {
@@ -409,12 +409,11 @@ export class KvDriverRedis implements KvDriver {
 				? await this.redis.increment(namespaced, amount, this.ttl)
 				: await this.redis.increment(namespaced, amount);
 		} catch (error) {
-			// 3. A value `INCRBY` cannot read as an integer — a JSON string, `null`, a fraction, a compressed payload —
-			//    comes back as this exact reply error. Redis prefixes the message when the failure happens inside the
-			//    Lua script, so the whole sentence is matched rather than its start, and only it: an unrelated error
-			//    that merely mentions "not an integer" passes through unchanged. The match is rethrown as the error
-			//    the local store throws for the same key, so a caller handles both backends alike, with the reply kept
-			//    as the cause
+			// A value `INCRBY` cannot read as an integer — a JSON string, `null`, a fraction, a compressed payload — comes
+			// back as this exact reply error. Redis prefixes the message when the failure happens inside the Lua script, so
+			// the whole sentence is matched rather than its start, and only it: an unrelated error that merely mentions
+			// "not an integer" passes through unchanged. The match is rethrown as the error the local store throws for the
+			// same key, so a caller handles both backends alike, with the reply kept as the cause
 			if (error instanceof Error && error.message.includes('ERR value is not an integer or out of range')) {
 				throw new Error(`The value for key "${key}" is not an integer.`, { cause: error });
 			}
@@ -433,28 +432,28 @@ export class KvDriverRedis implements KvDriver {
 	 * @throws Error when the stored value is not a number — the same error the local store throws.
 	 */
 	async setMax(key: string, value: number): Promise<boolean> {
-		// 1. `NaN` and the infinities would reach the script as text Lua's `tonumber` cannot read, and die there in a
-		//    comparison with nil; refused up front instead, with the error the local store throws
+		// `NaN` and the infinities would reach the script as text Lua's `tonumber` cannot read, and die there in a
+		// comparison with nil; refused up front instead, with the error the local store throws
 		if (!Number.isFinite(value)) {
 			throw new RangeError(`The value for key "${key}" must be a finite number, got ${value}`);
 		}
 
-		// 2. The value goes to the script as text and is stored verbatim, so a `get` reads back exactly what `set`
-		//    stores; the expiry travels with it, so a key stored here expires like one `set` wrote
+		// Sent as text and stored verbatim, so a `get` reads back exactly what `set` stores; the expiry travels with it,
+		// so a key stored here expires like one `set` wrote
 		const namespaced = withNamespace(key, this.namespace);
 
 		const wasSet = this.ttl
 			? await this.redis.setMax(namespaced, String(value), this.ttl)
 			: await this.redis.setMax(namespaced, String(value));
 
-		// 3. The script answers `-1` for a current value that is no number, which the local store refuses with an
-		//    error rather than a `false` that would read as "not larger"
+		// The local store refuses a current value that is no number with an error, rather than a `false` that would
+		// read as "not larger"
 		if (wasSet === -1) {
 			throw new Error(`The value for key "${key}" is not a number.`);
 		}
 
-		// 4. Only `1` means stored, so anything else — including a `null` an older script build would answer with for
-		//    "not stored" — reads as `false`
+		// Anything but `1` — including a `null` an older script build would answer with for "not stored" — reads as
+		// `false`
 		return wasSet === 1;
 	}
 
@@ -468,9 +467,9 @@ export class KvDriverRedis implements KvDriver {
 	 * local store throws, with Redlock's quorum failure as `cause`.
 	 */
 	async acquireLock(key: string): Promise<Lock> {
-		// 1. Wait for the lock under the locks namespace; the timeout was floored to the integer Redlock wants. Redlock
-		//    reports a spent retry budget as a quorum failure that names neither the key nor the budget; it is
-		//    rethrown as the error the local store throws, so a caller handles both backends alike
+		// The timeout was floored to the integer Redlock wants. Redlock reports a spent retry budget as a quorum failure
+		// that names neither the key nor the budget; it is rethrown as the error the local store throws, so a caller
+		// handles both backends alike
 		let lock: RedlockLock;
 
 		try {
@@ -481,15 +480,15 @@ export class KvDriverRedis implements KvDriver {
 
 		let released = false;
 
-		// 2. Wrap the Redlock lock in the backend-agnostic handle shape. Redlock's `extend()` invalidates the lock
-		//    object it was called on and answers with a new one, so the handle follows that new object: extending
-		//    through the old one a second time would throw "already expired" while Redis still holds the lock. The
-		//    release runs without retries: a lock that is gone — expired while the holder overran its timeout — is a
-		//    failed vote Redlock would otherwise retry for the whole acquire budget before reporting it
+		// Redlock's `extend()` invalidates the lock object it was called on and answers with a new one, so the handle
+		// follows that new object: extending through the old one a second time would throw "already expired" while
+		// Redis still holds the lock. The release runs without retries: a lock that is gone — expired while the holder
+		// overran its timeout — is a failed vote Redlock would otherwise retry for the whole acquire budget before
+		// reporting it
 		return {
 			release: async () => {
-				// 1. Once only, like the local store's handle: a second release must not go to Redis for a lock this
-				//    holder already gave back and report it as gone
+				// Once only, like the local store's handle: a second release must not go to Redis for a lock this holder
+				// already gave back and report it as gone
 				if (released) {
 					return;
 				}
@@ -498,8 +497,7 @@ export class KvDriverRedis implements KvDriver {
 				await this.redlock.release(lock, { retryCount: 0 });
 			},
 			extend: async (duration: number) => {
-				// 1. Follow the lock Redlock answers with, since it invalidates the one it was called on; floored,
-				//    because Redlock wants an integer
+				// Redlock invalidates the lock it was called on, and wants an integer duration
 				lock = await lock.extend(Math.floor(duration));
 			},
 		};
@@ -516,21 +514,21 @@ export class KvDriverRedis implements KvDriver {
 	 * error `acquireLock` throws; whatever the callback throws.
 	 */
 	async usingLock<T>(key: string, callback: () => Promise<T>): Promise<T> {
-		// 1. Redlock's `using` also auto-extends the lock while the callback is still running. Its release uses the
-		//    acquire retry budget, so a lock gone at release time — expired after the callback blocked the event loop
-		//    past the timeout, or removed by hand — is reported only after about `lockTimeout` of retries. The
-		//    callback marks that it ran, which is what tells a quorum failure of the acquire from one of that release.
-		//    The callback's own error is caught inside the routine and kept aside: Redlock releases in a `finally`,
-		//    and a release that throws there would otherwise replace the callback's error with its own
+		// Redlock's `using` also auto-extends the lock while the callback is still running. Its release uses the acquire
+		// retry budget, so a lock gone at release time — expired after the callback blocked the event loop past the
+		// timeout, or removed by hand — is reported only after about `lockTimeout` of retries. The callback marks that
+		// it ran, which is what tells a quorum failure of the acquire from one of that release. The callback's own error
+		// is caught inside the routine and kept aside: Redlock releases in a `finally`, and a release that throws there
+		// would otherwise replace the callback's error with its own
 		let started = false;
 		let failure: { error: unknown } | undefined;
 
 		try {
 			const result = await this.redlock.using([withNamespace(key, this.lockNamespace)], this.lockTimeout, async () => {
-				// 1. Reached only once the lock was acquired, so a later quorum failure cannot be the acquire's
+				// Reached only once the lock was acquired, so a later quorum failure cannot be the acquire's
 				started = true;
 
-				// 2. Keep the callback's error instead of throwing it, so Redlock's release cannot overwrite it
+				// Kept rather than thrown, so Redlock's release cannot overwrite it
 				try {
 					return await callback();
 				} catch (error) {
@@ -540,21 +538,19 @@ export class KvDriverRedis implements KvDriver {
 				}
 			});
 
-			// 2. The release went through, but the callback failed: its error is what the caller gets
 			if (failure) {
 				throw failure.error;
 			}
 
 			return result;
 		} catch (error) {
-			// 3. The callback's error wins over a release that failed after it, since it is the root cause
+			// The callback's error wins over a release that failed after it, since it is the root cause
 			if (failure) {
 				throw failure.error;
 			}
 
-			// 4. A quorum failure before the callback ran is the acquire giving up on a busy lock: rethrown as the error
-			//    the local store throws. A release that found the lock gone after a successful callback passes through
-			//    as it is
+			// A quorum failure before the callback ran is the acquire giving up on a busy lock. A release that found the
+			// lock gone after a successful callback passes through as it is
 			throw started ? error : this.toLockError(key, error);
 		}
 	}
@@ -571,7 +567,7 @@ export class KvDriverRedis implements KvDriver {
 	 * @internal
 	 */
 	private toLockError(key: string, error: unknown): unknown {
-		// 1. Only a spent retry window is a busy lock; the Redlock error stays reachable as the cause, with its votes
+		// Only a spent retry window is a busy lock; the Redlock error stays reachable as the cause, with its votes
 		if (error instanceof ExecutionError) {
 			return new Error(`Lock "${key}" was not acquired within ${this.lockTimeout} ms`, { cause: error });
 		}
@@ -585,15 +581,15 @@ export class KvDriverRedis implements KvDriver {
 	 * @throws The reply error of the first `UNLINK` Redis refused; Error when the pipeline was aborted.
 	 */
 	async clear(): Promise<void> {
-		// 1. `SCAN` instead of `KEYS`, so a large keyspace does not block the Redis server. The namespace is escaped,
-		//    since `MATCH` reads `*`, `?`, `[`, `]` and `\` in it as pattern operators: unescaped, a namespace such as
-		//    `tenant[1]` would unlink another store's keys and leave its own in place
+		// `SCAN` instead of `KEYS`, so a large keyspace does not block the Redis server. The namespace is escaped, since
+		// `MATCH` reads `*`, `?`, `[`, `]` and `\` in it as pattern operators: unescaped, a namespace such as
+		// `tenant[1]` would unlink another store's keys and leave its own in place
 		const keysStream = this.redis.scanStream({
 			match: withNamespace('*', escapeGlob(this.namespace)),
 		});
 
-		// 2. Queue every batch into one pipeline and send it in a single round trip. A `SCAN` step may match nothing
-		//    and still answer with an empty batch; `UNLINK` without keys is an error, so such a batch is skipped
+		// One pipeline sends every batch in a single round trip. A `SCAN` step may match nothing and still answer with
+		// an empty batch, and `UNLINK` without keys is an error
 		const pipeline = this.redis.pipeline();
 
 		for await (const keys of keysStream as AsyncIterable<string[]>) {
@@ -602,14 +598,14 @@ export class KvDriverRedis implements KvDriver {
 			}
 		}
 
-		// 3. `exec()` rejects only when the connection fails; a command Redis refused — `READONLY` on a replica, `OOM`
-		//    under `noeviction`, `NOPERM` from an ACL — comes back as an error in its result tuple. Such a failure is
-		//    thrown, or `clear()` would report success while every key is still there. A `null` answer means the
-		//    pipeline was aborted and nothing ran
+		// `exec()` rejects only when the connection fails; a command Redis refused — `READONLY` on a replica, `OOM`
+		// under `noeviction`, `NOPERM` from an ACL — comes back as an error in its result tuple. Such a failure is
+		// thrown, or `clear()` would report success while every key is still there. A `null` answer means the pipeline
+		// was aborted and nothing ran
 		const results = await pipeline.exec();
 
 		if (results === null) {
-			throw new Error(`Clearing namespace "${this.namespace}" was aborted`);
+			throw new Error(`KvDriverRedis: clearing namespace "${this.namespace}" was aborted`);
 		}
 
 		const failed = results.find(([error]) => error);

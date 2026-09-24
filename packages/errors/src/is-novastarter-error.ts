@@ -34,13 +34,12 @@ export const isNovastarterError = <T = never, C extends string = string>(
 ): value is NovastarterError<
 	[T] extends [never] ? (C extends keyof ExtensionsMap ? ExtensionsMap[C] : unknown) : T
 > => {
-	// 1. Probe the value inside a try block: a hostile object such as a revoked Proxy throws on every structural
-	//    probe (`Array.isArray`, `in`, property reads), and a guard applied to caught `unknown` values must be
-	//    total — anything that throws while being probed is simply not a match
+	// A hostile object such as a revoked Proxy throws on every structural probe (`Array.isArray`, `in`, property
+	// reads), and a guard applied to caught `unknown` values must be total — anything that throws while being probed is
+	// simply not a match
 	try {
-		// 2. Only a non-array object carrying the shared name qualifies; arrays are objects too, hence the extra
-		//    check. The local is named `matches` rather than after the exported function, so the two never shadow
-		//    each other
+		// Arrays are objects too, hence the extra check. The local is named `matches` rather than after the exported
+		// function, so the two never shadow each other
 		const matches =
 			typeof value === 'object' &&
 			value !== null &&
@@ -48,15 +47,14 @@ export const isNovastarterError = <T = never, C extends string = string>(
 			'name' in value &&
 			value.name === 'NovastarterError';
 
-		// 3. When a code is requested, compare it upper-cased, the way `createError` stores it
+		// Upper-cased, the way `createError` stores the code
 		if (code) {
 			return matches && 'code' in value && value.code === code.toUpperCase();
 		}
 
-		// 4. Without a code any Novastarter error matches
 		return matches;
 	} catch {
-		// 5. A value that fights the probe cannot be a Novastarter error, and the guard must not throw
+		// A value that fights the probe cannot be a Novastarter error, and the guard must not throw
 		return false;
 	}
 };

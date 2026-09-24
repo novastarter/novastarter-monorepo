@@ -17,12 +17,12 @@ import type { GithubProfile } from './fetch-profile.js';
  * ```
  */
 export const toIdentity = (profile: GithubProfile): AuthIdentity => {
-	// 1. Empty strings are as good as absent: a name of `""` falls back to the login, an empty avatar is left out
+	// Empty strings are as good as absent: a name of `""` falls back to the login, an empty avatar is left out
 	const { user, email } = profile;
 	const name = typeof user.name === 'string' && user.name ? user.name : user.login;
 	const avatarUrl = typeof user.avatar_url === 'string' && user.avatar_url ? user.avatar_url : undefined;
 
-	// 2. Only fields with a value are set, so the identity carries no `undefined` keys
+	// Only fields with a value are set, so the identity carries no `undefined` keys
 	return {
 		provider: PROVIDER,
 		subject: String(user.id),

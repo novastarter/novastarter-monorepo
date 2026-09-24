@@ -10,17 +10,17 @@ import { REDACTED_TEXT } from '@novastarter/constants';
  */
 export function redactQuery(originalPath: string): string {
 	try {
-		// 1. A base is required for relative paths; only pathname and search are read back, so its value is irrelevant
+		// A base is required for relative paths; only pathname and search are read back, so its value is irrelevant.
 		const url = new URL(originalPath, 'http://example.com/');
 
-		// 2. Only the token is sensitive; every other parameter stays useful for debugging
+		// Only the token is sensitive; every other parameter stays useful for debugging.
 		if (url.searchParams.has('access_token')) {
 			url.searchParams.set('access_token', REDACTED_TEXT);
 		}
 
 		return url.pathname + url.search;
 	} catch {
-		// 3. An unparseable path is logged as is rather than dropping the log line
+		// An unparseable path is logged as is rather than dropping the log line.
 		return originalPath;
 	}
 }

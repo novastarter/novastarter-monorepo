@@ -1,3 +1,4 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import { type CallOptions, type CallResponse, type HttpApi, request } from '@novastarter/http';
 import {
 	bareMailAddress,
@@ -101,24 +102,26 @@ export class MailDriverMailtrap implements MailDriver {
 	 * Create a driver on a client of its own for the given token.
 	 *
 	 * @param config - Token, sandbox inbox and bulk switch.
-	 * @throws Error without a token, with a sandbox but no inbox, or with sandbox and bulk together — the SDK
+	 * @throws InvalidConfigError without a token, with a sandbox but no inbox, or with sandbox and bulk together — the SDK
 	 * would refuse the first send for either.
 	 */
 	constructor(config: MailDriverMailtrapConfig) {
-		// 1. Configuration errors are reported by the option's name, before the SDK gets to refuse the first send
+		// Configuration errors are reported by the option's name before the SDK gets to refuse the first send
 		if (!config.token) {
-			throw new Error('The mailtrap mail driver needs a "token"');
+			throw new InvalidConfigError({ reason: 'The mailtrap mail driver needs a "token"' });
 		}
 
 		if (config.sandbox && config.testInboxId === undefined) {
-			throw new Error('The mailtrap mail driver needs a "testInboxId" in sandbox mode');
+			throw new InvalidConfigError({ reason: 'The mailtrap mail driver needs a "testInboxId" in sandbox mode' });
 		}
 
 		if (config.sandbox && config.bulk) {
-			throw new Error('The mailtrap mail driver cannot be in sandbox and bulk mode at once');
+			throw new InvalidConfigError({
+				reason: 'The mailtrap mail driver cannot be in sandbox and bulk mode at once; turn one off',
+			});
 		}
 
-		// 2. The client picks its host from the flags: sandbox, bulk, or the transactional sending API
+		// The client picks its host from the flags: sandbox, bulk, or the transactional sending API
 		this.client = new MailtrapClient({
 			token: config.token,
 			sandbox: Boolean(config.sandbox),
@@ -126,7 +129,7 @@ export class MailDriverMailtrap implements MailDriver {
 			...(config.testInboxId !== undefined ? { testInboxId: config.testInboxId } : {}),
 		});
 
-		// 3. The token also goes to the API of `call()`, the one request made without the SDK
+		// `call()` is the one request made without the SDK, so its API gets the token too
 		this.api = {
 			provider: 'mailtrap',
 			baseUrl: MAILTRAP_API_URL,
@@ -145,8 +148,8 @@ export class MailDriverMailtrap implements MailDriver {
 	 * errors) when the API refuses; the mapper's own error unchanged when the message cannot be built.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
-		// 1. The message is translated before the request, so a failure of the mapper (no sender, unreadable
-		//    attachment) surfaces the kit's own error instead of a re-wrapped API error
+		// Translated before the request, so a mapper failure (no sender, unreadable attachment) surfaces the kit's own
+		// error instead of a re-wrapped API error
 		const mail = await toMailtrapMail(message);
 
 		let response: Awaited<ReturnType<MailtrapClient['send']>>;
@@ -154,12 +157,12 @@ export class MailDriverMailtrap implements MailDriver {
 		try {
 			response = await this.client.send(mail);
 		} catch (error) {
-			// 2. The SDK throws its own `MailtrapError` on refusal, its messages listed; wrapped so the log names the
-			//    provider, the SDK's error as the cause
+			// The SDK throws its own `MailtrapError` on refusal; it is wrapped so the log names the provider, with the SDK's
+			// error as the cause
 			throw describeError(error);
 		}
 
-		// 3. Mailtrap takes a message whole or refuses it, so every recipient counts as accepted
+		// Mailtrap takes a message whole or refuses it, so every recipient counts as accepted
 		return {
 			messageId: response.message_ids[0],
 			accepted: toMailAddressList(message.to).map(bareMailAddress),
@@ -176,16 +179,16 @@ export class MailDriverMailtrap implements MailDriver {
 	 * @throws ProviderCallError when Mailtrap refuses the token — its status and answer in `extensions`.
 	 * @throws HitRateLimitError when Mailtrap answers 429.
 	 * @throws TimeoutError when the request outlives its timeout.
-	 * @throws Error when the token has no account.
+	 * @throws InvalidConfigError when the token has no account.
 	 */
 	async verify(): Promise<void> {
-		// 1. Listing the accounts is the cheapest call that needs the token: a bad one is refused here, without a send;
-		//    `request()` already names Mailtrap in its errors, so they go up unchanged
+		// Listing the accounts is the cheapest call that needs the token, so a bad one is refused without a send;
+		// `request()` already names Mailtrap in its errors, so they go up unchanged
 		const { data: accounts } = await request<unknown[]>(this.api, 'GET /api/accounts');
 
-		// 2. A token of no account can send nothing; a non-array answer is treated the same, since no account is visible
+		// A token of no account can send nothing; a non-array answer is treated the same, since no account is visible
 		if (!Array.isArray(accounts) || accounts.length === 0) {
-			throw new Error('Mailtrap token has access to no account');
+			throw new InvalidConfigError({ reason: 'The mailtrap mail driver needs a "token" with access to an account' });
 		}
 	}
 
@@ -219,8 +222,6 @@ export class MailDriverMailtrap implements MailDriver {
 		params?: Record<string, unknown>,
 		options?: CallOptions,
 	): Promise<CallResponse<T>> {
-		// 1. `request()` does the whole of it — placeholders, the host check before the token is sent, the deadline,
-		//    the kit's errors with Mailtrap's `errors` and without the token — over the API the constructor described
 		return request<T>(this.api, method, params, options);
 	}
 }
