@@ -130,8 +130,8 @@ logger, the process one unless given), `queryLogging` (every query with its para
 location's name, which `registerLocation()` fills in, so every log line of the driver carries `database: "<name>"` and
 `DatabaseUnavailableError` says which location is down.
 
-A driver refuses a missing option at construction with a plain `Error` naming it:
-`The postgres database driver needs a "connection"`.
+A driver refuses a missing option at construction with an `InvalidConfigError` (`INVALID_CONFIG`) naming it:
+`Invalid config. The postgres database driver needs a "connection".`
 
 ## Writing a driver
 

@@ -1,4 +1,4 @@
-import { InvalidConfigError } from '@novastarter/errors';
+import { InvalidPayloadError } from '@novastarter/errors';
 import type { SmsMessage } from '@novastarter/sms';
 import { type SMSParams, TypeEnum } from '@vonage/sms';
 import { GSM_ALPHABET } from './constants.js';
@@ -27,7 +27,7 @@ export const needsUnicode = (text: string): boolean => {
  *
  * @param message - Ours, with the recipient already in E.164 (`sendSms()` normalises it).
  * @returns Vonage's.
- * @throws InvalidConfigError when the message has no sender — Vonage has no account-wide default to fall back on.
+ * @throws InvalidPayloadError when the message has no sender — Vonage has no account-wide default to fall back on.
  * @example
  * ```ts
  * const answer = await client.send(toVonageMessage(message));
@@ -36,7 +36,7 @@ export const needsUnicode = (text: string): boolean => {
 export const toVonageMessage = (message: SmsMessage): SMSParams => {
 	// Vonage takes the sender per request and has no pool to pick one from, so a message without one cannot be sent.
 	if (!message.from) {
-		throw new InvalidConfigError({
+		throw new InvalidPayloadError({
 			reason: 'The vonage sms driver needs a "from" on the message or in the sms routes',
 		});
 	}

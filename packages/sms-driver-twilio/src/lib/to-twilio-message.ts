@@ -1,4 +1,4 @@
-import { InvalidConfigError } from '@novastarter/errors';
+import { InvalidPayloadError } from '@novastarter/errors';
 import type { SmsMessage } from '@novastarter/sms';
 import type { MessageListInstanceCreateOptions } from 'twilio/lib/rest/api/v2010/account/message.js';
 
@@ -22,7 +22,7 @@ export interface TwilioMessageDefaults {
  * @param message - Ours, with the recipient already in E.164 (`sendSms()` normalises it).
  * @param defaults - The location's messaging service and status callback.
  * @returns Twilio's.
- * @throws InvalidConfigError when neither the message nor the location names a sender — Twilio would refuse the request.
+ * @throws InvalidPayloadError when neither the message nor the location names a sender — Twilio would refuse the request.
  * @example
  * ```ts
  * await client.messages.create(toTwilioMessage(message, { messagingServiceSid: 'MG…' }));
@@ -44,7 +44,7 @@ export const toTwilioMessage = (
 		const messagingServiceSid = defaults.messagingServiceSid;
 
 		if (!messagingServiceSid) {
-			throw new InvalidConfigError({
+			throw new InvalidPayloadError({
 				reason: 'The twilio sms driver needs a "from" on the message, in the sms routes, or a "messagingServiceSid"',
 			});
 		}

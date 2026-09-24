@@ -2,7 +2,7 @@
  * Tests of `to-twilio-message`: how a message and the location's defaults become the payload of Twilio's
  * `messages.create()`.
  */
-import { InvalidConfigError } from '@novastarter/errors';
+import { InvalidPayloadError } from '@novastarter/errors';
 import { describe, expect, test } from 'vitest';
 import { toTwilioMessage } from './to-twilio-message.js';
 
@@ -42,7 +42,7 @@ describe('toTwilioMessage', () => {
 
 	test('Refuses a message no sender can be found for', () => {
 		// Twilio answers 21603 for a request without a sender, so the error names the options to configure instead.
-		expect(() => toTwilioMessage({ to: '+14155550123', text: 'Hi' })).toThrow(InvalidConfigError);
+		expect(() => toTwilioMessage({ to: '+14155550123', text: 'Hi' })).toThrow(InvalidPayloadError);
 		expect(() => toTwilioMessage({ to: '+14155550123', text: 'Hi' })).toThrow(/"from" on the message/);
 		expect(() => toTwilioMessage({ to: '+14155550123', text: 'Hi' })).toThrow(/"messagingServiceSid"/);
 	});

@@ -113,9 +113,9 @@ Mandatory, no exceptions. Applies to every file: `packages/`, `apps/`, tests, sc
 
 A reader must understand what the code does and why without opening neighbouring files.
 
-**JSDoc** above every class, method and member (private too), constructor, module-level function and function-valued `const`, and
-every exported type or `const`. ESLint (`jsdoc/require-jsdoc`) checks presence; callbacks passed as arguments and
-helpers declared inside a function body need none.
+**JSDoc** above every class, method and member (private too), constructor, module-level function and function-valued
+`const`, and every exported type or `const`. ESLint (`jsdoc/require-jsdoc`) checks presence; callbacks passed as
+arguments and helpers declared inside a function body need none.
 
 - The first line is one sentence: what the symbol does. Non-obvious behaviour or constraints go in a paragraph after it.
 - Tags: `@param` for every argument, `@returns`, `@throws`, `@typeParam` for generics, `@defaultValue` for default
@@ -184,8 +184,7 @@ Mandatory, no exceptions.
   catalog under `catalogs:` and is declared as `"dependency": "catalog:<name>"`. Still no versions inline.
 - Internal monorepo packages are linked as `"@novastarter/name": "workspace:*"`.
 - Native dependencies (with a postinstall build) are allowed via `allowBuilds` in `pnpm-workspace.yaml`.
-- A `peerDependencies` entry that uses a version range today may keep it.
-- `pnpm check:catalog` checks all of this; lefthook runs it when a `package.json` is staged.
+- `pnpm check:catalog` checks all of this, peer dependencies included; lefthook runs it when a `package.json` is staged.
 
 ## Rule: never create a new package on your own
 

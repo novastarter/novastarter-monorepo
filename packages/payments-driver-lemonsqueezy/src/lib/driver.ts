@@ -92,7 +92,7 @@ const MAX_SUBSCRIPTION_PAGES = 10;
  * Lemon Squeezy is a merchant of record that sells variants of products: the catalog's `providerIds.lemonsqueezy`
  * are variant ids. Trials are a property of the variant, a checkout has no cancel page (its own back link leads to
  * the store), the portal returns to the store, and a subscription is cancelled at the end of its paid period only —
- * `cancelSubscription` with `immediately` is refused with an Error rather than downgraded to a period-end cancellation.
+ * `cancelSubscription` with `immediately` is refused with an `InvalidPayloadError` rather than downgraded to a period-end cancellation.
  *
  * @example
  * ```ts

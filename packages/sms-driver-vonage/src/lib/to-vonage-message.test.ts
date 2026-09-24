@@ -2,7 +2,7 @@
  * Tests of `to-vonage-message`: how a message becomes the parameters of Vonage's `sms.send()`, and when the text has
  * to go out as UCS-2.
  */
-import { InvalidConfigError } from '@novastarter/errors';
+import { InvalidPayloadError } from '@novastarter/errors';
 import { describe, expect, test } from 'vitest';
 import { needsUnicode, toVonageMessage } from './to-vonage-message.js';
 
@@ -54,7 +54,7 @@ describe('toVonageMessage', () => {
 
 	test('Refuses a message without a sender', () => {
 		// Vonage takes the sender per request and has no pool to fall back on.
-		expect(() => toVonageMessage({ to: '+14155550123', text: 'Hi' })).toThrow(InvalidConfigError);
+		expect(() => toVonageMessage({ to: '+14155550123', text: 'Hi' })).toThrow(InvalidPayloadError);
 		expect(() => toVonageMessage({ to: '+14155550123', text: 'Hi' })).toThrow(/"from"/);
 	});
 });
