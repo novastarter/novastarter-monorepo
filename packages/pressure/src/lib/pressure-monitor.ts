@@ -141,7 +141,7 @@ export class PressureMonitor {
 	 * @param options - Thresholds and sampling settings; see {@link PressureMonitorOptions} for the defaults.
 	 */
 	constructor(options: PressureMonitorOptions = {}) {
-		// 1. Fill in the defaults so every later comparison can read the options without null checks
+		// Defaults filled in, so every later comparison can read the options without null checks
 		this.options = defaults(options, {
 			sampleInterval: 250,
 			resolution: 10,
@@ -151,19 +151,19 @@ export class PressureMonitor {
 			maxEventLoopUtilization: false,
 		});
 
-		// 2. Delay is measured by Node itself between samples; the histogram must be enabled explicitly to record
+		// Node measures the delay between samples itself, but the histogram records it only once enabled
 		this.histogram = monitorEventLoopDelay({ resolution: this.options.resolution });
 		this.histogram.enable();
 
-		// 3. Node reports utilization accumulated since the loop started; taking a base reading now lets the first
-		//    sample cover only its own interval instead of the whole start-up
+		// Node reports utilization accumulated since the loop started; taking a base reading now lets the first sample
+		// cover only its own interval instead of the whole start-up
 		this.lastEventLoopUtilization = performance.eventLoopUtilization();
 
-		// 4. Bind once, so the same function reference can be handed to the timer and later refreshed
+		// Bound once, so the same function reference can be handed to the timer and later refreshed
 		this.updateUsage = this.updateUsage.bind(this);
 		this.timeout = setTimeout(this.updateUsage, this.options.sampleInterval);
 
-		// 5. A monitor must never keep an otherwise finished process alive
+		// A monitor must never keep an otherwise finished process alive
 		this.timeout.unref();
 	}
 
@@ -175,27 +175,23 @@ export class PressureMonitor {
 	 * @returns `true` as soon as one limit is crossed, `false` when every enabled metric is within bounds.
 	 */
 	get overloaded(): boolean {
-		// 1. Heap check; a `false` threshold short-circuits, so an unset limit never triggers an overload
+		// A `false` threshold short-circuits, so an unset limit never triggers an overload
 		if (this.options.maxMemoryHeapUsed && this.memoryHeapUsed > this.options.maxMemoryHeapUsed) {
 			return true;
 		}
 
-		// 2. RSS check, same skip rule
 		if (this.options.maxMemoryRss && this.memoryRss > this.options.maxMemoryRss) {
 			return true;
 		}
 
-		// 3. Event loop delay check, same skip rule
 		if (this.options.maxEventLoopDelay && this.eventLoopDelay > this.options.maxEventLoopDelay) {
 			return true;
 		}
 
-		// 4. Event loop utilization check, same skip rule
 		if (this.options.maxEventLoopUtilization && this.eventLoopUtilization > this.options.maxEventLoopUtilization) {
 			return true;
 		}
 
-		// 5. Nothing crossed its limit
 		return false;
 	}
 
@@ -206,15 +202,13 @@ export class PressureMonitor {
 	 * timer keep doing work for as long as the process runs; closing is what stops them. Closing twice is harmless.
 	 */
 	close(): void {
-		// 1. A second close has nothing left to release
 		if (this.closed) {
 			return;
 		}
 
-		// 2. Flag first, so a sample that is somehow still invoked afterwards does not re-arm the timer
+		// Flagged first, so a sample that is somehow still invoked afterwards does not re-arm the timer
 		this.closed = true;
 
-		// 3. Drop the pending sample and stop the native sampler behind the histogram
 		clearTimeout(this.timeout);
 		this.histogram.disable();
 	}
@@ -225,16 +219,16 @@ export class PressureMonitor {
 	 * @internal
 	 */
 	private updateUsage(): void {
-		// 1. A closed monitor has a disabled histogram and no timer to re-arm; the stale sample stays as it is
+		// A closed monitor has a disabled histogram and no timer to re-arm; the stale sample stays as it is
 		if (this.closed) {
 			return;
 		}
 
-		// 2. Sample memory and event loop metrics together, so `overloaded` compares values from the same instant
+		// Memory and the event loop are sampled together, so `overloaded` compares values from the same instant
 		this.updateMemoryUsage();
 		this.updateEventLoopUsage();
 
-		// 3. Refreshing the existing timer avoids allocating a new one per sample and keeps the `unref` in place
+		// Refreshing the existing timer avoids allocating a new one per sample and keeps the `unref` in place
 		this.timeout.refresh();
 	}
 
@@ -244,7 +238,7 @@ export class PressureMonitor {
 	 * @internal
 	 */
 	private updateMemoryUsage(): void {
-		// 1. A single `memoryUsage()` call reports both values; only heap and RSS are compared against thresholds
+		// A single `memoryUsage()` call reports both values; only heap and RSS are compared against thresholds
 		const { heapUsed, rss } = memoryUsage();
 		this.memoryHeapUsed = heapUsed;
 		this.memoryRss = rss;
@@ -256,16 +250,16 @@ export class PressureMonitor {
 	 * @internal
 	 */
 	private updateEventLoopUsage(): void {
-		// 1. A bare `eventLoopUtilization()` is cumulative since the loop started and would flatten every spike into a
-		//    lifetime average; passing the previous reading makes Node return the ratio over the last interval only
+		// A bare `eventLoopUtilization()` is cumulative since the loop started and would flatten every spike into a
+		// lifetime average; passing the previous reading makes Node return the ratio over the last interval only
 		const current = performance.eventLoopUtilization();
 		this.eventLoopUtilization = performance.eventLoopUtilization(current, this.lastEventLoopUtilization).utilization;
 		this.lastEventLoopUtilization = current;
 
-		// 2. The histogram reports nanoseconds; thresholds are in milliseconds, hence the 1e6 division
+		// The histogram reports nanoseconds and thresholds are in milliseconds, hence the 1e6 division
 		this.eventLoopDelay = Math.round(this.histogram.mean / 1e6);
 
-		// 3. Reset so the next sample only covers the next interval rather than the whole lifetime
+		// Reset so the next sample only covers the next interval rather than the whole lifetime
 		this.histogram.reset();
 	}
 }

@@ -25,7 +25,7 @@ export const toDrizzleOptions = <Schema extends Record<string, unknown>>(
 ): DrizzleOptions<Schema> => {
 	const options: DrizzleOptions<Schema> = {};
 
-	// 1. Copy the two pass-through options only when given, so Drizzle sees no key it would take as a value
+	// Drizzle would take a present key as a value, so the pass-through options are copied only when given
 	if (config.schema !== undefined) {
 		options.schema = config.schema;
 	}
@@ -34,8 +34,7 @@ export const toDrizzleOptions = <Schema extends Record<string, unknown>>(
 		options.casing = config.casing;
 	}
 
-	// 2. The query logger is opt-in: on by default it would cost a logger call per query in every deployment. `true`
-	//    means SQL text and parameter count; an object carries what it asks for — the values only as `{ params: true }`
+	// The query logger is opt-in: on by default it would cost a logger call per query in every deployment
 	if (config.queryLogging) {
 		options.logger = createQueryLogger(
 			logger,

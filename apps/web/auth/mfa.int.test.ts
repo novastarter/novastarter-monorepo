@@ -51,7 +51,7 @@ const decodeBase32 = (text: string): Buffer => {
 	let bits = 0;
 	let value = 0;
 
-	// 1. Five bits per character in, a byte out whenever eight have gathered; the rest is padding
+	// Five bits per character in, a byte out whenever eight have gathered; the rest is padding
 	for (const char of text.toUpperCase()) {
 		value = (value << 5) | alphabet.indexOf(char);
 		bits += 5;
@@ -75,14 +75,14 @@ const decodeBase32 = (text: string): Buffer => {
  * @returns The code.
  */
 const totp = (secret: string): string => {
-	// 1. The time step as an 8-byte big-endian counter, HMAC-SHA1'd with the secret
+	// The time step as an 8-byte big-endian counter, HMAC-SHA1'd with the secret
 	const counter = Buffer.alloc(8);
 
 	counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / PERIOD)));
 
 	const digest = createHmac('sha1', decodeBase32(secret)).update(counter).digest();
 
-	// 2. Dynamic truncation to the code's digits
+	// Dynamic truncation to the code's digits
 	const offset = (digest[digest.length - 1] ?? 0) & 0x0f;
 
 	return ((digest.readUInt32BE(offset) & 0x7fffffff) % 10 ** TOTP_DIGITS).toString().padStart(TOTP_DIGITS, '0');
@@ -95,7 +95,7 @@ const totp = (secret: string): string => {
  * @returns The secret and the recovery codes.
  */
 const enrol = async (userId: string): Promise<{ secret: string; codes: string[] }> => {
-	// 1. The code of the current step confirms; the clock then moves a period on, so the next code is a new one
+	// The code of the current step confirms; the clock then moves a period on, so the next code is a new one
 	const { secret } = await startTotpEnrolment(userId, 'ada@example.com');
 	const codes = await confirmTotpEnrolment(userId, totp(secret));
 
@@ -110,7 +110,7 @@ describe('auth MFA on PGlite', { timeout: 30_000 }, () => {
 	afterAll(closeTestDatabase);
 
 	beforeEach(() => {
-		// 1. Only `Date` is faked: PGlite keeps its real timers
+		// Only `Date` is faked: PGlite keeps its real timers
 		vi.useFakeTimers({ toFake: ['Date'], now: NOW });
 	});
 
@@ -122,7 +122,7 @@ describe('auth MFA on PGlite', { timeout: 30_000 }, () => {
 	test('Starts an enrolment stored encrypted and unconfirmed, and replaces a pending one', async () => {
 		const first = await startTotpEnrolment('1', 'ada@example.com');
 
-		// 1. The URI names the issuer and the account; the table holds the secret encrypted, from step 0
+		// The URI names the issuer and the account; the table holds the secret encrypted, from step 0
 		expect(first.uri).toMatch(/^otpauth:\/\/totp\/Test%3Aada%40example\.com\?/);
 
 		const [row] = await useDb().select().from(authMfa);
@@ -131,7 +131,7 @@ describe('auth MFA on PGlite', { timeout: 30_000 }, () => {
 		expect(row?.secret).not.toContain(first.secret);
 		expect(await hasMfa('1')).toBe(false);
 
-		// 2. A second start replaces the pending secret
+		// A second start replaces the pending secret
 		const second = await startTotpEnrolment('1', 'ada@example.com');
 
 		await expect(confirmTotpEnrolment('1', totp(first.secret))).rejects.toMatchObject(WRONG);
@@ -141,7 +141,7 @@ describe('auth MFA on PGlite', { timeout: 30_000 }, () => {
 	test('Confirms with a code from the app and hands out recovery codes', async () => {
 		const { codes } = await enrol('1');
 
-		// 1. TOTP is on, with ten stored codes
+		// TOTP is on, with ten stored codes
 		expect(await hasMfa('1')).toBe(true);
 		expect(codes).toHaveLength(10);
 		expect(await countRecoveryCodes('1')).toBe(10);
@@ -150,7 +150,7 @@ describe('auth MFA on PGlite', { timeout: 30_000 }, () => {
 	test('Refuses to confirm without a pending enrolment, or twice', async () => {
 		await expect(confirmTotpEnrolment('1', '123456')).rejects.toMatchObject(REFUSED);
 
-		// 1. Confirmed once, there is nothing pending any more
+		// Confirmed once, there is nothing pending any more
 		const { secret } = await enrol('1');
 
 		await expect(confirmTotpEnrolment('1', totp(secret))).rejects.toMatchObject(REFUSED);
@@ -159,7 +159,7 @@ describe('auth MFA on PGlite', { timeout: 30_000 }, () => {
 	test('Refuses a new enrolment while TOTP is confirmed', async () => {
 		await enrol('1');
 
-		// 1. A stolen session must not swap the second factor
+		// A stolen session must not swap the second factor
 		await expect(startTotpEnrolment('1', 'thief@example.com')).rejects.toMatchObject(REFUSED);
 		expect(await hasMfa('1')).toBe(true);
 	});
@@ -168,11 +168,11 @@ describe('auth MFA on PGlite', { timeout: 30_000 }, () => {
 		const { secret } = await enrol('1');
 		const code = totp(secret);
 
-		// 1. Accepted once; the same code again is a replay
+		// Accepted once; the same code again is a replay
 		expect(await verifySecondFactor('1', code)).toBe('totp');
 		await expect(verifySecondFactor('1', code)).rejects.toMatchObject(WRONG);
 
-		// 2. The confirmation's code, a step older, is refused as well
+		// The confirmation's code, a step older, is refused as well
 		vi.setSystemTime(Date.now() - PERIOD);
 		await expect(verifySecondFactor('1', totp(secret))).rejects.toMatchObject(WRONG);
 	});
@@ -181,7 +181,7 @@ describe('auth MFA on PGlite', { timeout: 30_000 }, () => {
 		const { secret } = await enrol('1');
 		const code = totp(secret);
 
-		// 1. The conditional step update hands the step to one request only
+		// The conditional step update hands the step to one request only
 		const outcomes = await Promise.allSettled([verifySecondFactor('1', code), verifySecondFactor('1', code)]);
 
 		expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
@@ -195,11 +195,11 @@ describe('auth MFA on PGlite', { timeout: 30_000 }, () => {
 			throw new Error('the enrolment must hand out codes');
 		}
 
-		// 1. Typed upper case without the dash, still the same code
+		// Typed upper case without the dash, still the same code
 		expect(await verifySecondFactor('1', code.replace('-', '').toUpperCase())).toBe('recovery');
 		expect(await countRecoveryCodes('1')).toBe(9);
 
-		// 2. Spent, it is gone
+		// Spent, it is gone
 		await expect(verifySecondFactor('1', code)).rejects.toMatchObject(WRONG);
 	});
 
@@ -207,7 +207,7 @@ describe('auth MFA on PGlite', { timeout: 30_000 }, () => {
 		const { codes } = await enrol('1');
 		const code = codes[0] ?? '';
 
-		// 1. The atomic delete hands the code to one request only
+		// The atomic delete hands the code to one request only
 		const outcomes = await Promise.allSettled([verifySecondFactor('1', code), verifySecondFactor('1', code)]);
 
 		expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
@@ -217,10 +217,10 @@ describe('auth MFA on PGlite', { timeout: 30_000 }, () => {
 	test('Refuses a second factor without a confirmed enrolment, and a recovery code of another user', async () => {
 		const { secret } = await startTotpEnrolment('1', 'ada@example.com');
 
-		// 1. A pending enrolment is no second factor
+		// A pending enrolment is no second factor
 		await expect(verifySecondFactor('1', totp(secret))).rejects.toMatchObject(WRONG);
 
-		// 2. A code belongs to its user alone
+		// A code belongs to its user alone
 		await confirmTotpEnrolment('1', totp(secret));
 
 		const other = await enrol('2');
@@ -231,7 +231,7 @@ describe('auth MFA on PGlite', { timeout: 30_000 }, () => {
 	test('Regenerates recovery codes, voiding the old set', async () => {
 		await expect(regenerateRecoveryCodes('1')).rejects.toMatchObject(REFUSED);
 
-		// 1. The new set replaces the old one whole
+		// The new set replaces the old one whole
 		const { codes } = await enrol('1');
 		const fresh = await regenerateRecoveryCodes('1');
 
@@ -246,12 +246,12 @@ describe('auth MFA on PGlite', { timeout: 30_000 }, () => {
 		await enrol('2');
 		await disableMfa('1');
 
-		// 1. Nothing of the user is left; another user keeps theirs
+		// Nothing of the user is left; another user keeps theirs
 		expect(await hasMfa('1')).toBe(false);
 		expect(await countRecoveryCodes('1')).toBe(0);
 		expect(await useDb().select().from(authRecoveryCodes).where(eq(authRecoveryCodes.userId, '2'))).toHaveLength(10);
 
-		// 2. A new enrolment is allowed again
+		// A new enrolment is allowed again
 		await expect(startTotpEnrolment('1', 'ada@example.com')).resolves.toHaveProperty('secret');
 	});
 });

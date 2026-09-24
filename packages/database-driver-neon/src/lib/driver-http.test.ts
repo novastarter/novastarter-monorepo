@@ -41,22 +41,22 @@ let sample: {
 const mockClient = (
 	rows: { created_at: string }[] = [],
 ): { query: ReturnType<typeof vi.fn>; transaction: ReturnType<typeof vi.fn> } => {
-	// 1. Every statement is a thenable tagged with its text, like a lazy `NeonQueryPromise`
+	// Every statement is a thenable tagged with its text, like a lazy `NeonQueryPromise`
 	const query = vi.fn((text: string, params?: unknown[]) =>
 		Object.assign(Promise.resolve(text.startsWith('select') ? rows : []), { text, params }),
 	);
 
-	// 2. The transaction resolves by default; a test makes one reject to play a failing migration
+	// The transaction resolves by default; a test makes one reject to play a failing migration
 	const transaction = vi.fn().mockResolvedValue([]);
 
-	// 3. Attach both to the shared client, where the driver reaches them through `db.$client`
+	// Attach both to the shared client, where the driver reaches them through `db.$client`
 	Object.assign(sample.client, { query, transaction });
 
 	return { query, transaction };
 };
 
 beforeEach(() => {
-	// 1. Fresh values per test; the client is a function, as `neon()` answers with one
+	// Fresh values per test; the client is a function, as `neon()` answers with one
 	sample = {
 		url: `postgresql://${randUserName()}:${randPassword()}@ep-${randWord()}.${randDomainName()}/neondb?sslmode=require`,
 		folder: randDirectoryPath(),
@@ -68,28 +68,28 @@ beforeEach(() => {
 
 	sample.db.$client = sample.client;
 
-	// 2. `neon` answers the bare function and `drizzle` a bare object: only `execute` is called
+	// `neon` answers the bare function and `drizzle` a bare object: only `execute` is called
 	vi.mocked(neon).mockReturnValue(sample.client as never);
 	vi.mocked(drizzle).mockReturnValue(sample.db as never);
 	vi.mocked(useLogger).mockReturnValue(sample.processLogger as never);
 });
 
 afterEach(() => {
-	// 1. Reset call history and implementations, so a `mockReturnValue` set in one test cannot leak into the next
+	// Reset call history and implementations, so a `mockReturnValue` set in one test cannot leak into the next
 	vi.resetAllMocks();
 });
 
 describe('#constructor', () => {
 	test('Throws when the connection is missing', () => {
 		expect(() => new DatabaseDriverNeonHttp({ connection: '' })).toThrowErrorMatchingInlineSnapshot(
-			`[Error: The neon-http database driver needs a "connection"]`,
+			`[NovastarterError: Invalid config. The neon-http database driver needs a "connection".]`,
 		);
 	});
 
 	test('Builds a query function from a connection string', () => {
 		const driver = new DatabaseDriverNeonHttp({ connection: sample.url, logger: sample.logger as never });
 
-		// 1. `neon()` gets the string alone: an `options: undefined` next to it would be an explicit value
+		// `neon()` gets the string alone: an `options: undefined` next to it would be an explicit value
 		expect(neon).toHaveBeenCalledExactlyOnceWith(sample.url);
 		expect(drizzle).toHaveBeenCalledExactlyOnceWith(sample.client, {});
 		expect(driver.db).toBe(sample.db);
@@ -104,7 +104,7 @@ describe('#constructor', () => {
 	});
 
 	test('Uses a given query function as is', () => {
-		// 1. A function built before the driver, with whatever options its owner chose: `neon()` is not called
+		// A function built before the driver, with whatever options its owner chose: `neon()` is not called
 		const client = vi.fn() as unknown as NeonHttpClient;
 
 		new DatabaseDriverNeonHttp({ connection: client, logger: sample.logger as never });
@@ -123,19 +123,17 @@ describe('#constructor', () => {
 			logger: sample.logger as never,
 		});
 
-		// 1. Drizzle gets the function and only the options that carry a value
 		expect(drizzle).toHaveBeenCalledExactlyOnceWith(sample.client, { schema, casing: 'snake_case' });
 	});
 
 	test('Hands Drizzle a query logger on the process logger only when asked for', () => {
 		new DatabaseDriverNeonHttp({ connection: sample.url });
 
-		// 1. Off by default: no logger key, so Drizzle makes no logger call per query
+		// Off by default: no logger key, so Drizzle makes no logger call per query
 		expect(vi.mocked(drizzle).mock.calls[0]![1]).toStrictEqual({});
 
 		new DatabaseDriverNeonHttp({ connection: sample.url, queryLogging: true });
 
-		// 2. On, without a logger of its own: the query logger reports to the process logger
 		const options = vi.mocked(drizzle).mock.calls[1]![1]!;
 
 		(options.logger as { logQuery(query: string, params: unknown[]): void }).logQuery('select 1', []);
@@ -147,7 +145,7 @@ describe('#constructor', () => {
 	});
 
 	test('Has nothing to close', () => {
-		// 1. A fetch per query holds no connection; the manager skips a driver without `close`
+		// A fetch per query holds no connection; the manager skips a driver without `close`
 		const driver = new DatabaseDriverNeonHttp({ connection: sample.url, logger: sample.logger as never });
 
 		expect('close' in driver).toBe(false);
@@ -156,7 +154,7 @@ describe('#constructor', () => {
 
 describe('#capabilities', () => {
 	test('Declares whether transactions work', () => {
-		// 1. No sessions, so an app reaches for `db.batch()`; the flag is what it reads instead of the driver name
+		// No sessions, so an app reaches for `db.batch()`; the flag is what it reads instead of the driver name
 		const driver = new DatabaseDriverNeonHttp({ connection: sample.url, logger: sample.logger as never });
 
 		expect(driver.capabilities).toStrictEqual({ transactions: false });
@@ -165,7 +163,7 @@ describe('#capabilities', () => {
 
 describe('#label', () => {
 	test('Binds the label to the logger, so the query log names the location', () => {
-		// 1. A labelled driver logs through a child carrying `database`; the query logger inherits it
+		// A labelled driver logs through a child carrying `database`; the query logger inherits it
 		const child = { error: vi.fn(), debug: vi.fn() };
 		const logger = { ...sample.logger, child: vi.fn().mockReturnValue(child) };
 
@@ -210,7 +208,7 @@ describe('#ping', () => {
 
 		sample.db.execute.mockRejectedValue(error);
 
-		// 1. One error for every backend: recognisable, 503, the location in the message, the backend's error as cause
+		// One error for every backend: recognisable, 503, the location in the message, the backend's error as cause
 		const thrown: unknown = await driver.ping().catch((caught: unknown) => caught);
 
 		expect(thrown).toBeInstanceOf(DatabaseUnavailableError);
@@ -246,7 +244,6 @@ describe('#migrate', () => {
 
 		await driver.migrate({ migrationsFolder: sample.folder, migrationsSchema: 'app', migrationsTable: undefined });
 
-		// 1. The folder is read with the options without their undefined keys
 		expect(readMigrationFiles).toHaveBeenCalledExactlyOnceWith({
 			migrationsFolder: sample.folder,
 			migrationsSchema: 'app',
@@ -258,12 +255,11 @@ describe('#migrate', () => {
 			'select created_at from "app"."__drizzle_migrations" order by created_at desc limit 1',
 		]);
 
-		// 2. One transaction per migration: its statements, then its journal row
 		const sent = transaction.mock.calls.map(([queries]) =>
 			(queries as { text: string; params?: unknown[] }[]).map(({ text, params }) => [text, params]),
 		);
 
-		// 3. Every migration runs READ WRITE, whatever transaction defaults the query function carries
+		// Every migration runs READ WRITE, whatever transaction defaults the query function carries
 		expect(transaction.mock.calls.map(([, options]) => options)).toStrictEqual([
 			{ readOnly: false, deferrable: false },
 			{ readOnly: false, deferrable: false },
@@ -294,7 +290,6 @@ describe('#migrate', () => {
 
 		await driver.migrate({ migrationsFolder: sample.folder });
 
-		// 1. Only the newer one runs, recorded in Drizzle's default journal
 		expect(transaction).toHaveBeenCalledOnce();
 
 		expect(
@@ -306,7 +301,7 @@ describe('#migrate', () => {
 		const { transaction } = mockClient();
 		const error = new Error('syntax error');
 
-		// 1. The second migration's transaction fails: Neon rolls back its statements and its journal row together
+		// The second migration's transaction fails: Neon rolls back its statements and its journal row together
 		transaction.mockResolvedValueOnce([]).mockRejectedValueOnce(error);
 
 		vi.mocked(readMigrationFiles).mockReturnValue([
@@ -319,7 +314,7 @@ describe('#migrate', () => {
 
 		await expect(driver.migrate({ migrationsFolder: sample.folder })).rejects.toBe(error);
 
-		// 2. The first migration committed with its row, so a re-run resumes at the second; the third never started
+		// The first migration committed with its row, so a re-run resumes at the second; the third never started
 		expect(transaction).toHaveBeenCalledTimes(2);
 		expect((transaction.mock.calls[0]![0] as { params?: unknown[] }[]).at(-1)!.params).toStrictEqual(['h1', 1]);
 	});
@@ -333,7 +328,7 @@ describe('#migrate', () => {
 
 		await driver.migrate({ migrationsFolder: sample.folder, migrationsSchema: 'a"b', migrationsTable: 'log' });
 
-		// 1. A quote inside a name is doubled, so it cannot close the identifier
+		// A quote inside a name is doubled, so it cannot close the identifier
 		expect(query.mock.calls[0]![0]).toBe('CREATE SCHEMA IF NOT EXISTS "a""b"');
 	});
 
@@ -342,7 +337,7 @@ describe('#migrate', () => {
 		const driver = new DatabaseDriverNeonHttp({ connection: sample.url, logger: sample.logger as never });
 
 		await expect(driver.migrate({ migrationsFolder: '' })).rejects.toThrowErrorMatchingInlineSnapshot(
-			`[Error: DatabaseDriver.migrate needs a "migrationsFolder"]`,
+			`[NovastarterError: Invalid config. DatabaseDriver.migrate needs a "migrationsFolder".]`,
 		);
 
 		expect(readMigrationFiles).not.toHaveBeenCalled();

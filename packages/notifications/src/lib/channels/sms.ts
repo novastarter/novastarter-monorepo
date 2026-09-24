@@ -41,7 +41,7 @@ export const smsChannel = (options: SmsChannelOptions = {}): NotificationChannel
 	 * @throws What `sendSms()` throws: a number that is not E.164, or every location failing.
 	 */
 	async send({ recipient, content }: NotificationDelivery<SmsContent>): Promise<void> {
-		// 1. The recipient is the channel's to fill in, like the mail channel's
+		// The channel fills in the recipient, like the mail channel, so a template cannot redirect the message
 		const message: SmsMessage = { ...content, to: recipient.phone! };
 
 		await sendSms(message, options.location ? { location: options.location } : {});

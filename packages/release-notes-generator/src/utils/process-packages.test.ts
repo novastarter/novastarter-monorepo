@@ -1,7 +1,7 @@
 /**
  * Tests of `release-notes-generator/utils/process-packages`.
  */
-import type { Project } from '@pnpm/types';
+import type { Project, ProjectManifest } from '@pnpm/types';
 import { beforeEach, expect, test, vi } from 'vitest';
 import type { Config } from '../types.js';
 
@@ -17,7 +17,7 @@ const mockConfig = vi.hoisted((): Partial<Config> => ({
 	linkedPackages: [['trigger', 'target']],
 }));
 
-vi.mock('../config.js', () => ({ default: mockConfig }));
+vi.mock('../config.js', () => ({ config: mockConfig }));
 
 /**
  * Content served for `.changeset/pre.json`; `undefined` means `changesets` is not in prerelease mode.
@@ -64,7 +64,11 @@ beforeEach(() => {
  * manifest.
  * @returns A partial pnpm project with a spied manifest writer.
  */
-const generatePackage = (name: string, version: string, opts?: Record<string, any>): Partial<Project> => ({
+const generatePackage = (
+	name: string,
+	version: string,
+	opts?: { bumped?: boolean; additional?: Partial<ProjectManifest> },
+): Partial<Project> => ({
 	rootDir: (opts?.['bumped'] !== false ? 'mock' : 'nomock') as Project['rootDir'],
 	manifest: {
 		name,
@@ -96,7 +100,7 @@ test('should fail if main version is missing', async () => {
 });
 
 test('should name the environment variable when the forced version is invalid', async () => {
-	// 1. A malformed forced version is blamed on its source, never on an undefined main package
+	// A malformed forced version is blamed on its source, never on an undefined main package
 	await expect(() =>
 		processPackages({ workspaceRoot: 'mock-workspace', forcedVersion: 'not-a-version' }),
 	).rejects.toThrow(
@@ -131,8 +135,8 @@ test('should take the prerelease state from changesets without a main package', 
 });
 
 test('should not read a prerelease tag from a finished prerelease cycle', async () => {
-	// 1. `changesets pre exit` keeps `pre.json` on disk with `mode: "exit"`, so the stable release right after a
-	//    prerelease cycle must not be reported as a prerelease
+	// `changesets pre exit` keeps `pre.json` on disk with `mode: "exit"`, so the stable release right after a
+	// prerelease cycle must not be reported as a prerelease
 	delete mockConfig.mainPackage;
 	mockChangesetPreFile = JSON.stringify({ mode: 'exit', tag: 'beta' });
 	packages = [generatePackage('example', '1.1.0')];

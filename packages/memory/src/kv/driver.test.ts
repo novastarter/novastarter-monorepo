@@ -6,13 +6,13 @@ import type { KvDriver } from './driver.js';
 import * as driver from './driver.js';
 
 test('ships no runtime code', () => {
-	// 1. The interface describes the backends; nothing here may end up in a consumer's bundle
+	// The interface only describes the backends, so nothing here may end up in a consumer's bundle
 	expect(Object.keys(driver)).toEqual([]);
 });
 
 test('a backend may answer synchronously or asynchronously', () => {
-	// 1. The local store answers plain values while Redis answers promises; the `MaybePromise` return types are
-	//    what lets one interface describe both, and `close` is the only optional member
+	// The local store answers plain values while Redis answers promises; the `MaybePromise` return types let one
+	// interface describe both, and `close` is the only optional member
 	const local: KvDriver = {
 		get: (_key) => undefined,
 		set: (_key, _value) => {},

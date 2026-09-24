@@ -22,7 +22,7 @@ afterEach(() => {
 
 describe('providerErrorReason', () => {
 	test('Reads the reason out of the shapes providers answer with', () => {
-		// 1. One shape per provider family
+		// One shape per provider family
 		expect(providerErrorReason({ error: { message: 'No such customer', type: 'invalid_request_error' } })).toBe(
 			'No such customer',
 		);
@@ -42,11 +42,11 @@ describe('providerErrorReason', () => {
 	});
 
 	test('Folds and cuts a text answer, and names nothing for an answer without a reason', () => {
-		// 1. An HTML page is one line, cut with an ellipsis
+		// An HTML page is one line, cut with an ellipsis
 		expect(providerErrorReason('  <html>\n  Bad   Gateway </html> ')).toBe('<html> Bad Gateway </html>');
 		expect(providerErrorReason('x'.repeat(400))).toBe(`${'x'.repeat(300)}…`);
 
-		// 2. Nothing to quote
+		// Nothing to quote
 		expect(providerErrorReason({ ok: false })).toBeUndefined();
 		expect(providerErrorReason(undefined)).toBeUndefined();
 		expect(providerErrorReason('   ')).toBeUndefined();
@@ -62,7 +62,7 @@ describe('ProviderCallError', () => {
 			body: { error: { message: 'No such payment_intent' } },
 		});
 
-		// 1. The provider refused, not the application's caller
+		// The provider refused, not the application's caller
 		expect(error.code).toBe('PROVIDER_CALL_FAILED');
 		expect(error.status).toBe(502);
 		expect(error.message).toBe('stripe refused POST /v1/refunds: 404 No such payment_intent');
@@ -73,7 +73,7 @@ describe('ProviderCallError', () => {
 
 describe('toProviderCallError', () => {
 	test('Makes a 429 a HitRateLimitError reset at Retry-After, in seconds or as a date', () => {
-		// 1. Seconds from a `Headers` object
+		// Seconds from a `Headers` object
 		const seconds = toProviderCallError({
 			provider: 'polar',
 			method: 'GET /v1/products',
@@ -85,7 +85,7 @@ describe('toProviderCallError', () => {
 		expect(seconds).toBeInstanceOf(HitRateLimitError);
 		expect((seconds as InstanceType<typeof HitRateLimitError>).extensions.reset.getTime()).toBe(NOW + 7_000);
 
-		// 2. A date from a plain record; the body's own wait wins when given
+		// A date from a plain record; the body's own wait wins when given
 		const dated = toProviderCallError({
 			provider: 'resend',
 			method: 'GET /domains',
@@ -100,7 +100,7 @@ describe('toProviderCallError', () => {
 
 		expect((named as InstanceType<typeof HitRateLimitError>).extensions.reset.getTime()).toBe(NOW + 2_000);
 
-		// 3. An absurd wait is a day, a negative one now, a blank header or a broken number none — one second
+		// An absurd wait is a day, a negative one now, a blank header or a broken number none — one second
 		const huge = toProviderCallError({
 			provider: 'x',
 			method: 'GET /',
@@ -121,7 +121,7 @@ describe('toProviderCallError', () => {
 			expect((error as InstanceType<typeof HitRateLimitError>).extensions.reset.getTime()).toBe(NOW + 1_000);
 		}
 
-		// 4. No wait named: one second
+		// No wait named: one second
 		const bare = toProviderCallError({ provider: 'x', method: 'GET /', status: 429, body: {} });
 
 		expect((bare as InstanceType<typeof HitRateLimitError>).extensions.reset.getTime()).toBe(NOW + 1_000);
@@ -131,7 +131,7 @@ describe('toProviderCallError', () => {
 		const cause = new Error('StripeInvalidRequestError');
 		const error = toProviderCallError({ provider: 'stripe', method: 'GET /v1/x', status: 400, body: {}, cause });
 
-		// 1. The status and the cause are kept
+		// The status and the cause are kept
 		expect(error).toBeInstanceOf(ProviderCallError);
 		expect(error.message).toBe('stripe refused GET /v1/x: 400');
 		expect(error.cause).toBe(cause);

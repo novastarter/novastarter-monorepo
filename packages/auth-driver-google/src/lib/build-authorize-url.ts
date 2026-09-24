@@ -18,11 +18,11 @@ import { AUTHORIZE_URL } from './constants.js';
  * ```
  */
 export const buildAuthorizeUrl = (params: AuthorizeParams, clientId: string, scopes: readonly string[]): URL => {
-	// 1. The call's scopes first, then the location's; `openid` leads when missing, or no ID token comes back
+	// `openid` leads when missing, or no ID token comes back
 	const requested = params.scopes ?? scopes;
 	const scope = requested.includes('openid') ? requested : ['openid', ...requested];
 
-	// 2. `URLSearchParams` does the encoding, so a redirect URI with its own query survives intact
+	// `URLSearchParams` does the encoding, so a redirect URI with its own query survives intact
 	const url = new URL(AUTHORIZE_URL);
 
 	url.search = new URLSearchParams({

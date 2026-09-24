@@ -1,5 +1,6 @@
 import { ErrorCode } from './codes.js';
 import type { HitRateLimitErrorExtensions } from './errors/hit-rate-limit.js';
+import type { InvalidConfigErrorExtensions } from './errors/invalid-config.js';
 import type { InvalidPayloadErrorExtensions } from './errors/invalid-payload.js';
 import type { ProviderCallErrorExtensions } from './errors/provider-call.js';
 
@@ -10,6 +11,7 @@ import type { ProviderCallErrorExtensions } from './errors/provider-call.js';
  * otherwise `isNovastarterError` narrows its extensions to `never` and reading a field fails to compile.
  */
 type Map = {
+	[ErrorCode.InvalidConfig]: InvalidConfigErrorExtensions;
 	[ErrorCode.InvalidPayload]: InvalidPayloadErrorExtensions;
 	[ErrorCode.RequestsExceeded]: HitRateLimitErrorExtensions;
 	[ErrorCode.ProviderCallFailed]: ProviderCallErrorExtensions;

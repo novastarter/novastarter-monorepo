@@ -25,11 +25,18 @@ interface Call {
  * @returns The fetch and the calls it saw.
  */
 const fakeFetch = (responses: { status?: number; body?: unknown }[]) => {
-	// 1. The calls are kept outside the fetch, so a test reads them after the client has sent
+	// The calls are kept outside the fetch, so a test reads them after the client has sent.
 	const calls: Call[] = [];
 
+	/**
+	 * Record the request and answer the next queued response.
+	 *
+	 * @param url - The requested URL.
+	 * @param init - The method, headers, body and signal of the request.
+	 * @returns The queued response, or an empty success once the queue is empty.
+	 */
 	const fetch: ApiFetch = async (url, init) => {
-		// 1. The body is recorded parsed, so a test matches objects rather than JSON text
+		// The body is recorded parsed, so a test matches objects rather than JSON text.
 		calls.push({
 			method: init.method,
 			url,
@@ -38,11 +45,11 @@ const fakeFetch = (responses: { status?: number; body?: unknown }[]) => {
 			signal: init.signal,
 		});
 
-		// 2. Past the queue the API answers an empty success, so a test only queues what it asserts on
+		// Past the queue the API answers an empty success, so a test only queues what it asserts on.
 		const next = responses.shift() ?? { status: 200, body: {} };
 		const status = next.status ?? 200;
 
-		// 3. `ok` follows the status the way the platform's response does; no body reads as empty text, like a 204
+		// `ok` follows the status the way the platform's response does; no body reads as empty text, like a 204.
 		return {
 			status,
 			ok: status >= 200 && status < 300,
@@ -56,19 +63,17 @@ const fakeFetch = (responses: { status?: number; body?: unknown }[]) => {
 
 describe('LemonSqueezyApi', () => {
 	test('Sends the JSON:API headers and the bearer, reads a refusal into an error', async () => {
-		// 1. Three answers in a row: a success, a refusal with JSON:API errors, a gateway failure without a body
 		const { fetch, calls } = fakeFetch([
 			{ status: 200, body: { data: { id: '1' } } },
 			{ status: 401, body: { errors: [{ status: '401', title: 'Unauthenticated', detail: 'Bad key' }] } },
 			{ status: 500, body: undefined },
 		]);
 
-		// 2. A trailing slash on the base URL must not double up in the path
 		const api = new LemonSqueezyApi({ apiKey: 'k', fetch, apiUrl: 'https://stand-in.test/v1/' });
 
 		await expect(api.request('GET', '/users/me')).resolves.toStrictEqual({ data: { id: '1' } });
 
-		// 3. The API refuses `application/json`, so both media types and the bearer are on every request
+		// The API refuses `application/json`, so both media types and the bearer are on every request.
 		expect(calls[0]).toMatchObject({
 			method: 'GET',
 			url: 'https://stand-in.test/v1/users/me',
@@ -81,32 +86,29 @@ describe('LemonSqueezyApi', () => {
 
 		expect(calls[0]?.signal).toBeInstanceOf(AbortSignal);
 
-		// 4. A refusal names the API's own detail and keeps the status, so a handler can tell a 401 from a 422
+		// The status is kept so a handler can tell a 401 from a 422.
 		const refusal = await api.request('GET', '/users/me').catch((error: unknown) => error);
 
 		expect(refusal).toBeInstanceOf(LemonSqueezyApiError);
 		expect((refusal as LemonSqueezyApiError).message).toBe('Lemon Squeezy 401: Bad key');
 		expect((refusal as LemonSqueezyApiError).status).toBe(401);
 
-		// 5. A failure without JSON:API errors is still an error, reported with the status alone
 		await expect(api.request('GET', '/users/me')).rejects.toThrow('Lemon Squeezy 500: request failed');
 	});
 
 	test('Refuses a timeout the abort signal cannot hold, at construction', () => {
-		// 1. A negative, `NaN`, infinite or fractional delay would throw on every request, `0` would abandon every
-		//    request immediately, one above the timer's bound would abandon every request after 1 ms — all are refused
-		//    before a single request is sent
+		// A negative, `NaN`, infinite or fractional delay would throw on every request, `0` would abandon every request
+		// immediately, and one above the timer's bound would abandon every request after 1 ms.
 		for (const timeout of [-1, 0, Number.NaN, Number.POSITIVE_INFINITY, 1.5, MAX_TIMEOUT + 1]) {
 			expect(() => new LemonSqueezyApi({ apiKey: 'k', timeout })).toThrow(RangeError);
 		}
 
-		// 2. The bounds of the accepted range are timeouts the signal holds
 		expect(() => new LemonSqueezyApi({ apiKey: 'k', timeout: 1 })).not.toThrow();
 		expect(() => new LemonSqueezyApi({ apiKey: 'k', timeout: MAX_TIMEOUT })).not.toThrow();
 	});
 
 	test('Sends with the platform fetch bound to the global object', async () => {
-		// 1. A fetch on the global object that records its receiver, the way a WebIDL operation would insist on it
+		// Records its receiver, the way a WebIDL operation would insist on it.
 		const original = globalThis.fetch;
 		const receiver = vi.fn();
 
@@ -123,22 +125,28 @@ describe('LemonSqueezyApi', () => {
 
 			expect(receiver).toHaveBeenCalledWith(globalThis);
 		} finally {
-			// 2. Whatever the assertion, the platform fetch is restored for the next test
 			globalThis.fetch = original;
 		}
 	});
 
 	test('Abandons a request that outlives the timeout', async () => {
-		// 1. A fetch that never answers on its own and only fails when its signal aborts, like the platform's does
+		// Only fails when its signal aborts, like the platform's fetch does.
+		/**
+		 * Wait for the abort signal and reject with its reason.
+		 *
+		 * @param _url - The requested URL, unused.
+		 * @param init - The request; only its signal is read.
+		 * @returns A promise that settles only when the signal aborts.
+		 */
 		const fetch: ApiFetch = (_url, init) =>
 			new Promise((_resolve, reject) => {
 				init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true });
 			});
 
-		// 2. The shortest deadline that still arms a timer, so the test does not wait
+		// The shortest deadline that still arms a timer, so the test does not wait.
 		const api = new LemonSqueezyApi({ apiKey: 'k', fetch, timeout: 1 });
 
-		// 3. The abort reason is the `TimeoutError` of `AbortSignal.timeout()`, what a handler checks by name
+		// The `TimeoutError` of `AbortSignal.timeout()` is what a handler checks by name.
 		await expect(api.request('GET', '/users/me')).rejects.toMatchObject({ name: 'TimeoutError' });
 	});
 });
@@ -152,7 +160,6 @@ describe('LemonSqueezyApi.call', () => {
 	 * @returns The client and the stub fetch.
 	 */
 	const setup = (responses: Response[], config: { apiUrl?: string; timeout?: number } = {}) => {
-		// 1. The stub answers in order; its calls are the requests the client made
 		const fetch = vi.fn<ApiFetch>();
 
 		for (const response of responses) fetch.mockResolvedValueOnce(response);
@@ -174,7 +181,7 @@ describe('LemonSqueezyApi.call', () => {
 	test('Sends a GET from the API root with its query, the JSON:API headers and the bearer key', async () => {
 		const { api, fetch } = setup([json({ data: [] })]);
 
-		// 1. The path names the version itself; the brackets of a JSON:API filter are in the key
+		// The path names the version itself; the brackets of a JSON:API filter are in the key.
 		const { data } = await api.call('GET /v1/discounts', { 'filter[store_id]': 1, 'page[size]': 10 });
 
 		expect(data).toStrictEqual({ data: [] });
@@ -199,7 +206,6 @@ describe('LemonSqueezyApi.call', () => {
 		const { api, fetch } = setup([json(undefined, 204)], { apiUrl: 'http://localhost:4010/v1/' });
 		const document = { data: { type: 'orders', id: '1', attributes: { amount: 500 } } };
 
-		// 1. The stand-in's origin with the caller's path; an empty answer is `undefined`
 		await expect(
 			api.call('POST /v1/orders/1/refund', document, { headers: { 'X-Trace': 't1' }, timeout: 5_000 }),
 		).resolves.toStrictEqual({ status: 204, headers: {}, data: undefined });
@@ -214,7 +220,7 @@ describe('LemonSqueezyApi.call', () => {
 	test('Refuses a URL on another host before any request, and reaches one on Lemon Squeezy’s', async () => {
 		const { api, fetch } = setup([json({ data: {} })], { apiUrl: 'http://localhost:4010/v1' });
 
-		// 1. The key would travel with the request; the API's own host stays reachable from a stand-in
+		// The key would travel with the request; the API's own host stays reachable from a stand-in.
 		await expect(api.call('GET https://evil.example/v1/stores')).rejects.toThrow('evil.example');
 		await api.call('GET https://api.lemonsqueezy.com/v1/stores/1');
 
@@ -226,7 +232,7 @@ describe('LemonSqueezyApi.call', () => {
 		const body = { errors: [{ status: '404', title: 'Not Found', detail: 'The related resource does not exist.' }] };
 		const { api } = setup([json(body, 404)]);
 
-		// 1. The status and the answer in the extensions; the key neither in the message nor in them
+		// The key must appear neither in the message nor in the extensions.
 		const error = (await api.call('GET /v1/orders/9').catch((caught: unknown) => caught)) as InstanceType<
 			typeof ProviderCallError
 		>;
@@ -241,7 +247,6 @@ describe('LemonSqueezyApi.call', () => {
 	test('Turns a 429 into HitRateLimitError', async () => {
 		const { api } = setup([json({ errors: [] }, 429, { 'retry-after': '3' })]);
 
-		// 1. Reset at the Retry-After the API names
 		const error = (await api.call('GET /v1/stores').catch((caught: unknown) => caught)) as InstanceType<
 			typeof HitRateLimitError
 		>;
@@ -253,7 +258,6 @@ describe('LemonSqueezyApi.call', () => {
 	test('Gives up with TimeoutError at the client’s timeout and aborts the request', async () => {
 		const { api, fetch } = setup([], { timeout: 10 });
 
-		// 1. A request that only ends when its signal aborts
 		fetch.mockImplementationOnce(
 			(_url, init) =>
 				new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason))),
@@ -266,7 +270,7 @@ describe('LemonSqueezyApi.call', () => {
 	test('Keeps a stand-in’s path prefix and forwards redirect: manual', async () => {
 		const { api, fetch } = setup([json({ data: {} })], { apiUrl: 'http://localhost:4010/proxy/ls/v1' });
 
-		// 1. Only the trailing `/v1` of the base goes; the fetch is told not to follow redirects
+		// Only the trailing `/v1` of the base goes.
 		await api.call('GET /v1/orders/1');
 
 		const [url, init] = fetch.mock.calls[0]!;
@@ -278,7 +282,6 @@ describe('LemonSqueezyApi.call', () => {
 	test('Answers the status, the lower-cased headers and the body', async () => {
 		const { api } = setup([json({ data: {} }, 200, { 'X-Ratelimit-Remaining': '59' })]);
 
-		// 1. The rate-limit header readable under its lower-case name
 		await expect(api.call('GET /v1/stores/1')).resolves.toStrictEqual({
 			status: 200,
 			headers: { 'content-type': 'text/plain;charset=UTF-8', 'x-ratelimit-remaining': '59' },
@@ -289,12 +292,10 @@ describe('LemonSqueezyApi.call', () => {
 	test('Fills a {name} from its parameter, encoded, and sends that parameter nowhere else', async () => {
 		const { api, fetch } = setup([json({ data: {} }), json({ data: {} })]);
 
-		// 1. In a GET, the id leaves the query
 		await api.call('GET /v1/orders/{id}', { id: '1 /x', include: 'customer' });
 
 		expect(fetch.mock.calls[0]![0]).toBe('https://api.lemonsqueezy.com/v1/orders/1%20%2Fx?include=customer');
 
-		// 2. In a PATCH, it leaves the body
 		const document = { data: { type: 'customers', id: '7', attributes: { name: 'Ada' } } };
 
 		await api.call('PATCH /v1/customers/{customer}', { customer: 7, ...document });
@@ -308,7 +309,7 @@ describe('LemonSqueezyApi.call', () => {
 	test('Refuses a {name} no parameter fills before any request', async () => {
 		const { api, fetch } = setup([]);
 
-		// 1. Sent, it would reach the API as `%7Bid%7D`
+		// Sent, it would reach the API as `%7Bid%7D`.
 		await expect(api.call('GET /v1/orders/{id}', { include: 'customer' })).rejects.toThrow('{id}');
 		expect(fetch).not.toHaveBeenCalled();
 	});

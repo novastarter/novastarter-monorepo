@@ -39,7 +39,7 @@ describe('exchangeCode', () => {
 			tokenType: 'bearer',
 		});
 
-		// 1. Without `Accept: application/json` GitHub answers form-encoded
+		// Without `Accept: application/json` GitHub answers form-encoded
 		const [url, init] = fetch.mock.calls[0]!;
 
 		expect(url).toBe(TOKEN_URL);
@@ -59,7 +59,7 @@ describe('exchangeCode', () => {
 		vi.useFakeTimers({ toFake: ['Date'] });
 		vi.setSystemTime(1_000_000);
 
-		// 1. A GitHub App with expiring tokens adds both; an empty scope is no scopes
+		// A GitHub App with expiring tokens adds both; an empty scope is no scopes
 		const fetch = answer(200, {
 			access_token: 'ghu_1',
 			refresh_token: 'ghr_1',
@@ -81,7 +81,7 @@ describe('exchangeCode', () => {
 	});
 
 	test('Throws a provider failure for a refusal answered with 200', async () => {
-		// 1. GitHub's own way of refusing a code: a successful status with an error in the body
+		// GitHub's own way of refusing a code: a successful status with an error in the body
 		const fetch = answer(200, {
 			error: 'bad_verification_code',
 			error_description: 'The code passed is incorrect or expired.',
@@ -97,12 +97,11 @@ describe('exchangeCode', () => {
 	});
 
 	test('Throws a provider failure for an error status and for an answer without a token', async () => {
-		// 1. A gateway error has no OAuth error, so the status is the reason
+		// A gateway error has no OAuth error, so the status is the reason
 		await expect(exchangeCode({ fetch: answer(502, undefined), timeout: 1_000 }, params)).rejects.toThrow(
 			'the token endpoint answered 502',
 		);
 
-		// 2. A 200 that carries neither an error nor a token cannot sign anyone in
 		await expect(exchangeCode({ fetch: answer(200, {}), timeout: 1_000 }, params)).rejects.toThrow(
 			'the token response carried no access_token',
 		);

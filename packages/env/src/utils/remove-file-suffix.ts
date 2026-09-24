@@ -12,6 +12,6 @@
  * ```
  */
 export const removeFileSuffix = (key: string): string => {
-	// 1. The caller checked the suffix with `isFileKey`, so the five characters are cut blindly
+	// The caller checked the suffix with `isFileKey`, so the five characters are cut blindly
 	return key.slice(0, -5);
 };

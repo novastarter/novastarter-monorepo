@@ -14,6 +14,11 @@ pre-commit:
       run: pnpm exec prettier --cache --write --ignore-unknown {staged_files}
       stage_fixed: true
 
+    # Versions live in the pnpm catalog only; checked when a package.json is staged
+    - name: check-catalog
+      run: pnpm check:catalog
+      glob: '**/package.json'
+
     # AGENTS.md: every change under packages/ or apps/ ships with a .changeset/<name>.md
     - name: changeset
       script: changeset.mjs

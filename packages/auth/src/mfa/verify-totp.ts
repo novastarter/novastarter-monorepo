@@ -32,7 +32,7 @@ export interface VerifyTotpOptions {
  * ```
  */
 export const isTotpCode = (code: string): boolean => {
-	// 1. Surrounding spaces are what a pasted code brings along, not part of it
+	// Surrounding spaces are what a pasted code brings along, not part of it
 	return new RegExp(`^\\d{${TOTP_DIGITS}}$`).test(String(code).trim());
 };
 
@@ -47,7 +47,8 @@ export const isTotpCode = (code: string): boolean => {
  * @returns The accepted time step.
  * @throws InvalidCredentialsError when the code does not match or its step was used already.
  * @throws HitRateLimitError when the user tried too many codes.
- * @throws Error without a usable `mfa.encryptionKey` in the settings, or when the secret opens with none of its keys.
+ * @throws InvalidConfigError without a usable `mfa.encryptionKey` in the settings.
+ * @throws Error when the secret opens with none of its keys.
  * @example
  * ```ts
  * await verifyTotp({
@@ -62,10 +63,10 @@ export const isTotpCode = (code: string): boolean => {
 export const verifyTotp = async (options: VerifyTotpOptions): Promise<number> => {
 	const limiter = authSettings().limiters?.mfa;
 
-	// 1. The limiter first, so a wrong guess costs as much as a right one
+	// The limiter first, so a wrong guess costs as much as a right one
 	await limiter?.consume(options.userId);
 
-	// 2. The secret is decrypted only for the comparison; the step must be new for the user
+	// The secret is decrypted only for the comparison; the step must be new for the user
 	const step = matchTotp(
 		decodeBase32(decrypt(options.encryptedSecret, mfaKeys(), 'totp-secret').plaintext),
 		String(options.code).trim(),
@@ -76,7 +77,7 @@ export const verifyTotp = async (options: VerifyTotpOptions): Promise<number> =>
 		throw new InvalidCredentialsError();
 	}
 
-	// 3. A right code clears the count, so a user who mistyped a few times is not locked out afterwards
+	// A right code clears the count, so a user who mistyped a few times is not locked out afterwards
 	await limiter?.delete(options.userId);
 
 	return step;

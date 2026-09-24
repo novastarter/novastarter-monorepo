@@ -17,7 +17,7 @@ import type { AuthFetch } from './request.js';
  */
 const routed = (routes: Record<string, { status: number; body: unknown }>) =>
 	vi.fn<AuthFetch>(async (url) => {
-		// 1. An unrouted URL is a test mistake, answered with a 599 so it cannot pass silently
+		// An unrouted URL is a test mistake, answered with a 599 so it cannot pass silently
 		const route = routes[url] ?? { status: 599, body: undefined };
 
 		return { status: route.status, ok: route.status < 300, text: async () => JSON.stringify(route.body) };
@@ -37,7 +37,7 @@ describe('fetchProfile', () => {
 
 		expect(await fetchProfile({ fetch, timeout: 1_000 }, 'gho_1')).toStrictEqual({ user, email: 'octo@example.com' });
 
-		// 1. Both requests carry the token, the media type, the pinned version and a user agent GitHub insists on
+		// GitHub refuses a request without a user agent
 		for (const [, init] of fetch.mock.calls) {
 			expect(init.headers).toStrictEqual({
 				Authorization: 'Bearer gho_1',
@@ -49,7 +49,7 @@ describe('fetchProfile', () => {
 	});
 
 	test('Answers no address when the addresses scope was not granted', async () => {
-		// 1. Without `user:email` GitHub refuses the list with 403 or 404; the sign-in goes on without an address
+		// Without `user:email` GitHub refuses the list with 403 or 404; the sign-in goes on without an address
 		for (const status of [403, 404]) {
 			const fetch = routed({
 				[USER_URL]: { status: 200, body: user },
@@ -61,8 +61,8 @@ describe('fetchProfile', () => {
 	});
 
 	test('Fails on a spent rate limit of the addresses instead of answering no address', async () => {
-		// 1. GitHub spends its primary limit with a 403 and `x-ratelimit-remaining: 0`; that is the rate limit it is,
-		//    not a missing scope, and the error carries GitHub's reset so the caller can retry
+		// GitHub spends its primary limit with a 403 and `x-ratelimit-remaining: 0`; that is the rate limit it is, not
+		// a missing scope, and the error carries GitHub's reset so the caller can retry
 		const reset = Math.floor(Date.now() / 1000) + 120;
 
 		const fetch = vi.fn<AuthFetch>(async (url) =>
@@ -85,8 +85,8 @@ describe('fetchProfile', () => {
 	});
 
 	test('Fails on a spent rate limit of the profile as the rate limit, not a provider failure', async () => {
-		// 1. Both requests draw on the token's one budget, so a spent limit refuses the profile as well; the profile is
-		//    checked first, and its refusal must still carry GitHub's reset rather than read as a permanent failure
+		// Both requests draw on the token's one budget, so a spent limit refuses the profile as well; the profile is
+		// checked first, and its refusal must still carry GitHub's reset rather than read as a permanent failure
 		const reset = Math.floor(Date.now() / 1000) + 120;
 
 		const fetch = vi.fn<AuthFetch>(
@@ -101,14 +101,12 @@ describe('fetchProfile', () => {
 			(thrown: unknown) => thrown,
 		)) as InstanceType<typeof HitRateLimitError>;
 
-		// 2. The retryable limit, reset at GitHub's time, not an AuthProviderFailedError
 		expect(error).toBeInstanceOf(HitRateLimitError);
 		expect(error.extensions.reset.getTime()).toBeGreaterThanOrEqual(reset * 1000 - 2_000);
 		expect(error.extensions.reset.getTime()).toBeLessThanOrEqual(reset * 1000 + 2_000);
 	});
 
 	test('Fails on a refused profile, a profile without an id, and an addresses outage', async () => {
-		// 1. A revoked token: the profile is refused with GitHub's message
 		const refused = routed({
 			[USER_URL]: { status: 401, body: { message: 'Bad credentials' } },
 			[EMAILS_URL]: { status: 401, body: { message: 'Bad credentials' } },
@@ -122,7 +120,7 @@ describe('fetchProfile', () => {
 			message: 'The github sign-in failed: the user endpoint answered 401: Bad credentials',
 		});
 
-		// 2. A profile without a numeric id has nothing stable to link by
+		// A profile without a numeric id has nothing stable to link by
 		const anonymous = routed({
 			[USER_URL]: { status: 200, body: { login: 'octocat' } },
 			[EMAILS_URL]: { status: 200, body: [] },
@@ -132,7 +130,7 @@ describe('fetchProfile', () => {
 			'the user profile carried no id',
 		);
 
-		// 3. An outage of the address list must not pass for "no address"
+		// An outage of the address list must not pass for "no address"
 		const outage = routed({ [USER_URL]: { status: 200, body: user }, [EMAILS_URL]: { status: 500, body: undefined } });
 
 		await expect(fetchProfile({ fetch: outage, timeout: 1_000 }, 'gho_1')).rejects.toThrow(

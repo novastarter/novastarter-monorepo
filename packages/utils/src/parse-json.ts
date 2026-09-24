@@ -6,7 +6,7 @@
  * character by character (`"\u005f_proto__"`).
  *
  * @param input - JSON text.
- * @returns The parsed value.
+ * @returns The parsed value, typed `unknown` so the caller narrows or casts it to the shape it expects.
  * @throws `SyntaxError` when `input` is not valid JSON.
  * @example
  * ```ts
@@ -14,16 +14,15 @@
  * // => { name: 'x' } — the prototype key is gone
  * ```
  */
-export function parseJSON(input: string): any {
-	// 1. Only pay for the reviver when the text can carry a prototype key at all: spelled out, or hidden behind
-	//    unicode escapes that `JSON.parse` resolves before the key is compared
+export function parseJSON(input: string): unknown {
+	// Only pay for the reviver when the text can carry a prototype key at all: spelled out, or hidden behind
+	// unicode escapes that `JSON.parse` resolves before the key is compared
 	const text = String(input);
 
 	if (text.includes('__proto__') || text.includes('\\u')) {
 		return JSON.parse(text, noproto);
 	}
 
-	// 2. Fast path for the common, harmless case
 	return JSON.parse(input);
 }
 
@@ -38,7 +37,6 @@ export function parseJSON(input: string): any {
  * @returns The value unchanged, or `undefined` for a `__proto__` key.
  */
 export function noproto<T>(key: string, value: T): T | void {
-	// 1. Every key except the dangerous one passes through untouched
 	if (key !== '__proto__') {
 		return value;
 	}

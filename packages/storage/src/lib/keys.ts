@@ -28,20 +28,20 @@
  * ```
  */
 export const toListPrefix = (fullPrefix: string, prefix: string): string => {
-	// 1. Empty root and prefix give the empty string, the whole bucket; nothing to add a slash to
+	// The empty string is the whole bucket, so there is no folder to add a slash to
 	if (fullPrefix === '') {
 		return '';
 	}
 
-	// 2. Folder-ness is read from the last segment of the raw prefix, not from the full key: the full key was built
-	//    from the resolved prefix, where `.` and `..` have already collapsed, so `..` or `avatars/..` and a bare
-	//    `media` root look the same there. Judged by a trailing slash alone they were listed as the partial key
-	//    `media` and matched `media-archive/…`, keys outside the location. Backslashes count as separators, the way
-	//    the path joiner that built the full key reads them
+	// Folder-ness is read from the last segment of the raw prefix, not from the full key: the full key was built
+	// from the resolved prefix, where `.` and `..` have already collapsed, so `..` or `avatars/..` and a bare
+	// `media` root look the same there. Judged by a trailing slash alone they were listed as the partial key
+	// `media` and matched `media-archive/…`, keys outside the location. Backslashes count as separators, the way
+	// the path joiner that built the full key reads them
 	const lastSegment = prefix.split(/[/\\]/).at(-1) ?? '';
 	const folder = lastSegment === '' || lastSegment === '.' || lastSegment === '..';
 
-	// 3. A folder gets its slash back, which path joining drops
+	// Path joining drops the trailing slash, so a folder gets it back
 	return folder ? `${fullPrefix}/` : fullPrefix;
 };
 
@@ -61,7 +61,6 @@ export const toListPrefix = (fullPrefix: string, prefix: string): string => {
  * ```
  */
 export const toRelativePath = (root: string, key: string): string => {
-	// 1. No root, nothing to strip; a key under the root loses the root and the slash after it
 	if (root === '') {
 		return key;
 	}

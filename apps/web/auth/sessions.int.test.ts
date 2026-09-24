@@ -27,7 +27,7 @@ describe('auth sessions on PGlite', { timeout: 30_000 }, () => {
 	afterAll(closeTestDatabase);
 
 	beforeEach(() => {
-		// 1. Only `Date` is faked: PGlite keeps its real timers
+		// Only `Date` is faked: PGlite keeps its real timers
 		vi.useFakeTimers({ toFake: ['Date'], now: NOW });
 	});
 
@@ -39,14 +39,14 @@ describe('auth sessions on PGlite', { timeout: 30_000 }, () => {
 	test('Starts a session keyed by the token hash and reads it back with its metadata', async () => {
 		const { token, session } = await startSession('1', { userAgent: 'test' });
 
-		// 1. The token itself is nowhere in the table
+		// The token itself is nowhere in the table
 		const [row] = await useDb().select().from(authSessions);
 
 		expect(row?.id).toBe(hashToken(token));
 		expect(row?.id).not.toBe(token);
 		expect(row?.createdAt).toEqual(new Date(NOW));
 
-		// 2. Read back as the record the package made, epoch milliseconds and all
+		// Read back as the record the package made, epoch milliseconds and all
 		expect(await readSession(token)).toEqual(session);
 		expect(session.metadata).toEqual({ userAgent: 'test' });
 	});
@@ -54,7 +54,7 @@ describe('auth sessions on PGlite', { timeout: 30_000 }, () => {
 	test('Returns null for an unknown token and deletes an expired session', async () => {
 		expect(await readSession('unknown')).toBeNull();
 
-		// 1. Past its deadline the session is no session, and its row goes on sight
+		// Past its deadline the session is no session, and its row goes on sight
 		const { token, session } = await startSession('1');
 
 		vi.setSystemTime(session.expiresAt);
@@ -68,11 +68,11 @@ describe('auth sessions on PGlite', { timeout: 30_000 }, () => {
 
 		const { token, session } = await startSession('1');
 
-		// 1. Early on nothing moves
+		// Early on nothing moves
 		vi.setSystemTime(NOW + 5 * MINUTE);
 		expect((await readSession(token))?.expiresAt).toBe(session.expiresAt);
 
-		// 2. Past half the idle lifetime the deadline moves forward, and the row carries the new one
+		// Past half the idle lifetime the deadline moves forward, and the row carries the new one
 		vi.setSystemTime(NOW + 20 * MINUTE);
 		expect((await readSession(token))?.expiresAt).toBe(NOW + 50 * MINUTE);
 
@@ -87,7 +87,7 @@ describe('auth sessions on PGlite', { timeout: 30_000 }, () => {
 
 		await endSession(token);
 
-		// 1. Only the one named goes
+		// Only the one named goes
 		expect(await readSession(token)).toBeNull();
 		expect(await readSession(other.token)).not.toBeNull();
 	});
@@ -95,11 +95,11 @@ describe('auth sessions on PGlite', { timeout: 30_000 }, () => {
 	test('Ends a session by id only for its owner', async () => {
 		const { token, session } = await startSession('1');
 
-		// 1. Another user cannot end it with its id
+		// Another user cannot end it with its id
 		expect(await endSessionById('2', session.id)).toBe(false);
 		expect(await readSession(token)).not.toBeNull();
 
-		// 2. The owner can
+		// The owner can
 		expect(await endSessionById('1', session.id)).toBe(true);
 		expect(await readSession(token)).toBeNull();
 	});
@@ -110,11 +110,11 @@ describe('auth sessions on PGlite', { timeout: 30_000 }, () => {
 
 		const stranger = await startSession('2');
 
-		// 1. Both of the user's sessions go
+		// Both of the user's sessions go
 		expect(await endAllSessions('1')).toBe(2);
 		expect(await listSessions('1')).toEqual([]);
 
-		// 2. Another user stays signed in
+		// Another user stays signed in
 		expect(await readSession(stranger.token)).not.toBeNull();
 	});
 
@@ -127,10 +127,10 @@ describe('auth sessions on PGlite', { timeout: 30_000 }, () => {
 
 		await startSession('2');
 
-		// 1. Newest first, the other user's left out
+		// Newest first, the other user's left out
 		expect((await listSessions('1')).map((session) => session.id)).toEqual([second.session.id, first.session.id]);
 
-		// 2. Past the first one's deadline only the second is live
+		// Past the first one's deadline only the second is live
 		vi.setSystemTime(first.session.expiresAt);
 		expect((await listSessions('1')).map((session) => session.id)).toEqual([second.session.id]);
 	});
@@ -139,8 +139,8 @@ describe('auth sessions on PGlite', { timeout: 30_000 }, () => {
 		test('Serves a started session from the cache without the table', async () => {
 			const { token, session } = await startSession('1');
 
-			// 1. The row goes behind the module's back; the cached copy still answers — the documented cost of the
-			//    cache, bounded by its ttl
+			// The row goes behind the module's back; the cached copy still answers — the documented cost of the cache,
+			// bounded by its ttl
 			await useDb().delete(authSessions).where(eq(authSessions.id, session.id));
 
 			expect(await readSession(token)).toEqual(session);
@@ -149,7 +149,7 @@ describe('auth sessions on PGlite', { timeout: 30_000 }, () => {
 		test('Caches a session read from the table on a miss', async () => {
 			const { token, session } = await startSession('1');
 
-			// 1. A flushed cache sends the read to the table, which fills the cache again
+			// A flushed cache sends the read to the table, which fills the cache again
 			await useCache().location().clear();
 
 			expect(await readSession(token)).toEqual(session);
@@ -161,14 +161,14 @@ describe('auth sessions on PGlite', { timeout: 30_000 }, () => {
 			const two = await startSession('1');
 			const three = await startSession('1');
 
-			// 1. Each is cached, so a stale copy would answer if an end forgot the cache
+			// Each is cached, so a stale copy would answer if an end forgot the cache
 			await endSession(one.token);
 			await endSessionById('1', two.session.id);
 
 			expect(await readSession(one.token)).toBeNull();
 			expect(await readSession(two.token)).toBeNull();
 
-			// 2. Everywhere, by the ids the table returned
+			// Everywhere, by the ids the table returned
 			const four = await startSession('1');
 
 			expect(await endAllSessions('1')).toBe(2);
@@ -179,7 +179,7 @@ describe('auth sessions on PGlite', { timeout: 30_000 }, () => {
 		test('Drops an expired cached session from the table and the cache', async () => {
 			const { token, session } = await startSession('1');
 
-			// 1. The cached copy expires like the row; both go on the read that notices
+			// The cached copy expires like the row; both go on the read that notices
 			vi.setSystemTime(session.expiresAt);
 
 			expect(await readSession(token)).toBeNull();
@@ -192,7 +192,7 @@ describe('auth sessions on PGlite', { timeout: 30_000 }, () => {
 
 			const { token, session } = await startSession('1');
 
-			// 1. Past half the idle lifetime the deadline moves; both copies carry the new one
+			// Past half the idle lifetime the deadline moves; both copies carry the new one
 			vi.setSystemTime(NOW + 6 * MINUTE);
 
 			const read = await readSession(token);
@@ -210,8 +210,8 @@ describe('auth sessions on PGlite', { timeout: 30_000 }, () => {
 
 			const { token, session } = await startSession('1');
 
-			// 1. The row goes while the cached copy stays, as when another request ends it concurrently; the read that
-			//    would slide the deadline finds nothing to update and drops the copy rather than caching it again
+			// The row goes while the cached copy stays, as when another request ends it concurrently; the read that
+			// would slide the deadline finds nothing to update and drops the copy rather than caching it again
 			await useDb().delete(authSessions).where(eq(authSessions.id, session.id));
 			vi.setSystemTime(NOW + 6 * MINUTE);
 
@@ -222,7 +222,7 @@ describe('auth sessions on PGlite', { timeout: 30_000 }, () => {
 		test('Falls back to the table when the cache fails', async () => {
 			const { token, session } = await startSession('1');
 
-			// 1. A broken cache is logged and skipped: the table still answers
+			// A broken cache is logged and skipped: the table still answers
 			const location = useCache().location();
 			const get = vi.spyOn(location, 'get').mockRejectedValue(new Error('cache down'));
 

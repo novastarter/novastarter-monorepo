@@ -1,3 +1,4 @@
+import { InvalidPayloadError } from '@novastarter/errors';
 import {
 	type MailAddress,
 	type MailAttachment,
@@ -30,8 +31,7 @@ export const SENDGRID_CATEGORY_COUNT = 10;
  * @returns The `categories` values, the category first.
  */
 export const toSendgridCategories = (message: MailMessage): string[] =>
-	// 1. SendGrid refuses a message over its category limits, so each label is cut, an empty one drops out and the
-	//    tail past the count is left off, the category first
+	// SendGrid refuses a message over its category limits, so the labels are adapted rather than refused
 	[message.category ?? 'transactional', ...(message.tags ?? [])]
 		.map((category) => category.slice(0, SENDGRID_CATEGORY_LENGTH))
 		.filter((category) => category !== '')
@@ -44,7 +44,7 @@ export const toSendgridCategories = (message: MailMessage): string[] =>
  * @returns `{ email, name? }`.
  */
 export const toSendgridAddress = (address: MailAddress): { email: string; name?: string } => {
-	// 1. The object APIs take name and address apart, so a display-name string is parsed, not flattened to the address
+	// The object APIs take name and address apart, so a display-name string is parsed, not flattened to the address
 	const parsed = parseMailAddress(address);
 
 	return { email: parsed.address, ...(parsed.name !== undefined ? { name: parsed.name } : {}) };
@@ -63,7 +63,7 @@ export const toSendgridAddress = (address: MailAddress): { email: string; name?:
  * @internal
  */
 const toUniqueSendgridAddresses = (addresses: MailAddress[], seen: Set<string>): { email: string; name?: string }[] =>
-	// 1. Keep an address only the first time it shows up, remembering it so a later list drops it too
+	// The set is shared, so a later list drops an address seen in an earlier one
 	addresses.map(toSendgridAddress).filter((address) => {
 		const key = address.email.toLowerCase();
 
@@ -81,15 +81,15 @@ const toUniqueSendgridAddresses = (addresses: MailAddress[], seen: Set<string>):
  *
  * @param attachment - Ours.
  * @returns SendGrid's.
- * @throws Error for an attachment with neither content nor path.
+ * @throws InvalidPayloadError for an attachment with neither content nor path.
  */
 export const toSendgridAttachment = async (
 	attachment: MailAttachment,
 ): Promise<NonNullable<MailDataRequired['attachments']>[number]> => {
-	// 1. SendGrid wants the bytes base64-encoded in the request; a path is read here since the API cannot fetch it
+	// SendGrid wants the bytes base64-encoded in the request; a path is read here since the API cannot fetch it
 	const content = await readAttachment(attachment);
 
-	// 2. A content id makes the attachment inline, for `cid:` references from the html
+	// A content id makes the attachment inline, for `cid:` references from the html
 	return {
 		filename: attachment.filename,
 		content: content.toString('base64'),
@@ -109,21 +109,21 @@ export const toSendgridAttachment = async (
  * @param message - Ours, with `from` set (`sendMail()` fills it in).
  * @param sandbox - Turn SendGrid's sandbox mode on.
  * @returns SendGrid's.
- * @throws Error when `from` is missing — SendGrid requires it.
+ * @throws InvalidPayloadError when `from` is missing — SendGrid requires it.
  */
 export const toSendgridMail = async (message: MailMessage, sandbox = false): Promise<MailDataRequired> => {
-	// 1. The API refuses a message without a sender; say so before the request goes out
+	// The API refuses a message without a sender; say so before the request goes out
 	if (!message.from) {
-		throw new Error('SendGrid needs a "from" address');
+		throw new InvalidPayloadError({ reason: 'SendGrid needs a "from" address' });
 	}
 
-	// 2. SendGrid refuses a repeated recipient, so `to`, then `cc`, then `bcc` keep only addresses not seen before
+	// SendGrid refuses a repeated recipient, so `to`, then `cc`, then `bcc` keep only addresses not seen before
 	const seen = new Set<string>();
 	const to = toUniqueSendgridAddresses(toMailAddressList(message.to), seen);
 	const cc = toUniqueSendgridAddresses(message.cc ?? [], seen);
 	const bcc = toUniqueSendgridAddresses(message.bcc ?? [], seen);
 
-	// 3. Optional fields are only set when present, so the request carries no `undefined` keys or empty lists
+	// Optional fields are only set when present, so the request carries no `undefined` keys or empty lists
 	const mail = {
 		to,
 		from: toSendgridAddress(message.from),
@@ -138,7 +138,6 @@ export const toSendgridMail = async (message: MailMessage, sandbox = false): Pro
 		...(sandbox ? { mailSettings: { sandboxMode: { enable: true } } } : {}),
 	} as MailDataRequired;
 
-	// 4. Attachments are read in parallel: every one is encoded in full before the request is built
 	if (message.attachments) {
 		mail.attachments = await Promise.all(message.attachments.map(toSendgridAttachment));
 	}

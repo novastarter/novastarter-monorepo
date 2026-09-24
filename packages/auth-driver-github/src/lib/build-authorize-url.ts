@@ -18,8 +18,8 @@ import { AUTHORIZE_URL } from './constants.js';
  * ```
  */
 export const buildAuthorizeUrl = (params: AuthorizeParams, clientId: string, scopes: readonly string[]): URL => {
-	// 1. `URLSearchParams` does the encoding, so a redirect URI with its own query survives intact; GitHub reads the
-	//    scopes space-separated like the OAuth spec
+	// `URLSearchParams` does the encoding, so a redirect URI with its own query survives intact; GitHub reads the
+	// scopes space-separated like the OAuth spec
 	const url = new URL(AUTHORIZE_URL);
 
 	url.search = new URLSearchParams({

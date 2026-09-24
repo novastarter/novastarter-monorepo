@@ -8,7 +8,32 @@
  * them — with the {@link CallOptions} and the {@link CallResponse} every `call()` shares, and the {@link HttpHooks}
  * called around every request.
  */
-export * from './call.js';
-export * from './http-call.js';
-export * from './http.js';
-export * from './request.js';
+export {
+	CALL_VERBS,
+	type CallOptions,
+	type CallResponse,
+	type CallVerb,
+	type HeadersLike,
+	type ParsedCallMethod,
+	parseCallMethod,
+	toHeaderRecord,
+} from './call.js';
+export {
+	type HttpCallFetch,
+	type HttpCallRequest,
+	type HttpCallResponse,
+	httpCall,
+	MAX_CALL_REDIRECTS,
+	resolveCallUrl,
+	toQueryString,
+} from './http-call.js';
+export {
+	DEFAULT_REQUEST_TIMEOUT,
+	http,
+	type HttpErrorEvent,
+	type HttpHooks,
+	type HttpOptions,
+	type HttpRequestEvent,
+	type HttpResponseEvent,
+} from './http.js';
+export { type HttpApi, request } from './request.js';

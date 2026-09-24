@@ -8,7 +8,7 @@ import {
 	type ScryptParams,
 	verifyPassword,
 } from '@novastarter/auth';
-import { InvalidCredentialsError } from '@novastarter/errors';
+import { InvalidConfigError, InvalidCredentialsError } from '@novastarter/errors';
 import { useLogger } from '@novastarter/logger';
 import { toError } from '@novastarter/utils';
 
@@ -117,12 +117,13 @@ export class AuthDriverCredentials implements AuthDriver {
 	 * Create a driver on the application's user lookup.
 	 *
 	 * @param config - The lookup, the rehash callback and the cost.
-	 * @throws Error without a `findUser` function.
+	 * @throws InvalidConfigError without a `findUser` function.
 	 */
 	constructor(config: AuthDriverCredentialsConfig) {
-		// 1. Without a lookup no one can sign in; report it by the option's name at construction, not at the first form
+		// Checked at construction, so a missing lookup is reported by the option's name rather than at the first
+		// sign-in
 		if (typeof config.findUser !== 'function') {
-			throw new Error('The credentials auth driver needs a "findUser" function');
+			throw new InvalidConfigError({ reason: 'The credentials auth driver needs a "findUser" function' });
 		}
 
 		this.findUser = config.findUser;
@@ -140,25 +141,25 @@ export class AuthDriverCredentials implements AuthDriver {
 	 * @throws Error when the stored hash is not a scrypt PHC string — a broken record, not a wrong password.
 	 */
 	async authenticate(credentials: Credentials): Promise<AuthIdentity> {
-		// 1. Surrounding spaces are what a form or a password manager adds by accident; anything more is the lookup's.
-		//    A form body is untyped at runtime, so an identifier that is no string is treated as an unknown account
+		// Surrounding spaces are what a form or a password manager adds by accident; anything more is the lookup's. A
+		// form body is untyped at runtime, so an identifier that is no string is treated as an unknown account
 		const identifier = typeof credentials.identifier === 'string' ? credentials.identifier.trim() : '';
 		const user = identifier ? await this.findUser(identifier) : null;
 
-		// 2. No account or no password: the same scrypt run as a real check, against a hash of the same cost, so the
-		//    time taken does not reveal whether the identifier exists
+		// The same scrypt run as a real check, against a hash of the same cost, so the time taken does not reveal
+		// whether the identifier exists
 		if (!user || user.passwordHash === null) {
 			await verifyPassword(credentials.password, await this.getDummyHash());
 
 			throw new InvalidCredentialsError();
 		}
 
-		// 3. One error for every failure, so the caller cannot tell a wrong password from an unknown account
+		// One error for every failure, so the caller cannot tell a wrong password from an unknown account
 		if (!(await verifyPassword(credentials.password, user.passwordHash))) {
 			throw new InvalidCredentialsError();
 		}
 
-		// 4. The password is at hand only now, so this is the moment to bring an old hash up to the current cost
+		// The password is at hand only now, so this is the moment to bring an old hash up to the current cost
 		await this.rehash(user.id, user.passwordHash, credentials.password);
 
 		return { provider: 'credentials', subject: user.id };
@@ -176,12 +177,11 @@ export class AuthDriverCredentials implements AuthDriver {
 	 * @internal
 	 */
 	private async rehash(id: string, hash: string, password: string): Promise<void> {
-		// 1. Nothing to do without a place to store the new hash, or when the stored one already has the wanted cost
 		if (!this.onRehash || !needsRehash(hash, this.params)) {
 			return;
 		}
 
-		// 2. Hashing and storing both run inside the guard, since either one failing leaves the old hash valid anyway
+		// Hashing and storing both run inside the guard, since either one failing leaves the old hash valid anyway
 		try {
 			await this.onRehash(id, await hashPassword(password, this.params));
 		} catch (error) {
@@ -196,12 +196,12 @@ export class AuthDriverCredentials implements AuthDriver {
 	 * @internal
 	 */
 	private getDummyHash(): Promise<string> {
-		// 1. Made lazily, so a process that never sees an unknown account never pays for it, and kept as a promise, so
-		//    concurrent first calls share one hashing instead of each starting their own
+		// Made lazily, so a process that never sees an unknown account never pays for it, and kept as a promise, so
+		// concurrent first calls share one hashing instead of each starting their own
 		if (!this.dummyHash) {
 			const pending = hashPassword(DUMMY_PASSWORD, this.params);
 
-			// 2. A failed hashing is not cached, so the next sign-in tries again instead of failing for good
+			// A failed hashing is not cached, so the next sign-in tries again instead of failing for good
 			pending.catch(() => {
 				if (this.dummyHash === pending) {
 					this.dummyHash = undefined;

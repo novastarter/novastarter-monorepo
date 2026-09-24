@@ -28,6 +28,6 @@ import { PaymentsManager } from './payments-manager.js';
  * ```
  */
 export const usePayments: Singleton<PaymentsManager> =
-	// 1. The manager is built empty on first use: the application registers its drivers and locations on it at
-	//    start-up, and the singleton hands every later caller that same instance so the registrations are shared
+	// The manager is built empty on first use: the application registers its drivers and locations on it at start-up,
+	// and every later caller gets that same instance so the registrations are shared.
 	singleton(() => new PaymentsManager());

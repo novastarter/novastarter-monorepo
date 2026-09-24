@@ -29,7 +29,7 @@ let sample: {
 };
 
 beforeEach(() => {
-	// 1. Fresh values per test; the URI is well-formed so the test reads like a real configuration
+	// Fresh values per test; the URI is well-formed so the test reads like a real configuration
 	sample = {
 		uri: `mysql://${randUserName()}:${randPassword()}@${randDomainName()}:3306/${randWord()}`,
 		folder: randDirectoryPath(),
@@ -39,29 +39,29 @@ beforeEach(() => {
 		db: { execute: vi.fn() },
 	};
 
-	// 2. `createPool` answers a bare pool and `drizzle` a bare database: only the members the driver calls exist
+	// `createPool` answers a bare pool and `drizzle` a bare database: only the members the driver calls exist
 	vi.mocked(createPool).mockReturnValue(sample.pool as unknown as Pool);
 	vi.mocked(drizzle).mockReturnValue(sample.db as never);
 	vi.mocked(useLogger).mockReturnValue(sample.processLogger as never);
 });
 
 afterEach(() => {
-	// 1. Reset call history and implementations, so a `mockReturnValue` set in one test cannot leak into the next
+	// Reset call history and implementations, so a `mockReturnValue` set in one test cannot leak into the next
 	vi.resetAllMocks();
 });
 
 describe('#constructor', () => {
 	test('Throws when the connection is missing', () => {
-		// 1. Without one mysql2 would open a pool on `localhost:3306` as `root`, a server never configured
+		// Without one mysql2 would open a pool on `localhost:3306` as `root`, a server never configured
 		expect(() => new DatabaseDriverMysql({ connection: '' })).toThrowErrorMatchingInlineSnapshot(
-			`[Error: The mysql database driver needs a "connection"]`,
+			`[NovastarterError: Invalid config. The mysql database driver needs a "connection".]`,
 		);
 	});
 
 	test('Opens a pool of its own from a connection URI', () => {
 		const driver = new DatabaseDriverMysql({ connection: sample.uri, logger: sample.logger as never });
 
-		// 1. The URI becomes the pool's `uri` option; the pool is the driver's, so it is closed by it
+		// The pool is the driver's, so the driver closes it
 		expect(createPool).toHaveBeenCalledExactlyOnceWith({ uri: sample.uri });
 		expect(driver['pool']).toBe(sample.pool);
 		expect(driver['ownsPool']).toBe(true);
@@ -72,12 +72,11 @@ describe('#constructor', () => {
 
 		new DatabaseDriverMysql({ connection: options, logger: sample.logger as never });
 
-		// 1. Options go to mysql2 as they are
 		expect(createPool).toHaveBeenCalledExactlyOnceWith(options);
 	});
 
 	test('Uses a given pool as is and leaves it to the caller', () => {
-		// 1. A pool built before the driver: the driver must neither open another nor take this one over
+		// A pool built before the driver: the driver must neither open another nor take this one over
 		const pool = { getConnection: vi.fn(), end: vi.fn() } as unknown as Pool;
 
 		const driver = new DatabaseDriverMysql({ connection: pool, logger: sample.logger as never });
@@ -97,8 +96,7 @@ describe('#constructor', () => {
 			logger: sample.logger as never,
 		});
 
-		// 1. Drizzle gets the pool, only the options that carry a value, and always a `mode` — it refuses a schema
-		//    without one
+		// Drizzle always gets a `mode`: it refuses a schema without one
 		expect(drizzle).toHaveBeenCalledExactlyOnceWith(sample.pool, { schema, casing: 'snake_case', mode: 'default' });
 		expect(driver.db).toBe(sample.db);
 	});
@@ -112,12 +110,11 @@ describe('#constructor', () => {
 	test('Hands Drizzle a query logger on the process logger only when asked for', () => {
 		new DatabaseDriverMysql({ connection: sample.uri });
 
-		// 1. Off by default: no logger key, so Drizzle makes no logger call per query
+		// Off by default: no logger key, so Drizzle makes no logger call per query
 		expect(vi.mocked(drizzle).mock.calls[0]![1]).toStrictEqual({ mode: 'default' });
 
 		new DatabaseDriverMysql({ connection: sample.uri, queryLogging: true });
 
-		// 2. On, without a logger of its own: the query logger reports to the process logger
 		const options = vi.mocked(drizzle).mock.calls[1]![1]!;
 
 		(options.logger as { logQuery(query: string, params: unknown[]): void }).logQuery('select 1', []);
@@ -131,7 +128,7 @@ describe('#constructor', () => {
 
 describe('#capabilities', () => {
 	test('Declares whether transactions work', () => {
-		// 1. Sessions, so `db.transaction()` works; the flag is what an app reads instead of the driver name
+		// Sessions, so `db.transaction()` works; the flag is what an app reads instead of the driver name
 		const driver = new DatabaseDriverMysql({ connection: sample.uri, logger: sample.logger as never });
 
 		expect(driver.capabilities).toStrictEqual({ transactions: true });
@@ -140,7 +137,7 @@ describe('#capabilities', () => {
 
 describe('#label', () => {
 	test('Binds the label to the logger, so the query log names the location', () => {
-		// 1. A labelled driver logs through a child carrying `database`; the query logger inherits it
+		// A labelled driver logs through a child carrying `database`; the query logger inherits it
 		const child = { error: vi.fn(), debug: vi.fn() };
 		const logger = { ...sample.logger, child: vi.fn().mockReturnValue(child) };
 
@@ -171,7 +168,7 @@ describe('#ping', () => {
 
 		await driver.ping();
 
-		// 1. Through `db.execute`, so the same path the application's queries take is what gets proven
+		// Through `db.execute`, so the same path the application's queries take is what gets proven
 		expect(sample.db.execute).toHaveBeenCalledExactlyOnceWith(sql`select 1`);
 	});
 
@@ -181,7 +178,7 @@ describe('#ping', () => {
 
 		sample.db.execute.mockRejectedValue(error);
 
-		// 1. One error for every backend: recognisable, 503, the location in the message, the backend's error as cause
+		// One error for every backend: recognisable, 503, the location in the message, the backend's error as cause
 		const thrown: unknown = await driver.ping().catch((caught: unknown) => caught);
 
 		expect(thrown).toBeInstanceOf(DatabaseUnavailableError);
@@ -210,7 +207,6 @@ describe('#migrate', () => {
 
 		await driver.migrate({ migrationsFolder: sample.folder, migrationsTable: undefined });
 
-		// 1. The Drizzle database goes in as is, the options without their undefined keys
 		expect(migrate).toHaveBeenCalledExactlyOnceWith(sample.db, { migrationsFolder: sample.folder });
 	});
 
@@ -229,7 +225,7 @@ describe('#migrate', () => {
 		const driver = new DatabaseDriverMysql({ connection: sample.uri, logger: sample.logger as never });
 
 		await expect(driver.migrate({ migrationsFolder: '' })).rejects.toThrowErrorMatchingInlineSnapshot(
-			`[Error: DatabaseDriver.migrate needs a "migrationsFolder"]`,
+			`[NovastarterError: Invalid config. DatabaseDriver.migrate needs a "migrationsFolder".]`,
 		);
 
 		expect(migrate).not.toHaveBeenCalled();
@@ -246,7 +242,7 @@ describe('#close', () => {
 	});
 
 	test('Leaves a given pool open for its owner', async () => {
-		// 1. The caller built the pool and may share it; ending it here would pull it from under them
+		// The caller built the pool and may share it; ending it here would pull it from under them
 		const pool = { getConnection: vi.fn(), end: vi.fn() } as unknown as Pool;
 		const driver = new DatabaseDriverMysql({ connection: pool, logger: sample.logger as never });
 

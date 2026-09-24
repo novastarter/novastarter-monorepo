@@ -30,7 +30,7 @@ export class SynchronizedClock {
 	 * @param kv - Store shared by every instance — Redis in a cluster, in-process for a single node.
 	 */
 	constructor(id: string, kv: KvDriver) {
-		// 1. Prefixed, so a clock never collides with a value another module stores under the bare id
+		// Prefixed, so a clock never collides with a value another module stores under the bare id
 		this.key = `clock:${id}`;
 		this.kv = kv;
 	}
@@ -43,9 +43,9 @@ export class SynchronizedClock {
 	 * got there first.
 	 */
 	async set(timestamp: number): Promise<boolean> {
-		// 1. `setMax` saves only when the new reading beats the stored one and reports whether it did: the call that
-		//    moved the clock is the winner of the race, every other instance sees a value that is not greater and
-		//    stands down
+		// `setMax` saves only when the new reading beats the stored one and reports whether it did: the call that
+		// moved the clock is the winner of the race, every other instance sees a value that is not greater and
+		// stands down
 		return this.kv.setMax(this.key, timestamp);
 	}
 
@@ -53,8 +53,8 @@ export class SynchronizedClock {
 	 * Forget the clock, so the next instance to start begins afresh.
 	 */
 	async reset(): Promise<void> {
-		// 1. Deleting removes the reading entirely, so the next instance to reach a fire time writes unopposed and the
-		//    schedule starts afresh instead of inheriting a stale one
+		// Deleting removes the reading entirely, so the next instance to reach a fire time writes unopposed and the
+		// schedule starts afresh instead of inheriting a stale one
 		await this.kv.delete(this.key);
 	}
 }

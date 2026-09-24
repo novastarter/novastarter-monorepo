@@ -43,7 +43,7 @@ const lastPool = () =>
 	};
 
 beforeEach(() => {
-	// 1. Fresh values per test; the URL has the shape of a Neon console string
+	// Fresh values per test; the URL has the shape of a Neon console string
 	sample = {
 		url: `postgresql://${randUserName()}:${randPassword()}@ep-${randWord()}.${randDomainName()}/neondb?sslmode=require`,
 		folder: randDirectoryPath(),
@@ -52,29 +52,29 @@ beforeEach(() => {
 		db: { execute: vi.fn() },
 	};
 
-	// 2. `drizzle` answers a bare object: only `execute` is called, and the migrator is mocked whole
+	// `drizzle` answers a bare object: only `execute` is called, and the migrator is mocked whole
 	vi.mocked(drizzle).mockReturnValue(sample.db as never);
 	vi.mocked(useLogger).mockReturnValue(sample.processLogger as never);
 });
 
 afterEach(() => {
-	// 1. Clear the call history, so a pool built in one test cannot be read by the next; the implementations stay,
-	//    since the `Pool` factory above is what every test constructs its pool with
+	// Clear the call history, so a pool built in one test cannot be read by the next; the implementations stay,
+	// since the `Pool` factory above is what every test constructs its pool with
 	vi.clearAllMocks();
 });
 
 describe('#constructor', () => {
 	test('Throws when the connection is missing', () => {
-		// 1. Without one the pool would read node-postgres's `PG*` variables and connect somewhere never configured
+		// Without one the pool would read node-postgres's `PG*` variables and connect somewhere never configured
 		expect(() => new DatabaseDriverNeon({ connection: '' })).toThrowErrorMatchingInlineSnapshot(
-			`[Error: The neon database driver needs a "connection"]`,
+			`[NovastarterError: Invalid config. The neon database driver needs a "connection".]`,
 		);
 	});
 
 	test('Opens a pool of its own from a connection string', () => {
 		const driver = new DatabaseDriverNeon({ connection: sample.url, logger: sample.logger as never });
 
-		// 1. The string becomes the pool's `connectionString`; the pool is the driver's, so it is closed by it
+		// The pool is the driver's, so the driver closes it
 		expect(Pool).toHaveBeenCalledExactlyOnceWith({ connectionString: sample.url });
 		expect(driver['pool']).toBe(lastPool());
 		expect(driver['ownsPool']).toBe(true);
@@ -85,12 +85,11 @@ describe('#constructor', () => {
 
 		new DatabaseDriverNeon({ connection: options, logger: sample.logger as never });
 
-		// 1. Options go to the pool as they are
 		expect(Pool).toHaveBeenCalledExactlyOnceWith(options);
 	});
 
 	test('Uses a given pool as is and leaves it to the caller', () => {
-		// 1. A pool built before the driver: the driver must neither open another nor take this one over
+		// A pool built before the driver: the driver must neither open another nor take this one over
 		const pool = new Pool();
 
 		const driver = new DatabaseDriverNeon({ connection: pool, logger: sample.logger as never });
@@ -104,12 +103,12 @@ describe('#constructor', () => {
 	test('Reports the errors of its own pool to the logger instead of crashing the process', () => {
 		new DatabaseDriverNeon({ connection: sample.url, logger: sample.logger as never });
 
-		// 1. The listener is on `error`, so an idle client's failure is no longer an unhandled event
+		// The listener is on `error`, so an idle client's failure is no longer an unhandled event
 		const pool = lastPool();
 
 		expect(pool.on).toHaveBeenCalledExactlyOnceWith('error', expect.any(Function));
 
-		// 2. What the pool emits reaches the logger with the error first, as pino expects
+		// The error goes first, as pino expects
 		const error = new Error('connection terminated');
 		const listener = pool.on.mock.calls[0]![1] as (error: Error) => void;
 
@@ -139,7 +138,6 @@ describe('#constructor', () => {
 			logger: sample.logger as never,
 		});
 
-		// 1. Drizzle gets the pool and only the options that carry a value
 		expect(drizzle).toHaveBeenCalledExactlyOnceWith(driver['pool'], { schema, casing: 'snake_case' });
 		expect(driver.db).toBe(sample.db);
 	});
@@ -147,12 +145,11 @@ describe('#constructor', () => {
 	test('Hands Drizzle a query logger only when asked for', () => {
 		new DatabaseDriverNeon({ connection: sample.url, logger: sample.logger as never });
 
-		// 1. Off by default: no logger key, so Drizzle makes no logger call per query
+		// Off by default: no logger key, so Drizzle makes no logger call per query
 		expect(vi.mocked(drizzle).mock.calls[0]![1]).toStrictEqual({});
 
 		new DatabaseDriverNeon({ connection: sample.url, logger: sample.logger as never, queryLogging: true });
 
-		// 2. On: the query logger reports to the driver's logger
 		const options = vi.mocked(drizzle).mock.calls[1]![1]!;
 
 		(options.logger as { logQuery(query: string, params: unknown[]): void }).logQuery('select 1', []);
@@ -163,7 +160,7 @@ describe('#constructor', () => {
 
 describe('#capabilities', () => {
 	test('Declares whether transactions work', () => {
-		// 1. Sessions, so `db.transaction()` works; the flag is what an app reads instead of the driver name
+		// Sessions, so `db.transaction()` works; the flag is what an app reads instead of the driver name
 		const driver = new DatabaseDriverNeon({ connection: sample.url, logger: sample.logger as never });
 
 		expect(driver.capabilities).toStrictEqual({ transactions: true });
@@ -172,7 +169,7 @@ describe('#capabilities', () => {
 
 describe('#label', () => {
 	test('Binds the label to the logger, so the query log names the location', () => {
-		// 1. A labelled driver logs through a child carrying `database`; the query logger inherits it
+		// A labelled driver logs through a child carrying `database`; the query logger inherits it
 		const child = { error: vi.fn(), debug: vi.fn() };
 		const logger = { ...sample.logger, child: vi.fn().mockReturnValue(child) };
 
@@ -203,7 +200,7 @@ describe('#ping', () => {
 
 		await driver.ping();
 
-		// 1. Through `db.execute`, so the same path the application's queries take is what gets proven
+		// Through `db.execute`, so the same path the application's queries take is what gets proven
 		expect(sample.db.execute).toHaveBeenCalledExactlyOnceWith(sql`select 1`);
 	});
 
@@ -213,7 +210,7 @@ describe('#ping', () => {
 
 		sample.db.execute.mockRejectedValue(error);
 
-		// 1. One error for every backend: recognisable, 503, the location in the message, the backend's error as cause
+		// One error for every backend: recognisable, 503, the location in the message, the backend's error as cause
 		const thrown: unknown = await driver.ping().catch((caught: unknown) => caught);
 
 		expect(thrown).toBeInstanceOf(DatabaseUnavailableError);
@@ -242,7 +239,6 @@ describe('#migrate', () => {
 
 		await driver.migrate({ migrationsFolder: sample.folder, migrationsTable: undefined });
 
-		// 1. The Drizzle database goes in as is, the options without their undefined keys
 		expect(migrate).toHaveBeenCalledExactlyOnceWith(sample.db, { migrationsFolder: sample.folder });
 	});
 
@@ -262,7 +258,7 @@ describe('#migrate', () => {
 		const driver = new DatabaseDriverNeon({ connection: sample.url, logger: sample.logger as never });
 
 		await expect(driver.migrate({ migrationsFolder: '' })).rejects.toThrowErrorMatchingInlineSnapshot(
-			`[Error: DatabaseDriver.migrate needs a "migrationsFolder"]`,
+			`[NovastarterError: Invalid config. DatabaseDriver.migrate needs a "migrationsFolder".]`,
 		);
 
 		expect(migrate).not.toHaveBeenCalled();
@@ -279,7 +275,7 @@ describe('#close', () => {
 	});
 
 	test('Leaves a given pool open for its owner', async () => {
-		// 1. The caller built the pool and may share it; ending it here would pull it from under them
+		// The caller built the pool and may share it; ending it here would pull it from under them
 		const pool = new Pool();
 		const driver = new DatabaseDriverNeon({ connection: pool, logger: sample.logger as never });
 

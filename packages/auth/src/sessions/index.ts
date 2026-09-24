@@ -1,5 +1,5 @@
 /**
  * Sessions: opaque tokens whose records the application stores, with a hard and an optional sliding idle lifetime.
  */
-export * from './check-session.js';
-export * from './create-session.js';
+export { checkSession, type SessionCheck } from './check-session.js';
+export { type CreatedSession, createSession, type CreateSessionOptions } from './create-session.js';

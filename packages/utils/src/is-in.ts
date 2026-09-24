@@ -18,6 +18,6 @@
  * ```
  */
 export function isIn<T extends readonly string[]>(value: string, array: T): value is T[number] {
-	// 1. The tuple is widened to `readonly string[]` here, so any string can be looked up
+	// The tuple is widened to `readonly string[]` here, so any string can be looked up
 	return array.includes(value);
 }

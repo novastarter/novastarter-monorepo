@@ -20,7 +20,7 @@ import {
  * @internal
  */
 export const derive = (password: string, salt: Buffer, params: ScryptParams): Promise<Buffer> => {
-	// 1. The callback form runs on libuv's thread pool; the sync one would block the event loop for a tenth of a second
+	// The callback form runs on libuv's thread pool; the sync one would block the event loop for a tenth of a second
 	return new Promise((resolve, reject) => {
 		scrypt(
 			password,
@@ -41,12 +41,12 @@ export const derive = (password: string, salt: Buffer, params: ScryptParams): Pr
  * @internal
  */
 export const normalizePassword = (password: string): string => {
-	// 1. Checked before any work: an empty password is no password, a huge one only a way to burn CPU
+	// Checked before any work: an empty password is no password, a huge one only a way to burn CPU
 	if (typeof password !== 'string' || password.length === 0 || password.length > MAX_PASSWORD_LENGTH) {
 		throw new InvalidPayloadError({ reason: `The password must be 1 to ${MAX_PASSWORD_LENGTH} characters long` });
 	}
 
-	// 2. NFKC, so the same password typed on two keyboards — a composed and a decomposed "é" — hashes the same
+	// NFKC, so the same password typed on two keyboards — a composed and a decomposed "é" — hashes the same
 	return password.normalize('NFKC');
 };
 
@@ -66,10 +66,10 @@ export const normalizePassword = (password: string): string => {
  * ```
  */
 export const hashPassword = async (password: string, params: ScryptParams = DEFAULT_SCRYPT_PARAMS): Promise<string> => {
-	// 1. Normalised and bounded first, the same way the verification does it
+	// Normalised and bounded first, the same way the verification does it
 	const normalized = normalizePassword(password);
 
-	// 2. A fresh salt per hash, so equal passwords get different hashes and no table can be precomputed
+	// A fresh salt per hash, so equal passwords get different hashes and no table can be precomputed
 	const salt = randomBytes(SALT_BYTES);
 
 	return formatHash(params, salt, await derive(normalized, salt, params));

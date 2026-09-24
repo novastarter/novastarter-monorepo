@@ -16,8 +16,8 @@ const firebaseError = (code: string, message: string): Error => Object.assign(ne
 
 describe('describeError', () => {
 	test('Reports the dead-token codes and an invalid-argument about the token as gone, naming the code', () => {
-		// 1. The two codes Firebase says to delete the token on; the code is the reason the caller can log, the SDK's
-		//    error the cause
+		// The two codes Firebase says to delete the token on; the code is the reason the caller can log, the SDK's error
+		// the cause
 		const unregistered = firebaseError(
 			'messaging/registration-token-not-registered',
 			'Requested entity was not found.',
@@ -36,7 +36,7 @@ describe('describeError', () => {
 			PushTargetGoneError,
 		);
 
-		// 2. A malformed token comes back as `invalid-argument`, told apart from a bad payload by the message
+		// A malformed token comes back as `invalid-argument`, told apart from a bad payload by the message
 		const invalid = firebaseError(
 			'messaging/invalid-argument',
 			'The registration token is not a valid FCM registration token',
@@ -51,7 +51,7 @@ describe('describeError', () => {
 	});
 
 	test('Names the code of any other refusal, keeping the SDK error as the cause', () => {
-		// 1. An `invalid-argument` about the payload is a bug in the message, not a dead token
+		// An `invalid-argument` about the payload is a bug in the message, not a dead token
 		const refused = firebaseError('messaging/invalid-argument', 'Invalid data payload key');
 		const described = describeError(refused);
 
@@ -64,9 +64,8 @@ describe('describeError', () => {
 	});
 
 	test('Treats a Node system error as the network, not a coded refusal', () => {
-		// 1. System errors carry a string `code` of their own (ECONNRESET, ENOTFOUND, ETIMEDOUT); without Firebase's
-		//    `messaging/` prefix the coded branch must not fire, or the report would name an FCM code that was never
-		//    returned
+		// System errors carry a string `code` of their own (ECONNRESET, ENOTFOUND, ETIMEDOUT); without Firebase's
+		// `messaging/` prefix the coded branch must not fire, or the report would name an FCM code that was never returned
 		const reset = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
 		const described = describeError(reset);
 
@@ -76,12 +75,12 @@ describe('describeError', () => {
 	});
 
 	test('Prefixes anything without a code and passes it on as the cause', () => {
-		// 1. A network failure never reached FCM, so there is no code: only the message
+		// A network failure never reached FCM, so there is no code: only the message
 		const socket = new Error('ECONNRESET');
 
 		expect(describeError(socket)).toMatchObject({ message: 'FCM: ECONNRESET', cause: socket });
 
-		// 2. A thrown non-error is still described rather than crashing the description
+		// A thrown non-error is still described rather than crashing the description
 		expect(describeError('boom')).toMatchObject({ message: 'FCM: boom', cause: 'boom' });
 	});
 });

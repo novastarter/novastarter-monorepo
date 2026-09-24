@@ -29,8 +29,8 @@ export type SecondFactor = 'totp' | 'recovery';
 const advanceStep =
 	(userId: string) =>
 	async (step: number): Promise<boolean> => {
-		// 1. One conditional update: of two requests with the same code only one moves the step, and an older code
-		//    never moves it back
+		// One conditional update: of two requests with the same code only one moves the step, and an older code never
+		// moves it back
 		const moved = await useDb()
 			.update(authMfa)
 			.set({ lastStep: step })
@@ -54,10 +54,10 @@ const replaceRecoveryCodes = async (userId: string): Promise<string[]> => {
 	const db = useDb();
 	const { codes, ids } = generateRecoveryCodes();
 
-	// 1. The old set goes first, so a leaked code is dead even if the insert fails
+	// The old set goes first, so a leaked code is dead even if the insert fails
 	await db.delete(authRecoveryCodes).where(eq(authRecoveryCodes.userId, userId));
 
-	// 2. Only the ids are stored; the codes themselves exist on the user's screen alone
+	// Only the ids are stored; the codes themselves exist on the user's screen alone
 	await db.insert(authRecoveryCodes).values(ids.map((id) => ({ userId, id })));
 
 	return codes;
@@ -71,7 +71,7 @@ const replaceRecoveryCodes = async (userId: string): Promise<string[]> => {
  * @internal
  */
 const findEnrolment = async (userId: string): Promise<typeof authMfa.$inferSelect | undefined> => {
-	// 1. One per user: the user id is the key
+	// One per user: the user id is the key
 	const [row] = await useDb().select().from(authMfa).where(eq(authMfa.userId, userId)).limit(1);
 
 	return row;
@@ -91,11 +91,11 @@ const findEnrolment = async (userId: string): Promise<typeof authMfa.$inferSelec
  * @throws Error without a usable `mfa.encryptionKey` in the auth settings.
  */
 export const startTotpEnrolment = async (userId: string, accountName: string): Promise<StartedTotpEnrolment> => {
-	// 1. A fresh secret; the plain one only travels to the user's screen
+	// A fresh secret; the plain one only travels to the user's screen
 	const { secret, uri, encryptedSecret } = enrollTotp({ accountName });
 	const createdAt = new Date();
 
-	// 2. Insert, or overwrite a pending enrolment; a confirmed row makes the update match nothing and return no row
+	// Insert, or overwrite a pending enrolment; a confirmed row makes the update match nothing and return no row
 	const written = await useDb()
 		.insert(authMfa)
 		.values({ userId, secret: encryptedSecret, confirmed: false, createdAt, lastStep: 0 })
@@ -124,17 +124,17 @@ export const startTotpEnrolment = async (userId: string, accountName: string): P
  * @throws HitRateLimitError when the user tried too many codes.
  */
 export const confirmTotpEnrolment = async (userId: string, code: string): Promise<string[]> => {
-	// 1. Only a pending enrolment can be confirmed; a confirmed one needs no second confirmation
+	// Only a pending enrolment can be confirmed; a confirmed one needs no second confirmation
 	const enrolment = await findEnrolment(userId);
 
 	if (!enrolment || enrolment.confirmed) {
 		throw new InvalidPayloadError({ reason: 'There is no pending TOTP enrolment to confirm' });
 	}
 
-	// 2. The code proves the app holds the secret; its step is recorded, so it cannot sign in afterwards
+	// The code proves the app holds the secret; its step is recorded, so it cannot sign in afterwards
 	await verifyTotp({ userId, encryptedSecret: enrolment.secret, code, advance: advanceStep(userId) });
 
-	// 3. Confirmed only while still pending — a concurrent confirmation or re-enrolment makes this match nothing
+	// Confirmed only while still pending — a concurrent confirmation or re-enrolment makes this match nothing
 	const confirmed = await useDb()
 		.update(authMfa)
 		.set({ confirmed: true })
@@ -145,7 +145,7 @@ export const confirmTotpEnrolment = async (userId: string, code: string): Promis
 		throw new InvalidPayloadError({ reason: 'There is no pending TOTP enrolment to confirm' });
 	}
 
-	// 4. The recovery codes come with a working second factor, not before
+	// The recovery codes come with a working second factor, not before
 	return replaceRecoveryCodes(userId);
 };
 
@@ -159,21 +159,21 @@ export const confirmTotpEnrolment = async (userId: string, code: string): Promis
  * @throws HitRateLimitError when the user tried too many codes.
  */
 export const verifySecondFactor = async (userId: string, code: string): Promise<SecondFactor> => {
-	// 1. Without a confirmed enrolment there is no second factor to pass; the same error as a wrong code
+	// Without a confirmed enrolment there is no second factor to pass; the same error as a wrong code
 	const enrolment = await findEnrolment(userId);
 
 	if (!enrolment?.confirmed) {
 		throw new InvalidCredentialsError();
 	}
 
-	// 2. Six digits are a TOTP code, recorded as used so it cannot be replayed
+	// Six digits are a TOTP code, recorded as used so it cannot be replayed
 	if (isTotpCode(code)) {
 		await verifyTotp({ userId, encryptedSecret: enrolment.secret, code, advance: advanceStep(userId) });
 
 		return 'totp';
 	}
 
-	// 3. Anything else is a recovery code, spent by one atomic delete, so two requests with it cannot both pass
+	// Anything else is a recovery code, spent by one atomic delete, so two requests with it cannot both pass
 	await verifyRecoveryCode({
 		userId,
 		code,
@@ -197,7 +197,7 @@ export const verifySecondFactor = async (userId: string, code: string): Promise<
  * @returns `true` for a confirmed enrolment; a pending one protects nothing yet.
  */
 export const hasMfa = async (userId: string): Promise<boolean> => {
-	// 1. Only the confirmed flag decides
+	// Only the confirmed flag decides
 	const enrolment = await findEnrolment(userId);
 
 	return enrolment?.confirmed === true;
@@ -211,12 +211,12 @@ export const hasMfa = async (userId: string): Promise<boolean> => {
  * @throws InvalidPayloadError when the user has no confirmed TOTP: codes without a second factor protect nothing.
  */
 export const regenerateRecoveryCodes = async (userId: string): Promise<string[]> => {
-	// 1. Codes belong to a working second factor
+	// Codes belong to a working second factor
 	if (!(await hasMfa(userId))) {
 		throw new InvalidPayloadError({ reason: 'TOTP is not enabled' });
 	}
 
-	// 2. The old set dies with the new one
+	// The old set dies with the new one
 	return replaceRecoveryCodes(userId);
 };
 
@@ -227,7 +227,7 @@ export const regenerateRecoveryCodes = async (userId: string): Promise<string[]>
  * @returns The count.
  */
 export const countRecoveryCodes = async (userId: string): Promise<number> => {
-	// 1. Spent codes are deleted, so every row is an unused code
+	// Spent codes are deleted, so every row is an unused code
 	const [row] = await useDb()
 		.select({ total: count() })
 		.from(authRecoveryCodes)
@@ -247,7 +247,7 @@ export const countRecoveryCodes = async (userId: string): Promise<number> => {
 export const disableMfa = async (userId: string): Promise<void> => {
 	const db = useDb();
 
-	// 1. The enrolment first: once it is gone the codes are no longer accepted, even if their delete fails
+	// The enrolment first: once it is gone the codes are no longer accepted, even if their delete fails
 	await db.delete(authMfa).where(eq(authMfa.userId, userId));
 	await db.delete(authRecoveryCodes).where(eq(authRecoveryCodes.userId, userId));
 };

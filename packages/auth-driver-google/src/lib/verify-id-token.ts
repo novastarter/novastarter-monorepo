@@ -33,8 +33,8 @@ export interface VerifyIdTokenOptions {
  * ```
  */
 export const verifyIdToken = async (idToken: string, options: VerifyIdTokenOptions): Promise<JWTPayload> => {
-	// 1. `jose` checks the signature, the issuer, the audience and the time claims in one go; the tolerance forgives a
-	//    verifying clock a little ahead of Google's, so a token at the end of its life is not refused by skew alone
+	// The tolerance forgives a verifying clock a little ahead of Google's, so a token at the end of its life is not
+	// refused by skew alone
 	let payload: JWTPayload;
 
 	try {
@@ -51,12 +51,12 @@ export const verifyIdToken = async (idToken: string, options: VerifyIdTokenOptio
 		);
 	}
 
-	// 2. A token minted for another sign-in — replayed or injected — carries another nonce
+	// A token minted for another sign-in, replayed or injected, carries another nonce
 	if (payload['nonce'] !== options.nonce) {
 		throw new AuthProviderFailedError({ provider: PROVIDER, reason: 'the ID token nonce does not match' });
 	}
 
-	// 3. The subject is the stable id the application links the account by; a token without one is useless
+	// The subject is the stable id the application links the account by; a token without one is useless
 	if (typeof payload.sub !== 'string' || !payload.sub) {
 		throw new AuthProviderFailedError({ provider: PROVIDER, reason: 'the ID token has no subject' });
 	}

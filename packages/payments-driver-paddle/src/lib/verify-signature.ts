@@ -32,8 +32,8 @@ export interface SignatureParts {
  * integer — a non-integer would make the replay-window check compare against `NaN` and accept any age.
  */
 export const signaturePartsOf = (signature: string): SignatureParts => {
-	// 1. The header is `ts=…;h1=…` — both parts are required, in any order, a part with an empty value counting as
-	//    absent, the way the SDK's validator reads it
+	// The header is `ts=…;h1=…` — both parts are required, in any order, a part with an empty value counting as
+	// absent, the way the SDK's validator reads it
 	let ts = '';
 	let h1 = '';
 
@@ -46,14 +46,14 @@ export const signaturePartsOf = (signature: string): SignatureParts => {
 		else if (key === 'h1') h1 = value;
 	}
 
-	// 2. Without both parts the header is malformed: a payload problem the sender fixes, not a credentials problem
+	// Without both parts the header is malformed: a payload problem the sender fixes, not a credentials problem
 	if (!ts || !h1) {
 		throw new InvalidPayloadError({ reason: 'The paddle-signature header carries no timestamp or digest' });
 	}
 
-	// 3. The timestamp is used the way the SDK uses it: parsed to an integer that is stringified back into the
-	//    signed payload — a non-integer would parse to `NaN`, the digest would be computed over `"NaN:…"` and the
-	//    replay window over `NaN`, silently accepting a delivery of any age
+	// The timestamp is used the way the SDK uses it: parsed to an integer that is stringified back into the
+	// signed payload — a non-integer would parse to `NaN`, the digest would be computed over `"NaN:…"` and the
+	// replay window over `NaN`, silently accepting a delivery of any age
 	const timestamp = parseInt(ts, 10);
 
 	if (!Number.isInteger(timestamp)) {
@@ -78,17 +78,17 @@ export const signaturePartsOf = (signature: string): SignatureParts => {
  * @returns `true` for a body the secret signed within the window.
  */
 export const verifySignature = (rawBody: string, parts: SignatureParts, secret: string): boolean => {
-	// 1. The signed payload is the integer timestamp, a colon, then the body — reproduced exactly, so a digest the
-	//    SDK would accept is accepted here too
+	// The signed payload is the integer timestamp, a colon, then the body — reproduced exactly, so a digest the
+	// SDK would accept is accepted here too
 	const expected = createHmac('sha256', secret).update(`${parts.ts}:${rawBody}`).digest('hex');
 
-	// 2. Both sides as the bytes of their hex text, compared in constant time; a digest of another length cannot
-	//    match and must not throw
+	// Both sides as the bytes of their hex text, compared in constant time; a digest of another length cannot
+	// match and must not throw
 	const expectedBytes = Buffer.from(expected, 'utf8');
 	const givenBytes = Buffer.from(parts.h1, 'utf8');
 	const matches = expectedBytes.length === givenBytes.length && timingSafeEqual(expectedBytes, givenBytes);
 
-	// 3. The SDK's replay window: a timestamp older than five seconds is stale, a future one is not refused
+	// The SDK's replay window: a timestamp older than five seconds is stale, a future one is not refused
 	const stale = Date.now() > (parts.ts + MAX_VALID_TIME_DIFFERENCE) * 1000;
 
 	return matches && !stale;

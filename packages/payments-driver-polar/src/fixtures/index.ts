@@ -20,7 +20,7 @@ export const WEBHOOK_SECRET = 'polar-webhook-secret';
  * @returns The JSON text.
  */
 export const fixtureText = (name: string): string => {
-	// 1. Read the file as text rather than JSON, since the signature covers the exact bytes Polar would send
+	// Text rather than JSON, since the signature covers the exact bytes Polar would send
 	return readFileSync(new URL(`./${name}.json`, import.meta.url), 'utf8');
 };
 
@@ -38,10 +38,10 @@ export const sign = (
 	secret: string = WEBHOOK_SECRET,
 	id: string = 'msg_2abc',
 ): { 'webhook-id': string; 'webhook-timestamp': string; 'webhook-signature': string } => {
-	// 1. A current timestamp, since the verifier refuses one outside its tolerance window
+	// A current timestamp, since the verifier refuses one outside its tolerance window
 	const timestamp = String(Math.floor(Date.now() / 1000));
 
-	// 2. The signed string is `id.timestamp.body`, the Standard Webhooks layout, with the secret as the raw HMAC key
+	// The signed string is `id.timestamp.body`, the Standard Webhooks layout, with the secret as the raw HMAC key
 	const signature = `v1,${createHmac('sha256', secret).update(`${id}.${timestamp}.${body}`).digest('base64')}`;
 
 	return { 'webhook-id': id, 'webhook-timestamp': timestamp, 'webhook-signature': signature };
@@ -54,7 +54,7 @@ export const sign = (
  * @returns What `validateEvent` hands the driver.
  */
 export const parsed = (name: string): ReturnType<typeof validateEvent> => {
-	// 1. Sign the fixture and let the SDK verify and parse it, so the mappings see exactly the shapes the driver does
+	// The SDK verifies and parses the signed fixture, so the mappings see exactly the shapes the driver does
 	const body = fixtureText(name);
 
 	return validateEvent(body, sign(body), WEBHOOK_SECRET);

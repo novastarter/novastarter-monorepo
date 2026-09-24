@@ -29,7 +29,7 @@ export const POLAR_STATUSES: readonly SubscriptionStatus[] = [
  * @throws Error for a status the kit does not know — a change on Polar's side the mapping has to learn.
  */
 export const toSubscription = (subscription: PolarSubscription): Subscription => {
-	// 1. Polar's status set is the kit's; an unknown one is a change on Polar's side, better loud than silently wrong
+	// An unknown status is a change on Polar's side, better loud than silently wrong
 	if (!POLAR_STATUSES.includes(subscription.status as SubscriptionStatus)) {
 		throw new Error(`Polar subscription "${subscription.id}" has an unknown status "${String(subscription.status)}"`);
 	}
@@ -45,7 +45,7 @@ export const toSubscription = (subscription: PolarSubscription): Subscription =>
 		currentPeriodStart: subscription.currentPeriodStart,
 		currentPeriodEnd: subscription.currentPeriodEnd,
 		cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
-		// 2. `endsAt` is when a scheduled cancellation takes effect — the kit's `cancelAt`
+		// `endsAt` is when a scheduled cancellation takes effect — the kit's `cancelAt`
 		cancelAt: subscription.endsAt,
 		canceledAt: subscription.canceledAt,
 		trialEnd: subscription.trialEnd,

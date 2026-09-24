@@ -1,5 +1,5 @@
 import { useEmitter } from '@novastarter/emitter';
-import { InvalidPayloadError } from '@novastarter/errors';
+import { InvalidConfigError, InvalidPayloadError } from '@novastarter/errors';
 import { useLogger } from '@novastarter/logger';
 import { toError } from '@novastarter/utils';
 import { MessengerTargetGoneError } from '../errors/index.js';
@@ -78,8 +78,9 @@ export interface MessengerSendOptions {
  * @returns The driver's result with the location, or `null` when a `messenger.send` filter dropped the message.
  * @throws InvalidPayloadError for a message without a recipient, or without text and attachments.
  * @throws MessengerTargetGoneError when the recipient can no longer be reached — forget the chat, do not retry.
- * @throws Error when the location does not exist, or the messenger refused or could not be reached, or the chat a
- * `messenger.send` handler redirected to is gone; the driver's error as `cause`.
+ * @throws InvalidConfigError when the location does not exist.
+ * @throws Error when the messenger refused or could not be reached, or the chat a `messenger.send` handler redirected
+ * to is gone; the driver's error as `cause`.
  * @example
  * ```ts
  * await sendMessage({
@@ -97,26 +98,27 @@ export const sendMessage = async (
 	const manager = useMessenger();
 	const logger = useLogger();
 
-	// 1. The message is checked before any work is done, so a broken one never reaches a handler
+	// Checked before any work is done, so a broken message never reaches a handler
 	assertMessage(message);
 
-	// 2. A filter handler may rewrite the message — a redirect to a test chat — or veto it; the rewrite is checked too
+	// A filter handler may rewrite the message — a redirect to a test chat — or veto it, so the rewrite is checked too
 	const prepared = await useEmitter().emitFilter<MessengerMessage | null>(MESSENGER_SEND_FILTER, message, {});
 
 	if (!prepared) return null;
 
 	assertMessage(prepared);
 
-	// 3. One location; a name nobody registered is a configuration mistake worth naming
 	const location = options.location ?? prepared.location ?? DEFAULT_MESSENGER_LOCATION;
 
 	if (!manager.hasLocation(location)) {
-		throw new Error(`Messenger location "${location}" doesn't exist.`);
+		throw new InvalidConfigError({
+			reason: `Messenger location "${location}" doesn't exist; register it or name another one`,
+		});
 	}
 
 	const driver = manager.location(location);
 
-	// 4. One send, then `messenger.sent` with the recipient, so a listener can log without re-deriving it
+	// `messenger.sent` carries the recipient, so a listener can log without re-deriving it
 	try {
 		const result = await driver.send(prepared);
 		const sent: MessengerSendResult = { ...result, location };
@@ -125,15 +127,15 @@ export const sendMessage = async (
 
 		return sent;
 	} catch (error) {
-		// 5. A gone recipient is not a failure to retry: reported as its own event, which carries the chat that was
-		//    actually contacted
+		// A gone recipient is not a failure to retry: reported as its own event, which carries the chat that was
+		// actually contacted
 		if (error instanceof MessengerTargetGoneError) {
 			logger.info(`Messenger recipient on "${location}" is gone (${error.extensions.reason}): ${prepared.to}`);
 			useEmitter().emitAction(MESSENGER_GONE_EVENT, { location, to: prepared.to, reason: error.extensions.reason });
 
-			// 6. The error itself names no chat, and callers forget the chat they passed in when they catch it; so it is
-			//    passed on as is only when that chat, on the location the caller meant, is the one that is gone. A
-			//    redirect to a test chat the bot was kicked from must not make the caller forget the real user's chat
+			// The error itself names no chat, and callers forget the chat they passed in when they catch it; so it is
+			// passed on as is only when that chat, on the location the caller meant, is the one that is gone. A
+			// redirect to a test chat the bot was kicked from must not make the caller forget the real user's chat
 			const intended = options.location ?? message.location ?? DEFAULT_MESSENGER_LOCATION;
 
 			if (prepared.to === message.to && location === intended) {
@@ -146,7 +148,7 @@ export const sendMessage = async (
 			);
 		}
 
-		// 7. Anything else is the messenger refusing or being unreachable; the driver's error travels as the cause
+		// Anything else is the messenger refusing or being unreachable; the driver's error travels as the cause
 		logger.warn(toError(error), `Messenger location "${location}" failed to send to ${prepared.to}`);
 		useEmitter().emitAction(MESSENGER_FAILED_EVENT, { location, to: prepared.to });
 
@@ -162,12 +164,12 @@ export const sendMessage = async (
  * @internal
  */
 const assertMessage = (message: MessengerMessage): void => {
-	// 1. A recipient is the one thing every messenger needs
+	// A recipient is the one thing every messenger needs
 	if (typeof message.to !== 'string' || !message.to.trim()) {
 		throw new InvalidPayloadError({ reason: 'The messenger message has no recipient' });
 	}
 
-	// 2. An empty message is refused by every messenger; refused here as the payload's fault
+	// An empty message is refused by every messenger; refused here as the payload's fault
 	const hasText = typeof message.text === 'string' && message.text.trim().length > 0;
 
 	if (!hasText && !message.attachments?.length) {

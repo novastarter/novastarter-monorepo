@@ -12,6 +12,6 @@ import { type DotenvParseOutput, parse } from 'dotenv';
  * @throws When the file cannot be read.
  */
 export const readConfigurationFromDotEnv = (path: string): DotenvParseOutput => {
-	// 1. The raw buffer is enough for dotenv; no need to decode it first
+	// The raw buffer is enough for dotenv; no need to decode it first
 	return parse(readFileSync(path));
 };

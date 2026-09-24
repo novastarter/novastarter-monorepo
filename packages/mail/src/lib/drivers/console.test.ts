@@ -1,14 +1,14 @@
 /**
  * Tests of the `console` mail driver.
  */
+import type { Logger } from '@novastarter/logger';
 import { describe, expect, test, vi } from 'vitest';
 import { MailDriverConsole } from './console.js';
 
 describe('MailDriverConsole', () => {
 	test('Logs the message and accepts every recipient', async () => {
-		// 1. A recording logger stands in for the application's
 		const logger = { info: vi.fn() };
-		const driver = new MailDriverConsole({ logger: logger as any });
+		const driver = new MailDriverConsole({ logger: logger as unknown as Logger });
 
 		const result = await driver.send({
 			to: ['ada@example.com', { name: 'Grace', address: 'grace@example.com' }],
@@ -20,7 +20,6 @@ describe('MailDriverConsole', () => {
 			category: 'transactional',
 		});
 
-		// 2. The result carries bare addresses; the log line the readable forms, html left out
 		expect(result).toStrictEqual({ accepted: ['ada@example.com', 'grace@example.com'], rejected: [] });
 
 		expect(logger.info).toHaveBeenCalledWith(
@@ -37,9 +36,8 @@ describe('MailDriverConsole', () => {
 	});
 
 	test('Includes the html only when asked', async () => {
-		// 1. `includeHtml` is the one switch: with it the html joins the log line
 		const logger = { info: vi.fn() };
-		const driver = new MailDriverConsole({ logger: logger as any, includeHtml: true });
+		const driver = new MailDriverConsole({ logger: logger as unknown as Logger, includeHtml: true });
 
 		await driver.send({ to: 'ada@example.com', subject: 'Hi', html: '<p>Hi</p>' });
 
@@ -49,9 +47,8 @@ describe('MailDriverConsole', () => {
 	test('Logs a call with its method and parameters, files by name, and answers nothing', async () => {
 		const logger = { info: vi.fn() };
 
-		// 1. The same call a provider's driver takes, written to the log; the options are not logged
 		await expect(
-			new MailDriverConsole({ logger: logger as any }).call(
+			new MailDriverConsole({ logger: logger as unknown as Logger }).call(
 				'POST /v1/files',
 				{ purpose: 'import', file: new File(['x'], 'data.csv'), raw: new Blob(['y']) },
 				{ headers: { authorization: 'secret' } },
@@ -65,8 +62,10 @@ describe('MailDriverConsole', () => {
 	});
 
 	test('Answers a plain 200 with no headers and no body', async () => {
-		// 1. Code that reads the status of a real provider's answer runs against the console too
-		await expect(new MailDriverConsole({ logger: { info: vi.fn() } as any }).call('GET /v1/x')).resolves.toStrictEqual({
+		// Code that reads the status of a real provider's answer runs against the console too
+		await expect(
+			new MailDriverConsole({ logger: { info: vi.fn() } as unknown as Logger }).call('GET /v1/x'),
+		).resolves.toStrictEqual({
 			status: 200,
 			headers: {},
 			data: undefined,

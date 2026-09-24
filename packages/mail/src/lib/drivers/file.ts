@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { InvalidConfigError } from '@novastarter/errors';
 import nodemailer, { type Transporter } from 'nodemailer';
 import type { MailDriver } from '../../driver.js';
 import type { MailMessage, MailResult } from '../../types.js';
@@ -49,17 +50,16 @@ export class MailDriverFile implements MailDriver {
 	 * Create a driver writing to the given directory.
 	 *
 	 * @param config - Target directory.
-	 * @throws Error when no directory is configured.
+	 * @throws InvalidConfigError when no directory is configured.
 	 */
 	constructor(config: MailDriverFileConfig) {
-		// 1. A missing directory is a configuration error; report it by the option's name
 		if (!config.dir) {
-			throw new Error('The file mail driver needs a "dir"');
+			throw new InvalidConfigError({ reason: 'The file mail driver needs a "dir"' });
 		}
 
 		this.dir = resolve(config.dir);
 
-		// 2. The stream transport with `buffer` hands back the whole message as one Buffer
+		// The stream transport with `buffer` hands back the whole message as one Buffer
 		this.transporter = nodemailer.createTransport({ streamTransport: true, buffer: true, newline: 'unix' });
 	}
 
@@ -72,15 +72,15 @@ export class MailDriverFile implements MailDriver {
 	 * written.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
-		// 1. nodemailer builds the complete message — headers, MIME parts, attachments — the way a server would get it
+		// nodemailer builds the complete message — headers, MIME parts, attachments — the way a server would get it
 		const info = await this.transporter.sendMail(toNodemailerMessage(message));
 
-		// 2. The directory is created on first use rather than in the constructor, so `pnpm build` and the like never
-		//    litter the working directory
+		// The directory is created on first use rather than in the constructor, so `pnpm build` and the like never
+		// litter the working directory
 		await mkdir(this.dir, { recursive: true });
 
-		// 3. Sortable by time, unique by message id. The id may be a caller's `Message-ID` header, where `/` and `..` are
-		//    legal, so everything outside a plain file-name alphabet becomes `_`: the file then always lands in `dir`
+		// Sortable by time, unique by message id. The id may be a caller's `Message-ID` header, where `/` and `..` are
+		// legal, so everything outside a plain file-name alphabet becomes `_`: the file then always lands in `dir`
 		const id = String(info.messageId ?? Date.now())
 			.replace(/^<|>$/g, '')
 			.replace(/[^A-Za-z0-9._-]/g, '_');

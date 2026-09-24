@@ -2,6 +2,8 @@
  * Tests of `queue/lib/create-worker` with `bullmq` and the Redis client of `@novastarter/redis` mocked.
  */
 import { EventEmitter } from 'node:events';
+import { InvalidConfigError } from '@novastarter/errors';
+import type { Logger } from '@novastarter/logger';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { z } from 'zod';
 import { _contracts, registerJob } from '../contracts/index.js';
@@ -96,7 +98,7 @@ describe('createWorker', () => {
 		useQueue().registerLocation('default', {
 			driver: 'local',
 			options: {
-				logger: logger as any,
+				logger: logger as unknown as Logger,
 			},
 		});
 
@@ -106,29 +108,33 @@ describe('createWorker', () => {
 				connection: 'redis://jobs',
 				prefix: 'acme',
 				telemetry: telemetry as never,
-				logger: logger as any,
+				logger: logger as unknown as Logger,
 			},
 		});
 
 		await createWorker(
 			'test',
 			vi.fn(async () => {}),
-			{ logger: logger as any },
+			{ logger: logger as unknown as Logger },
 		);
 
-		// 1. The worker shares the location's client, prefix and telemetry with the producer of the process
+		// The worker shares the location's client, prefix and telemetry with the producer of the process
 		expect(FakeWorker.instances[0]).toMatchObject({
 			name: 'test',
 			opts: { connection: (useQueue().location('test') as QueueDriverBullmq).connection, prefix: 'acme', telemetry },
 		});
 
-		await expect(
-			createWorker(
-				'other',
-				vi.fn(async () => {}),
-				{ logger: logger as any },
-			),
-		).rejects.toThrow('Queue "other" is not on a "bullmq" location; a worker needs one');
+		const refused = createWorker(
+			'other',
+			vi.fn(async () => {}),
+			{ logger: logger as unknown as Logger },
+		);
+
+		await expect(refused).rejects.toThrow(InvalidConfigError);
+
+		await expect(refused).rejects.toThrow(
+			'Invalid config. Queue "other" is not on a "bullmq" location; a worker needs one, or a "connection" of its own.',
+		);
 	});
 
 	test('Runs the processor with the rebuilt name and context, logging completions and failures', async () => {
@@ -140,12 +146,12 @@ describe('createWorker', () => {
 			connection: { host: 'redis' },
 			concurrency: 3,
 			telemetry: telemetry as never,
-			logger: logger as any,
+			logger: logger as unknown as Logger,
 		});
 
 		expect(running.queue).toBe('test');
 
-		// 1. The worker opens with the telemetry add-on, so its runs continue the producer's trace
+		// The worker opens with the telemetry add-on, so its runs continue the producer's trace
 		expect(FakeWorker.instances[0]).toMatchObject({
 			name: 'test',
 			opts: { connection: { host: 'redis' }, concurrency: 3, telemetry },
@@ -187,7 +193,7 @@ describe('createWorker', () => {
 		registerJob(slow);
 
 		const processor = vi.fn((_payload: unknown, _context: JobContext) => new Promise<void>(() => {}));
-		await createWorker('test', processor, { connection: {}, timeout: 5_000, logger: logger as any });
+		await createWorker('test', processor, { connection: {}, timeout: 5_000, logger: logger as unknown as Logger });
 
 		const run = FakeWorker.instances[0]!.processor({ id: '1', name: 'slow', data: {}, attemptsMade: 0, timestamp: 0 });
 		const settled = run.catch((error: unknown) => error);
@@ -220,19 +226,19 @@ describe('createWorker', () => {
 	});
 
 	test('Refuses a fallback timeout a timer cannot hold, once, instead of failing every run', async () => {
-		await expect(createWorker('test', vi.fn(), { connection: {}, timeout: -1, logger: logger as any })).rejects.toThrow(
-			RangeError,
-		);
+		await expect(
+			createWorker('test', vi.fn(), { connection: {}, timeout: -1, logger: logger as unknown as Logger }),
+		).rejects.toThrow(RangeError);
 
 		await expect(
-			createWorker('test', vi.fn(), { connection: {}, timeout: Number.NaN, logger: logger as any }),
+			createWorker('test', vi.fn(), { connection: {}, timeout: Number.NaN, logger: logger as unknown as Logger }),
 		).rejects.toThrow('The "timeout" of the worker of queue "test" is NaN');
 
 		expect(FakeWorker.instances).toHaveLength(0);
 	});
 
 	test('Refuses a job whose contract the worker does not know', async () => {
-		await createWorker('test', vi.fn(), { connection: {}, logger: logger as any });
+		await createWorker('test', vi.fn(), { connection: {}, logger: logger as unknown as Logger });
 
 		await expect(
 			FakeWorker.instances[0]!.processor({ id: '1', name: 'unknown', data: {}, attemptsMade: 0, timestamp: 0 }),

@@ -117,7 +117,6 @@ export declare class StorageDriver {
 	 * const { status, headers, data } = await driver.call!('GetBucketVersioning');
 	 * ```
 	 */
-
 	call?<T = unknown>(method: string, params?: Record<string, unknown>, options?: CallOptions): Promise<CallResponse<T>>;
 
 	/**

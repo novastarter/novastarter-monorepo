@@ -23,12 +23,12 @@ const cases: [string, Uint8Array][] = [
 ];
 
 test.each(cases)('%s', async (_description, input) => {
-	// 1. Compressing answers with the package's array type, not with the buffer zlib produced
+	// Compressing answers with the package's array type, not with the buffer zlib produced
 	const compressed = await compress(input);
 
 	expect(compressed).toBeInstanceOf(Uint8Array);
 
-	// 2. Decompressing gives the original bytes back, so what was stored reads the same
+	// Decompressing gives the original bytes back, so what was stored reads the same
 	const decompressed = await decompress(compressed);
 
 	expect(decompressed).toEqual(input);

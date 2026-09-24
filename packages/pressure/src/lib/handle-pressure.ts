@@ -24,11 +24,10 @@ export type PressureHandler = RequestHandler & {
  * @returns The copy, or `undefined` when no error was given.
  */
 const cloneError = (error: Error | undefined): Error | undefined => {
-	// 1. No error given means the caller set none; the middleware substitutes its generic default instead
 	if (error === undefined) return undefined;
 
-	// 2. A fresh object on the original's prototype, with its own properties copied over, is indistinguishable from
-	//    the original for reading yet writes nothing back to it
+	// A fresh object on the original's prototype, with its own properties copied over, is indistinguishable from the
+	// original for reading yet writes nothing back to it
 	return Object.create(Object.getPrototypeOf(error), Object.getOwnPropertyDescriptors(error));
 };
 
@@ -61,31 +60,27 @@ const cloneError = (error: Error | undefined): Error | undefined => {
 export const handlePressure = (
 	options: PressureMonitorOptions & { error?: Error | (() => Error); retryAfter?: string },
 ): PressureHandler => {
-	// 1. Create the monitor once, outside the handler, so its sampling timer is not restarted for each request
+	// Created once, outside the handler, so its sampling timer is not restarted for each request
 	const monitor = new PressureMonitor(options);
 
-	// 2. The handler closes over that single monitor and only reads its cached verdict per request
 	const handler: RequestHandler = (_req, res, next) => {
-		// 1. Reject only while the latest sample reports overload
 		if (monitor.overloaded) {
-			// 2. Tell clients when to come back, but only when the caller chose a value
 			if (options.retryAfter) {
 				res.header('Retry-After', options.retryAfter);
 			}
 
-			// 3. Forwarding an error to `next` lets the app's error handler decide the status and body; the error
-			//    is resolved per request — a factory is called, an `Error` is cloned — so a handler that mutates it
-			//    cannot share that state with the next overloaded request
+			// Forwarding the error to `next` lets the app's error handler decide the status and body. The error is
+			// resolved per request — a factory is called, an `Error` is cloned — so a handler that mutates it cannot
+			// share that state with the next overloaded request
 			const error = typeof options.error === 'function' ? options.error() : cloneError(options.error);
 
 			return next(error ?? new Error('Pressure limit exceeded'));
 		}
 
-		// 4. Under normal load the middleware is transparent
 		return next();
 	};
 
-	// 3. Attaching the monitor to the function is what lets the caller stop it; the handler stays a plain
-	//    `RequestHandler` for Express
+	// Attaching the monitor to the function is what lets the caller stop it; the handler stays a plain `RequestHandler`
+	// for Express
 	return Object.assign(handler, { monitor });
 };

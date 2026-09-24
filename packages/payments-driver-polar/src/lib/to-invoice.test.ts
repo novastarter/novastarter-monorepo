@@ -13,7 +13,7 @@ import { toInvoice } from './to-invoice.js';
  * @returns The order.
  */
 const paidOrder = (): Order => {
-	// 1. The fixture is signed and parsed by the SDK, so the order carries exactly the shape the driver sees
+	// The fixture is signed and parsed by the SDK, so the order carries exactly the shape the driver sees
 	const event = parsed('order.paid');
 
 	return event.type === 'order.paid' ? event.data : (undefined as never);
@@ -21,7 +21,7 @@ const paidOrder = (): Order => {
 
 describe('toInvoice', () => {
 	test('Maps a paid order as a paid invoice', () => {
-		// 1. A paid order is paid in full: the whole due amount is paid, nothing is due, paid when created
+		// A paid order is paid in full: the whole due amount is paid, nothing is due, paid when created
 		expect(toInvoice(paidOrder())).toStrictEqual({
 			id: 'f0e1d2c3-7777-4a77-9c77-000000000007',
 			number: 'NOVA-0001',
@@ -40,8 +40,8 @@ describe('toInvoice', () => {
 	});
 
 	test('Takes the paid and due amounts from what Polar collects, not the face value', () => {
-		// 1. A customer balance applied to the order lowers what Polar charges below the total; the total stays the
-		//    invoice's face value while the paid amount is what was actually collected
+		// A customer balance applied to the order lowers what Polar charges below the total; the total stays the
+		// invoice's face value while the paid amount is what was actually collected
 		const withBalance = { ...paidOrder(), appliedBalanceAmount: -2000, dueAmount: 7500 };
 
 		expect(toInvoice(withBalance)).toMatchObject({
@@ -51,7 +51,7 @@ describe('toInvoice', () => {
 			amountDue: 0,
 		});
 
-		// 2. The same order still pending owes what Polar will collect, and nothing is paid yet
+		// The same order still pending owes what Polar will collect, and nothing is paid yet
 		const pending = { ...withBalance, status: 'pending' as const, paid: false };
 
 		expect(toInvoice(pending)).toMatchObject({
@@ -64,7 +64,7 @@ describe('toInvoice', () => {
 	});
 
 	test('Reads a status it does not know as still open', () => {
-		// 1. A refund does not unpay an invoice; a status Polar adds later is read as open rather than failing the list
+		// A refund does not unpay an invoice; a status Polar adds later is read as open rather than failing the list
 		expect(toInvoice({ ...paidOrder(), status: 'refunded' as const })).toMatchObject({ status: 'paid' });
 		expect(toInvoice({ ...paidOrder(), status: 'disputed' as never, paid: false })).toMatchObject({ status: 'open' });
 	});

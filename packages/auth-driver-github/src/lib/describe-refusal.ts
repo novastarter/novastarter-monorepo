@@ -18,25 +18,22 @@ import type { ProviderResponse } from './request.js';
  * ```
  */
 export const describeRefusal = (what: string, response: ProviderResponse): string => {
-	// 1. Only a JSON object can carry the error fields; anything else falls through to the status
+	// Only a JSON object can carry the error fields
 	const body =
 		typeof response.body === 'object' && response.body !== null ? (response.body as Record<string, unknown>) : {};
 
 	const error = body['error'];
 	const description = body['error_description'];
 
-	// 2. The error code first, the prose after it, when GitHub sent both
 	if (typeof error === 'string' && error) {
 		return typeof description === 'string' && description ? `${error}: ${description}` : error;
 	}
 
-	// 3. The REST API's own shape: the status and its message
 	const message = body['message'];
 
 	if (typeof message === 'string' && message) {
 		return `${what} answered ${response.status}: ${message}`;
 	}
 
-	// 4. Neither: the status is all there is to report
 	return `${what} answered ${response.status}`;
 };

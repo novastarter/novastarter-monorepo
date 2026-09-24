@@ -1,3 +1,4 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import { type Logger, useLogger } from '@novastarter/logger';
 import { MAX_TIMER_DELAY, toError, withTimeout } from '@novastarter/utils';
 import type { Job, Worker, WorkerOptions } from 'bullmq';
@@ -88,7 +89,7 @@ export class JobTimeoutError extends Error {
  * @param processor - What to do with a job.
  * @param options - Connection, concurrency, timeout, telemetry and logger.
  * @returns The running worker.
- * @throws Error when no connection is given and the queue's location is not a `bullmq` one — there is nothing to
+ * @throws InvalidConfigError when no connection is given and the queue's location is not a `bullmq` one — there is nothing to
  * consume from; `RangeError` for a `timeout` that is negative, `NaN` or above `MAX_TIMER_DELAY`, which would fail
  * every run instead of limiting it.
  */
@@ -97,23 +98,23 @@ export const createWorker = async (
 	processor: WorkerProcessor,
 	options: CreateWorkerOptions = {},
 ): Promise<QueueWorker> => {
-	// 1. A fallback timeout no timer can hold is refused once, here, rather than by `withTimeout` on every job whose
-	//    contract sets none — each of which BullMQ would then retry with backoff for nothing
+	// A fallback timeout no timer can hold is refused once, here, rather than by `withTimeout` on every job whose
+	// contract sets none — each of which BullMQ would then retry with backoff for nothing
 	if (options.timeout !== undefined && !(options.timeout >= 0 && options.timeout <= MAX_TIMER_DELAY)) {
 		throw new RangeError(
 			`The "timeout" of the worker of queue "${queue}" is ${options.timeout}; it must be between 0 and ${MAX_TIMER_DELAY} ms`,
 		);
 	}
 
-	// 2. `bullmq` is loaded here and not at the top of the module, so a producer that never starts a worker never
-	//    pays for it; the load fails with the install hint when the optional peer is missing, not a bare
-	//    "Cannot find package". The logger falls back to the process one
+	// `bullmq` is loaded here and not at the top of the module, so a producer that never starts a worker never
+	// pays for it; the load fails with the install hint when the optional peer is missing, not a bare
+	// "Cannot find package". The logger falls back to the process one
 	const { Worker } = await loadBullmq();
 	const logger = options.logger ?? useLogger();
 
-	// 3. Without a connection of its own the worker consumes the location the producer of this process enqueues on,
-	//    which is the one place the queue's Redis, prefix and telemetry are known; any other kind of location has
-	//    nothing a worker could consume from
+	// Without a connection of its own the worker consumes the location the producer of this process enqueues on,
+	// which is the one place the queue's Redis, prefix and telemetry are known; any other kind of location has
+	// nothing a worker could consume from
 	let location: QueueDriverBullmq | undefined;
 	let connection: WorkerOptions['connection'];
 
@@ -121,7 +122,9 @@ export const createWorker = async (
 		const driver = useQueue().location(queue);
 
 		if (!(driver instanceof QueueDriverBullmq)) {
-			throw new Error(`Queue "${queue}" is not on a "bullmq" location; a worker needs one`);
+			throw new InvalidConfigError({
+				reason: `Queue "${queue}" is not on a "bullmq" location; a worker needs one, or a "connection" of its own`,
+			});
 		}
 
 		location = driver;
@@ -130,16 +133,14 @@ export const createWorker = async (
 		connection = options.connection;
 	}
 
-	// 4. What the options leave out comes from the location, when there is one
 	const prefix = options.prefix ?? location?.prefix;
 	const telemetry = options.telemetry ?? location?.telemetry;
 
-	// 5. Open the worker on the queue; the processor rebuilds the job name and enforces the timeout around every run.
-	//    Options BullMQ would take literally, `concurrency: undefined` included, are only set when given
+	// Options BullMQ would take literally, `concurrency: undefined` included, are only set when given
 	const worker = new Worker(
 		queue,
 		async (job: Job) => {
-			// 1. The full name is `<queue>.<action>`; an unknown one means producer and worker disagree on the contracts
+			// An unknown name means producer and worker disagree on the contracts
 			const name = `${queue}.${job.name}`;
 			const contract = getJobContract(name);
 
@@ -150,8 +151,8 @@ export const createWorker = async (
 				enqueuedAt: new Date(job.timestamp),
 			};
 
-			// 2. The contract's timeout, then the worker's default; none means the job may take as long as it needs.
-			//    Only `undefined` means none: both were range-checked where they were set, so any number is a limit
+			// The contract's timeout, then the worker's default; none means the job may take as long as it needs.
+			// Only `undefined` means none: both were range-checked where they were set, so any number is a limit
 			const timeout = contract.options.timeout ?? options.timeout;
 
 			if (timeout === undefined) {
@@ -159,9 +160,9 @@ export const createWorker = async (
 				return;
 			}
 
-			// 3. The run is raced against the clock and told when it lost: the signal in the context aborts with the
-			//    timeout error, so a processor that passes it on stops instead of finishing a job already marked failed
-			//    — and retried by the contract's rules — a second time in the background
+			// The run is raced against the clock and told when it lost: the signal in the context aborts with the
+			// timeout error, so a processor that passes it on stops instead of finishing a job already marked failed
+			// — and retried by the contract's rules — a second time in the background
 			await withTimeout((signal) => processor(job.data, { ...context, signal }), timeout, {
 				error: () => new JobTimeoutError(name, timeout),
 			});
@@ -174,9 +175,8 @@ export const createWorker = async (
 		},
 	);
 
-	// 6. Lifecycle to the log: what ran, what failed on which attempt, and connection trouble. BullMQ forwards a
-	//    rejection as it came, so a processor rejecting with a string would be taken for the message and the job's
-	//    name dropped; `toError` keeps both
+	// BullMQ forwards a rejection as it came, so a processor rejecting with a string would be taken for the message
+	// and the job's name dropped; `toError` keeps both
 	worker.on('completed', (job) => {
 		logger.info(`Job "${queue}.${job.name}" (${job.id}) completed`);
 	});
@@ -193,7 +193,6 @@ export const createWorker = async (
 		logger.error(toError(error), `Worker of queue "${queue}" error`);
 	});
 
-	// 7. The handle: the queue and the BullMQ worker for what the wrapper does not expose, and a close that drains
 	return {
 		queue,
 		worker,

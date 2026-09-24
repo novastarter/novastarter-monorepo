@@ -19,6 +19,6 @@ const RESERVED = /[_*[\]()~`>#+\-=|{}.!\\]/g;
  * ```
  */
 export const escapeMarkdownV2 = (text: string): string => {
-	// 1. One backslash before each reserved character, the backslash itself included
+	// One backslash before each reserved character, the backslash itself included
 	return text.replace(RESERVED, '\\$&');
 };

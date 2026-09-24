@@ -138,7 +138,6 @@ export declare class PaymentsDriver {
 	 * const { status, headers, data } = await driver.call!('POST /v1/refunds', { payment_intent: 'pi_123' });
 	 * ```
 	 */
-
 	call?<T = unknown>(method: string, params?: Record<string, unknown>, options?: CallOptions): Promise<CallResponse<T>>;
 
 	/**

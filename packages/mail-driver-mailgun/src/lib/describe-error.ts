@@ -8,7 +8,7 @@ import { toErrorMessage } from '@novastarter/utils';
  * @throws Always.
  */
 export const rethrowMailgunError = (error: unknown): never => {
-	// 1. The SDK's message already names the status and Mailgun's reason; only the provider is added
+	// The SDK's message already names the status and Mailgun's reason; only the provider is added
 	const details = toErrorMessage(error);
 
 	throw new Error(`Mailgun: ${details}`, { cause: error });

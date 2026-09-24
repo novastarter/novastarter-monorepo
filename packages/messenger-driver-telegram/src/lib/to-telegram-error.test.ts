@@ -1,7 +1,7 @@
 /**
  * Tests of `messenger-driver-telegram/lib/to-telegram-error`.
  */
-import { HitRateLimitError } from '@novastarter/errors';
+import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { MessengerTargetGoneError } from '@novastarter/messenger';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { toTelegramError } from './to-telegram-error.js';
@@ -17,7 +17,6 @@ afterEach(() => {
 
 describe('toTelegramError', () => {
 	test('Makes a blocked bot or a gone chat a MessengerTargetGoneError', () => {
-		// 1. Every 403, and the 400s that mean the chat is gone
 		const blocked = toTelegramError(
 			'sendMessage',
 			{ error_code: 403, description: 'Forbidden: bot was blocked by the user' },
@@ -36,7 +35,6 @@ describe('toTelegramError', () => {
 	});
 
 	test('Makes a 429 a HitRateLimitError reset at retry_after', () => {
-		// 1. The wait Telegram names, in seconds
 		const error = toTelegramError('sendMessage', { error_code: 429, parameters: { retry_after: 5 } }, 429);
 
 		expect(error).toBeInstanceOf(HitRateLimitError);
@@ -46,14 +44,20 @@ describe('toTelegramError', () => {
 		);
 	});
 
-	test('Makes anything else an Error with Telegram’s description, or the HTTP status without one', () => {
-		// 1. A broken request is told in Telegram's words
-		expect(
-			toTelegramError('sendMessage', { error_code: 400, description: "Bad Request: can't parse entities" }, 400)
-				.message,
-		).toBe("Telegram refused sendMessage: Bad Request: can't parse entities");
+	test('Makes anything else a ProviderCallError with Telegram’s answer, or the HTTP status without one', () => {
+		const answer = { ok: false as const, error_code: 400, description: "Bad Request: can't parse entities" };
+		const error = toTelegramError('sendMessage', answer, 400);
 
-		// 2. No answer body: the status stands in
-		expect(toTelegramError('getMe', {}, 502).message).toBe('Telegram refused getMe: HTTP 502');
+		expect(error).toBeInstanceOf(ProviderCallError);
+		expect(error.message).toBe("telegram refused sendMessage: 400 Bad Request: can't parse entities");
+
+		expect((error as InstanceType<typeof ProviderCallError>).extensions).toEqual({
+			provider: 'telegram',
+			method: 'sendMessage',
+			status: 400,
+			body: answer,
+		});
+
+		expect(toTelegramError('getMe', {}, 502).message).toBe('telegram refused getMe: 502');
 	});
 });

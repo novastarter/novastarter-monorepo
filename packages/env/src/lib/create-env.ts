@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { ErrorCode, InvalidConfigError, isNovastarterError } from '@novastarter/errors';
 import { toErrorMessage } from '@novastarter/utils';
 import { DEFAULTS } from '../constants/defaults.js';
 import type { Env } from '../types/env.js';
@@ -37,15 +38,15 @@ export interface CreateEnvOptions {
  *
  * @param options - Which variables may come from a file.
  * @returns The configuration, cast prefixes applied.
- * @throws When a variable of `fileVariables` is set both as `<NAME>` and `<NAME>_FILE`, when a `_FILE` variable
- * points to a file that cannot be read (the fs error is the `cause`), or when a value with a cast prefix cannot be
- * read (`number:80O0`); the error names the variable.
+ * @throws InvalidConfigError when a variable of `fileVariables` is set both as `<NAME>` and `<NAME>_FILE`, when a
+ * `_FILE` variable points to a file that cannot be read (the fs error is the `cause`), or when a value with a cast
+ * prefix cannot be read (`number:80O0`); the error names the variable.
  */
 export const createEnv = (options: CreateEnvOptions = {}): Env => {
-	// 1. The `*_FILE` variables the application allows; anything outside this set is treated as a plain variable
+	// The `*_FILE` variables the application allows; anything outside this set is treated as a plain variable
 	const fileVariables = new Set(options.fileVariables ?? []);
 
-	// 2. Gather the raw sources; the file is read last so it overrides the process environment
+	// The file is read last so it overrides the process environment
 	const baseConfiguration = readConfigurationFromProcess();
 	const fileConfiguration = readConfigurationFromFile(getConfigPath());
 
@@ -53,61 +54,64 @@ export const createEnv = (options: CreateEnvOptions = {}): Env => {
 
 	const output: Env = {};
 
-	// 3. Defaults are authored in their final type already and go in as they are
+	// Defaults are authored in their final type already and go in as they are
 	for (const [key, value] of Object.entries(DEFAULTS)) {
 		output[key] = value;
 	}
 
 	for (let [key, value] of Object.entries(rawConfiguration)) {
-		// 4. A `*_FILE` variable of the application's schema holds a path, not the value; unknown names are left
-		//    alone so a third-party `FOO_FILE` is never read as a secret
+		// A `*_FILE` variable of the application's schema holds a path, not the value; unknown names are left
+		// alone so a third-party `FOO_FILE` is never read as a secret
 		if (isFileKey(key) && fileVariables.has(removeFileSuffix(key)) && typeof value === 'string') {
 			const name = removeFileSuffix(key);
 
-			// 5. The plain variable and its `_FILE` twin land under one name, and `process.env` enumerates in the order
-			//    the variables were passed, so the survivor would differ between deployments; refuse the pair instead
-			//    of picking a secret by chance
+			// The plain variable and its `_FILE` twin land under one name, and `process.env` enumerates in the order
+			// the variables were passed, so the survivor would differ between deployments; refuse the pair instead
+			// of picking a secret by chance
 			if (Object.hasOwn(rawConfiguration, name)) {
-				throw new Error(`Environment variables "${name}" and "${key}" are both set; keep one of them.`);
+				throw new InvalidConfigError({
+					reason: `The environment variables "${name}" and "${key}" are both set; keep one of them`,
+				});
 			}
 
-			// 6. A cast prefix applies to the file contents, not the path, so it is peeled off and re-applied; the
-			//    peel cannot fail, so it stays outside the try and the path below is the one actually read
+			// A cast prefix applies to the file contents, not the path, so it is peeled off and re-applied; the
+			// peel cannot fail, so it stays outside the try and the path below is the one actually read
 			const castFlag = getCastFlag(value);
 			const castPrefix = castFlag ? castFlag + ':' : '';
 			const filePath = castFlag ? value.replace(castPrefix, '') : value;
 
 			try {
-				// 7. Read the secret as text
 				const fileContent = readFileSync(filePath, { encoding: 'utf8' });
 
-				// 8. A mounted-secret file ends in a newline an inline value never carries; one trailing `\r?\n` is
-				//    stripped — not a full trim, since inner whitespace can be intentional — so both sources yield
-				//    the same value
+				// A mounted-secret file ends in a newline an inline value never carries; one trailing `\r?\n` is
+				// stripped — not a full trim, since inner whitespace can be intentional — so both sources yield
+				// the same value
 				const secret = fileContent.replace(/\r?\n$/, '');
 
-				// 9. Store under the option name and feed the prefix back in, so casting treats it like an inline value
+				// The prefix is fed back in, so casting treats the content like an inline value
 				key = name;
 				value = castPrefix + secret;
 			} catch (error) {
-				// 10. The fs error carries the code and path the operator needs (`EACCES`, `ENOENT`), so it stays as
-				//     the cause and its message is quoted, while the wrapper adds the variable the fs alone does not
-				//     know; the message names `filePath`, the path that was actually read, not the raw value with
-				//     its cast prefix
-				throw new Error(
-					`Failed to read value from file "${filePath}", defined in environment variable "${key}": ${toErrorMessage(error)}`,
+				// The fs error carries the code and path the operator needs (`EACCES`, `ENOENT`), so it stays as
+				// the cause and its message is quoted, while the wrapper adds the variable the fs alone does not
+				// know; the message names `filePath`, the path that was actually read, not the raw value with
+				// its cast prefix
+				throw new InvalidConfigError(
+					{
+						reason: `The file "${filePath}" of the environment variable "${key}" cannot be read: ${toErrorMessage(error)}`,
+					},
 					{ cause: error },
 				);
 			}
 		}
 
-		// 11. A cast prefix on a source value is applied; everything else is kept as the source gave it. A payload the
-		//     prefix cannot read is reported with the variable's name, which the cast alone does not know
+		// A cast prefix on a source value is applied; everything else is kept as the source gave it. A payload the
+		// prefix cannot read is reported with the variable's name, which the cast alone does not know
 		try {
-			// 12. A plain assignment of a `__proto__` key runs the `Object.prototype` setter and swaps the returned
-			//     object's prototype: dynamic lookups then resolve through the attacker's object while `Object.entries`
-			//     stays clean, bypassing the guard `parseJSON` carries for exactly this key. Defining the property
-			//     stores the value as an own data property instead, like any other variable
+			// A plain assignment of a `__proto__` key runs the `Object.prototype` setter and swaps the returned
+			// object's prototype: dynamic lookups then resolve through the attacker's object while `Object.entries`
+			// stays clean, bypassing the guard `parseJSON` carries for exactly this key. Defining the property
+			// stores the value as an own data property instead, like any other variable
 			if (key === '__proto__') {
 				Object.defineProperty(output, key, {
 					value: cast(value),
@@ -119,7 +123,11 @@ export const createEnv = (options: CreateEnvOptions = {}): Env => {
 				output[key] = cast(value);
 			}
 		} catch (error) {
-			throw new Error(`Environment variable "${key}": ${toErrorMessage(error)}`, { cause: error });
+			const reason = isNovastarterError(error, ErrorCode.InvalidConfig)
+				? error.extensions.reason
+				: toErrorMessage(error);
+
+			throw new InvalidConfigError({ reason: `Fix the environment variable "${key}": ${reason}` }, { cause: error });
 		}
 	}
 

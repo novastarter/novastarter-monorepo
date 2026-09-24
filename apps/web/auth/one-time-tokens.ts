@@ -24,7 +24,7 @@ type TokenRow = typeof authTokens.$inferSelect;
  * @internal
  */
 const toRecord = (row: TokenRow): TokenRecord => {
-	// 1. The package counts in epoch milliseconds; a null user or data is an optional field it leaves out
+	// The package counts in epoch milliseconds; a null user or data is an optional field it leaves out
 	return {
 		id: row.id,
 		purpose: row.purpose,
@@ -53,19 +53,19 @@ const toRecord = (row: TokenRow): TokenRecord => {
  * ```
  */
 export const issueToken = async (options: CreateTokenOptions): Promise<CreatedToken> => {
-	// 1. Made first, so a refused request (no purpose, a code without a user) deletes nothing
+	// Made first, so a refused request (no purpose, a code without a user) deletes nothing
 	const created = createToken(options);
 	const { record } = created;
 	const db = useDb();
 
-	// 2. A new code voids the user's earlier codes of the purpose
+	// A new code voids the user's earlier codes of the purpose
 	if (options.format === 'code' && record.userId !== undefined) {
 		await db
 			.delete(authTokens)
 			.where(and(eq(authTokens.userId, record.userId), eq(authTokens.purpose, record.purpose)));
 	}
 
-	// 3. The record alone is stored, keyed by the token's hash
+	// The record alone is stored, keyed by the token's hash
 	await db.insert(authTokens).values({
 		purpose: record.purpose,
 		id: record.id,
@@ -108,8 +108,8 @@ export const spendToken = async (
 	token: string,
 	options: SpendTokenOptions = {},
 ): Promise<TokenRecord> => {
-	// 1. The package computes the id, charges a code attempt and judges; the purpose is part of the delete's key, so a
-	//    token of another purpose matches nothing and stays for its own use
+	// The package computes the id, charges a code attempt and judges; the purpose is part of the delete's key, so a
+	// token of another purpose matches nothing and stays for its own use
 	return checkToken({
 		purpose,
 		token,
@@ -133,7 +133,7 @@ export const spendToken = async (
  * @returns How many tokens were voided.
  */
 export const revokeTokens = async (userId: string, purpose?: string): Promise<number> => {
-	// 1. The purpose narrows the delete only when given
+	// The purpose narrows the delete only when given
 	const where =
 		purpose === undefined
 			? eq(authTokens.userId, userId)

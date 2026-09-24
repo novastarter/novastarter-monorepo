@@ -36,9 +36,8 @@ const storage = (): { records: Map<string, RefreshRecord> } & Omit<RefreshTokenP
 
 	return {
 		records,
-		// 1. By the token's hash
 		find: async (id) => records.get(id) ?? null,
-		// 2. The successor first, then the mark only while the current one is unused
+		// The successor first, then the mark only while the current one is unused
 		rotate: async (current, next) => {
 			records.set(next.id, next);
 
@@ -52,7 +51,6 @@ const storage = (): { records: Map<string, RefreshRecord> } & Omit<RefreshTokenP
 
 			return true;
 		},
-		// 3. Every token of the family
 		revokeFamily: async (familyId) => {
 			for (const [id, record] of records) {
 				if (record.familyId === familyId) {
@@ -79,10 +77,8 @@ describe('refreshTokenPair', () => {
 		const store = storage();
 		const { pair, refresh } = await issueTokenPair('user-1');
 
-		// 1. Nothing stored under the hash
 		await expect(refreshTokenPair({ ...store, token: pair.refreshToken })).rejects.toMatchObject(INVALID);
 
-		// 2. Stored, but at its deadline
 		store.records.set(refresh.id, refresh);
 		vi.setSystemTime(NOW + 60_000);
 		await expect(refreshTokenPair({ ...store, token: pair.refreshToken })).rejects.toMatchObject(INVALID);
@@ -97,7 +93,6 @@ describe('refreshTokenPair', () => {
 
 		const refreshed = await refreshTokenPair({ ...store, token: pair.refreshToken, claims: { role: 'admin' } });
 
-		// 1. The presented token is marked used, and its successor is stored in the family
 		expect(store.records.get(refresh.id)?.usedAt).toBe(NOW + 1_000);
 
 		expect(store.records.get(hashToken(refreshed.pair.refreshToken))).toStrictEqual({
@@ -109,7 +104,6 @@ describe('refreshTokenPair', () => {
 			usedAt: null,
 		});
 
-		// 2. The new access token carries the claims read afresh
 		expect(refreshed.userId).toBe('user-1');
 
 		await expect(verifyAccessToken(refreshed.pair.accessToken)).resolves.toMatchObject({
@@ -126,7 +120,6 @@ describe('refreshTokenPair', () => {
 
 		const refreshed = await refreshTokenPair({ ...store, token: pair.refreshToken });
 
-		// 1. The first token again: a replay, refused, and the successor the client holds is gone too
 		await expect(refreshTokenPair({ ...store, token: pair.refreshToken })).rejects.toMatchObject(INVALID);
 		expect(store.records.size).toBe(0);
 		await expect(refreshTokenPair({ ...store, token: refreshed.pair.refreshToken })).rejects.toMatchObject(INVALID);
@@ -139,7 +132,7 @@ describe('refreshTokenPair', () => {
 
 		store.records.set(refresh.id, refresh);
 
-		// 1. The mark moves nothing, as when a concurrent request won the race
+		// The mark moves nothing, as when a concurrent request won the race
 		await expect(
 			refreshTokenPair({ ...store, token: pair.refreshToken, rotate: async () => false }),
 		).rejects.toMatchObject(INVALID);

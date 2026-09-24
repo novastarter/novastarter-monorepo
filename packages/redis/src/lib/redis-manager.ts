@@ -36,7 +36,7 @@ export class RedisManager extends LocationManager<Redis, [config: RedisConfig, o
 	 * @returns A connecting client.
 	 */
 	protected build(config: RedisConfig, overrides: RedisOptions = {}): Redis {
-		// 1. `createRedis` is the one place a client is opened, so a location's client is set up like any other
+		// `createRedis` is the one place a client is opened, so a location's client is set up like any other
 		return createRedis(config, overrides);
 	}
 
@@ -53,15 +53,14 @@ export class RedisManager extends LocationManager<Redis, [config: RedisConfig, o
 	 * @returns Once the server acknowledged the quit, or the client was dropped without one.
 	 */
 	protected async release(redis: Redis): Promise<void> {
-		// 1. A client that is not connected has no server to notify: `quit` would reconnect forever to deliver QUIT
-		//    and never resolve, hanging the shutdown — `disconnect` drops the socket without sending anything
+		// A client that is not connected has no server to notify: `quit` would reconnect forever to deliver QUIT
+		// and never resolve, hanging the shutdown — `disconnect` drops the socket without sending anything
 		if (redis.status !== 'ready') {
 			redis.disconnect();
 
 			return;
 		}
 
-		// 2. A connected client quits gracefully: the server is told and pending replies are waited for
 		await redis.quit();
 	}
 }

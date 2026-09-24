@@ -143,17 +143,14 @@ describe('handleWebhook', () => {
 	test('Verifies through the default location, filters the event and reports it', async () => {
 		const event = await handleWebhook('{}', headers);
 
-		// 1. The driver's event comes back as is
 		expect(event).toBe(paidEvent);
 
-		// 2. The filter saw the normalised event with where it came from
 		expect(emitter.emitFilter).toHaveBeenCalledWith(PAYMENTS_WEBHOOK_FILTER, paidEvent, {
 			location: 'default',
 			provider: 'test',
 			type: 'invoice.paid',
 		});
 
-		// 3. Listeners get the facts of the event, with the event itself under `payload`
 		expect(emitter.emitAction).toHaveBeenCalledWith(PAYMENTS_RECEIVED_EVENT, {
 			location: 'default',
 			id: 'evt_1',
@@ -165,26 +162,26 @@ describe('handleWebhook', () => {
 	});
 
 	test('Verifies through the location asked for', async () => {
-		// 1. An explicit location wins over the default
+		// An explicit location wins over the default.
 		expect(await handleWebhook('{}', headers, { location: 'untracked' })).toBeNull();
 	});
 
 	test('Names a location nobody registered', async () => {
-		// 1. A configuration mistake, not a bad delivery: a plain error naming the location
-		await expect(handleWebhook('{}', headers, { location: 'nope' })).rejects.toThrow(
-			'Payments location "nope" doesn\'t exist.',
-		);
+		// A configuration mistake, not a bad delivery.
+		await expect(handleWebhook('{}', headers, { location: 'nope' })).rejects.toMatchObject({
+			code: ErrorCode.InvalidConfig,
+			message: expect.stringContaining('The payments location "nope" doesn\'t exist'),
+		});
 	});
 
 	test('Answers null silently for a verified event the kit does not track', async () => {
-		// 1. Nothing to filter, nothing to report: the route still acknowledges the delivery
+		// The route still acknowledges the delivery, since there is nothing to filter or report.
 		expect(await handleWebhook('{}', headers, { location: 'untracked' })).toBeNull();
 		expect(emitter.emitFilter).not.toHaveBeenCalled();
 		expect(emitter.emitAction).not.toHaveBeenCalled();
 	});
 
 	test('Answers null when a filter handler vetoes the event', async () => {
-		// 1. A vetoed event is dropped without `payments.received`
 		emitter.emitFilter.mockResolvedValueOnce(null);
 
 		expect(await handleWebhook('{}', headers)).toBeNull();
@@ -192,7 +189,7 @@ describe('handleWebhook', () => {
 	});
 
 	test('Rethrows a wrong signature as is and reports it', async () => {
-		// 1. The kit's 401 passes through untouched, so the route maps its status
+		// The kit's error passes through untouched, so the route can map its status.
 		const error: unknown = await handleWebhook('{}', headers, { location: 'forged' }).catch((error: unknown) => error);
 
 		expect(isNovastarterError(error, ErrorCode.InvalidCredentials)).toBe(true);
@@ -205,7 +202,6 @@ describe('handleWebhook', () => {
 	});
 
 	test('Rethrows a malformed delivery as is and reports it', async () => {
-		// 1. The kit's 400 passes through untouched
 		const error: unknown = await handleWebhook('{}', headers, { location: 'malformed' }).catch(
 			(error: unknown) => error,
 		);
@@ -219,7 +215,7 @@ describe('handleWebhook', () => {
 	});
 
 	test('Wraps any other driver failure with the cause and reports it', async () => {
-		// 1. An SDK failure is not the delivery's fault: a plain error naming the location, the driver's error as cause
+		// An SDK failure is not the delivery's fault, so it is a plain error with the driver's error as the cause.
 		const error: unknown = await handleWebhook('{}', headers, { location: 'broken' }).catch((error: unknown) => error);
 
 		expect(error).toBeInstanceOf(Error);
@@ -230,8 +226,8 @@ describe('handleWebhook', () => {
 	});
 
 	test('Logs a driver rejecting with a string as an error, keeping the location line', async () => {
-		// 1. Pino would take a bare string for the message and drop the line naming the location, so the rejection
-		//    is wrapped into an `Error` first; the string stays reachable as its cause
+		// Pino would take a bare string for the message and drop the line naming the location, so the rejection is
+		// wrapped into an `Error` first.
 		const error: unknown = await handleWebhook('{}', headers, { location: 'shouting' }).catch(
 			(error: unknown) => error,
 		);

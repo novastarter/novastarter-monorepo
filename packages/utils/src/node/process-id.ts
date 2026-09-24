@@ -24,14 +24,14 @@ export const _cache: { id: string | undefined } = { id: undefined };
  * ```
  */
 export const processId = (): string => {
-	// 1. Reuse the id once it has been computed, so every caller in this process sees the same value
+	// Reuse the id once it has been computed, so every caller in this process sees the same value
 	if (_cache.id) return _cache.id;
 
-	// 2. Combine host, pid and the current time: pids repeat across hosts and across restarts, time breaks that tie
+	// Pids repeat across hosts and across restarts; the current time breaks that tie.
 	const parts = [hostname(), process.pid, new Date().getTime()];
 	const hash = createHash('md5').update(parts.join(''));
 
-	// 3. Keep the digest: it embeds the start time, so recomputing it later would hand out a different id mid-process
+	// Keep the digest: it embeds the start time, so recomputing it later would hand out a different id mid-process
 	_cache.id = hash.digest('hex');
 
 	return _cache.id;

@@ -29,33 +29,33 @@ import { normalizePath } from './normalize-path.js';
  * ```
  */
 export const joinPath = (...segments: string[]): string => {
-	// 1. Only strings join: `Array.prototype.join` would turn `undefined` and `null` into nothing and spell a number
-	//    out, so a caller path missing at runtime — past the types — would quietly name the root
+	// Only strings join: `Array.prototype.join` would turn `undefined` and `null` into nothing and spell a number
+	// out, so a caller path missing at runtime — past the types — would quietly name the root
 	for (const segment of segments) {
 		if (typeof segment !== 'string') {
 			throw new TypeError(`joinPath: every segment must be a string, got ${typeof segment}`);
 		}
 	}
 
-	// 2. Skip empty parts, so `joinPath('', 'a')` and `joinPath('a')` are the same path; nothing left means no path
+	// Skip empty parts, so `joinPath('', 'a')` and `joinPath('a')` are the same path; nothing left means no path
 	const parts = segments.filter((segment) => segment !== '');
 
 	if (parts.length === 0) {
 		return '';
 	}
 
-	// 3. Remember whether the path is rooted before anything is collapsed: the root must survive resolution and
-	//    bounds how far `..` may climb, and a path made only of separators (`joinPath('/', '/')`) normalises to
-	//    nothing, so the raw join is the one place the root can still be seen
+	// Remember whether the path is rooted before anything is collapsed: the root must survive resolution and
+	// bounds how far `..` may climb, and a path made only of separators (`joinPath('/', '/')`) normalises to
+	// nothing, so the raw join is the one place the root can still be seen
 	const raw = parts.join('/');
 	const absolute = raw.startsWith('/') || raw.startsWith('\\');
 
-	// 4. Collapse separators and backslashes, so the split below only ever sees single forward slashes
+	// Collapse separators and backslashes, so the split below only ever sees single forward slashes
 	const joined = normalizePath(raw);
 	const resolved: string[] = [];
 
-	// 5. Walk the segments: `.` is a no-op, `..` pops the previous real segment, or stays when there is none to pop
-	//    in a relative path, or vanishes in an absolute one, since there is nothing above the root
+	// Walk the segments: `.` is a no-op, `..` pops the previous real segment, or stays when there is none to pop
+	// in a relative path, or vanishes in an absolute one, since there is nothing above the root
 	for (const segment of joined.split('/')) {
 		if (segment === '' || segment === '.') {
 			continue;
@@ -74,7 +74,7 @@ export const joinPath = (...segments: string[]): string => {
 		resolved.push(segment);
 	}
 
-	// 6. Put the root back; an absolute path that resolved to nothing is the root itself
+	// An absolute path that resolved to nothing is the root itself.
 	return (absolute ? '/' : '') + resolved.join('/');
 };
 
@@ -99,6 +99,6 @@ export const joinPath = (...segments: string[]): string => {
  * ```
  */
 export const confinePath = (filepath: string): string => {
-	// 1. Rooted, `..` cannot climb; the root itself is then dropped, since the caller's root is the one that matters
+	// Rooted, `..` cannot climb; the root itself is then dropped, since the caller's root is the one that matters
 	return joinPath('/', filepath).slice(1);
 };

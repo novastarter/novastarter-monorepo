@@ -5,7 +5,7 @@
  * for brand names and mixed-case terms (`iPhone`, `PostgreSQL`, `pH`). Entries must not repeat an acronym from the
  * acronym list.
  */
-export default [
+export const SPECIAL_CASE: string[] = [
 	'2FA',
 	'4K',
 	'5K',
@@ -51,4 +51,4 @@ export default [
 	'UUID',
 	'XSS',
 	'YouTube',
-] as string[];
+];

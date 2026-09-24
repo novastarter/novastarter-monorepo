@@ -10,7 +10,8 @@ import { mfaKeys } from './mfa-key.js';
  *
  * @param encryptedSecret - The secret as the application stored it.
  * @returns The secret encrypted under the current key; `null` when it already is.
- * @throws Error without a usable `mfa.encryptionKey` in the settings, or when the secret opens with none of its keys.
+ * @throws InvalidConfigError without a usable `mfa.encryptionKey` in the settings.
+ * @throws Error when the secret opens with none of its keys.
  * @example
  * ```ts
  * for (const row of await db.select().from(authMfa)) {
@@ -23,11 +24,11 @@ import { mfaKeys } from './mfa-key.js';
  * ```
  */
 export const reencryptTotpSecret = (encryptedSecret: string): string | null => {
-	// 1. Opened with any of the keys; the position says whether it was the current one
+	// Opened with any of the keys; the position says whether it was the current one
 	const keys = mfaKeys();
 	const { plaintext, keyIndex } = decrypt(encryptedSecret, keys, 'totp-secret');
 
-	// 2. Already under the current key: nothing to write back
+	// Already under the current key: nothing to write back
 	if (keyIndex === 0) {
 		return null;
 	}

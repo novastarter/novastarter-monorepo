@@ -12,10 +12,8 @@ afterEach(() => {
 
 describe('authSettings', () => {
 	test('Reads the settings of useAuth() afresh on every call', () => {
-		// 1. Nothing registered is an empty object
 		expect(authSettings()).toStrictEqual({});
 
-		// 2. A registration made after the first read is seen by the next one
 		const settings: AuthSettings = { session: { ttl: 1_000 } };
 
 		useAuth().registerSettings(settings);

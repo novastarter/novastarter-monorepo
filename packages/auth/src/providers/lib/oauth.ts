@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { InvalidConfigError } from '@novastarter/errors';
 import { AuthInvalidTokenError } from '../../errors/index.js';
 import { requireSecrets } from '../../lib/require-secret.js';
 import { authSettings } from '../../lib/settings-access.js';
@@ -88,7 +89,7 @@ interface OAuthCookie {
  * @param location - The location of the provider: `google`, `github`.
  * @param options - The callback URL, scopes and data to keep.
  * @returns The URL to redirect to, and the cookie to set with its expiry.
- * @throws Error when the location does not exist or its driver is not an OAuth one, or without a usable
+ * @throws InvalidConfigError when the location does not exist or its driver is not an OAuth one, or without a usable
  * `oauth.secret` in the settings.
  * @example
  * ```ts
@@ -99,24 +100,26 @@ interface OAuthCookie {
  * ```
  */
 export const startOAuth = async (location: string, options: StartOAuthOptions): Promise<StartedOAuth> => {
-	// 1. The driver and the secret first, so a configuration mistake is reported before anything is made
+	// The driver and the secret first, so a configuration mistake is reported before anything is made
 	const driver = useAuth().location(location);
 
 	if (!driver.authorize) {
-		throw new Error(`Auth location "${location}" does not sign in with OAuth`);
+		throw new InvalidConfigError({
+			reason: `Auth location "${location}" does not sign in with OAuth, register it with a driver that does`,
+		});
 	}
 
 	const settings = authSettings().oauth ?? {};
 	const secret = requireSecrets(settings.secret, 'oauth.secret')[0]!;
 
-	// 2. Three secrets and the S256 challenge of the verifier — the only PKCE method worth sending
+	// Three secrets and the S256 challenge of the verifier — the only PKCE method worth sending
 	const state = randomToken();
 	const codeVerifier = randomToken();
 	const nonce = randomToken(16);
 	const codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url');
 	const expiresAt = Date.now() + (settings.stateTtl ?? DEFAULT_OAUTH_STATE_TTL);
 
-	// 3. Sealed together with the location and the deadline, so a cookie cannot be replayed elsewhere or later
+	// Sealed together with the location and the deadline, so a cookie cannot be replayed elsewhere or later
 	const sealed: OAuthCookie = {
 		location,
 		state,
@@ -154,7 +157,7 @@ export const startOAuth = async (location: string, options: StartOAuthOptions): 
  * state is not the callback's.
  * @throws AuthProviderFailedError when the provider refused the code or its answer did not check out.
  * @throws InvalidCredentialsError when a filter refused the sign-in.
- * @throws Error when the location does not exist or its driver is not an OAuth one, or without a usable
+ * @throws InvalidConfigError when the location does not exist or its driver is not an OAuth one, or without a usable
  * `oauth.secret` in the settings.
  * @example
  * ```ts
@@ -165,17 +168,19 @@ export const startOAuth = async (location: string, options: StartOAuthOptions): 
  * ```
  */
 export const finishOAuth = async (location: string, params: FinishOAuthParams): Promise<FinishedOAuth> => {
-	// 1. The driver and the secret first, so a configuration mistake is reported as itself
+	// The driver and the secret first, so a configuration mistake is reported as itself
 	const driver = useAuth().location(location);
 
 	if (!driver.callback) {
-		throw new Error(`Auth location "${location}" does not sign in with OAuth`);
+		throw new InvalidConfigError({
+			reason: `Auth location "${location}" does not sign in with OAuth, register it with a driver that does`,
+		});
 	}
 
 	const secrets = requireSecrets(authSettings().oauth?.secret, 'oauth.secret');
 
-	// 2. The cookie must open with one of the secrets, be current, belong to this location and carry the callback's state;
-	//    every failure is the same error, and the state is compared in constant time
+	// The cookie must open with one of the secrets, be current, belong to this location and carry the callback's state;
+	// every failure is the same error, and the state is compared in constant time
 	const sealed = open(params.cookie, secrets);
 
 	if (
@@ -188,7 +193,6 @@ export const finishOAuth = async (location: string, params: FinishOAuthParams): 
 		throw failSignIn(location, new AuthInvalidTokenError());
 	}
 
-	// 3. The driver exchanges the code with the verifier and checks what comes back
 	let result: OAuthCallbackResult;
 
 	try {
@@ -202,8 +206,8 @@ export const finishOAuth = async (location: string, params: FinishOAuthParams): 
 		throw failSignIn(location, error);
 	}
 
-	// 4. The tokens come off before the filter and the event: they are secrets, and a handler or a listener that logs
-	//    its payload must not be handed them
+	// The tokens come off before the filter and the event: they are secrets, and a handler or a listener that logs its
+	// payload must not be handed them
 	const { tokens, ...identity } = result;
 
 	return {
@@ -222,7 +226,7 @@ export const finishOAuth = async (location: string, params: FinishOAuthParams): 
  * @internal
  */
 const open = (cookie: string | undefined, secrets: readonly string[]): OAuthCookie | null => {
-	// 1. GCM refuses a changed byte or another key; either is just an unusable cookie here
+	// GCM refuses a changed byte or another key; either is just an unusable cookie here
 	if (typeof cookie !== 'string' || cookie.length === 0) {
 		return null;
 	}

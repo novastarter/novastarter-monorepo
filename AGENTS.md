@@ -1,11 +1,10 @@
 ## Super-rule: English only
 
-This rule overrides everything else and applies always and everywhere.
+Overrides everything else.
 
-Everything is done and written in English: code, comments, docs, commit messages, changesets, PR titles and
-descriptions, issues, file names, identifiers, error messages, logs, chat replies to the user, questions, plans.
-
-**No other languages. No exceptions.** Input in another language is answered in English.
+Everything is in English: code, comments, docs, commit messages, changesets, PR titles and descriptions, issues, file
+names, identifiers, error messages, logs, chat replies to the user, questions, plans. No other language, no exceptions.
+Input in another language is answered in English.
 
 ## Rule: never push to git
 
@@ -16,240 +15,151 @@ Mandatory, no exceptions.
 - Not after a commit, not "to finish the task", not because a PR needs the branch. Pushing is done by the user, by hand.
 - Committing and pushing are separate steps. A request to commit is never a request to push.
 
+## Commands
+
+Run from the repository root. Apps are named `web` and `docs`, packages `@novastarter/<dir>`.
+
+- `pnpm install` — install everything; also installs the lefthook git hooks.
+- `pnpm turbo run test --filter=@novastarter/<name>` — test one package; `check-types` and `build` work the same way.
+  Turbo builds the workspace dependencies first (`^build`).
+- `pnpm --filter @novastarter/<name> test | check-types | build` runs the script alone, without building dependencies:
+  it fails with "Cannot find module '@novastarter/…'" or "Failed to resolve entry" until they are built. Build them
+  once with `pnpm turbo run build --filter='@novastarter/<name>^...'`.
+- `pnpm --filter @novastarter/<name> exec vitest run src/x.test.ts` — one test file (dependencies built, see above).
+- `pnpm build`, `pnpm check-types`, `pnpm test` — the whole repo through turbo.
+- `pnpm lint` — ESLint over the whole repo, check only. `pnpm exec eslint <file>` — one file.
+- `pnpm format` — Prettier check only. `pnpm exec prettier --write <file>` — format one file.
+- `pnpm check:catalog` — every dependency version comes from the catalog (see "dependency versions only via catalog:").
+
+The Stop hook `.claude/hooks/typecheck.mjs` runs `check-types` through turbo for every package or app with uncommitted
+changes and keeps the turn open while it fails.
+
+Never run a fixer over the whole repo (`pnpm lint --fix`, `prettier --write .`): other work may be in the same tree.
+
+## Repo map
+
+- `apps/web` — the Next.js app: env schema, location configs, `bootstrap.ts` that wires every subsystem, jobs, the
+  database schema and migrations. See `apps/web/AGENTS.md`.
+- `apps/docs` — the Next.js documentation site. See `apps/docs/AGENTS.md`.
+- Base: `types`, `constants`, `errors`, `utils` (`DriverManager`, `LocationManager`, `singleton`), `tsconfig`.
+- Process: `env` (the only reader of `process.env`), `logger`, `emitter` (hooks), `pressure`, `validation`, `http`
+  (outgoing requests for drivers).
+- Subsystems, each a manager plus `<name>-driver-*` packages: `storage`, `database`, `mail`, `sms`, `push`, `payments`,
+  `auth`, `messenger`, `queue`.
+- Other subsystems: `redis` (named ioredis clients), `memory` (key-value, cache, bus, limiter), `ai`, `feature-flags`,
+  `notifications` (one message over mail, SMS, push, messengers, inbox).
+- Tooling: `release-notes-generator` (builds release notes from changesets).
+
+The driver / manager / factory pattern. A subsystem package exports a manager class that extends `DriverManager` from
+`@novastarter/utils` (or `LocationManager` when there is no driver to pick, as in `redis`), a driver contract, and
+`useX()`, a process-wide singleton of the manager. A driver package exports one driver class and adds its options to
+the subsystem's `XDrivers` interface with `declare module`. The app wires it at start-up:
+
+```ts
+useStorage().registerDriver('s3', StorageDriverS3);
+useStorage().registerLocation('uploads', { driver: 's3', options: { bucket: 'uploads' } });
+
+await useStorage().location('uploads').write('avatar.png', stream, 'image/png');
+```
+
+A location is built on its first `location()` call, so unused locations open nothing. Why: `docs/decisions/0001`.
+
+## Reference package
+
+Copy `packages/storage` (a subsystem) and `packages/storage-driver-s3` (a driver): layout, `package.json`, `exports`,
+scripts, `src/index.ts`, tests, JSDoc. Do not copy a random neighbour; older packages may lag behind.
+
+## Decisions
+
+Why things are the way they are: `docs/decisions/` (ADRs, one short note per decision). Read the list before proposing
+a change to structure, configuration or exports.
+
+## Rule: keep the map, commands and decisions up to date
+
+Mandatory, no exceptions.
+
+- A change to the repo structure, the root scripts, a new package or subsystem, or a new decision updates the matching
+  section of this file ("Commands", "Repo map", "Reference package") or adds a note to `docs/decisions/`, in the same
+  change.
+
+## Rule: grep-friendly code
+
+Mandatory, no exceptions. Applies to `packages/` and `apps/`; ESLint checks all of it except names built from strings.
+
+- Named exports only: `export { StorageDriverS3 } from './lib/driver.js'`, types with `export type { … }`.
+- No `export * from`: list the names, so a grep for a name finds where it is exported.
+- No `export default`. Exceptions: Next files under `apps/*/app/**` and `*.config.*`, where the tool demands it.
+- No renaming on export (`export { a as b }`): one symbol, one name.
+- No dynamic `import()` outside tests, and no names built from strings. When `import()` is required (an optional peer,
+  a Next runtime split), add `// eslint-disable-next-line no-restricted-syntax -- <reason>`.
+- No `process.env` in `packages/`, except `@novastarter/env`, `release-notes-generator` and `*.int.test.ts`. See
+  "no application business logic in `packages/`".
+- No imports from `apps/` or of an app package (`web`, `docs`) in `packages/`.
+- Why: `docs/decisions/0004-named-exports-only.md`.
+
+## Rule: strict types
+
+Mandatory, no exceptions. ESLint checks all of it.
+
+- `any` is forbidden everywhere, tests included. Use a real type, `unknown` with narrowing, `Partial<T>` or
+  `vi.mocked()`.
+- `@ts-ignore` and `@ts-nocheck` are forbidden. `@ts-expect-error` only with a description:
+  `// @ts-expect-error -- the option is checked at runtime`.
+- JSDoc presence (see "comment all code") is checked by `eslint-plugin-jsdoc`, in tests too.
+
 ## Rule: comment all code
 
-This rule applies always and everywhere:
+Mandatory, no exceptions. Applies to every file: `packages/`, `apps/`, tests, scripts, configs.
 
-- `packages/`
-- `apps/`
-- `tests/`
-- scripts
-- TypeScript/JavaScript configs
-- new code
-- modified code
-- exported code
-- internal code
-- public API
-- private API
-- production code
-- temporary code
+A reader must understand what the code does and why without opening neighbouring files.
 
-**There are no exceptions.**
+**JSDoc** above every class, method and member (private too), constructor, module-level function and function-valued
+`const`, and every exported type or `const`. ESLint (`jsdoc/require-jsdoc`) checks presence; callbacks passed as
+arguments and helpers declared inside a function body need none.
 
-A person reading the code must understand **what the code does and why it is done this way** without opening
-neighbouring files.
+- The first line is one sentence: what the symbol does. Non-obvious behaviour or constraints go in a paragraph after it.
+- Tags: `@param` for every argument, `@returns`, `@throws`, `@typeParam` for generics, `@defaultValue` for default
+  constants, `@example` for public API, `@internal` for private members. Link symbols with `{@link OtherSymbol}`.
 
-### Comment format
+**Comments inside a function body:**
 
-#### 1. Full JSDoc above every export
-
-JSDoc is mandatory above:
-
-- `class`
-- `function`
-- `const`
-- `type`
-- every class method
-- `constructor`
-- private methods
-- private members, where JSDoc applies to them
-
-The first line of the JSDoc is **one sentence** describing what the symbol does.
-
-If the behaviour or constraints are not obvious, a separate paragraph explaining the behaviour and constraints follows
-the first line.
-
-Use the matching JSDoc tags:
-
-- `@param` — for every argument
-- `@returns` — for the return value
-- `@throws` — for errors the function may throw
-- `@typeParam` — for generic parameters
-- `@defaultValue` — for constants holding a default value
-- `@example` — for public API
-- `@internal` — for private/internal members
-
-Reference other symbols with `{@link OtherSymbol}`.
-
-#### 2. Numbered comments inside function bodies
-
-Inside every function, every logical block must have a comment before it.
-
-Format:
+- Only where the code does not say it itself: why it is done this way, a constraint, a non-obvious consequence, a link to
+  a protocol or bug.
+- No numbering (`// 1.`, `// 2.`): the step order is visible from the code. ESLint (`local/no-numbered-comments`)
+  rejects it.
+- A comment that retells the code ("Create the set", "Return the result") is deleted. In a "what + why" comment, keep
+  only the why.
 
 ```ts
-// 1. Describe what this step does and why
-// 2. Describe the next logical step and why
-// 3. Describe the next logical step and why
-```
-
-Numbering:
-
-- starts at `1` for every function;
-- runs sequentially;
-- must have no gaps;
-- every number goes **before its logical block**.
-
-The comment must explain not only **what** happens but also **why** it is done this particular way.
-
-#### 3. Comment language
-
-All comments are written **in English**, like the rest of the code in `packages/`.
-
-### Example
-
-````ts
 /**
- * Retry settings applied when the caller passes none.
+ * Top the bucket back up for the time elapsed since the previous refill.
  *
- * @defaultValue 3 repeats, 100 ms base delay, 5 s ceiling.
+ * @internal
  */
-export const DEFAULT_RETRY_OPTIONS: RetryOptions = {
-	retries: 3,
-	baseDelay: 100,
-	maxDelay: 5_000,
-};
+private refill(): void {
+	// A monotonic clock, so NTP corrections cannot hand out free tokens
+	const now = performance.now();
+	const elapsed = (now - this.lastRefill) / 1000;
 
-/**
- * Rate limiter that hands out a fixed number of tokens per second.
- *
- * The bucket starts full and refills continuously up to its capacity, so short bursts are allowed while the long-run
- * average stays at `refillPerSecond`.
- *
- * @example
- * ```ts
- * const bucket = new TokenBucket(10, 2);
- *
- * if (!bucket.consume()) {
- *     throw new Error('Rate limit exceeded');
- * }
- * ```
- */
-export class TokenBucket {
-	private tokens: number;
-	private lastRefill: number;
-
-	/**
-	 * Create a bucket that starts out full.
-	 *
-	 * @param capacity - Largest burst the bucket will ever allow.
-	 * @param refillPerSecond - Tokens added back every second.
-	 */
-	constructor(
-		private readonly capacity: number,
-		private readonly refillPerSecond: number,
-	) {
-		this.tokens = capacity;
-		this.lastRefill = performance.now();
-	}
-
-	/**
-	 * Take tokens from the bucket.
-	 *
-	 * @param count - Number of tokens the caller wants.
-	 * @returns `true` when the tokens were deducted, `false` when the budget was insufficient.
-	 */
-	consume(count = 1): boolean {
-		// 1. Account for the time passed since the previous call
-		this.refill();
-
-		// 2. Reject the request outright when the budget is short
-		if (this.tokens < count) {
-			return false;
-		}
-
-		// 3. Charge the request and let it through
-		this.tokens -= count;
-
-		return true;
-	}
-
-	/**
-	 * Top the bucket back up for the time elapsed since the previous refill.
-	 *
-	 * @internal
-	 */
-	private refill(): void {
-		// 1. Measure the gap on a monotonic clock, so NTP corrections cannot hand out free tokens
-		const now = performance.now();
-		const elapsed = (now - this.lastRefill) / 1000;
-
-		// 2. Nothing to add within the same tick
-		if (elapsed <= 0) {
-			return;
-		}
-
-		// 3. Credit the elapsed time, keeping fractions so a slow rate never rounds down to zero
-		this.tokens = Math.min(this.capacity, this.tokens + elapsed * this.refillPerSecond);
-		this.lastRefill = now;
-	}
+	// Fractions are kept so a slow rate never rounds down to zero
+	this.tokens = Math.min(this.capacity, this.tokens + elapsed * this.refillPerSecond);
+	this.lastRefill = now;
 }
-
-/**
- * Run an operation again with exponential backoff until it succeeds or the retry budget runs out.
- *
- * @typeParam T - Value the operation resolves to.
- * @param fn - Operation to run. Called at least once.
- * @param options - Partial overrides merged over {@link DEFAULT_RETRY_OPTIONS}.
- * @returns The first successful result.
- * @throws The error raised by the final attempt.
- */
-export async function withRetry<T>(fn: () => Promise<T>, options: Partial<RetryOptions> = {}): Promise<T> {
-	// 1. Caller overrides win over the defaults
-	const { retries, baseDelay, maxDelay } = { ...DEFAULT_RETRY_OPTIONS, ...options };
-
-	let lastError: unknown;
-
-	// 2. One call plus `retries` repeats, hence the inclusive bound
-	for (let attempt = 0; attempt <= retries; attempt++) {
-		try {
-			return await fn();
-		} catch (error) {
-			// 3. Remember the failure — it becomes the thrown error once the budget is spent
-			lastError = error;
-
-			// 4. Out of budget: stop without sleeping for nothing
-			if (attempt === retries) {
-				break;
-			}
-
-			// 5. Double the wait each round, capped, then jitter it to break up synchronised clients
-			const backoff = Math.min(maxDelay, baseDelay * 2 ** attempt);
-			await sleep(backoff * (0.5 + Math.random() / 2));
-		}
-	}
-
-	// 6. Every attempt failed — surface the most recent reason
-	throw lastError;
-}
-````
-
-### What not to do
-
-Do not add comments that merely repeat the code.
-
-Bad:
-
-```ts
-// Increment the counter
-counter++;
 ```
 
-Such a comment explains nothing, because `counter++` is already obvious.
+**Do not:** write banners or decorative blocks (`====`, `----`, `****`); put a comment after code on the same line;
+translate code into English (`// Increment the counter` above `counter++`). Why: `docs/decisions/0006`.
 
-Also forbidden:
+## Rule: errors
 
-- full-width separator/banner comments;
-- large decorative blocks of `====`, `----`, `*****` and the like;
-- trailing comments after code on the same line.
+Mandatory, no exceptions.
 
-Bad:
-
-```ts
-counter++; // Increment counter
-```
-
-Comments must explain **logic, intent, reason or constraint**, not translate the code into English.
+- A mistake in driver, manager or location configuration throws `InvalidConfigError` from `@novastarter/errors` (code
+  `INVALID_CONFIG`). The message names the subject and what to do: `The mysql database driver needs a "connection"`.
+- An error the caller may branch on (bad input, a provider answer, a limit) is a class of the kit with a code.
+- A plain `Error` only for a broken invariant or a programming mistake nobody catches; its message still names the
+  package and the cause.
+- Why: `docs/decisions/0007-config-errors.md`.
 
 ## Rule: check existing packages first
 
@@ -274,6 +184,7 @@ Mandatory, no exceptions.
   catalog under `catalogs:` and is declared as `"dependency": "catalog:<name>"`. Still no versions inline.
 - Internal monorepo packages are linked as `"@novastarter/name": "workspace:*"`.
 - Native dependencies (with a postinstall build) are allowed via `allowBuilds` in `pnpm-workspace.yaml`.
+- `pnpm check:catalog` checks all of this, peer dependencies included; lefthook runs it when a `package.json` is staged.
 
 ## Rule: never create a new package on your own
 
@@ -293,8 +204,8 @@ Mandatory, no exceptions.
 
 Mandatory, no exceptions.
 
-- Do not invent your own structure. Copy the convention of the neighbouring packages in `packages/`: `package.json`,
-  `exports`, the `build`, `dev`, `test`, `test:coverage` scripts, `src/index.ts` and so on.
+- Do not invent your own structure. Copy the reference package (see "Reference package"): `package.json`, `exports`,
+  the `build`, `dev`, `test`, `test:coverage` scripts, `src/index.ts` and so on.
 - A new storage driver is always a separate package.
 - Subsystems follow the single driver / manager / factory convention. A new subsystem repeats it rather than introducing
   its own.

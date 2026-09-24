@@ -13,8 +13,7 @@ import { parseJSON } from './parse-json.js';
  * @typeParam T - Type the caller expects the parsed value to be.
  * @typeParam F - Type of the fallback; `T` unless given.
  * @param input - JSON text, or any text.
- * @param fallback - What to answer with when `input` is not valid JSON.
- * @returns The parsed value, or `fallback`; `undefined` when no fallback is given.
+ * @returns The parsed value; `undefined` when `input` is not valid JSON and no fallback is given.
  * @example
  * ```ts
  * tryParseJSON('{"a":1}');
@@ -28,13 +27,22 @@ import { parseJSON } from './parse-json.js';
  * ```
  */
 export function tryParseJSON<T = unknown>(input: string): T | undefined;
+/**
+ * Parse JSON text, answering with `fallback` instead of throwing when the text is not JSON.
+ *
+ * @typeParam T - Type the caller expects the parsed value to be.
+ * @typeParam F - Type of the fallback; `T` unless given.
+ * @param input - JSON text, or any text.
+ * @param fallback - What to answer with when `input` is not valid JSON.
+ * @returns The parsed value, or `fallback`.
+ */
 export function tryParseJSON<T = unknown, F = T>(input: string, fallback: F): T | F;
 export function tryParseJSON(input: string, fallback?: unknown): unknown {
-	// 1. Failure is the expected outcome for ordinary text, so it is caught rather than surfaced
+	// Failure is the expected outcome for ordinary text, so it is caught rather than surfaced
 	try {
 		return parseJSON(input) as unknown;
 	} catch (error) {
-		// 2. Only "not JSON" maps to the fallback; anything else is a real fault the caller has to see
+		// Only "not JSON" maps to the fallback; anything else is a real fault the caller has to see
 		if (error instanceof SyntaxError) {
 			return fallback;
 		}

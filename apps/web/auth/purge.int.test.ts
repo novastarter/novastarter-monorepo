@@ -29,16 +29,16 @@ describe('purgeExpiredAuthRows on PGlite', { timeout: 30_000 }, () => {
 	test('Deletes expired sessions, tokens and refresh tokens and keeps the live ones', async () => {
 		vi.useFakeTimers({ toFake: ['Date'], now: NOW });
 
-		// 1. One of each that expires within the hour, and one of each that lasts longer
+		// One of each that expires within the hour, and one of each that lasts longer
 		await startSession('1');
 		await issueToken({ purpose: 'sign-in', ttl: 60_000 });
 		await issueToken({ purpose: 'password-reset', ttl: 2 * 60 * 60_000 });
 		await issueTokens('1');
 
-		// 2. An hour on, only the short token is past its deadline
+		// An hour on, only the short token is past its deadline
 		expect(await purgeExpiredAuthRows(NOW + 60 * 60_000)).toEqual({ sessions: 0, tokens: 1, refreshTokens: 0 });
 
-		// 3. Far in the future everything is
+		// Far in the future everything is
 		expect(await purgeExpiredAuthRows(NOW + 365 * 24 * 60 * 60_000)).toEqual({
 			sessions: 1,
 			tokens: 1,
@@ -55,7 +55,7 @@ describe('purgeExpiredAuthRows on PGlite', { timeout: 30_000 }, () => {
 	test('Uses the current time by default', async () => {
 		const { token } = await startSession('1');
 
-		// 1. A live session survives a purge now
+		// A live session survives a purge now
 		expect(await purgeExpiredAuthRows()).toEqual({ sessions: 0, tokens: 0, refreshTokens: 0 });
 		expect(await readSession(token)).not.toBeNull();
 	});

@@ -8,7 +8,7 @@ import { AiModelNotFoundError } from './model-not-found.js';
 test('Carries the code, the status and the model in the message', () => {
 	const error = new AiModelNotFoundError({ model: 'chat' });
 
-	// 1. A model the configuration cannot resolve is the server's fault, not the caller's
+	// A model the configuration cannot resolve is the server's fault, not the caller's
 	expect(error.code).toBe('AI_MODEL_NOT_FOUND');
 	expect(error.status).toBe(500);
 
@@ -18,6 +18,6 @@ test('Carries the code, the status and the model in the message', () => {
 
 	expect(error.extensions).toStrictEqual({ model: 'chat' });
 
-	// 2. Made by the kit's factory, so the shared type guard recognises it
+	// Made by the kit's factory, so the shared type guard recognises it
 	expect(isNovastarterError(error, 'AI_MODEL_NOT_FOUND')).toBe(true);
 });

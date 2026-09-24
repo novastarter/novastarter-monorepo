@@ -69,7 +69,7 @@ class FakeChallengeDriver implements AuthDriver {
 	 * @returns Options and state.
 	 */
 	async begin(): Promise<ChallengeBegun> {
-		// 1. A fixed challenge, so the tests can check it comes back through the cookie
+		// A fixed challenge, so the tests can check it comes back through the cookie
 		return { options: { challenge: 'abc' }, state: { challenge: 'abc' } };
 	}
 
@@ -81,10 +81,10 @@ class FakeChallengeDriver implements AuthDriver {
 	 * @returns An identity.
 	 */
 	async complete(input: ChallengeInput, state: Record<string, unknown> | undefined): Promise<AuthIdentity> {
-		// 1. Recorded, so the tests can check what `finishChallenge()` passed on
+		// Recorded, so the tests can check what `finishChallenge()` passed on
 		completed.push({ input, state });
 
-		// 2. Anything but the right answer is a refusal, as a real driver would make it
+		// Anything but the right answer is a refusal, as a real driver would make it
 		if (input['answer'] !== 'ok') {
 			throw new InvalidCredentialsError();
 		}
@@ -103,7 +103,7 @@ class FakeStatelessDriver implements AuthDriver {
 	 * @returns No options, no state.
 	 */
 	async begin(): Promise<ChallengeBegun> {
-		// 1. A link driver mails the token; the browser gets nothing to carry
+		// A link driver mails the token; the browser gets nothing to carry
 		return {};
 	}
 
@@ -115,7 +115,7 @@ class FakeStatelessDriver implements AuthDriver {
 	 * @returns An identity.
 	 */
 	async complete(input: ChallengeInput, state: Record<string, unknown> | undefined): Promise<AuthIdentity> {
-		// 1. Recorded, so the tests can check no state was invented
+		// Recorded, so the tests can check no state was invented
 		completed.push({ input, state });
 
 		return { provider: 'stateless', subject: '7' };
@@ -133,7 +133,7 @@ class FakeFormOnlyDriver implements AuthDriver {
 	 * @returns An identity for the identifier.
 	 */
 	async authenticate(credentials: Credentials): Promise<AuthIdentity> {
-		// 1. Only there so the driver is a form one; never called by the challenge flow
+		// Only there so the driver is a form one; never called by the challenge flow
 		return { provider: 'credentials', subject: credentials.identifier };
 	}
 }
@@ -144,7 +144,7 @@ class FakeFormOnlyDriver implements AuthDriver {
  * @param signInLimiter - The `signIn` limiter of the settings, if the test wants one.
  */
 const register = (signInLimiter?: LimiterDriverLocal): void => {
-	// 1. Two locations on the stateful driver, so a cookie can be taken to the wrong one
+	// Two locations on the stateful driver, so a cookie can be taken to the wrong one
 	const auth = useAuth();
 
 	auth.registerDriver('fakeChallenge', FakeChallengeDriver);
@@ -160,8 +160,8 @@ const register = (signInLimiter?: LimiterDriverLocal): void => {
 beforeEach(() => {
 	vi.useFakeTimers({ toFake: ['Date'] });
 	vi.setSystemTime(NOW);
-	vi.mocked(useLogger).mockReturnValue(logger as any);
-	vi.mocked(useEmitter).mockReturnValue(emitter as any);
+	vi.mocked(useLogger).mockReturnValue(logger as unknown as ReturnType<typeof useLogger>);
+	vi.mocked(useEmitter).mockReturnValue(emitter as unknown as ReturnType<typeof useEmitter>);
 	register();
 });
 
@@ -176,11 +176,9 @@ describe('sealChallenge / openChallenge', () => {
 	test('Round-trips the state for the same location and purpose only', () => {
 		const { cookie, expiresAt } = sealChallenge('passkey', 'registration', { challenge: 'x' });
 
-		// 1. The default lifetime applies
 		expect(expiresAt).toBe(NOW + DEFAULT_CHALLENGE_TTL);
 		expect(openChallenge('passkey', 'registration', cookie)).toStrictEqual({ challenge: 'x' });
 
-		// 2. Another location, another purpose, a changed byte or nothing at all opens to nothing
 		expect(openChallenge('other', 'registration', cookie)).toBeNull();
 		expect(openChallenge('passkey', CHALLENGE_SIGN_IN_PURPOSE, cookie)).toBeNull();
 		expect(openChallenge('passkey', 'registration', `${cookie.slice(0, -2)}AA`)).toBeNull();
@@ -190,19 +188,17 @@ describe('sealChallenge / openChallenge', () => {
 	test('Refuses an expired cookie and opens one sealed with a secret being rotated out', () => {
 		const { cookie } = sealChallenge('passkey', 'registration', { challenge: 'x' });
 
-		// 1. The old secret stays second in the list and still opens what it sealed
 		useAuth().registerSettings({ challenge: { secret: ['another-challenge-secret-of-32-chars!', SECRET] } });
 
 		expect(openChallenge('passkey', 'registration', cookie)).toStrictEqual({ challenge: 'x' });
 
-		// 2. Past the lifetime nothing opens
 		vi.setSystemTime(NOW + DEFAULT_CHALLENGE_TTL);
 
 		expect(openChallenge('passkey', 'registration', cookie)).toBeNull();
 	});
 
 	test('Refuses to run without a usable secret', () => {
-		// 1. A missing or short secret is a configuration mistake, never a default
+		// A missing or short secret is a configuration mistake, never a default
 		useAuth().registerSettings({});
 
 		expect(() => sealChallenge('passkey', 'registration', {})).toThrow(/challenge\.secret/);
@@ -214,11 +210,9 @@ describe('startChallenge / finishChallenge', () => {
 	test('Carries the state of a stateful driver through the cookie and signs in', async () => {
 		const started = await startChallenge('passkey');
 
-		// 1. The browser gets the options and a cookie valid for the challenge lifetime
 		expect(started.options).toStrictEqual({ challenge: 'abc' });
 		expect(started.expiresAt).toBe(NOW + DEFAULT_CHALLENGE_TTL);
 
-		// 2. The second step hands the driver the state back and announces the sign-in
 		await expect(
 			finishChallenge('passkey', { input: { answer: 'ok' }, cookie: started.cookie }),
 		).resolves.toStrictEqual({ provider: 'fake', subject: '42' });
@@ -232,7 +226,7 @@ describe('startChallenge / finishChallenge', () => {
 	});
 
 	test('Hands out no cookie for a stateless driver and finishes without one', async () => {
-		// 1. Nothing to carry: a link may be opened in another browser
+		// Nothing to carry: a link may be opened in another browser
 		await expect(startChallenge('link', { identifier: 'a@example.com' })).resolves.toStrictEqual({
 			options: undefined,
 			cookie: undefined,
@@ -250,7 +244,6 @@ describe('startChallenge / finishChallenge', () => {
 	test('Refuses a cookie of another location or a tampered one, before the driver is asked', async () => {
 		const { cookie } = await startChallenge('passkey');
 
-		// 1. Every broken cookie is the same error, announced as a failed sign-in
 		await expect(finishChallenge('other', { input: { answer: 'ok' }, cookie })).rejects.toMatchObject({
 			code: 'AUTH_INVALID_TOKEN',
 		});
@@ -270,7 +263,6 @@ describe('startChallenge / finishChallenge', () => {
 	test("Announces and rethrows the driver's refusal", async () => {
 		const { cookie } = await startChallenge('passkey');
 
-		// 1. The error is the driver's own, and the failure is announced with its code
 		await expect(finishChallenge('passkey', { input: { answer: 'no' }, cookie })).rejects.toBeInstanceOf(
 			InvalidCredentialsError,
 		);
@@ -285,7 +277,6 @@ describe('startChallenge / finishChallenge', () => {
 		useAuth.reset();
 		register(new LimiterDriverLocal({ points: 2, duration: 60 }));
 
-		// 1. Two starts for one address pass, the third is refused before the driver runs; case and spaces fold
 		await startChallenge('link', { identifier: 'a@example.com' });
 		await startChallenge('link', { identifier: ' A@example.com ' });
 
@@ -293,12 +284,10 @@ describe('startChallenge / finishChallenge', () => {
 			code: 'REQUESTS_EXCEEDED',
 		});
 
-		// 2. Another address has its own budget
 		await expect(startChallenge('link', { identifier: 'b@example.com' })).resolves.toBeDefined();
 	});
 
 	test('Refuses a location whose driver has no two-step sign-in', async () => {
-		// 1. A configuration mistake, reported as itself
 		await expect(startChallenge('form')).rejects.toThrow('Auth location "form" does not sign in with a challenge');
 
 		await expect(finishChallenge('form', { input: {} })).rejects.toThrow(

@@ -68,7 +68,7 @@ export interface CreatedToken {
 export const createToken = (options: CreateTokenOptions): CreatedToken => {
 	const format = options.format ?? 'link';
 
-	// 1. A purpose is what keeps a reset token from confirming an email; a code needs its user to be unique
+	// A purpose is what keeps a reset token from confirming an email; a code needs its user to be unique
 	if (!options.purpose) {
 		throw new InvalidPayloadError({ reason: 'A token needs a purpose' });
 	}
@@ -77,7 +77,7 @@ export const createToken = (options: CreateTokenOptions): CreatedToken => {
 		throw new InvalidPayloadError({ reason: 'A one-time code needs a userId' });
 	}
 
-	// 2. The token for the caller, its hash for the record; a code is shorter-lived, since it is easier to guess
+	// The token for the caller, its hash for the record; a code is shorter-lived, since it is easier to guess
 	const settings = authSettings().tokens ?? {};
 	const token = format === 'code' ? randomDigits(CODE_DIGITS) : randomToken();
 	const now = Date.now();

@@ -43,7 +43,6 @@ const lastClient = () =>
 	vi.mocked(PGlite).mock.results.at(-1)!.value as { waitReady: Promise<void>; close: ReturnType<typeof vi.fn> };
 
 beforeEach(() => {
-	// 1. Fresh values per test
 	sample = {
 		directory: randDirectoryPath(),
 		folder: randDirectoryPath(),
@@ -52,14 +51,14 @@ beforeEach(() => {
 		db: { execute: vi.fn() },
 	};
 
-	// 2. `drizzle` answers a bare object: only `execute` is called, and the migrator is mocked whole
+	// `drizzle` answers a bare object: only `execute` is called, and the migrator is mocked whole
 	vi.mocked(drizzle).mockReturnValue(sample.db as never);
 	vi.mocked(useLogger).mockReturnValue(sample.processLogger as never);
 });
 
 afterEach(() => {
-	// 1. Clear the call history, so an instance built in one test cannot be read by the next; the implementations
-	//    stay, since the `PGlite` factory above is what every test constructs its instance with
+	// Clear the call history, so an instance built in one test cannot be read by the next; the implementations
+	// stay, since the `PGlite` factory above is what every test constructs its instance with
 	vi.clearAllMocks();
 });
 
@@ -72,24 +71,24 @@ describe('dataDirectory', () => {
 	});
 
 	test('Answers nothing for a file:// URL with an empty path', () => {
-		// 1. `file://` alone slices to '': mkdirSync('') would fail with a bare ENOENT, while `undefined` leaves the
-		//    URL to PGlite, whose own error names the problem
+		// `file://` alone slices to '': mkdirSync('') would fail with a bare ENOENT, while `undefined` leaves the
+		// URL to PGlite, whose own error names the problem
 		expect(dataDirectory('file://')).toBeUndefined();
 	});
 });
 
 describe('#constructor', () => {
 	test('Throws when the connection is missing', () => {
-		// 1. An empty string would be a database in memory whose writes vanish at exit
+		// An empty string would be a database in memory whose writes vanish at exit
 		expect(() => new DatabaseDriverPglite({ connection: '' })).toThrowErrorMatchingInlineSnapshot(
-			`[Error: The pglite database driver needs a "connection"]`,
+			`[NovastarterError: Invalid config. The pglite database driver needs a "connection".]`,
 		);
 	});
 
 	test('Creates the directory with its parents and starts an instance on it', () => {
 		const driver = new DatabaseDriverPglite({ connection: sample.directory, logger: sample.logger as never });
 
-		// 1. The directory first, recursively, since PGlite creates the leaf only; then the instance on the path alone
+		// PGlite creates the leaf only, so the directory comes first, recursively
 		expect(mkdirSync).toHaveBeenCalledExactlyOnceWith(sample.directory, { recursive: true });
 		expect(PGlite).toHaveBeenCalledExactlyOnceWith(sample.directory);
 		expect(driver['client']).toBe(lastClient());
@@ -99,7 +98,7 @@ describe('#constructor', () => {
 	test('Strips a file:// prefix before creating the directory', () => {
 		new DatabaseDriverPglite({ connection: `file://${sample.directory}`, logger: sample.logger as never });
 
-		// 1. The prefix is PGlite's to read; the filesystem wants the bare path
+		// The prefix is PGlite's to read; the filesystem wants the bare path
 		expect(mkdirSync).toHaveBeenCalledExactlyOnceWith(sample.directory, { recursive: true });
 		expect(PGlite).toHaveBeenCalledExactlyOnceWith(`file://${sample.directory}`);
 	});
@@ -114,8 +113,8 @@ describe('#constructor', () => {
 	test('Creates no directory for a file:// URL with an empty path', () => {
 		new DatabaseDriverPglite({ connection: 'file://', logger: sample.logger as never });
 
-		// 1. An empty path would reach mkdirSync as '' and fail with a bare ENOENT; the URL goes to PGlite as is, so
-		//    its own clearer error for it surfaces
+		// An empty path would reach mkdirSync as '' and fail with a bare ENOENT; the URL goes to PGlite as is, so
+		// its own clearer error for it surfaces
 		expect(mkdirSync).not.toHaveBeenCalled();
 		expect(PGlite).toHaveBeenCalledExactlyOnceWith('file://');
 	});
@@ -129,7 +128,7 @@ describe('#constructor', () => {
 	});
 
 	test('Uses a given instance as is and leaves it to the caller', () => {
-		// 1. An instance built before the driver: the driver must neither start another nor take this one over
+		// An instance built before the driver: the driver must neither start another nor take this one over
 		const client = new PGlite();
 
 		const driver = new DatabaseDriverPglite({ connection: client, logger: sample.logger as never });
@@ -142,7 +141,7 @@ describe('#constructor', () => {
 	});
 
 	test('Reports a failed boot to the logger instead of crashing the process', async () => {
-		// 1. The boot promise rejects with nobody awaiting it — the case that would be an unhandled rejection
+		// The boot promise rejects with nobody awaiting it — the case that would be an unhandled rejection
 		const error = new Error('wasm failed to load');
 
 		vi.mocked(PGlite).mockImplementationOnce(function () {
@@ -151,7 +150,7 @@ describe('#constructor', () => {
 
 		new DatabaseDriverPglite({ connection: MEMORY_DATA_DIR });
 
-		// 2. The rejection lands on the process logger, since no logger was given
+		// The rejection lands on the process logger, since no logger was given
 		await vi.waitFor(() => {
 			expect(sample.processLogger.error).toHaveBeenCalledExactlyOnceWith(error, 'PGlite failed to start');
 		});
@@ -167,7 +166,6 @@ describe('#constructor', () => {
 			logger: sample.logger as never,
 		});
 
-		// 1. Drizzle gets the instance and only the options that carry a value
 		expect(drizzle).toHaveBeenCalledExactlyOnceWith(driver['client'], { schema, casing: 'snake_case' });
 		expect(driver.db).toBe(sample.db);
 	});
@@ -175,12 +173,11 @@ describe('#constructor', () => {
 	test('Hands Drizzle a query logger only when asked for', () => {
 		new DatabaseDriverPglite({ connection: MEMORY_DATA_DIR, logger: sample.logger as never });
 
-		// 1. Off by default: no logger key, so Drizzle makes no logger call per query
+		// Off by default: no logger key, so Drizzle makes no logger call per query
 		expect(vi.mocked(drizzle).mock.calls[0]![1]).toStrictEqual({});
 
 		new DatabaseDriverPglite({ connection: MEMORY_DATA_DIR, logger: sample.logger as never, queryLogging: true });
 
-		// 2. On: the query logger reports to the driver's logger
 		const options = vi.mocked(drizzle).mock.calls[1]![1]!;
 
 		(options.logger as { logQuery(query: string, params: unknown[]): void }).logQuery('select 1', []);
@@ -191,7 +188,7 @@ describe('#constructor', () => {
 
 describe('#capabilities', () => {
 	test('Declares whether transactions work', () => {
-		// 1. Sessions, so `db.transaction()` works; the flag is what an app reads instead of the driver name
+		// Sessions, so `db.transaction()` works; the flag is what an app reads instead of the driver name
 		const driver = new DatabaseDriverPglite({ connection: MEMORY_DATA_DIR, logger: sample.logger as never });
 
 		expect(driver.capabilities).toStrictEqual({ transactions: true });
@@ -200,7 +197,7 @@ describe('#capabilities', () => {
 
 describe('#label', () => {
 	test('Binds the label to the logger, so the query log names the location', () => {
-		// 1. A labelled driver logs through a child carrying `database`; the query logger inherits it
+		// A labelled driver logs through a child carrying `database`; the query logger inherits it
 		const child = { error: vi.fn(), debug: vi.fn() };
 		const logger = { ...sample.logger, child: vi.fn().mockReturnValue(child) };
 
@@ -236,7 +233,7 @@ describe('#ping', () => {
 
 		await driver.ping();
 
-		// 1. Through `db.execute`, so the same path the application's queries take is what gets proven
+		// Through `db.execute`, so the same path the application's queries take is what gets proven
 		expect(sample.db.execute).toHaveBeenCalledExactlyOnceWith(sql`select 1`);
 	});
 
@@ -251,7 +248,7 @@ describe('#ping', () => {
 
 		sample.db.execute.mockRejectedValue(error);
 
-		// 1. One error for every backend: recognisable, 503, the location in the message, the backend's error as cause
+		// One error for every backend: recognisable, 503, the location in the message, the backend's error as cause
 		const thrown: unknown = await driver.ping().catch((caught: unknown) => caught);
 
 		expect(thrown).toBeInstanceOf(DatabaseUnavailableError);
@@ -280,7 +277,6 @@ describe('#migrate', () => {
 
 		await driver.migrate({ migrationsFolder: sample.folder, migrationsSchema: 'app', migrationsTable: undefined });
 
-		// 1. The Drizzle database goes in as is, the options without their undefined keys
 		expect(migrate).toHaveBeenCalledExactlyOnceWith(sample.db, {
 			migrationsFolder: sample.folder,
 			migrationsSchema: 'app',
@@ -291,7 +287,7 @@ describe('#migrate', () => {
 		const driver = new DatabaseDriverPglite({ connection: MEMORY_DATA_DIR, logger: sample.logger as never });
 
 		await expect(driver.migrate({ migrationsFolder: '' })).rejects.toThrowErrorMatchingInlineSnapshot(
-			`[Error: DatabaseDriver.migrate needs a "migrationsFolder"]`,
+			`[NovastarterError: Invalid config. DatabaseDriver.migrate needs a "migrationsFolder".]`,
 		);
 
 		expect(migrate).not.toHaveBeenCalled();
@@ -306,7 +302,7 @@ describe('#close', () => {
 
 		expect(lastClient().close).toHaveBeenCalledOnce();
 
-		// 1. PGlite refuses a second close; an instance reporting itself closed is left alone
+		// PGlite refuses a second close; an instance reporting itself closed is left alone
 		(lastClient() as { closed?: boolean }).closed = true;
 
 		await driver.close();
@@ -315,7 +311,7 @@ describe('#close', () => {
 	});
 
 	test('Leaves a given instance open for its owner', async () => {
-		// 1. The caller built the instance and may share it; closing it here would pull it from under them
+		// The caller built the instance and may share it; closing it here would pull it from under them
 		const client = new PGlite();
 		const driver = new DatabaseDriverPglite({ connection: client, logger: sample.logger as never });
 

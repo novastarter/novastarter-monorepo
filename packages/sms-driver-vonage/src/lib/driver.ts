@@ -1,3 +1,4 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import { type CallOptions, type CallResponse, type HttpApi, request } from '@novastarter/http';
 import type { SmsDriver, SmsMessage, SmsResult } from '@novastarter/sms';
 import { SMS } from '@vonage/sms';
@@ -86,28 +87,26 @@ export class SmsDriverVonage implements SmsDriver {
 	 * Create a driver on a client of its own for the given key.
 	 *
 	 * @param config - Credentials.
-	 * @throws Error without an API key or its secret.
+	 * @throws InvalidConfigError without an API key or its secret.
 	 */
 	constructor(config: SmsDriverVonageConfig) {
-		// 1. Both halves of the credential are needed; report the missing one by the option's name
 		if (!config.apiKey) {
-			throw new Error('The vonage sms driver needs an "apiKey"');
+			throw new InvalidConfigError({ reason: 'The vonage sms driver needs an "apiKey"' });
 		}
 
 		if (!config.apiSecret) {
-			throw new Error('The vonage sms driver needs an "apiSecret"');
+			throw new InvalidConfigError({ reason: 'The vonage sms driver needs an "apiSecret"' });
 		}
 
-		// 2. The credentials are kept for `verify()`, which reads the account balance directly; the timeout bounds that
-		//    fetch the way the SDK client's own requests are bounded
+		// `verify()` reads the account balance directly with these credentials; the timeout bounds that fetch the way
+		// the SDK client's own requests are bounded.
 		this.credentials = { apiKey: config.apiKey, apiSecret: config.apiSecret };
 		this.timeout = config.timeout;
 
-		// 3. Only the SMS product is built, not the whole Vonage client: nothing else of the SDK is loaded
+		// Only the SMS product is built, not the whole Vonage client, so nothing else of the SDK is loaded.
 		this.client = new SMS(this.credentials, config.timeout !== undefined ? { timeout: config.timeout } : {});
 
-		// 4. `call()` goes without the SDK's client, which drops the response headers (`@vonage/server-client` 1.23):
-		//    the key pair as the SDK sends it, on Vonage's hosts only
+		// `call()` skips the SDK's client, which drops the response headers (`@vonage/server-client` 1.23).
 		this.api = {
 			provider: 'vonage',
 			baseUrl: VONAGE_API_URL,
@@ -129,18 +128,16 @@ export class SmsDriverVonage implements SmsDriver {
 	 * delivered parts already went out and are billed, so the message is not to be re-sent through a fallback.
 	 */
 	async send(message: SmsMessage): Promise<SmsResult> {
-		// 1. Vonage answers `200` even for a refusal, and the SDK turns a refused part into a throw; `describeError`
-		//    keeps Vonage's own status code, which is what an application matches on
+		// Vonage answers `200` even for a refusal, and the SDK turns a refused part into a throw; `describeError` keeps
+		// Vonage's own status code, which is what an application matches on.
 		const answer = await this.client.send(toVonageMessage(message)).catch((error: unknown) => {
 			throw describeError(error);
 		});
 
-		// 2. A long text is split into parts, one entry each; they share an id prefix, so the first one identifies the
-		//    message and `messageCount` says how many were billed
+		// The parts of a long text share an id prefix, so the first one identifies the message.
 		const first = answer.messages[0];
 
-		// 3. Vonage sends `message-count` as a JSON string and the SDK only renames the key, whatever its typings say, so
-		//    the count is made a number here to keep `segments` a number, and left out when it is not one
+		// Vonage sends `message-count` as a JSON string and the SDK only renames the key, whatever its typings say.
 		const count = answer.messageCount as unknown;
 		const segments = Number(count);
 
@@ -185,8 +182,7 @@ export class SmsDriverVonage implements SmsDriver {
 		params?: Record<string, unknown>,
 		options?: CallOptions,
 	): Promise<CallResponse<T>> {
-		// 1. The shared request does it all: placeholders, Vonage's hosts only — so the key pair is never used for
-		//    another — the deadline over the answer's reading too, and an error status turned into the kit's error
+		// The shared request accepts only Vonage's hosts, so the key pair is never sent to another.
 		return request<T>(this.api, method, params, options);
 	}
 
@@ -196,11 +192,8 @@ export class SmsDriverVonage implements SmsDriver {
 	 * @throws Error naming the status when the account cannot be read.
 	 */
 	async verify(): Promise<void> {
-		// 1. The balance endpoint accepts the credentials as a Basic `Authorization` header and creates nothing; it is
-		//    asked with `fetch` rather than through `@vonage/accounts`, which would be a second SDK for one request.
-		//    A timeout, when the location sets one, bounds this fetch too — the SDK client's own requests are bounded
-		//    the same way. The credentials never go in the URL: a full request URL is what proxies, traces and error
-		//    output record, and the account's secret must not leak into any of those
+		// `fetch` rather than `@vonage/accounts`, which would be a second SDK for one request. The credentials go in a
+		// Basic header, never in the URL: a full request URL is what proxies, traces and error output record.
 		const headers = {
 			Authorization: `Basic ${Buffer.from(`${this.credentials.apiKey}:${this.credentials.apiSecret}`).toString('base64')}`,
 		};
@@ -213,13 +206,12 @@ export class SmsDriverVonage implements SmsDriver {
 			throw describeError(error);
 		});
 
-		// 2. Bad credentials answer 401; anything else non-2xx is the API being unreachable or out of order
+		// Bad credentials answer 401; anything else non-2xx is the API being unreachable or out of order.
 		if (!response.ok) {
 			throw new Error(`Vonage: ${response.status}: ${response.statusText || 'the account could not be read'}`);
 		}
 
-		// 3. The balance answer is not read further; an unconsumed body would hold the socket out of `fetch`'s
-		//    connection pool until GC, so it is drained before the driver moves on
+		// An unconsumed body would hold the socket out of `fetch`'s connection pool until GC.
 		await response.arrayBuffer();
 	}
 }

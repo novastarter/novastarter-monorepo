@@ -11,14 +11,17 @@ type Pool = { connect(): void; end(): void };
 
 describe('hasMethods', () => {
 	test('Recognises an object or a function carrying every method', () => {
-		// 1. Plain objects, class instances and functions with the members attached all qualify
+		// Plain objects, class instances and functions with the members attached all qualify
 		expect(hasMethods<Pool>({ connect() {}, end() {} }, ['connect', 'end'])).toBe(true);
 
 		expect(
 			hasMethods<Pool>(
 				new (class {
-					connect() {}
-					end() {}
+					/** Stand-in for the pool's `connect`; only its presence is checked. */
+					connect(): void {}
+
+					/** Stand-in for the pool's `end`; only its presence is checked. */
+					end(): void {}
 				})(),
 				['connect', 'end'],
 			),
@@ -45,7 +48,7 @@ describe('hasMethods', () => {
 	test('Narrows a union to the type declaring the methods', () => {
 		const connection = {} as string | { host: string } | Pool;
 
-		// 1. The guard narrows both branches: the pool inside, everything else outside
+		// The guard narrows both branches: the pool inside, everything else outside
 		if (hasMethods<Pool>(connection, ['connect', 'end'])) {
 			expectTypeOf(connection).toEqualTypeOf<Pool>();
 		} else {

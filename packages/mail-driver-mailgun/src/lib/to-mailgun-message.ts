@@ -1,3 +1,4 @@
+import { InvalidPayloadError } from '@novastarter/errors';
 import {
 	formatMailAddress,
 	type MailAttachment,
@@ -54,13 +55,15 @@ const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
  * @param name - Header name.
  * @param value - Header value.
  * @returns The `h:` field name and value.
- * @throws Error when the name is no token or the value holds CR, LF or another control character.
+ * @throws InvalidPayloadError when the name is no token or the value holds CR, LF or another control character.
  */
 export const toMailgunHeader = (name: string, value: string): { field: string; value: string } => {
-	// 1. A name that is not one token would not name a single header, and a line break or control character in the
-	//    value would reach the raw header verbatim — refuse either before the request goes out
+	// A name that is not one token would not name a single header, and a line break or control character in the value
+	// would reach the raw header verbatim — refuse either before the request goes out
 	if (!HEADER_NAME_PATTERN.test(name) || HEADER_VALUE_UNSAFE_CHARACTERS.test(value)) {
-		throw new Error(`Mailgun: the "${name}" header cannot be sent: the name must be a token and the value one line`);
+		throw new InvalidPayloadError({
+			reason: `Mailgun: the "${name}" header cannot be sent: the name must be a token and the value one line`,
+		});
 	}
 
 	return { field: `h:${name}`, value };
@@ -75,9 +78,9 @@ export const toMailgunHeader = (name: string, value: string): { field: string; v
  * @returns The `o:tag` values, the category first.
  */
 export const toMailgunTags = (message: MailMessage): string[] =>
-	// 1. Mailgun refuses a message over its tag limits: a tag is ASCII letters, digits, `_` and `-` only, so anything
-	//    outside the set becomes `_`; each label is then cut, an empty one drops out and the tail past the count is
-	//    left off, the category first
+	// Mailgun refuses a message over its tag limits: a tag is ASCII letters, digits, `_` and `-` only, so anything
+	// outside the set becomes `_`; each label is then cut, an empty one drops out and the tail past the count is left
+	// off, the category first
 	[message.category ?? 'transactional', ...(message.tags ?? [])]
 		.map((tag) => tag.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, MAILGUN_TAG_LENGTH))
 		.filter((tag) => tag !== '')
@@ -92,14 +95,14 @@ export const toMailgunTags = (message: MailMessage): string[] =>
  *
  * @param attachment - Ours.
  * @returns Mailgun's file.
- * @throws Error when the attachment has neither content nor a path to read.
+ * @throws InvalidPayloadError when the attachment has neither content nor a path to read.
  */
 export const toMailgunFile = async (attachment: MailAttachment): Promise<MailgunFile> => {
-	// 1. Mailgun takes the bytes in the multipart body; a path is read here rather than streamed, like the siblings do
+	// Mailgun takes the bytes in the multipart body; a path is read here rather than streamed, like the siblings do
 	const data = await readAttachment(attachment);
 
-	// 2. The content id stands in for the filename, which is how Mailgun matches `cid:` references; the bytes are a
-	//    typed `Blob` because the SDK sends a `Buffer` untyped, and a bare content id gives Mailgun no type to guess
+	// The content id stands in for the filename, which is how Mailgun matches `cid:` references; the bytes are a typed
+	// `Blob` because the SDK sends a `Buffer` untyped, and a bare content id gives Mailgun no type to guess
 	return {
 		filename: attachment.cid ?? attachment.filename,
 		data: new Blob([data], attachment.contentType !== undefined ? { type: attachment.contentType } : {}),
@@ -117,16 +120,17 @@ export const toMailgunFile = async (attachment: MailAttachment): Promise<Mailgun
  * @param message - Ours, with `from` set (`sendMail()` fills it in).
  * @param testMode - Turn Mailgun's test mode on for this message.
  * @returns Mailgun's.
- * @throws Error when `from` is missing — Mailgun requires it; Error when a custom header name is no token or a
- * value holds CR, LF or another control character — either would forge a raw header on Mailgun's side.
+ * @throws InvalidPayloadError when `from` is missing — Mailgun requires it; InvalidPayloadError when a custom header
+ * name is no token or a value holds CR, LF or another control character — either would forge a raw header on
+ * Mailgun's side.
  */
 export const toMailgunMessage = async (message: MailMessage, testMode = false): Promise<MailgunMessageData> => {
-	// 1. The API refuses a message without a sender; say so before the request goes out
+	// The API refuses a message without a sender, so it is refused before the request goes out
 	if (!message.from) {
-		throw new Error('Mailgun needs a "from" address');
+		throw new InvalidPayloadError({ reason: 'Mailgun needs a "from" address' });
 	}
 
-	// 2. Recipients as `Name <address>` strings, the form Mailgun parses
+	// Recipients as `Name <address>` strings, the form Mailgun parses
 	const data: MailgunMessageData = {
 		from: formatMailAddress(message.from),
 		to: toMailAddressList(message.to).map(formatMailAddress),
@@ -140,15 +144,14 @@ export const toMailgunMessage = async (message: MailMessage, testMode = false): 
 		...(testMode ? { 'o:testmode': true } : {}),
 	} as MailgunMessageData;
 
-	// 3. Any custom header is an `h:` field on Mailgun; a name or value that would not survive being rebuilt into a
-	//    raw header is refused here, before the request goes out
+	// Any custom header is an `h:` field on Mailgun; a name or value that would not survive being rebuilt into a raw
+	// header is refused here, before the request goes out
 	for (const [name, value] of Object.entries(message.headers ?? {})) {
 		const header = toMailgunHeader(name, value);
 
 		data[header.field] = header.value;
 	}
 
-	// 4. Inline files (content id) apart from regular attachments
 	if (message.attachments?.length) {
 		const files = await Promise.all(
 			message.attachments.map(async (attachment) => ({

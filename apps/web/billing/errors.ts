@@ -23,7 +23,7 @@ export interface ResourceRestrictedErrorExtensions {
  * @returns Message naming the category, so the caller knows which limit to raise.
  */
 export const limitExceededMessage = (extensions: LimitExceededErrorExtensions): string => {
-	// 1. Name the category alone: the numbers live on the check the caller ran, not on the error
+	// Name the category alone: the numbers live on the check the caller ran, not on the error
 	return `Limit exceeded for "${extensions.category}".`;
 };
 
@@ -34,7 +34,7 @@ export const limitExceededMessage = (extensions: LimitExceededErrorExtensions): 
  * @returns Message naming the category, so the caller knows which feature the plan lacks.
  */
 export const resourceRestrictedMessage = (extensions: ResourceRestrictedErrorExtensions): string => {
-	// 1. Name the category alone: which plan grants it is the pricing page's business, not the error's
+	// Name the category alone: which plan grants it is the pricing page's business, not the error's
 	return `Resource "${extensions.category}" is restricted.`;
 };
 

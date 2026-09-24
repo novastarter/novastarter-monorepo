@@ -29,17 +29,17 @@ export const TEST_SECRET = 'test-secret-of-at-least-thirty-two-characters';
  * @returns Once the tables exist.
  */
 export const bootTestDatabase = async (): Promise<void> => {
-	// 1. PGlite in memory: a real Postgres in the process, gone with it, so the suite needs no service
+	// PGlite in memory: a real Postgres in the process, gone with it, so the suite needs no service
 	useDatabase().registerDriver('pglite', DatabaseDriverPglite);
 	useDatabase().registerLocation('default', databaseConfig(envSchema.parse({ DATABASE_PGLITE_DIR: 'memory://' })));
 
-	// 2. The committed migrations, so a schema that drifted from them fails here rather than in production
+	// The committed migrations, so a schema that drifted from them fails here rather than in production
 	await migrateDatabase();
 
-	// 3. The in-process cache the sessions module reads through, as the app boots without a Redis
+	// The in-process cache the sessions module reads through, as the app boots without a Redis
 	useCache().registerLocation('default', { driver: 'local', options: {} });
 
-	// 4. Secrets for every feature under test; no limiters, which the suites add where they test them
+	// Secrets for every feature under test; no limiters, which the suites add where they test them
 	useAuth().registerSettings({
 		jwt: { secret: TEST_SECRET },
 		mfa: { issuer: 'Test', encryptionKey: TEST_SECRET },
@@ -53,10 +53,10 @@ export const bootTestDatabase = async (): Promise<void> => {
  * @returns Once the tables are empty.
  */
 export const clearAuthTables = async (): Promise<void> => {
-	// 1. One statement for all five tables; far cheaper than booting PGlite again
+	// One statement for all five tables; far cheaper than booting PGlite again
 	await useDb().execute(sql`TRUNCATE auth_sessions, auth_tokens, auth_refresh_tokens, auth_mfa, auth_recovery_codes`);
 
-	// 2. The cached sessions go with their rows, so a test never reads a copy an earlier one left behind
+	// The cached sessions go with their rows, so a test never reads a copy an earlier one left behind
 	await useCache().location().clear();
 };
 
@@ -66,7 +66,7 @@ export const clearAuthTables = async (): Promise<void> => {
  * @returns Once the database is closed.
  */
 export const closeTestDatabase = async (): Promise<void> => {
-	// 1. Close before resetting: a reset manager would no longer know the instance to close
+	// Close before resetting: a reset manager would no longer know the instance to close
 	await useDatabase().close();
 	useDatabase.reset();
 	useAuth.reset();

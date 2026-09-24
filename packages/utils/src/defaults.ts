@@ -33,10 +33,10 @@ export const defaults = <T extends object>(
 		>
 	>,
 ): Required<T> => {
-	// 1. Drop keys set to `undefined`, otherwise the spread below would let them override a real default
+	// Keys set to `undefined` are dropped, otherwise the spread below would let them override a real default.
 	const input = Object.fromEntries(Object.entries(obj).filter(([_key, value]) => value !== undefined));
 
-	// 2. Spread the defaults first so any key the caller did define takes precedence
+	// Spread the defaults first so any key the caller did define takes precedence
 	return {
 		...def,
 		...input,

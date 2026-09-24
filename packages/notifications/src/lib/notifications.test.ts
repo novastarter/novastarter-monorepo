@@ -5,6 +5,7 @@
  * and the delivery on one channel (every skip reason, the filter's rewrite, the events, a failing channel).
  */
 import { useEmitter } from '@novastarter/emitter';
+import { InvalidConfigError } from '@novastarter/errors';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { NotificationChannel, NotificationDelivery } from '../channel.js';
 import type { Notification, NotificationRecipient } from '../types.js';
@@ -44,7 +45,6 @@ const fakeChannel = (
 	name: string,
 	reachable: (recipient: NotificationRecipient) => boolean = () => true,
 ): NotificationChannel & { send: ReturnType<typeof vi.fn> } => {
-	// 1. A spy for `send`, so the tests can see what reached the transport
 	return { name, reaches: reachable, send: vi.fn(async (_delivery: NotificationDelivery) => undefined) };
 };
 
@@ -55,7 +55,7 @@ const fakeChannel = (
  * @returns The notifications and the two channels.
  */
 const make = (overrides: Partial<NotificationsOptions> = {}) => {
-	// 1. `mail` reaches an address, `sms` a phone — the recipient above has only the first
+	// The recipient has an address but no phone, so only `mail` can reach it
 	const mail = fakeChannel('mail', (recipient) => Boolean(recipient.email));
 	const sms = fakeChannel('sms', (recipient) => Boolean(recipient.phone));
 
@@ -70,7 +70,7 @@ const make = (overrides: Partial<NotificationsOptions> = {}) => {
 };
 
 beforeEach(() => {
-	vi.mocked(useEmitter).mockReturnValue(emitter as any);
+	vi.mocked(useEmitter).mockReturnValue(emitter as unknown as ReturnType<typeof useEmitter>);
 });
 
 afterEach(() => {
@@ -79,7 +79,7 @@ afterEach(() => {
 
 describe('constructor', () => {
 	test('Keeps the channels in order and refuses a duplicate name', () => {
-		// 1. The registration order is the order of every plan
+		// The registration order is the order of every plan
 		expect(make().notifications.channelNames()).toStrictEqual(['mail', 'sms']);
 
 		expect(
@@ -89,16 +89,16 @@ describe('constructor', () => {
 					findRecipient: async () => null,
 					render: async () => null,
 				}),
-		).toThrow('Notification channel "mail" is registered twice');
+		).toThrow(InvalidConfigError);
 	});
 });
 
 describe('plan', () => {
 	test('Picks the channels that reach the user and that the user wants', async () => {
-		// 1. No phone: `sms` is left out
+		// `sms` is left out because the recipient has no phone
 		await expect(make().notifications.plan(NOTIFICATION)).resolves.toStrictEqual(['mail']);
 
-		// 2. A preference turns `mail` off too
+		// A preference turns `mail` off too
 		const isEnabled = vi.fn(async (_userId: string, _type: string, channel: string) => channel !== 'mail');
 
 		await expect(make({ isEnabled }).notifications.plan(NOTIFICATION)).resolves.toStrictEqual([]);
@@ -110,7 +110,6 @@ describe('plan', () => {
 			findRecipient: async () => ({ userId: 'u1', email: 'a@example.com', phone: '+15555550100' }),
 		});
 
-		// 1. Asked in another order, answered in the registered one
 		await expect(notifications.plan({ ...NOTIFICATION, channels: ['sms', 'mail'] })).resolves.toStrictEqual([
 			'mail',
 			'sms',
@@ -122,12 +121,13 @@ describe('plan', () => {
 	test('Plans nothing for a missing user, and refuses an unknown channel or a broken notification', async () => {
 		const { notifications } = make();
 
-		// 1. A user deleted since is not an error
 		await expect(notifications.plan({ ...NOTIFICATION, userId: 'gone' })).resolves.toStrictEqual([]);
 
-		// 2. A channel nobody registered, or no type, is a mistake of the calling code
+		// A channel nobody registered, or no type, is a mistake of the calling code
 		await expect(notifications.plan({ ...NOTIFICATION, channels: ['fax'] })).rejects.toThrow(
-			'Notification channel "fax" isn\'t registered',
+			new InvalidConfigError({
+				reason: 'Notification channel "fax" isn\'t registered; register it in registerNotifications()',
+			}),
 		);
 
 		await expect(notifications.plan({ ...NOTIFICATION, type: '' })).rejects.toThrow();
@@ -138,7 +138,6 @@ describe('send', () => {
 	test('Delivers the rendered content and announces it', async () => {
 		const { notifications, mail } = make();
 
-		// 1. The channel gets the notification, the recipient and the content of `render`
 		await expect(notifications.send(NOTIFICATION, { channel: 'mail' })).resolves.toStrictEqual({ status: 'sent' });
 
 		expect(mail.send).toHaveBeenCalledWith({
@@ -158,14 +157,13 @@ describe('send', () => {
 	test('Delivers what the filter rewrote, and nothing when it dropped the notification', async () => {
 		const { notifications, mail } = make();
 
-		// 1. A rewrite goes through as rewritten
 		emitter.emitFilter.mockResolvedValueOnce({ ...NOTIFICATION, data: { invoice: '9' } });
 
 		await notifications.send(NOTIFICATION, { channel: 'mail' });
 
 		expect(mail.send.mock.calls[0]![0].notification.data).toStrictEqual({ invoice: '9' });
 
-		// 2. A drop is a skip, not a failure
+		// A drop is a skip, not a failure
 		emitter.emitFilter.mockResolvedValueOnce(null);
 
 		await expect(notifications.send(NOTIFICATION, { channel: 'mail' })).resolves.toStrictEqual({
@@ -175,7 +173,7 @@ describe('send', () => {
 	});
 
 	test('Skips a missing user, an unreachable one, a turned-off channel and a channel without content', async () => {
-		// 1. Each reason read at delivery time; none of them throws, so the job does not retry
+		// None of these reasons throws, so the job does not retry
 		await expect(
 			make().notifications.send({ ...NOTIFICATION, userId: 'gone' }, { channel: 'mail' }),
 		).resolves.toStrictEqual({ status: 'skipped', reason: 'recipient' });
@@ -200,7 +198,7 @@ describe('send', () => {
 
 		mail.send.mockRejectedValueOnce(failure);
 
-		// 1. The job gets the channel's own error to retry on
+		// The job gets the channel's own error to retry on
 		await expect(notifications.send(NOTIFICATION, { channel: 'mail' })).rejects.toBe(failure);
 
 		expect(emitter.emitAction).toHaveBeenCalledWith(NOTIFICATION_FAILED_EVENT, {
@@ -209,9 +207,7 @@ describe('send', () => {
 			error: failure,
 		});
 
-		// 2. A channel nobody registered is a mistake, not a skip
-		await expect(notifications.send(NOTIFICATION, { channel: 'fax' })).rejects.toThrow(
-			'Notification channel "fax" isn\'t registered',
-		);
+		// A channel nobody registered is a mistake, not a skip
+		await expect(notifications.send(NOTIFICATION, { channel: 'fax' })).rejects.toBeInstanceOf(InvalidConfigError);
 	});
 });

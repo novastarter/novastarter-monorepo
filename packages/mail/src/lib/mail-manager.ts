@@ -87,8 +87,8 @@ export class MailManager extends DriverManager<MailDriver, MailDrivers> {
 	constructor() {
 		super();
 
-		// 1. The drivers of the package are known up front; registering them here spares every application the same
-		//    lines, and a replacement under the same name still wins
+		// The drivers of the package are known up front; registering them here spares every application the same lines,
+		// and a replacement under the same name still wins
 		this.registerDriver('console', MailDriverConsole);
 		this.registerDriver('file', MailDriverFile);
 		this.registerDriver('sendmail', MailDriverSendmail);
@@ -104,7 +104,7 @@ export class MailManager extends DriverManager<MailDriver, MailDrivers> {
 	 * @param routes - Sender, chains and limiters; see {@link MailRoutes}.
 	 */
 	registerRoutes(routes: MailRoutes): void {
-		// 1. Replace rather than merge, like `registerLocation`: a second bootstrap gets exactly what it registered
+		// Replace rather than merge, like `registerLocation`: a second bootstrap gets exactly what it registered
 		this.mailRoutes = routes;
 	}
 
@@ -114,8 +114,8 @@ export class MailManager extends DriverManager<MailDriver, MailDrivers> {
 	 * @returns The routes; an empty object when none were registered.
 	 */
 	routes(): MailRoutes {
-		// 1. Handed out by reference, not copied: `sendMail()` reads it on every call, so a later `registerRoutes` is
-		//    seen at once and the limiters keep their identity
+		// Handed out by reference, not copied: `sendMail()` reads it on every call, so a later `registerRoutes` is seen
+		// at once and the limiters keep their identity
 		return this.mailRoutes;
 	}
 }

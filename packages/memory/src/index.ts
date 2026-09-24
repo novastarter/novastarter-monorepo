@@ -8,7 +8,39 @@
  * (`useKv().registerLocation` / `.location`) the application wires at start-up; the driver classes (`KvDriverLocal`,
  * `KvDriverRedis`, …) are exported for code that needs a standalone instance.
  */
-export * from './bus/index.js';
-export * from './cache/index.js';
-export * from './kv/index.js';
-export * from './limiter/index.js';
+export { BusDriverLocal, BusDriverRedis, BusManager, useBus } from './bus/index.js';
+export type { BusDriver, BusDriverLocalConfig, BusDriverRedisConfig, BusDrivers, MessageHandler } from './bus/index.js';
+export {
+	CACHE_CHANNEL_KEY,
+	CacheDriverLocal,
+	CacheDriverMulti,
+	CacheDriverRedis,
+	CacheManager,
+	useCache,
+} from './cache/index.js';
+export type {
+	CacheDriver,
+	CacheDriverLocalConfig,
+	CacheDriverMultiConfig,
+	CacheDriverRedisConfig,
+	CacheDrivers,
+	CacheMultiMessageClear,
+} from './cache/index.js';
+export { INCREMENT_SCRIPT, KvDriverLocal, KvDriverRedis, KvManager, SET_MAX_SCRIPT, useKv } from './kv/index.js';
+export type {
+	ExtendedRedis,
+	KvDriver,
+	KvDriverLocalConfig,
+	KvDriverRedisConfig,
+	KvDrivers,
+	Lock,
+	MaybePromise,
+} from './kv/index.js';
+export { LimiterDriverLocal, LimiterDriverRedis, LimiterManager, useLimiter } from './limiter/index.js';
+export type {
+	LimiterDriver,
+	LimiterDriverConfigBase,
+	LimiterDriverLocalConfig,
+	LimiterDriverRedisConfig,
+	LimiterDrivers,
+} from './limiter/index.js';

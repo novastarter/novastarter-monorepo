@@ -11,13 +11,13 @@ afterEach(() => {
 
 describe('usePayments', () => {
 	test('Creates a manager on first use and hands the same one out afterwards', () => {
-		// 1. Every later call returns the cached instance, so registrations made at start-up are visible everywhere
+		// Every later call returns the cached instance, so registrations made at start-up are visible everywhere.
 		const manager = usePayments();
 
 		expect(manager).toBeInstanceOf(PaymentsManager);
 		expect(usePayments()).toBe(manager);
 
-		// 2. `reset()` drops it, so the next test starts from an empty manager
+		// `reset()` drops the instance, so the next test starts from an empty manager.
 		usePayments.reset();
 		expect(usePayments()).not.toBe(manager);
 	});

@@ -53,24 +53,23 @@ export const enqueue = async <Name extends JobName>(
 	payload: JobInputOf<Name>,
 	options: EnqueueOptions = {},
 ): Promise<EnqueuedJob> => {
-	// 1. The contract is resolved first: an unregistered name fails the call before any payload work happens, and
-	//    every step below — validation, id, driver — hangs off the same definition
+	// The contract is resolved first: an unregistered name fails the call before any payload work happens, and
+	// every step below — validation, id, driver — hangs off the same definition
 	const contract = getJobContract(name);
 
-	// 2. Validation happens where the bug is: a bad payload fails the caller, never a worker hours later
+	// Validation happens where the bug is: a bad payload fails the caller, never a worker hours later
 	const parsed = contract.parse(payload);
 
-	// 3. The contract's options are the baseline; the call may tighten or loosen them. The id is derived from the
-	//    parsed payload, so two calls that differ only in a default the schema fills in still collapse into one job
+	// The id is derived from the parsed payload, so two calls that differ only in a default the schema fills in
+	// still collapse into one job
 	const effective = { ...contract.options, ...options };
 	const id = getJobId(contract, parsed, effective);
 
-	// 4. The queue of the job picks the location: its own when the application registered one, the default otherwise.
-	//    The driver takes the payload as passed: the run is where it is parsed, exactly once, so a schema transform
-	//    is applied a single time whichever way the job travels
+	// The driver takes the payload as passed: the run is where it is parsed, exactly once, so a schema transform
+	// is applied a single time whichever way the job travels
 	const job = await useQueue().location(contract.queue).enqueue(contract, payload, effective, id);
 
-	// 5. Listeners get the parsed payload; the emit is fire-and-forget, as every action event is
+	// Fire-and-forget, as every action event is
 	useEmitter().emitAction(QUEUE_ENQUEUED_EVENT, { ...job, payload: parsed });
 
 	return job;

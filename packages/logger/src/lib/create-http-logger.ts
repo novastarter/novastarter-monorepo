@@ -29,7 +29,7 @@ export interface CreateHttpLoggerOptions {
  * @internal
  */
 const redactUrl = (output: SerializedRequest): SerializedRequest => {
-	// 1. A caller's serializer may drop the URL or return something else entirely; only a string URL is rewritten
+	// A caller's serializer may drop the URL or return something else entirely.
 	if (typeof output?.url === 'string') {
 		output.url = redactQuery(output.url);
 	}
@@ -50,14 +50,13 @@ const redactUrl = (output: SerializedRequest): SerializedRequest => {
  * @returns A configured pino-http middleware.
  */
 export const createHttpLogger = (options: CreateHttpLoggerOptions): HttpLogger => {
-	// 1. The caller's serializers are taken apart from the other options: they are merged by key below, where a plain
-	//    spread would let the map built here replace them wholesale
+	// The caller's serializers are merged by key below; a plain spread would let the map built here replace them
+	// wholesale.
 	const { serializers: callerSerializers = {}, ...httpOptions }: Options = { ...options.http };
 
-	// 2. Ignored paths are matched on the pathname only, so a query string cannot un-silence them. The built `ignore`
-	//    is layered over the caller's own `autoLogging` rather than replacing it wholesale; a boolean `autoLogging`
-	//    carries no settings, so only an object is spread. `false` is left alone: pino-http gates completion logging
-	//    on `autoLogging !== false`, and an object built here would replace the boolean and switch it back on
+	// Matching the pathname only means a query string cannot un-silence an ignored path. A boolean `autoLogging`
+	// carries no settings, so only an object is spread. `false` is left alone: pino-http gates completion logging on
+	// `autoLogging !== false`, and an object built here would replace the boolean and switch it back on.
 	if (options.ignorePaths?.length && httpOptions.autoLogging !== false) {
 		const ignorePathsSet = new Set(options.ignorePaths);
 		const callerAutoLogging = typeof httpOptions.autoLogging === 'object' ? httpOptions.autoLogging : undefined;
@@ -65,42 +64,40 @@ export const createHttpLogger = (options: CreateHttpLoggerOptions): HttpLogger =
 		httpOptions.autoLogging = {
 			...callerAutoLogging,
 			ignore: (req) => {
-				// 1. A request without a target cannot match a path; it is logged like any other
 				if (!req.url) return false;
 
 				try {
-					// 2. A base is required for a relative path; only the pathname is read, so its value is irrelevant
+					// A base is required for a relative path; only the pathname is read, so its value is irrelevant.
 					const { pathname } = new URL(req.url, 'http://example.com/');
 					return ignorePathsSet.has(pathname);
 				} catch {
-					// 3. Node's parser accepts targets such as `//` that are no valid URL; pino-http calls this hook
-					//    unprotected inside the middleware, so a throw here would take the server down on one crafted
-					//    request. Such a request is logged rather than silenced
+					// Node's parser accepts targets such as `//` that are no valid URL; pino-http calls this hook
+					// unprotected inside the middleware, so a throw here would take the server down on one crafted
+					// request. Such a request is logged rather than silenced.
 					return false;
 				}
 			},
 		};
 	}
 
-	// 3. pino-http wraps every custom serializer unless told not to: the `req` serializer then receives the request
-	//    already serialised, and the raw message only with `wrapSerializers: false`
+	// pino-http wraps every custom serializer unless told not to: the `req` serializer then receives the request
+	// already serialised, and the raw message only with `wrapSerializers: false`.
 	const wrapped = httpOptions.wrapSerializers !== false;
 	const callerReq = callerSerializers['req'];
 
-	// 4. The request serializer runs last, so the token is gone from the URL before any stream sees it
+	// The request serializer runs last, so the token is gone from the URL before any stream sees it.
 	return pinoHttp({
 		logger: options.logger.child({}),
 		...httpOptions,
 		serializers: {
 			...callerSerializers,
 			req(request: IncomingMessage | SerializedRequest): SerializedRequest {
-				// 1. The caller's serializer gets what pino-http would have handed it without this package
+				// The caller's serializer gets what pino-http would have handed it without this package.
 				if (callerReq) {
 					return redactUrl(callerReq(request));
 				}
 
-				// 2. A request pino-http already serialised is kept as is, since serialising it again would lose the
-				//    remote address; only the raw message needs the standard serializer
+				// Serialising an already serialised request again would lose the remote address.
 				return redactUrl(wrapped ? (request as SerializedRequest) : stdSerializers.req(request as IncomingMessage));
 			},
 		},

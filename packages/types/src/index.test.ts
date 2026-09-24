@@ -6,13 +6,13 @@ import type { ClientFilterOperator, EventContext, Filter, FilterOperator, Novast
 import * as types from './index.js';
 
 test('ships no runtime code', () => {
-	// 1. A types-only package must compile to an empty module, or every consumer pays for code it never calls
+	// A types-only package must compile to an empty module, or every consumer pays for code it never calls
 	expect(Object.keys(types)).toEqual([]);
 });
 
 test('re-exports every subsystem', () => {
-	// 1. The package root is the one import path a consumer uses; the types of each submodule must stay reachable
-	//    through it as the submodules themselves define them
+	// The package root is the one import path a consumer uses; the types of each submodule must stay reachable
+	// through it as the submodules themselves define them
 	expectTypeOf<NovastarterError>().toEqualTypeOf<import('./error.js').NovastarterError>();
 	expectTypeOf<Filter>().toEqualTypeOf<import('./filter.js').Filter>();
 	expectTypeOf<FilterOperator>().toEqualTypeOf<import('./filter.js').FilterOperator>();

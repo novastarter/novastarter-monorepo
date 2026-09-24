@@ -9,6 +9,6 @@
  * @returns `namespace:key`.
  */
 export const withNamespace = (key: string, namespace: string): string => {
-	// 1. `:` is the conventional Redis separator, which keeps the keys readable in Redis tooling
+	// `:` is the conventional Redis separator, which keeps the keys readable in Redis tooling
 	return `${namespace}:${key}`;
 };

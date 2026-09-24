@@ -83,7 +83,9 @@ await sendTelegram({ token: env.ALERTS_BOT_TOKEN, chatId: '-1001234567890', text
 - `MessengerTargetGoneError` (410): the bot was blocked or kicked, the chat is gone — forget the chat id.
 - `HitRateLimitError` (429): Telegram asked to slow down; `reset` is when to try again.
 - `TimeoutError`: the call took longer than `timeout`.
-- `Error`: any other refusal, with Telegram's description; the token is never in a message.
+- `ProviderCallError` (502): any other refusal, with Telegram's `status` and answer in `extensions` and its description
+  in the message; the token is never in a message.
+- `InvalidConfigError` (500): a missing or malformed `token`, or an `apiUrl` that is not a URL.
 
 ## Options
 

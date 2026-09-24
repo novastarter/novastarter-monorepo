@@ -25,11 +25,11 @@ const WEBHOOK_SECRET = 'whsec_test_secret';
  * @returns The driver and the client to stub on.
  */
 const setup = () => {
-	// 1. A real client, so `webhooks` verifies signatures for real; the resources are spied on per test, so nothing
-	//    ever reaches the network
+	// A real client, so `webhooks` verifies signatures for real; the resources are spied on per test, so nothing ever
+	// reaches the network.
 	const client = new Stripe('sk_test_x', { appInfo: { name: 'test' } });
 
-	// 2. The driver takes the client instead of building one, which is what the `client` option exists for
+	// The driver takes the client instead of building one, which is what the `client` option exists for.
 	const driver = new PaymentsDriverStripe({ secretKey: 'sk_test_x', webhookSecret: WEBHOOK_SECRET, client });
 
 	return { client, driver };
@@ -44,11 +44,11 @@ const setup = () => {
  * @returns What `parseWebhook` answered.
  */
 const deliver = (driver: PaymentsDriverStripe, body: Stripe.Event | string, secret = WEBHOOK_SECRET) => {
-	// 1. The signature covers the exact bytes, so the text is made once and used for both the header and the call
+	// The signature covers the exact bytes, so the text is made once and used for both the header and the call.
 	const payload = typeof body === 'string' ? body : JSON.stringify(body);
 	const header = Stripe.webhooks.generateTestHeaderString({ payload, secret });
 
-	// 2. Headers arrive lower-cased, as the route hands them to the driver
+	// Headers arrive lower-cased, as the route hands them to the driver.
 	return driver.parseWebhook(payload, { 'stripe-signature': header, 'content-type': 'application/json' });
 };
 
@@ -59,13 +59,12 @@ afterEach(() => {
 
 describe('PaymentsDriverStripe', () => {
 	test('Refuses to start without a secret key or a webhook secret', () => {
-		// 1. Each missing value is named in the error, so a misconfigured deployment says which option to set
+		// Each missing value is named, so a misconfigured deployment says which option to set.
 		expect(() => new PaymentsDriverStripe({ secretKey: '', webhookSecret: 'whsec' })).toThrow('"secretKey"');
 		expect(() => new PaymentsDriverStripe({ secretKey: 'sk', webhookSecret: '' })).toThrow('"webhookSecret"');
 	});
 
 	test("Passes the application's appInfo to the client and nothing without one", () => {
-		// 1. The client records what it was built with; the driver neither invents a name nor drops the given one
 		const named = new PaymentsDriverStripe({ secretKey: 'sk', webhookSecret: 'whsec', appInfo: { name: 'Acme' } });
 		const anonymous = new PaymentsDriverStripe({ secretKey: 'sk', webhookSecret: 'whsec' });
 
@@ -74,7 +73,6 @@ describe('PaymentsDriverStripe', () => {
 	});
 
 	test('Creates a customer with the organization in its metadata', async () => {
-		// 1. Stripe answers the customer as created; the stub returns what the request carried
 		const { client, driver } = setup();
 
 		const create = vi.spyOn(client.customers, 'create').mockResolvedValue({
@@ -84,7 +82,6 @@ describe('PaymentsDriverStripe', () => {
 			metadata: { organizationId: 'org_42' },
 		} as never);
 
-		// 2. The normalised customer carries Stripe's id and the metadata the sync keys on
 		await expect(
 			driver.createCustomer({ email: 'ada@example.com', name: 'Ada', metadata: { organizationId: 'org_42' } }),
 		).resolves.toStrictEqual({
@@ -94,7 +91,6 @@ describe('PaymentsDriverStripe', () => {
 			metadata: { organizationId: 'org_42' },
 		});
 
-		// 3. Every given field is sent as is, under Stripe's names
 		expect(create).toHaveBeenCalledWith({
 			email: 'ada@example.com',
 			name: 'Ada',
@@ -103,7 +99,6 @@ describe('PaymentsDriverStripe', () => {
 	});
 
 	test('Starts a subscription checkout with the metadata on the session and on the subscription', async () => {
-		// 1. Stripe answers a hosted session with its page and expiry
 		const { client, driver } = setup();
 
 		const create = vi.spyOn(client.checkout.sessions, 'create').mockResolvedValue({
@@ -112,7 +107,6 @@ describe('PaymentsDriverStripe', () => {
 			expires_at: 1789171100,
 		} as never);
 
-		// 2. The session's expiry is a Stripe timestamp, answered as a `Date`
 		await expect(
 			driver.createCheckoutSession({
 				customerId: 'cus_1',
@@ -130,8 +124,7 @@ describe('PaymentsDriverStripe', () => {
 			expiresAt: new Date(1789171100 * 1000),
 		});
 
-		// 3. Subscription mode, one line item, the metadata on the session and under `subscription_data`, so the
-		//    subscription's own events carry it too
+		// The metadata goes under `subscription_data` too, so the subscription's own events carry it.
 		expect(create).toHaveBeenCalledWith({
 			mode: 'subscription',
 			customer: 'cus_1',
@@ -143,7 +136,6 @@ describe('PaymentsDriverStripe', () => {
 			subscription_data: { trial_period_days: 14, metadata: { organizationId: 'org_42', planId: 'pro' } },
 		});
 
-		// 4. A session without a URL cannot be redirected to
 		create.mockResolvedValue({ id: 'cs_2', url: null, expires_at: 1 } as never);
 
 		await expect(
@@ -152,14 +144,12 @@ describe('PaymentsDriverStripe', () => {
 	});
 
 	test('Opens the portal', async () => {
-		// 1. Stripe answers the portal session with its page
 		const { client, driver } = setup();
 
 		const create = vi
 			.spyOn(client.billingPortal.sessions, 'create')
 			.mockResolvedValue({ url: 'https://billing.stripe.com/session/x' } as never);
 
-		// 2. The URL is all the caller needs; the customer and the way back are what Stripe needs
 		await expect(
 			driver.createPortalSession({ customerId: 'cus_1', returnUrl: 'https://app/billing' }),
 		).resolves.toStrictEqual({
@@ -170,7 +160,6 @@ describe('PaymentsDriverStripe', () => {
 	});
 
 	test('Reads, updates and cancels a subscription through its item', async () => {
-		// 1. One Stripe subscription, as the fixture carries it, answers every stubbed call
 		const { client, driver } = setup();
 		const stripeSubscription = fixture('customer.subscription.created').data.object as Stripe.Subscription;
 
@@ -178,15 +167,13 @@ describe('PaymentsDriverStripe', () => {
 		const update = vi.spyOn(client.subscriptions, 'update').mockResolvedValue(stripeSubscription as never);
 		const cancel = vi.spyOn(client.subscriptions, 'cancel').mockResolvedValue(stripeSubscription as never);
 
-		// 2. A read is the retrieval, normalised
 		await expect(driver.getSubscription('sub_1S5abcDEF123456789')).resolves.toMatchObject({
 			id: 'sub_1S5abcDEF123456789',
 			status: 'trialing',
 			quantity: 3,
 		});
 
-		// 3. A plan change and a seat change go on the item, with the proration as asked; a change that needs a
-		//    payment waits until it is paid, so a declined card leaves the old price in place
+		// A change that needs a payment waits until it is paid, so a declined card leaves the old price in place.
 		await driver.updateSubscription({
 			subscriptionId: 'sub_1S5abcDEF123456789',
 			priceId: 'price_business_monthly',
@@ -200,7 +187,7 @@ describe('PaymentsDriverStripe', () => {
 			payment_behavior: 'pending_if_incomplete',
 		});
 
-		// 4. Without a proration choice the kit prorates, and only the given change goes on the item
+		// Without a proration choice the kit prorates.
 		await driver.updateSubscription({ subscriptionId: 'sub_1S5abcDEF123456789', quantity: 4 });
 
 		expect(update).toHaveBeenLastCalledWith('sub_1S5abcDEF123456789', {
@@ -209,7 +196,6 @@ describe('PaymentsDriverStripe', () => {
 			payment_behavior: 'pending_if_incomplete',
 		});
 
-		// 5. Cancelling at period end is an update; right away is a cancel — both pass the reason on
 		await driver.cancelSubscription({ subscriptionId: 'sub_1S5abcDEF123456789', reason: 'Too expensive' });
 
 		expect(update).toHaveBeenLastCalledWith('sub_1S5abcDEF123456789', {
@@ -221,7 +207,6 @@ describe('PaymentsDriverStripe', () => {
 
 		expect(cancel).toHaveBeenCalledWith('sub_1S5abcDEF123456789', {});
 
-		// 6. Neither a price nor a quantity is a caller's mistake, refused before any request is sent
 		await expect(driver.updateSubscription({ subscriptionId: 'sub_1S5abcDEF123456789' })).rejects.toThrow(
 			'Nothing to update',
 		);
@@ -230,8 +215,7 @@ describe('PaymentsDriverStripe', () => {
 	});
 
 	test('Throws when the change waits in pending_update because its payment failed', async () => {
-		// 1. Stripe answers the update with the old item and the change held in pending_update, as it does when the
-		//    invoice for a change sent with pending_if_incomplete is declined
+		// This is what Stripe answers when the invoice for a change sent with pending_if_incomplete is declined.
 		const { client, driver } = setup();
 		const stripeSubscription = fixture('customer.subscription.created').data.object as Stripe.Subscription;
 
@@ -249,7 +233,7 @@ describe('PaymentsDriverStripe', () => {
 			},
 		} as never);
 
-		// 2. The unchanged subscription is not answered as if the change was made; the error names the invoice
+		// The unchanged subscription must not be answered as if the change was made.
 		await expect(
 			driver.updateSubscription({
 				subscriptionId: 'sub_1S5abcDEF123456789',
@@ -262,27 +246,24 @@ describe('PaymentsDriverStripe', () => {
 	});
 
 	test('Lists invoices', async () => {
-		// 1. Stripe answers a page of invoices; one from the fixture is enough to check the mapping is applied
 		const { client, driver } = setup();
 		const invoice = fixture('invoice.paid').data.object as Stripe.Invoice;
 
 		const list = vi.spyOn(client.invoices, 'list').mockResolvedValue({ data: [invoice] } as never);
 
-		// 2. Each invoice is normalised; the customer and the limit are passed through as given
 		await expect(driver.listInvoices({ customerId: 'cus_T1abcDEF12345', limit: 10 })).resolves.toStrictEqual([
 			toInvoice(invoice),
 		]);
 
 		expect(list).toHaveBeenCalledWith({ customer: 'cus_T1abcDEF12345', limit: 10 });
 
-		// 3. Without a limit the kit's default of twenty is sent: leaving it out would let Stripe page at ten
+		// Leaving the limit out would let Stripe page at ten.
 		await expect(driver.listInvoices({ customerId: 'cus_T1abcDEF12345' })).resolves.toStrictEqual([toInvoice(invoice)]);
 
 		expect(list).toHaveBeenCalledWith({ customer: 'cus_T1abcDEF12345', limit: 20 });
 	});
 
 	test('Verifies a signed webhook and refuses a wrong signature, a missing header and a broken body', async () => {
-		// 1. A delivery signed with the endpoint's secret is verified and mapped
 		const { driver } = setup();
 		const event = fixture('customer.subscription.created');
 
@@ -292,12 +273,10 @@ describe('PaymentsDriverStripe', () => {
 			provider: 'stripe',
 		});
 
-		// 2. Another secret is a forged delivery; no header at all is a malformed one
 		await expect(deliver(driver, event, 'whsec_other')).rejects.toBeInstanceOf(InvalidCredentialsError);
 
 		await expect(driver.parseWebhook(JSON.stringify(event), {})).rejects.toBeInstanceOf(InvalidPayloadError);
 
-		// 3. A body altered after signing is a wrong signature; an unreadable body with a good signature is a payload
 		const payload = JSON.stringify(event);
 		const header = Stripe.webhooks.generateTestHeaderString({ payload, secret: WEBHOOK_SECRET });
 
@@ -309,24 +288,22 @@ describe('PaymentsDriverStripe', () => {
 	});
 
 	test('Refuses a signed body that is JSON but not a Stripe event', async () => {
-		// 1. The SDK only verifies and parses; without a shape check a signed `{"hello":1}` would be dropped as an
-		//    event of no interest and acknowledged with 200, so the driver refuses it as a payload problem instead
+		// The SDK only verifies and parses; without a shape check a signed `{"hello":1}` would be dropped as an event
+		// of no interest and acknowledged with 200.
 		const { driver } = setup();
 
 		await expect(deliver(driver, '{"hello":1}')).rejects.toBeInstanceOf(InvalidPayloadError);
 		await expect(deliver(driver, '{"hello":1}')).rejects.toThrow('not a Stripe event');
 
-		// 2. JSON that is not an object at all, and an event without its `data.object`, are refused the same way
 		await expect(deliver(driver, 'null')).rejects.toBeInstanceOf(InvalidPayloadError);
 		await expect(deliver(driver, '"evt_1"')).rejects.toBeInstanceOf(InvalidPayloadError);
 		await expect(deliver(driver, '{"id":"evt_1","type":"invoice.paid"}')).rejects.toBeInstanceOf(InvalidPayloadError);
 
-		// 3. An event of a type the kit does not act on is still an event: verified and dropped, not refused
+		// An event of a type the kit does not act on is still an event: dropped, not refused.
 		await expect(deliver(driver, fixture('customer.subscription.trial_will_end'))).resolves.toBeNull();
 	});
 
 	test('Verifies the key with the cheapest read', async () => {
-		// 1. One customer is the smallest authenticated read there is
 		const { client, driver } = setup();
 		const list = vi.spyOn(client.customers, 'list').mockResolvedValue({ data: [] } as never);
 
@@ -355,16 +332,15 @@ describe('call', () => {
 		});
 
 	test('Exposes the SDK client it was given', () => {
-		// 1. The SDK's own API, for what `call()` does not cover — an upload through `files.create`
+		// For what `call()` does not cover, such as an upload through `files.create`.
 		const { client, driver } = setup();
 
 		expect(driver.client).toBe(client);
 	});
 
 	test('Posts the body through rawRequest and answers what Stripe answered', async () => {
-		// 1. A POST carries its parameters as the body; the path and verb go to the SDK as given, with its network
-		//    retries off so none outlives the deadline; without a raw response on the answer the status is 200 and
-		//    there are no headers
+		// Network retries are off so none outlives the deadline; without a raw response on the answer the status is 200
+		// and there are no headers.
 		const { client, driver } = setup();
 		const raw = vi.spyOn(client, 'rawRequest').mockResolvedValue({ id: 're_1', object: 'refund' });
 
@@ -383,7 +359,6 @@ describe('call', () => {
 	});
 
 	test("Puts a GET's parameters in the path in Stripe's bracket notation, and passes timeout and headers", async () => {
-		// 1. A list by index and an object by key, as Stripe reads them; no body on a GET
 		const { client, driver } = setup();
 		const raw = vi.spyOn(client, 'rawRequest').mockResolvedValue({ data: [] });
 
@@ -402,7 +377,6 @@ describe('call', () => {
 	});
 
 	test("Sends a full URL on Stripe's files host to the SDK's files base", async () => {
-		// 1. The host picks the base; the request still goes through the client and its key
 		const { client, driver } = setup();
 		const raw = vi.spyOn(client, 'rawRequest').mockResolvedValue({ data: [] });
 
@@ -416,18 +390,18 @@ describe('call', () => {
 	});
 
 	test('Refuses a URL on another host, or plain http, before any request', async () => {
-		// 1. The key would travel with the request, so nothing is sent at all
+		// The key would travel with the request, so nothing is sent at all.
 		const { client, driver } = setup();
 		const raw = vi.spyOn(client, 'rawRequest');
 
 		await expect(driver.call('GET https://evil.example/v1/customers')).rejects.toThrow('evil.example');
-		await expect(driver.call('GET http://api.stripe.com/v1/customers')).rejects.toThrow('not on a host');
+		await expect(driver.call('GET http://api.stripe.com/v1/customers')).rejects.toThrow('not on a Stripe host');
 		await expect(driver.call('customers')).rejects.toThrow('is not');
 		expect(raw).not.toHaveBeenCalled();
 	});
 
 	test('Refuses parameters a PATCH cannot carry, and a file, before any request', async () => {
-		// 1. Stripe takes a body on POST only, and the raw request sends no multipart body; nothing is sent either way
+		// Stripe takes a body on POST only, and the raw request sends no multipart body.
 		const { client, driver } = setup();
 		const fetch = vi.fn();
 		const raw = vi.spyOn(client, 'rawRequest');
@@ -443,7 +417,6 @@ describe('call', () => {
 	});
 
 	test('Sends nothing when the signal is already aborted', async () => {
-		// 1. An aborted signal fails the call with its reason before the SDK is reached
 		const { client, driver } = setup();
 		const raw = vi.spyOn(client, 'rawRequest');
 
@@ -455,7 +428,6 @@ describe('call', () => {
 	});
 
 	test('Turns a refusal into ProviderCallError with the status and Stripe error, and never names the key', async () => {
-		// 1. A driver with a recognisable key, whose request Stripe refuses with 404
 		const client = new Stripe('sk_test_SECRET_KEY_123');
 		const driver = new PaymentsDriverStripe({ secretKey: 'sk_test_SECRET_KEY_123', webhookSecret: 'whsec', client });
 
@@ -465,7 +437,6 @@ describe('call', () => {
 			.call('GET /v1/payment_intents/pi_404')
 			.catch((caught: unknown) => caught)) as InstanceType<typeof ProviderCallError>;
 
-		// 2. Stripe's status and its `error` object, the SDK's additions left out, the SDK's exception as the cause
 		expect(error).toBeInstanceOf(ProviderCallError);
 
 		expect(error.extensions).toMatchObject({
@@ -483,7 +454,6 @@ describe('call', () => {
 	});
 
 	test('Turns a 429 into HitRateLimitError reset at Retry-After', async () => {
-		// 1. Stripe names the wait in the header
 		const { client, driver } = setup();
 
 		vi.spyOn(client, 'rawRequest').mockRejectedValue(refusal(429, { 'retry-after': '2' }));
@@ -497,7 +467,6 @@ describe('call', () => {
 	});
 
 	test('Gives up with TimeoutError at the timeout', async () => {
-		// 1. A request that never settles
 		const { client, driver } = setup();
 
 		vi.spyOn(client, 'rawRequest').mockReturnValue(new Promise(() => {}));
@@ -506,7 +475,8 @@ describe('call', () => {
 	});
 
 	test("Answers with the status and headers of the SDK's raw response", async () => {
-		// 1. The SDK hangs the raw response on the answer, not enumerable; Node's client gives a record of headers
+		// The SDK hangs the raw response on the answer as a non-enumerable key; Node's client gives a record of
+		// headers.
 		const { client, driver } = setup();
 		const answer = { id: 'cus_1', object: 'customer' };
 
@@ -529,7 +499,6 @@ describe('call', () => {
 	});
 
 	test("Reads the fetch client's raw response", async () => {
-		// 1. The fetch client hangs a `Response`: `status` and `Headers`
 		const { client, driver } = setup();
 		const answer = { id: 'cus_1' };
 
@@ -548,7 +517,6 @@ describe('call', () => {
 	});
 
 	test('Fills a {name} from its parameter, encoded, and sends that parameter nowhere else', async () => {
-		// 1. The id goes in the path and not in the query; the other parameters stay where the verb puts them
 		const { client, driver } = setup();
 		const raw = vi.spyOn(client, 'rawRequest').mockResolvedValue({});
 
@@ -559,7 +527,6 @@ describe('call', () => {
 			maxNetworkRetries: 0,
 		});
 
-		// 2. In a POST, the body loses the parameter too
 		await driver.call('POST /v1/customers/{id}', { id: 'cus_1', name: 'Ada' });
 
 		expect(raw).toHaveBeenLastCalledWith(
@@ -574,7 +541,7 @@ describe('call', () => {
 	});
 
 	test('Refuses a {name} no parameter fills before any request', async () => {
-		// 1. Sent, it would reach Stripe as `%7Bid%7D`; neither the SDK nor `fetch` is reached
+		// Sent, it would reach Stripe as `%7Bid%7D`.
 		const { client, driver } = setup();
 		const raw = vi.spyOn(client, 'rawRequest');
 		const fetch = vi.fn();

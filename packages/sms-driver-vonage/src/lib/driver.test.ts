@@ -2,11 +2,12 @@
  * Tests of the Vonage driver class with the SDK's `SMS` client replaced; the message mapper and the error
  * description have their own tests in `to-vonage-message.test.ts` and `describe-error.test.ts`.
  */
-import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
+import { HitRateLimitError, InvalidConfigError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import { MessageSendAllFailure, MessageSendPartialFailure } from '@vonage/sms';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import defaultExport, { SmsPartialDeliveryError } from '../index.js';
+import * as entry from '../index.js';
+import { SmsPartialDeliveryError } from '../index.js';
 import { BALANCE_URL } from './constants.js';
 import { SmsDriverVonage } from './driver.js';
 
@@ -47,8 +48,7 @@ afterEach(() => {
 
 describe('SmsDriverVonage', () => {
 	test('Sends and answers the id, the status, the part count and the balance', async () => {
-		// 1. Vonage answers one entry per part of the message, each with the balance left after it, and the part count as
-		//    the string its API really sends, which the driver has to turn into a number
+		// Vonage sends the part count as a string, which the driver has to turn into a number.
 		send.mockResolvedValueOnce({
 			messageCount: '2',
 			messages: [
@@ -68,11 +68,12 @@ describe('SmsDriverVonage', () => {
 
 		expect(send).toHaveBeenCalledWith({ to: '14155550123', from: 'Acme', text: 'Hi', type: 'text' });
 		expect(client).toHaveBeenCalledWith({ apiKey: 'key', apiSecret: 'secret' }, { timeout: 5_000 });
-		expect(defaultExport).toBe(SmsDriverVonage);
+		expect(entry.SmsDriverVonage).toBe(SmsDriverVonage);
+		expect(entry).not.toHaveProperty('default');
 	});
 
 	test('Describes a refused message by Vonage status and wording', async () => {
-		// 1. The SDK throws for an answer whose parts all failed; the status is what the application matches on
+		// The SDK throws for an answer whose parts all failed; the status is what the application matches on.
 		send.mockRejectedValueOnce(
 			new MessageSendAllFailure({
 				messageCount: 1,
@@ -88,9 +89,8 @@ describe('SmsDriverVonage', () => {
 	});
 
 	test('Reports a partially delivered message as the non-retryable SmsPartialDeliveryError', async () => {
-		// 1. A long text becomes parts, one entry each in Vonage's answer; the SDK throws MessageSendPartialFailure
-		//    when it took some parts and refused the rest — the accepted parts already went out and are billed, so the
-		//    driver must not report this as a refusal a fallback would re-send
+		// The SDK throws MessageSendPartialFailure when it took some parts and refused the rest. The accepted parts
+		// already went out and are billed, so the driver must not report this as a refusal a fallback would re-send.
 		send.mockRejectedValueOnce(
 			new MessageSendPartialFailure({
 				messageCount: 2,
@@ -107,7 +107,6 @@ describe('SmsDriverVonage', () => {
 			.send({ to: '+14155550123', from: 'Acme', text: 'Hi' })
 			.catch((thrown: unknown) => thrown)) as Error;
 
-		// 2. The dedicated error names how much went out and why the rest refused; the SDK's answer stays on the cause
 		expect(error).toBeInstanceOf(SmsPartialDeliveryError);
 
 		expect(error).toMatchObject({
@@ -119,6 +118,7 @@ describe('SmsDriverVonage', () => {
 	});
 
 	test('Refuses an incomplete credential by the option name', () => {
+		expect(() => new SmsDriverVonage({ apiKey: '', apiSecret: 'secret' })).toThrow(InvalidConfigError);
 		expect(() => new SmsDriverVonage({ apiKey: '', apiSecret: 'secret' })).toThrow(/"apiKey"/);
 		expect(() => new SmsDriverVonage({ apiKey: 'key', apiSecret: '' })).toThrow(/"apiSecret"/);
 	});
@@ -130,26 +130,23 @@ describe('SmsDriverVonage', () => {
 
 		const driver = new SmsDriverVonage({ apiKey: 'key', apiSecret: 'secret' });
 
-		// 1. The credentials travel in an `Authorization` header and nothing is created or billed; they never go in
-		//    the URL, which proxies, traces and error output record — the secret would leak into all of those
+		// Nothing is created or billed. The credentials travel in a header, never in the URL, which proxies, traces and
+		// error output record.
 		await expect(driver.verify()).resolves.toBeUndefined();
 
 		expect(fetch).toHaveBeenCalledWith(BALANCE_URL, {
 			headers: { Authorization: `Basic ${Buffer.from('key:secret').toString('base64')}` },
 		});
 
-		// 2. Bad credentials answer 401, which is reported with the status
 		fetch.mockResolvedValueOnce(new Response('Unauthorized', { status: 401, statusText: 'Unauthorized' }));
 		await expect(driver.verify()).rejects.toThrow('Vonage: 401: Unauthorized');
 
-		// 3. A network failure never reached the API and is described as it is
 		fetch.mockRejectedValueOnce(new Error('ENOTFOUND'));
 		await expect(driver.verify()).rejects.toThrow('Vonage: ENOTFOUND');
 	});
 
 	test('Drains the balance response body, so the socket returns to the pool', async () => {
-		// 1. The balance answer is not read further, but an unconsumed body would hold the socket out of `fetch`'s
-		//    connection pool until GC — `verify()` consumes and drops it
+		// An unconsumed body would hold the socket out of `fetch`'s connection pool until GC.
 		const response = new Response('{"value":10.5,"autoReload":false}');
 		const drain = vi.spyOn(response, 'arrayBuffer');
 
@@ -174,8 +171,7 @@ describe('SmsDriverVonage', () => {
 
 		await expect(driver.verify()).resolves.toBeUndefined();
 
-		// 1. The timeout the SDK client was built with bounds this fetch too — a stalled balance read would otherwise
-		//    sit out the agent's minutes-long limits
+		// A stalled balance read would otherwise sit out the agent's minutes-long limits.
 		expect(fetch).toHaveBeenCalledWith(BALANCE_URL, {
 			headers: { Authorization: `Basic ${Buffer.from('key:secret').toString('base64')}` },
 			signal: expect.any(AbortSignal),
@@ -194,7 +190,6 @@ describe('SmsDriverVonage.call', () => {
 	 * @returns The spy, for the tests to read the requests from.
 	 */
 	const stubFetch = (...responses: Response[]) => {
-		// 1. One response per request, in order; `fetch` records the URL and the request of each
 		const http = vi.fn(async (_url: string, _init: RequestInit) => responses.shift() ?? new Response(null));
 
 		vi.stubGlobal('fetch', http);
@@ -209,12 +204,11 @@ describe('SmsDriverVonage.call', () => {
 	 * @returns Its headers, as `httpCall` passes them: a record with lower-cased names.
 	 */
 	const headersOf = (init: RequestInit | undefined): Record<string, string> => {
-		// 1. `httpCall` always hands a plain record
+		// `httpCall` always hands a plain record.
 		return (init?.headers ?? {}) as Record<string, string>;
 	};
 
 	test('Sends a GET with the parameters in the URL and the key pair as Basic auth', async () => {
-		// 1. The query is built from the parameters, a list repeating its key
 		const http = stubFetch(Response.json({ value: 10.5, autoReload: false }));
 		const driver = new SmsDriverVonage({ apiKey: 'key', apiSecret: 'secret', timeout: 5_000 });
 
@@ -222,7 +216,6 @@ describe('SmsDriverVonage.call', () => {
 
 		expect(data).toStrictEqual({ value: 10.5, autoReload: false });
 
-		// 2. The URL, the verb, the Basic header, no body, and a signal the deadline aborts
 		const [url, init] = http.mock.calls[0]!;
 
 		expect(url).toBe('https://rest.nexmo.com/account/get-pricing/outbound/sms?country=GB&x=a&x=b');
@@ -234,7 +227,6 @@ describe('SmsDriverVonage.call', () => {
 	});
 
 	test('Sends a POST body as JSON by default', async () => {
-		// 1. Without a content type the parameters go as JSON, `undefined` ones left out
 		const http = stubFetch(Response.json({ ok: true }));
 		const driver = new SmsDriverVonage({ apiKey: 'key', apiSecret: 'secret' });
 
@@ -250,7 +242,6 @@ describe('SmsDriverVonage.call', () => {
 	});
 
 	test('Sends a form when the caller content type asks for one, with the caller headers', async () => {
-		// 1. The caller's content type, in any case, makes it a form; the other headers go as given
 		const http = stubFetch(new Response(null, { status: 204 }));
 		const driver = new SmsDriverVonage({ apiKey: 'key', apiSecret: 'secret' });
 
@@ -263,7 +254,6 @@ describe('SmsDriverVonage.call', () => {
 			},
 		);
 
-		// 2. An empty answer is nothing
 		expect(result).toStrictEqual({ status: 204, headers: {}, data: undefined });
 
 		const [, init] = http.mock.calls[0]!;
@@ -278,7 +268,6 @@ describe('SmsDriverVonage.call', () => {
 		const driver = new SmsDriverVonage({ apiKey: 'key', apiSecret: 'super-secret' });
 		const refusal = { type: 'https://developer.vonage.com/api-errors#unauthorized', title: 'Unauthorized' };
 
-		// 1. Vonage's answer is kept as the body; the secret and the Basic header are nowhere in the error
 		stubFetch(Response.json(refusal, { status: 401 }));
 
 		const error = (await driver.call('GET /account/get-balance').catch((thrown: unknown) => thrown)) as Error;
@@ -290,12 +279,11 @@ describe('SmsDriverVonage.call', () => {
 		expect(JSON.stringify(error)).not.toContain('super-secret');
 		expect(JSON.stringify(error)).not.toContain(Buffer.from('key:super-secret').toString('base64'));
 
-		// 2. Too many requests is a rate limit the caller may wait out
 		stubFetch(Response.json({ title: 'Throttled' }, { status: 429, headers: { 'retry-after': '2' } }));
 
 		await expect(driver.call('GET /account/get-balance')).rejects.toBeInstanceOf(HitRateLimitError);
 
-		// 3. What is not an answer — a network failure — passes through untouched; `fetch`'s error holds no header
+		// A network failure passes through untouched: `fetch`'s error holds no header.
 		const network = new TypeError('fetch failed');
 
 		vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(network));
@@ -307,7 +295,6 @@ describe('SmsDriverVonage.call', () => {
 		const http = stubFetch();
 		const driver = new SmsDriverVonage({ apiKey: 'key', apiSecret: 'secret' });
 
-		// 1. An aborted signal fails the call with its reason before `fetch` is reached
 		await expect(
 			driver.call('GET /account/get-balance', {}, { signal: AbortSignal.abort(new Error('stop')) }),
 		).rejects.toThrow('stop');
@@ -319,14 +306,13 @@ describe('SmsDriverVonage.call', () => {
 		const http = stubFetch();
 		const driver = new SmsDriverVonage({ apiKey: 'key', apiSecret: 'secret' });
 
-		// 1. The key pair would go wherever the URL points, so only Vonage hosts are accepted
+		// The key pair would go wherever the URL points, so only Vonage hosts are accepted.
 		await expect(driver.call('GET https://evil.example/account')).rejects.toThrow(/not on a host/);
 
 		expect(http).not.toHaveBeenCalled();
 	});
 
 	test('Fails with TimeoutError when Vonage does not answer in time', async () => {
-		// 1. A request that never settles is cut at the call timeout
 		vi.stubGlobal(
 			'fetch',
 			vi.fn(() => new Promise(() => {})),
@@ -338,7 +324,6 @@ describe('SmsDriverVonage.call', () => {
 	});
 
 	test('Answers the status, the real lower-cased headers and the body', async () => {
-		// 1. The response's own headers come back, their names lower-cased
 		stubFetch(Response.json({ value: 10.5 }, { headers: { 'X-Request-Id': 'r1' } }));
 
 		const driver = new SmsDriverVonage({ apiKey: 'key', apiSecret: 'secret' });
@@ -354,14 +339,12 @@ describe('SmsDriverVonage.call', () => {
 		const http = stubFetch(new Response(null, { status: 204 }), new Response(null, { status: 204 }));
 		const driver = new SmsDriverVonage({ apiKey: 'key', apiSecret: 'secret' });
 
-		// 1. In a GET, the type leaves the query
 		await driver.call('GET /account/get-pricing/outbound/{type}', { type: 'sms/x y', country: 'GB' });
 
 		const [url] = http.mock.calls[0]!;
 
 		expect(url).toBe('https://rest.nexmo.com/account/get-pricing/outbound/sms%2Fx%20y?country=GB');
 
-		// 2. In a POST, it leaves the body
 		await driver.call('POST https://api.nexmo.com/v1/items/{id}', { id: 'i1', name: 'x' });
 
 		expect(http.mock.calls[1]![0]).toBe('https://api.nexmo.com/v1/items/i1');
@@ -372,7 +355,7 @@ describe('SmsDriverVonage.call', () => {
 		const http = stubFetch();
 		const driver = new SmsDriverVonage({ apiKey: 'key', apiSecret: 'secret' });
 
-		// 1. Sent, it would reach Vonage as `%7Btype%7D`
+		// Sent, it would reach Vonage as `%7Btype%7D`.
 		await expect(driver.call('GET /account/get-pricing/outbound/{type}')).rejects.toThrow('{type}');
 		expect(http).not.toHaveBeenCalled();
 	});
@@ -383,7 +366,6 @@ describe('SmsDriverVonage.call with a file', () => {
 	const UPLOAD_URL = 'https://api.nexmo.com/v1/uploads';
 
 	test('Uploads as multipart, with the key pair as Basic auth', async () => {
-		// 1. `fetch` answers the upload
 		const http = vi.fn(
 			async (_url: string, _init: RequestInit) => new Response(JSON.stringify({ id: 'f1' }), { status: 201 }),
 		);
@@ -401,8 +383,7 @@ describe('SmsDriverVonage.call with a file', () => {
 
 		expect(result.data).toStrictEqual({ id: 'f1' });
 
-		// 2. The URL as given, Basic auth of the key pair, the caller's header, and the multipart body with the file —
-		//    the caller's content type dropped for the multipart one
+		// The caller's content type is dropped for the multipart one.
 		const [url, init] = http.mock.calls[0]!;
 		const headers = init.headers as Record<string, string>;
 		const body = init.body as FormData;
@@ -420,7 +401,6 @@ describe('SmsDriverVonage.call with a file', () => {
 	});
 
 	test('Uploads a list of files to the default host for a path', async () => {
-		// 1. A path goes under `rest.nexmo.com`; a list of files repeats its field
 		const http = vi.fn(async (_url: string, _init: RequestInit) => new Response(null, { status: 204 }));
 
 		vi.stubGlobal('fetch', http);
@@ -444,7 +424,7 @@ describe('SmsDriverVonage.call with a file', () => {
 
 		const driver = new SmsDriverVonage({ apiKey: 'key', apiSecret: 'secret' });
 
-		// 1. The key pair would go wherever the URL points
+		// The key pair would go wherever the URL points.
 		await expect(driver.call('POST https://evil.example/x', { file: new Blob(['x']) })).rejects.toThrow(
 			/not on a host/,
 		);
@@ -456,7 +436,6 @@ describe('SmsDriverVonage.call with a file', () => {
 		const driver = new SmsDriverVonage({ apiKey: 'key', apiSecret: 'super-secret' });
 		const refusal = { type: 'https://developer.vonage.com/api-errors#unauthorized', title: 'Unauthorized' };
 
-		// 1. Vonage's answer is kept as the body; the secret and the Basic header are nowhere in the error
 		vi.stubGlobal(
 			'fetch',
 			vi.fn(async () => new Response(JSON.stringify(refusal), { status: 401 })),
@@ -473,7 +452,6 @@ describe('SmsDriverVonage.call with a file', () => {
 		expect(JSON.stringify(error)).not.toContain(Buffer.from('key:super-secret').toString('base64'));
 		expect(JSON.stringify(error.cause ?? null)).not.toContain('super-secret');
 
-		// 2. Too many requests is a rate limit the caller may wait out
 		vi.stubGlobal(
 			'fetch',
 			vi.fn(async () => new Response('{}', { status: 429, headers: { 'retry-after': '1' } })),
@@ -485,7 +463,6 @@ describe('SmsDriverVonage.call with a file', () => {
 	});
 
 	test('Fails an upload with TimeoutError at the location timeout', async () => {
-		// 1. A `fetch` that never answers is cut at the location's timeout, the call naming none
 		vi.stubGlobal(
 			'fetch',
 			vi.fn(() => new Promise(() => {})),

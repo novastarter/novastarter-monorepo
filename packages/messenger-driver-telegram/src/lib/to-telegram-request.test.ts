@@ -6,7 +6,6 @@ import { toParseMode, toTelegramRequest } from './to-telegram-request.js';
 
 describe('toParseMode', () => {
 	test('Maps the formats to Telegram’s parse modes', () => {
-		// 1. Plain text has none
 		expect(toParseMode('markdown')).toBe('MarkdownV2');
 		expect(toParseMode('html')).toBe('HTML');
 		expect(toParseMode('text')).toBeUndefined();
@@ -16,7 +15,7 @@ describe('toParseMode', () => {
 
 describe('toTelegramRequest', () => {
 	test('Sends text with sendMessage, its format, silence and raw parameters', () => {
-		// 1. `raw` comes last, so it can add or override anything
+		// `raw` comes last, so it can add or override anything
 		expect(
 			toTelegramRequest({
 				to: '42',
@@ -38,13 +37,11 @@ describe('toTelegramRequest', () => {
 	});
 
 	test('Uses the default format only when the message names none', () => {
-		// 1. The driver's default, then the message's own over it
 		expect(toTelegramRequest({ to: '42', text: 'x' }, 'html').params['parse_mode']).toBe('HTML');
 		expect(toTelegramRequest({ to: '42', text: 'x', format: 'text' }, 'html').params['parse_mode']).toBeUndefined();
 	});
 
 	test('Sends one photo with sendPhoto and one document with sendDocument, the text as caption', () => {
-		// 1. A URL goes as is
 		expect(
 			toTelegramRequest({
 				to: '42',
@@ -56,7 +53,6 @@ describe('toTelegramRequest', () => {
 			params: { chat_id: '42', photo: 'https://example.com/a.png', caption: 'Chart' },
 		});
 
-		// 2. A bare blob becomes a file with the attachment's name
 		const { method, params } = toTelegramRequest({
 			to: '42',
 			attachments: [
@@ -74,7 +70,6 @@ describe('toTelegramRequest', () => {
 	test('Sends several files as an album, files as attach:// parts and the text on the first', () => {
 		const file = new File(['png'], 'b.png');
 
-		// 1. The URL stays in the list; the file is referenced by its part name and travels as that part
 		expect(
 			toTelegramRequest({
 				to: '42',

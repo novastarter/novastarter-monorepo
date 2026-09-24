@@ -27,6 +27,7 @@
 	"dependencies": {
 		"@cloudflare/workers-types": "catalog:",
 		"@novastarter/database": "workspace:*",
+		"@novastarter/errors": "workspace:*",
 		"drizzle-orm": "catalog:"
 	},
 	"devDependencies": {

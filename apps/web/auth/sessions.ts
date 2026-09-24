@@ -42,7 +42,7 @@ const cache = {
 	 * @returns The session; `undefined` when not cached or when the cache failed.
 	 */
 	async get(id: string): Promise<SessionRecord | undefined> {
-		// 1. A failing cache is a miss: the table answers instead
+		// A failing cache is a miss: the table answers instead
 		try {
 			return await useCache().location().get<SessionRecord>(cacheKey(id));
 		} catch (error) {
@@ -59,7 +59,7 @@ const cache = {
 	 * @returns Once it is cached, or the failure logged.
 	 */
 	async set(session: SessionRecord): Promise<void> {
-		// 1. A copy that could not be written only means the next read goes to the table
+		// A copy that could not be written only means the next read goes to the table
 		try {
 			await useCache().location().set(cacheKey(session.id), session);
 		} catch (error) {
@@ -74,7 +74,7 @@ const cache = {
 	 * @returns Once they are dropped, or the failure logged.
 	 */
 	async delete(ids: string[]): Promise<void> {
-		// 1. A drop that failed leaves a copy readable until the cache's ttl — logged, since sign-out is then late
+		// A drop that failed leaves a copy readable until the cache's ttl — logged, since sign-out is then late
 		try {
 			await Promise.all(ids.map((id) => useCache().location().delete(cacheKey(id))));
 		} catch (error) {
@@ -92,7 +92,7 @@ const cache = {
  * @internal
  */
 const toRecord = (row: SessionRow): SessionRecord => {
-	// 1. The package counts in epoch milliseconds, so a record survives JSON; the column keeps real timestamps
+	// The package counts in epoch milliseconds, so a record survives JSON; the column keeps real timestamps
 	return {
 		id: row.id,
 		userId: row.userId,
@@ -117,7 +117,7 @@ const toRecord = (row: SessionRow): SessionRecord => {
  * ```
  */
 export const startSession = async (userId: string, metadata?: Record<string, unknown>): Promise<CreatedSession> => {
-	// 1. The package makes the token and the record; only the record, keyed by the token's hash, is stored
+	// The package makes the token and the record; only the record, keyed by the token's hash, is stored
 	const created = createSession(userId, metadata ? { metadata } : {});
 	const { session } = created;
 
@@ -132,7 +132,7 @@ export const startSession = async (userId: string, metadata?: Record<string, unk
 			metadata: session.metadata ?? null,
 		});
 
-	// 2. Cached right away: the request after sign-in reads it without a query
+	// Cached right away: the request after sign-in reads it without a query
 	await cache.set(session);
 
 	return created;
@@ -148,7 +148,7 @@ export const readSession = async (token: string): Promise<SessionRecord | null> 
 	const db = useDb();
 	const id = hashToken(token);
 
-	// 1. The cache first — this runs on every request; the table, keyed by the token's hash, on a miss
+	// The cache first — this runs on every request; the table, keyed by the token's hash, on a miss
 	let found = await cache.get(id);
 	let cached = found !== undefined;
 
@@ -160,7 +160,7 @@ export const readSession = async (token: string): Promise<SessionRecord | null> 
 
 	const check = checkSession(found);
 
-	// 2. An expired session is deleted on sight, from the table and the cache, so neither waits for the purge
+	// An expired session is deleted on sight, from the table and the cache, so neither waits for the purge
 	if (check.status === 'invalid') {
 		if (found) {
 			await db.delete(authSessions).where(eq(authSessions.id, found.id));
@@ -170,9 +170,9 @@ export const readSession = async (token: string): Promise<SessionRecord | null> 
 		return null;
 	}
 
-	// 3. A moved idle deadline is written back to the table, then to the cache; the package moves it at most once per
-	//    half idle lifetime, so this stays rare. An update that matched no row means the session was ended meanwhile
-	//    — caching it again would bring it back, so it is dropped instead
+	// A moved idle deadline is written back to the table, then to the cache; the package moves it at most once per half
+	// idle lifetime, so this stays rare. An update that matched no row means the session was ended meanwhile — caching
+	// it again would bring it back, so it is dropped instead
 	if (check.extended) {
 		const updated = await db
 			.update(authSessions)
@@ -189,7 +189,7 @@ export const readSession = async (token: string): Promise<SessionRecord | null> 
 		cached = false;
 	}
 
-	// 4. A session read from the table, or one whose deadline moved, is (re)cached for the next request
+	// A session read from the table, or one whose deadline moved, is (re)cached for the next request
 	if (!cached) {
 		await cache.set(check.session);
 	}
@@ -206,8 +206,8 @@ export const readSession = async (token: string): Promise<SessionRecord | null> 
 export const endSession = async (token: string): Promise<void> => {
 	const id = hashToken(token);
 
-	// 1. By the token's hash, from the table and then the cache, so the sign-out holds on the very next request; a
-	//    token that matches nothing is already signed out
+	// By the token's hash, from the table and then the cache, so the sign-out holds on the very next request; a token
+	// that matches nothing is already signed out
 	await useDb().delete(authSessions).where(eq(authSessions.id, id));
 	await cache.delete([id]);
 };
@@ -220,13 +220,13 @@ export const endSession = async (token: string): Promise<void> => {
  * @returns Whether a session of the user was ended.
  */
 export const endSessionById = async (userId: string, id: string): Promise<boolean> => {
-	// 1. The user is part of the condition, so nobody ends another person's session by guessing or copying its id
+	// The user is part of the condition, so nobody ends another person's session by guessing or copying its id
 	const deleted = await useDb()
 		.delete(authSessions)
 		.where(and(eq(authSessions.id, id), eq(authSessions.userId, userId)))
 		.returning({ id: authSessions.id });
 
-	// 2. Only a session that was really the user's leaves the cache; another id is left alone
+	// Only a session that was really the user's leaves the cache; another id is left alone
 	await cache.delete(deleted.map((row) => row.id));
 
 	return deleted.length > 0;
@@ -239,13 +239,13 @@ export const endSessionById = async (userId: string, id: string): Promise<boolea
  * @returns How many sessions were ended.
  */
 export const endAllSessions = async (userId: string): Promise<number> => {
-	// 1. Every session of the user, the caller's own included; the caller starts a fresh one if it wants to stay in
+	// Every session of the user, the caller's own included; the caller starts a fresh one if it wants to stay in
 	const deleted = await useDb()
 		.delete(authSessions)
 		.where(eq(authSessions.userId, userId))
 		.returning({ id: authSessions.id });
 
-	// 2. The deleted ids come back from the table, which is how the cache — keyed by session, not by user — is cleared
+	// The deleted ids come back from the table, which is how the cache — keyed by session, not by user — is cleared
 	await cache.delete(deleted.map((row) => row.id));
 
 	return deleted.length;
@@ -258,7 +258,7 @@ export const endAllSessions = async (userId: string): Promise<number> => {
  * @returns The sessions that have not expired.
  */
 export const listSessions = async (userId: string): Promise<SessionRecord[]> => {
-	// 1. Expired rows wait for the purge; they are no longer sessions, so they are left out here
+	// Expired rows wait for the purge; they are no longer sessions, so they are left out here
 	const rows = await useDb()
 		.select()
 		.from(authSessions)

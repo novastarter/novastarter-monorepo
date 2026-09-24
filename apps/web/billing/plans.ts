@@ -1,3 +1,4 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import type { Money } from '@novastarter/payments';
 import { z } from 'zod';
 import { PlanCatalog } from './plan-catalog';
@@ -129,7 +130,7 @@ export const planDefinitionSchema: z.ZodType<PlanDefinition> = z.object({
  *
  * @param definitions - The plans, in the order the pricing page shows them.
  * @returns The catalog.
- * @throws Error describing every problem found.
+ * @throws InvalidConfigError describing every problem found.
  *
  * @example
  * ```ts
@@ -175,28 +176,27 @@ export const planDefinitionSchema: z.ZodType<PlanDefinition> = z.object({
  * ```
  */
 export const definePlans = (definitions: readonly PlanDefinition[]): PlanCatalog => {
-	// 1. Each definition on its own; every message names the plan by index and id, so a long file stays navigable
+	// Each definition on its own; every message names the plan by index and id, so a long file stays navigable
 	const parsed = z.array(planDefinitionSchema).safeParse(definitions);
 
 	if (!parsed.success) {
-		throw new Error(`Invalid plan definitions:\n${z.prettifyError(parsed.error)}`);
+		throw new InvalidConfigError({ reason: `Fix the plan definitions:\n${z.prettifyError(parsed.error)}` });
 	}
 
-	// 2. The cross-plan checks collect every problem rather than throwing at the first, so one run reports them all
+	// The cross-plan checks collect every problem rather than throwing at the first, so one run reports them all
 	const problems: string[] = [];
 	const seenIds = new Set<string>();
 	const seenPriceIds = new Map<string, string>();
 
-	// 3. One pass fills in the optional parts and records what later plans must not repeat
+	// One pass fills in the optional parts and records what later plans must not repeat
 	const plans: Plan[] = parsed.data.map((definition) => {
-		// 1. Ids are what subscriptions store; two plans with one id could not be told apart
+		// Ids are what subscriptions store; two plans with one id could not be told apart
 		if (seenIds.has(definition.id)) {
 			problems.push(`plan "${definition.id}" is defined twice`);
 		}
 
 		seenIds.add(definition.id);
 
-		// 2. Every provider id is checked against the prices and against the ids seen so far
 		const providerIds = definition.providerIds ?? {};
 
 		for (const [provider, ids] of Object.entries(providerIds)) {
@@ -205,12 +205,12 @@ export const definePlans = (definitions: readonly PlanDefinition[]): PlanCatalog
 
 				if (id === undefined) continue;
 
-				// 3. A provider id for a period without a price would sell something the catalog has no amount for
+				// A provider id for a period without a price would sell something the catalog has no amount for
 				if (!definition.prices[period]) {
 					problems.push(`plan "${definition.id}" has a ${period} price id for "${provider}" but no ${period} price`);
 				}
 
-				// 4. Reverse lookup — price id → plan — only works when an id appears once per provider
+				// Reverse lookup — price id → plan — only works when an id appears once per provider
 				const key = `${provider}:${id}`;
 				const owner = seenPriceIds.get(key);
 
@@ -222,7 +222,7 @@ export const definePlans = (definitions: readonly PlanDefinition[]): PlanCatalog
 			}
 		}
 
-		// 5. `isFree` is derived once here, so no reader has to inspect the prices again
+		// `isFree` is derived once here, so no reader has to inspect the prices again
 		return {
 			...definition,
 			providerIds,
@@ -230,11 +230,13 @@ export const definePlans = (definitions: readonly PlanDefinition[]): PlanCatalog
 		};
 	});
 
-	// 4. One error listing every problem, so the plan file is fixed in one go
+	// One error listing every problem, so the plan file is fixed in one go
 	if (problems.length > 0) {
-		throw new Error(`Invalid plan definitions:\n${problems.map((problem) => `- ${problem}`).join('\n')}`);
+		throw new InvalidConfigError({
+			reason: `Fix the plan definitions:\n${problems.map((problem) => `- ${problem}`).join('\n')}`,
+		});
 	}
 
-	// 5. The catalog is what the rest of the app reads; the plain array stays reachable as `catalog.plans`
+	// The catalog is what the rest of the app reads; the plain array stays reachable as `catalog.plans`
 	return new PlanCatalog(plans);
 };

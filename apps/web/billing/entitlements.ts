@@ -193,7 +193,6 @@ export class EntitlementManager {
 	 * @param options - Catalog, plan resolver, cache and bus.
 	 */
 	constructor(options: EntitlementManagerOptions) {
-		// 1. Everything is optional but the catalog and the resolver; the channel falls back to the default
 		this.plans = options.plans;
 		this.resolvePlan = options.resolvePlan;
 		this.cache = options.cache;
@@ -211,18 +210,18 @@ export class EntitlementManager {
 	 * @throws The error the bus refused the subscription with.
 	 */
 	async initialize(): Promise<void> {
-		// 1. Nothing to hear without a bus, and one subscription is enough however often start-up calls this
+		// Start-up may call this more than once; one subscription is enough.
 		if (this.subscribed || !this.bus) return;
 
-		// 2. Set before the await so a concurrent call waits instead of subscribing twice; the catch below resets
-		//    the flag on a refusal, so it never stays true with no subscription behind it
+		// Set before the await so a concurrent call waits instead of subscribing twice; the catch below resets the flag
+		// on a refusal, so it never stays true with no subscription behind it
 		this.subscribed = true;
 
 		try {
-			// 3. A message from another process clears the local copy without publishing again — no echo across nodes
+			// Only the local copy is cleared, without publishing again, so the message does not echo across nodes.
 			await this.bus.subscribe<InvalidateMessage>(this.channel, (message) => {
-				// 1. The bus waits for no handler: the delete runs detached, and a failure is logged rather than left
-				//    as an unhandled rejection that can take the process down
+				// The bus waits for no handler: the delete runs detached, and a failure is logged rather than left as
+				// an unhandled rejection that can take the process down
 				void this.clearCacheLocally(message.organizationId, message.keys).catch((error: unknown) => {
 					useLogger().error(
 						toError(error),
@@ -231,7 +230,7 @@ export class EntitlementManager {
 				});
 			});
 		} catch (error) {
-			// 4. The subscription never happened, so the flag must not claim it — the next start-up subscribes again
+			// The subscription never happened, so the flag must not claim it — the next start-up subscribes again
 			this.subscribed = false;
 			throw error;
 		}
@@ -245,9 +244,9 @@ export class EntitlementManager {
 	 * @throws Error when a counter for the key exists already — two modules claiming one key is a bug.
 	 */
 	registerCounter(key: string, counter: UsageCounter): void {
-		// 1. A second counter would silently replace the first; failing points at the module that registered twice
+		// A second counter would silently replace the first; failing points at the module that registered twice
 		if (this.counters.has(key)) {
-			throw new Error(`A counter is already registered for entitlement "${key}"`);
+			throw new Error(`EntitlementManager: a counter is already registered for entitlement "${key}"`);
 		}
 
 		this.counters.set(key, counter);
@@ -261,9 +260,9 @@ export class EntitlementManager {
 	 * @throws Error when a validator for the key exists already.
 	 */
 	registerValidator(key: string, validator: FeatureValidator): void {
-		// 1. Same rule as the counters: one owner per key
+		// Same rule as the counters: one owner per key
 		if (this.validators.has(key)) {
-			throw new Error(`A validator is already registered for entitlement "${key}"`);
+			throw new Error(`EntitlementManager: a validator is already registered for entitlement "${key}"`);
 		}
 
 		this.validators.set(key, validator);
@@ -275,7 +274,7 @@ export class EntitlementManager {
 	 * @returns The distinct keys, counters first.
 	 */
 	registeredKeys(): string[] {
-		// 1. A key may have both a counter and a validator; the Set lists it once
+		// A key may have both a counter and a validator; the Set lists it once
 		return [...new Set([...this.counters.keys(), ...this.validators.keys()])];
 	}
 
@@ -287,22 +286,22 @@ export class EntitlementManager {
 	 * @returns The plan id, or `null` when there is neither a plan nor a free one.
 	 */
 	async planOf(organizationId: string, fresh = false): Promise<string | null> {
-		// 1. A fork never caches its plan: it is a preview, and the cache is shared with the real manager
+		// A fork never caches its plan: it is a preview, and the cache is shared with the real manager
 		const key = planCacheKey(organizationId);
 		const cache = this.cachePlan ? this.cache : undefined;
 
-		// 2. The cached answer is a string, or `''` for "none" — a cache cannot tell `null` from a miss
+		// The cached answer is a string, or `''` for "none", since a cache cannot tell `null` from a miss.
 		if (!fresh && cache) {
 			const cached = await cache.get<string>(key);
 
 			if (typeof cached === 'string') return cached === '' ? null : cached;
 		}
 
-		// 3. A plan the catalog no longer lists — removed from the plan file — falls back to the free one
+		// A plan the catalog no longer lists (removed from the plan file) falls back to the free one.
 		const resolved = await this.resolvePlan(organizationId);
 		const planId = (resolved !== null && this.plans.has(resolved) ? resolved : this.plans.free?.id) ?? null;
 
-		// 4. Remember the answer under the same encoding the read expects
+		// Remember the answer under the same encoding the read expects
 		if (cache) await cache.set(key, planId ?? '');
 
 		return planId;
@@ -316,7 +315,7 @@ export class EntitlementManager {
 	 * @returns The value, or `undefined` when the plan does not mention the key — not granted.
 	 */
 	async entitlementOf(organizationId: string, key: string): Promise<EntitlementValue | undefined> {
-		// 1. No plan at all — not even a free one — grants nothing
+		// No plan at all — not even a free one — grants nothing
 		const planId = await this.planOf(organizationId);
 
 		return planId === null ? undefined : this.plans.entitlement(planId, key);
@@ -331,12 +330,12 @@ export class EntitlementManager {
 	 * @returns The usage; `0` for a key without a counter, since nothing counts it.
 	 */
 	async getUsage(organizationId: string, key: string, fresh = false): Promise<number> {
-		// 1. A key nobody counts uses nothing, so a limit on it is never exceeded
+		// A key nobody counts uses nothing, so a limit on it is never exceeded
 		const counter = this.counters.get(key);
 
 		if (!counter) return 0;
 
-		// 2. The cached count wins unless the caller asked for a fresh one — right after a write, say
+		// A caller asks for `fresh` right after a write, when the cached count is stale.
 		const cacheKey = usageCacheKey(organizationId, key);
 
 		if (!fresh && this.cache) {
@@ -345,7 +344,6 @@ export class EntitlementManager {
 			if (typeof cached === 'number') return cached;
 		}
 
-		// 3. Count, and remember the count until `clearCache()` drops it
 		const used = await counter(organizationId);
 
 		if (this.cache) await this.cache.set(cacheKey, used);
@@ -363,13 +361,13 @@ export class EntitlementManager {
 	 * @returns `true` when in use; `false` for a key without a validator.
 	 */
 	async isInUse(organizationId: string, key: string, fresh = false): Promise<boolean> {
-		// 1. A key nobody validates is never "in use", so a downgrade never flags it
+		// A key nobody validates is never "in use", so a downgrade never flags it
 		const validator = this.validators.get(key);
 
 		if (!validator) return false;
 
-		// 2. A key may carry a counter and a validator at once, so the switch state caches in a slot of its own —
-		//    sharing the usage slot would have the two overwrite each other
+		// A key may carry a counter and a validator at once, so the switch state caches in a slot of its own; sharing
+		// the usage slot would have the two overwrite each other.
 		const cacheKey = switchCacheKey(organizationId, key);
 
 		if (!fresh && this.cache) {
@@ -378,7 +376,6 @@ export class EntitlementManager {
 			if (typeof cached === 'boolean') return cached;
 		}
 
-		// 3. Ask, and remember the answer until `clearCache()` drops it
 		const inUse = await validator(organizationId);
 
 		if (this.cache) await this.cache.set(cacheKey, inUse);
@@ -399,13 +396,12 @@ export class EntitlementManager {
 	 * @returns The check.
 	 */
 	async check(organizationId: string, key: string, options: CheckOptions = {}): Promise<EntitlementCheck> {
-		// 1. The plan's value for the key decides which of the three shapes below applies
 		const planId = await this.planOf(organizationId, options.fresh);
 		const value = planId === null ? undefined : this.plans.entitlement(planId, key);
 		const adding = options.adding ?? 0;
 		const removing = options.removing ?? 0;
 
-		// 2. A switch: on or off, with whether it is in use for the downgrade preview
+		// The usage of a switch feeds the downgrade preview.
 		if (typeof value === 'boolean' || (value === undefined && this.validators.has(key))) {
 			const allowed = value === true;
 			const used = (await this.isInUse(organizationId, key, options.fresh)) ? 1 : 0;
@@ -413,15 +409,15 @@ export class EntitlementManager {
 			return { key, kind: 'switch', allowed, limit: allowed ? null : 0, used, remaining: null, planId };
 		}
 
-		// 3. No limit: always allowed, the usage still counted for the pages
+		// The usage is still counted, for the pages that show it.
 		if (value === null) {
 			const used = await this.getUsage(organizationId, key, options.fresh);
 
 			return { key, kind: 'limit', allowed: true, limit: null, used, remaining: null, planId };
 		}
 
-		// 4. A limit, zero for a key the plan leaves out; a pure removal is allowed even over the limit, so an
-		//    organization that outgrew a downgraded plan can always shrink back
+		// A key the plan leaves out is a limit of zero. A pure removal is allowed even over the limit, so an
+		// organization that outgrew a downgraded plan can always shrink back.
 		const limit = typeof value === 'number' ? value : 0;
 		const used = await this.getUsage(organizationId, key, options.fresh);
 		const allowed = (adding === 0 && removing > 0) || used + adding - removing <= limit;
@@ -440,12 +436,11 @@ export class EntitlementManager {
 	 * @throws ResourceRestrictedError (403) for a switch the plan does not grant.
 	 */
 	async assert(organizationId: string, key: string, options: CheckOptions = {}): Promise<EntitlementCheck> {
-		// 1. The check is the same as `check()`; only the failure changes shape
 		const result = await this.check(organizationId, key, options);
 
 		if (result.allowed) return result;
 
-		// 2. Two errors, so a transport layer can word a limit and a missing feature differently
+		// Two error classes, so a transport layer can word a limit and a missing feature differently.
 		if (result.kind === 'limit') {
 			throw new LimitExceededError({ category: key });
 		}
@@ -462,13 +457,13 @@ export class EntitlementManager {
 	 * @returns One check per registered key; `allowed` is `false` for a switch in use without the grant.
 	 */
 	async checkAll(organizationId: string, options: Pick<CheckOptions, 'fresh'> = {}): Promise<EntitlementCheck[]> {
-		// 1. The keys are independent, so they are checked in parallel
+		// The keys are independent, so they are checked in parallel
 		return Promise.all(
 			this.registeredKeys().map(async (key) => {
-				// 1. Nothing is about to change: the preview asks about the current usage alone
+				// Nothing is about to change: the preview asks about the current usage alone
 				const result = await this.check(organizationId, key, options);
 
-				// 2. A switch that is off is only a problem when the organization uses the feature
+				// A switch that is off is only a problem when the organization uses the feature
 				if (result.kind === 'switch' && !result.allowed && result.used === 0) {
 					return { ...result, allowed: true };
 				}
@@ -489,10 +484,10 @@ export class EntitlementManager {
 	 * @returns When cleared and published.
 	 */
 	async clearCache(organizationId: string, keys?: string[]): Promise<void> {
-		// 1. This process first, so the caller's next read is fresh even before the bus delivers
+		// This process first, so the caller's next read is fresh even before the bus delivers
 		await this.clearCacheLocally(organizationId, keys);
 
-		// 2. The other processes hear the same message `initialize()` subscribed them to
+		// The other processes hear the same message `initialize()` subscribed them to
 		if (this.bus) {
 			await this.bus.publish<InvalidateMessage>(this.channel, { organizationId, keys });
 		}
@@ -510,7 +505,7 @@ export class EntitlementManager {
 	 * @returns The fork.
 	 */
 	fork(planId: string | null): EntitlementManager {
-		// 1. The resolver is the only thing that changes: it answers the preview plan for every organization
+		// The resolver is the only thing that changes: it answers the preview plan for every organization
 		const forked = new EntitlementManager({
 			plans: this.plans,
 			resolvePlan: () => planId,
@@ -519,13 +514,13 @@ export class EntitlementManager {
 			channel: this.channel,
 		});
 
-		// 2. Usage is shared through the same cache and counters; the plan is the fork's own and never cached
+		// Usage is shared through the same cache and counters; the plan is the fork's own and never cached
 		forked.counters = this.counters;
 		forked.validators = this.validators;
 		forked.cachePlan = false;
 
-		// 3. The fork rides the original's bus subscription; copying the flag keeps its initialize from attaching a
-		//    second callback that would clear the same cache twice
+		// The fork rides the original's bus subscription; copying the flag keeps its initialize from attaching a second
+		// callback that would clear the same cache twice
 		forked.subscribed = this.subscribed;
 
 		return forked;
@@ -539,11 +534,10 @@ export class EntitlementManager {
 	 * @internal
 	 */
 	private async clearCacheLocally(organizationId: string, keys?: string[]): Promise<void> {
-		// 1. Nothing was cached without a cache, so there is nothing to drop
 		if (!this.cache) return;
 
-		// 2. A key may carry both a count and a switch state, so both slots of every target key go; without keys the
-		//    plan goes too — it is what a subscription change alters
+		// A key may carry both a count and a switch state, so both slots of every target key go. Without keys the plan
+		// goes too, since it is what a subscription change alters.
 		const targets = keys
 			? keys.flatMap((key) => [usageCacheKey(organizationId, key), switchCacheKey(organizationId, key)])
 			: [

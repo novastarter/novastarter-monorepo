@@ -10,6 +10,7 @@ import {
 	toMigrationConfig,
 	toUnavailableError,
 } from '@novastarter/database';
+import { InvalidConfigError } from '@novastarter/errors';
 import type { Logger } from '@novastarter/logger';
 import { sql } from 'drizzle-orm';
 import { drizzle, type PgliteDatabase } from 'drizzle-orm/pglite';
@@ -46,14 +47,14 @@ export type DatabaseDriverPgliteOptions = Omit<PGliteOptions, 'dataDir'>;
  * ```
  */
 export const dataDirectory = (connection: string): string | undefined => {
-	// 1. The prefix is PGlite's to read; the filesystem wants the bare path. A pathless `file://` slices to '', which
-	//    names no directory: mkdirSync('') would fail deep in the constructor with a bare ENOENT, while `undefined`
-	//    leaves the URL to PGlite, whose error says what is wrong with it
+	// The prefix is PGlite's to read; the filesystem wants the bare path. A pathless `file://` slices to '', which
+	// names no directory: mkdirSync('') would fail deep in the constructor with a bare ENOENT, while `undefined`
+	// leaves the URL to PGlite, whose error says what is wrong with it
 	if (connection.startsWith('file://')) {
 		return connection.slice('file://'.length) || undefined;
 	}
 
-	// 2. Any other scheme names no directory
+	// Any other scheme names no directory
 	if (connection.includes('://')) {
 		return undefined;
 	}
@@ -163,38 +164,37 @@ export class DatabaseDriverPglite<
 	 * Create a driver over an instance, starting one when given a data directory.
 	 *
 	 * @param config - Data directory or instance, PGlite options, schema and logging options.
-	 * @throws Error when `connection` is missing.
+	 * @throws InvalidConfigError when `connection` is missing.
 	 * @throws What the filesystem raised when the directory could not be created.
 	 */
 	constructor(config: DatabaseDriverPgliteConfig<Schema>) {
-		// 1. Refuse a missing connection up front: an empty string would silently be a database in memory whose
-		//    writes vanish at exit
+		// An empty string would otherwise silently be a database in memory whose writes vanish at exit
 		if (!config.connection) {
-			throw new Error('The pglite database driver needs a "connection"');
+			throw new InvalidConfigError({ reason: 'The pglite database driver needs a "connection"' });
 		}
 
 		this.label = config.label;
 		this.logger = resolveLogger(config);
 
-		// 2. A given instance belongs to whoever created it; a data directory becomes an instance of the driver's own
+		// A given instance belongs to whoever created it
 		this.ownsClient = typeof config.connection === 'string';
 
 		if (typeof config.connection === 'string') {
-			// 3. A directory wants its parents: PGlite's Node filesystem creates the leaf only, and a fresh checkout
-			//    has no `data/` yet. Done here, synchronously, so a bad path fails in the constructor rather than
-			//    inside the boot; `memory://` and the other URL schemes name no directory
+			// A directory wants its parents: PGlite's Node filesystem creates the leaf only, and a fresh checkout
+			// has no `data/` yet. Done here, synchronously, so a bad path fails in the constructor rather than
+			// inside the boot; `memory://` and the other URL schemes name no directory
 			const directory = dataDirectory(config.connection);
 
 			if (directory !== undefined) {
 				ensureDirectory(directory);
 			}
 
-			// 4. The options only when given, so PGlite sees no key it would take as a value
+			// The options are passed only when given, so PGlite sees no key it would take as a value
 			this.client =
 				config.options === undefined ? new PGlite(config.connection) : new PGlite(config.connection, config.options);
 
-			// 5. The boot runs on its own promise with nobody awaiting it; a failure there would be an unhandled
-			//    rejection, fatal to the process. Logged instead — every query still rejects with the same error
+			// The boot runs on its own promise with nobody awaiting it; a failure there would be an unhandled
+			// rejection, fatal to the process. Logged instead — every query still rejects with the same error
 			this.client.waitReady.catch((error: unknown) => {
 				this.logger.error(error, 'PGlite failed to start');
 			});
@@ -202,7 +202,6 @@ export class DatabaseDriverPglite<
 			this.client = config.connection;
 		}
 
-		// 6. Drizzle over the instance, with the schema and, when asked for, the query logger
 		this.db = drizzle(this.client, toDrizzleOptions(config, this.logger));
 	}
 
@@ -213,11 +212,11 @@ export class DatabaseDriverPglite<
 	 * @throws DatabaseUnavailableError naming the location, with what the boot or the query raised as its `cause`.
 	 */
 	async ping(): Promise<void> {
-		// 1. The cheapest statement; through Drizzle, so the same path the queries take is proven
+		// Through Drizzle, so the same path the queries take is proven
 		try {
 			await this.db.execute(sql`select 1`);
 		} catch (error) {
-			// 2. One error for every backend, 503, naming the location; the boot's or the query's error stays as `cause`
+			// One error for every backend; the boot's or the query's error stays as `cause`
 			throw toUnavailableError(error, this.label);
 		}
 	}
@@ -227,10 +226,10 @@ export class DatabaseDriverPglite<
 	 *
 	 * @param options - The folder and, optionally, the journal table and schema.
 	 * @returns Once every pending migration ran.
-	 * @throws Error when `migrationsFolder` is missing; what the migrator raised otherwise.
+	 * @throws InvalidConfigError when `migrationsFolder` is missing; what the migrator raised otherwise.
 	 */
 	async migrate(options: MigrateOptions): Promise<void> {
-		// 1. The migrator runs the pending files in one transaction, as on any Postgres
+		// The migrator runs the pending files in one transaction, as on any Postgres
 		await migrate(this.db, toMigrationConfig(options));
 	}
 
@@ -241,8 +240,8 @@ export class DatabaseDriverPglite<
 	 * @throws What the boot raised, when the instance never came up.
 	 */
 	async close(): Promise<void> {
-		// 1. An instance the caller handed in is theirs to close; one started here would otherwise keep its memory.
-		//    PGlite refuses to close twice, so a closed instance is left alone rather than reported as a failure
+		// An instance the caller handed in is theirs to close; one started here would otherwise keep its memory.
+		// PGlite refuses to close twice, so a closed instance is left alone rather than reported as a failure
 		if (this.ownsClient && !this.client.closed) {
 			await this.client.close();
 		}

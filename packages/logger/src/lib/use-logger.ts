@@ -34,7 +34,7 @@ export const useLogger: Singleton<Logger<never>> = singleton(() => createLogger(
  * ```
  */
 export const registerLogger = (logger: Logger<never>): void => {
-	// 1. Replace rather than merge: the application's logger carries its own streams and level
+	// Replace rather than merge: the application's logger carries its own streams and level.
 	useLogger.replace(logger);
 };
 
@@ -83,9 +83,9 @@ export const useHttpLogsStream: Singleton<LogsStream, [pretty: boolean, messenge
  * @internal
  */
 const requireBus = (name: string, messenger: LogsBus | undefined): LogsBus => {
-	// 1. The one check that turns a late `TypeError` inside pino into an error at the call that forgot the arguments
+	// This check turns a late `TypeError` inside pino into an error at the call that forgot the arguments.
 	if (!messenger) {
-		throw new Error(`${name}: the first call builds the stream and needs (pretty, messenger)`);
+		throw new Error(`@novastarter/logger: ${name}: the first call builds the stream and needs (pretty, messenger)`);
 	}
 
 	return messenger;

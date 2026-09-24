@@ -5,5 +5,5 @@
  * operation, fire-and-forget actions after it, and init stages of the application start-up — plus the `Emitter`
  * class itself for code that needs an isolated instance, such as tests.
  */
-export * from './lib/emitter.js';
-export * from './lib/use-emitter.js';
+export { Emitter } from './lib/emitter.js';
+export { useEmitter } from './lib/use-emitter.js';

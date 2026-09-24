@@ -27,7 +27,7 @@ let sample: {
 };
 
 beforeEach(() => {
-	// 1. Fresh values per test; the binding has the members of D1's API, none of which the driver itself calls
+	// Fresh values per test; the binding has the members of D1's API, none of which the driver itself calls
 	sample = {
 		folder: randDirectoryPath(),
 		logger: { error: vi.fn(), debug: vi.fn(), child: vi.fn().mockReturnThis() },
@@ -36,21 +36,21 @@ beforeEach(() => {
 		db: { run: vi.fn() },
 	};
 
-	// 2. `drizzle` answers a bare object: only `run` is called, and the migrator is mocked whole
+	// `drizzle` answers a bare object: only `run` is called, and the migrator is mocked whole
 	vi.mocked(drizzle).mockReturnValue(sample.db as never);
 	vi.mocked(useLogger).mockReturnValue(sample.processLogger as never);
 });
 
 afterEach(() => {
-	// 1. Reset call history and implementations, so a `mockReturnValue` set in one test cannot leak into the next
+	// Reset call history and implementations, so a `mockReturnValue` set in one test cannot leak into the next
 	vi.resetAllMocks();
 });
 
 describe('#constructor', () => {
 	test('Throws when the binding is missing', () => {
-		// 1. Without one Drizzle would fail on the first query, far from the wrangler configuration at fault
+		// Without one Drizzle would fail on the first query, far from the wrangler configuration at fault
 		expect(() => new DatabaseDriverD1({ binding: undefined as never })).toThrowErrorMatchingInlineSnapshot(
-			`[Error: The d1 database driver needs a "binding"]`,
+			`[NovastarterError: Invalid config. The d1 database driver needs a "binding".]`,
 		);
 	});
 
@@ -64,7 +64,6 @@ describe('#constructor', () => {
 			logger: sample.logger as never,
 		});
 
-		// 1. Drizzle gets the binding as it is and only the options that carry a value
 		expect(drizzle).toHaveBeenCalledExactlyOnceWith(sample.binding, { schema, casing: 'snake_case' });
 		expect(driver.db).toBe(sample.db);
 	});
@@ -72,12 +71,11 @@ describe('#constructor', () => {
 	test('Hands Drizzle a query logger on the process logger only when asked for', () => {
 		new DatabaseDriverD1({ binding: sample.binding });
 
-		// 1. Off by default: no logger key, so Drizzle makes no logger call per query
+		// Off by default: no logger key, so Drizzle makes no logger call per query
 		expect(vi.mocked(drizzle).mock.calls[0]![1]).toStrictEqual({});
 
 		new DatabaseDriverD1({ binding: sample.binding, queryLogging: true });
 
-		// 2. On, without a logger of its own: the query logger reports to the process logger
 		const options = vi.mocked(drizzle).mock.calls[1]![1]!;
 
 		(options.logger as { logQuery(query: string, params: unknown[]): void }).logQuery('select 1', []);
@@ -89,7 +87,7 @@ describe('#constructor', () => {
 	});
 
 	test('Has nothing to close', () => {
-		// 1. The binding is the platform's; the manager skips a driver without `close`
+		// The binding is the platform's; the manager skips a driver without `close`
 		const driver = new DatabaseDriverD1({ binding: sample.binding, logger: sample.logger as never });
 
 		expect('close' in driver).toBe(false);
@@ -98,7 +96,7 @@ describe('#constructor', () => {
 
 describe('#capabilities', () => {
 	test('Declares whether transactions work', () => {
-		// 1. No sessions, so an app reaches for `db.batch()`; the flag is what it reads instead of the driver name
+		// No sessions, so an app reaches for `db.batch()`; the flag is what it reads instead of the driver name
 		const driver = new DatabaseDriverD1({ binding: sample.binding, logger: sample.logger as never });
 
 		expect(driver.capabilities).toStrictEqual({ transactions: false });
@@ -107,7 +105,7 @@ describe('#capabilities', () => {
 
 describe('#label', () => {
 	test('Binds the label to the logger, so the query log names the location', () => {
-		// 1. A labelled driver logs through a child carrying `database`; the query logger inherits it
+		// A labelled driver logs through a child carrying `database`; the query logger inherits it
 		const child = { error: vi.fn(), debug: vi.fn() };
 		const logger = { ...sample.logger, child: vi.fn().mockReturnValue(child) };
 
@@ -138,7 +136,7 @@ describe('#ping', () => {
 
 		await driver.ping();
 
-		// 1. Through `db.run`, so the same path the application's statements take is what gets proven
+		// Through `db.run`, so the same path the application's statements take is what gets proven
 		expect(sample.db.run).toHaveBeenCalledExactlyOnceWith(sql`select 1`);
 	});
 
@@ -148,7 +146,7 @@ describe('#ping', () => {
 
 		sample.db.run.mockRejectedValue(error);
 
-		// 1. One error for every backend: recognisable, 503, the location in the message, the backend's error as cause
+		// One error for every backend: recognisable, 503, the location in the message, the backend's error as cause
 		const thrown: unknown = await driver.ping().catch((caught: unknown) => caught);
 
 		expect(thrown).toBeInstanceOf(DatabaseUnavailableError);
@@ -181,7 +179,6 @@ describe('#migrate', () => {
 			migrationsSchema: undefined,
 		});
 
-		// 1. The Drizzle database goes in as is, the options without their undefined keys
 		expect(migrate).toHaveBeenCalledExactlyOnceWith(sample.db, {
 			migrationsFolder: sample.folder,
 			migrationsTable: 'migrations',
@@ -192,7 +189,7 @@ describe('#migrate', () => {
 		const driver = new DatabaseDriverD1({ binding: sample.binding, logger: sample.logger as never });
 
 		await expect(driver.migrate({ migrationsFolder: '' })).rejects.toThrowErrorMatchingInlineSnapshot(
-			`[Error: DatabaseDriver.migrate needs a "migrationsFolder"]`,
+			`[NovastarterError: Invalid config. DatabaseDriver.migrate needs a "migrationsFolder".]`,
 		);
 
 		expect(migrate).not.toHaveBeenCalled();

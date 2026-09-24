@@ -27,7 +27,7 @@ declare module '@novastarter/database' {
  * @returns The location to register.
  */
 export const databaseConfig = (env: AppEnv): LocationConfig<DatabaseDrivers> => {
-	// 1. No URL: Postgres inside the process, on the configured directory
+	// No URL: Postgres inside the process, on the configured directory
 	if (!env.DATABASE_URL) {
 		return {
 			driver: 'pglite',
@@ -38,7 +38,7 @@ export const databaseConfig = (env: AppEnv): LocationConfig<DatabaseDrivers> => 
 		};
 	}
 
-	// 2. Supabase gets its driver, so TLS is on and the project's certificate is verified
+	// Supabase gets its driver, so TLS is on and the project's certificate is verified
 	if (env.DATABASE_DRIVER === 'supabase') {
 		return {
 			driver: 'supabase',
@@ -50,7 +50,7 @@ export const databaseConfig = (env: AppEnv): LocationConfig<DatabaseDrivers> => 
 		};
 	}
 
-	// 3. Neon over WebSocket or HTTP, for a deployment without TCP sockets; the console string works for both
+	// Neon over WebSocket or HTTP, for a deployment without TCP sockets; the console string works for both
 	if (env.DATABASE_DRIVER === 'neon' || env.DATABASE_DRIVER === 'neon-http') {
 		return {
 			driver: env.DATABASE_DRIVER,
@@ -61,7 +61,7 @@ export const databaseConfig = (env: AppEnv): LocationConfig<DatabaseDrivers> => 
 		};
 	}
 
-	// 4. Anything else is plain node-postgres on the URL alone
+	// Anything else is plain node-postgres on the URL alone
 	return {
 		driver: 'postgres',
 		options: {

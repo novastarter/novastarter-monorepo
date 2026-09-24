@@ -26,6 +26,7 @@
 		"test:coverage": "vitest run --coverage"
 	},
 	"dependencies": {
+		"@novastarter/errors": "workspace:*",
 		"js-yaml": "catalog:"
 	},
 	"devDependencies": {

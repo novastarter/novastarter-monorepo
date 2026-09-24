@@ -1,4 +1,5 @@
 import { AuthInvalidTokenError, openChallenge, sealChallenge, useAuth } from '@novastarter/auth';
+import { InvalidConfigError } from '@novastarter/errors';
 import type { PublicKeyCredentialCreationOptionsJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 import { AuthDriverPasskey, type PasskeyCredential, type PasskeyRegistrationParams } from './driver.js';
 
@@ -38,15 +39,15 @@ export interface FinishPasskeyRegistrationParams {
  *
  * @param location - The location.
  * @returns Its driver.
- * @throws Error when the location's driver is not the passkey one.
+ * @throws InvalidConfigError when the location's driver is not the passkey one.
  * @internal
  */
 const passkeyDriver = (location: string): AuthDriverPasskey => {
-	// 1. Registration is this driver's own flow; another driver behind the name is a configuration mistake
+	// Registration is this driver's own flow; another driver behind the name is a configuration mistake
 	const driver = useAuth().location(location);
 
 	if (!(driver instanceof AuthDriverPasskey)) {
-		throw new Error(`Auth location "${location}" is not a passkey one`);
+		throw new InvalidConfigError({ reason: `The auth location "${location}" needs the passkey driver` });
 	}
 
 	return driver;
@@ -62,7 +63,7 @@ const passkeyDriver = (location: string): AuthDriverPasskey => {
  * @param location - The passkey location.
  * @param params - The account, its name for the prompt, and its keys already stored.
  * @returns The options for the browser, and the cookie to set with its expiry.
- * @throws Error when the location's driver is not the passkey one, or without a usable `challenge.secret`.
+ * @throws InvalidConfigError when the location's driver is not the passkey one, or without a usable `challenge.secret`.
  * @example
  * ```ts
  * const { options, cookie, expiresAt } = await startPasskeyRegistration('passkey', {
@@ -76,10 +77,10 @@ export const startPasskeyRegistration = async (
 	location: string,
 	params: PasskeyRegistrationParams,
 ): Promise<StartedPasskeyRegistration> => {
-	// 1. The options first, so their challenge is the one sealed
+	// The options first, so their challenge is the one sealed
 	const options = await passkeyDriver(location).registrationOptions(params);
 
-	// 2. The account goes into the cookie too, so the key cannot be finished for another one
+	// The account goes into the cookie too, so the key cannot be finished for another one
 	const { cookie, expiresAt } = sealChallenge(location, PASSKEY_REGISTRATION_PURPOSE, {
 		challenge: options.challenge,
 		userId: params.userId,
@@ -98,7 +99,7 @@ export const startPasskeyRegistration = async (
  * @returns The key, for the application to store.
  * @throws AuthInvalidTokenError when the cookie is missing, tampered with, expired, or made for another account.
  * @throws InvalidCredentialsError when the answer does not check out.
- * @throws Error when the location's driver is not the passkey one, or without a usable `challenge.secret`.
+ * @throws InvalidConfigError when the location's driver is not the passkey one, or without a usable `challenge.secret`.
  * @example
  * ```ts
  * const key = await finishPasskeyRegistration('passkey', { userId: session.userId, response, cookie });
@@ -110,16 +111,14 @@ export const finishPasskeyRegistration = async (
 	location: string,
 	params: FinishPasskeyRegistrationParams,
 ): Promise<PasskeyCredential> => {
-	// 1. The driver first, so a configuration mistake is reported as itself
+	// The driver first, so a configuration mistake is reported as itself
 	const driver = passkeyDriver(location);
 
-	// 2. The cookie must open for this location and flow, and name the account signed in now
 	const state = openChallenge(location, PASSKEY_REGISTRATION_PURPOSE, params.cookie);
 
 	if (!state || typeof state['challenge'] !== 'string' || state['userId'] !== params.userId) {
 		throw new AuthInvalidTokenError();
 	}
 
-	// 3. The key itself
 	return driver.verifyRegistration(params.response, state['challenge'], params.userId);
 };

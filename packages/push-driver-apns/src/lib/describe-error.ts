@@ -11,8 +11,8 @@ import { GONE_REASONS } from './constants.js';
  * way what was thrown stays as the `cause`.
  */
 export const describeError = (error: unknown): Error => {
-	// 1. A refusal by APNs: the reason says whether the token is gone. The SDK's error stays as the cause in both
-	//    branches, so a handler can reach the status, the notification and Apple's timestamp
+	// The reason says whether the token is gone. The SDK's error stays as the cause in both branches, so a handler can
+	// reach the status, the notification and Apple's timestamp
 	if (error instanceof ApnsError) {
 		if (GONE_REASONS.has(error.reason)) {
 			return new PushTargetGoneError({ platform: 'apns', reason: error.reason }, { cause: error });
@@ -21,6 +21,6 @@ export const describeError = (error: unknown): Error => {
 		return new Error(`APNs ${error.statusCode} ${error.reason}`, { cause: error });
 	}
 
-	// 2. Anything else — the network, the deadline, a bug — as is, prefixed
+	// Anything else is the network, the deadline or a bug
 	return new Error(`APNs: ${toErrorMessage(error)}`, { cause: error });
 };

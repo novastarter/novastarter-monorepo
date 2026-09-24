@@ -13,13 +13,13 @@ import type { MailManager, MailRoutes } from './mail-manager.js';
  * ```
  */
 export const addressDomain = (address: MailAddress): string | undefined => {
-	// 1. Only the address part carries a domain; a display name may hold anything
+	// Only the address part carries a domain; a display name may hold anything
 	const raw = typeof address === 'string' ? address : address.address;
 	const at = raw.lastIndexOf('@');
 
 	if (at === -1) return undefined;
 
-	// 2. A display-name form (`News <hello@news.acme.com>`) carries a closing bracket after the domain
+	// A display-name form (`News <hello@news.acme.com>`) carries a closing bracket after the domain
 	return raw
 		.slice(at + 1)
 		.replace(/[>\s]+$/, '')
@@ -51,17 +51,16 @@ export const resolveMailChain = (routes: MailRoutes, message: MailMessage, manag
 	const known = manager.locationNames();
 	const category: MailCategory = message.category ?? 'transactional';
 
-	// 1. A rule is judged on the locations it can reach: unknown names are dropped before the rule is chosen, so a
-	//    rule made only of typos never wins the selection with an empty chain
+	// A rule is judged on the locations it can reach: unknown names are dropped before the rule is chosen, so a rule
+	// made only of typos never wins the selection with an empty chain
 	const usable = (names: string[] | undefined): string[] => (names ?? []).filter((name) => known.includes(name));
 
-	// 2. The sender's domain is the most specific rule
+	// The sender's domain is the most specific rule
 	const domain = message.from ? addressDomain(message.from) : undefined;
 	const byDomain = usable(domain ? routes.domains?.[domain] : undefined);
 
 	if (byDomain.length) return byDomain;
 
-	// 3. Then the category, then everything the manager knows
 	const byCategory = usable(routes[category]);
 
 	return byCategory.length ? byCategory : known;

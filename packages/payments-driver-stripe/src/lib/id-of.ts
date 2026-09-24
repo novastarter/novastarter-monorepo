@@ -5,9 +5,9 @@
  * @returns The id, or `null` when there is no reference.
  */
 export const idOf = (reference: string | { id: string } | null | undefined): string | null => {
-	// 1. A missing reference is `null`, so callers can store it as a nullable column without a second check
+	// A missing reference is `null`, so callers can store it as a nullable column without a second check.
 	if (reference === null || reference === undefined) return null;
 
-	// 2. Stripe hands back either the id or the expanded object, depending on the request's `expand`
+	// Stripe hands back either the id or the expanded object, depending on the request's `expand`.
 	return typeof reference === 'string' ? reference : reference.id;
 };

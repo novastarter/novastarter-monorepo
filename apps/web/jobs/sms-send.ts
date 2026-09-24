@@ -86,7 +86,6 @@ declare module '@novastarter/queue' {
  * @returns The message for `sendSms()`.
  */
 export const toSmsMessage = (payload: SmsSendPayload): SmsMessage => {
-	// 1. The job-only fields are split off; what remains is a message as the drivers take it
 	const { route, location: _location, ...rest } = payload;
 
 	return { ...rest, category: route };
@@ -101,10 +100,10 @@ export const toSmsMessage = (payload: SmsSendPayload): SmsMessage => {
  * @returns The handler.
  */
 export const createSmsSendHandler = (): JobHandler<typeof smsSend> => {
-	// 1. The factory keeps the shape of the sibling handlers: nothing is captured today, and options arrive without
-	//    a rewrite of the bootstrap or the tests
+	// The factory keeps the shape of the sibling handlers: nothing is captured today, and options arrive without a
+	// rewrite of the bootstrap or the tests
 	return async (payload: SmsSendPayload): Promise<void> => {
-		// 1. The message is sent inside the job, so a provider failure is retried rather than losing the message
+		// The message is sent inside the job, so a provider failure is retried rather than losing the message
 		await sendSms(toSmsMessage(payload), { location: payload.location });
 	};
 };

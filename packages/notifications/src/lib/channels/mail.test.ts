@@ -18,7 +18,6 @@ afterEach(() => {
 
 describe('mailChannel', () => {
 	test('Reaches a user with an address only', () => {
-		// 1. No address, nothing to send to
 		expect(mailChannel().reaches({ userId: 'u1', email: 'a@example.com' })).toBe(true);
 		expect(mailChannel().reaches({ userId: 'u1', email: null })).toBe(false);
 	});
@@ -30,12 +29,10 @@ describe('mailChannel', () => {
 			content: { subject: 'Paid', text: 'Invoice 1042 is paid', to: 'someone@else.com' } as never,
 		};
 
-		// 1. The recipient is the channel's, whatever the content says; the routes decide without a location
 		await mailChannel().send(delivery);
 
 		expect(sendMail).toHaveBeenCalledWith({ subject: 'Paid', text: 'Invoice 1042 is paid', to: 'a@example.com' }, {});
 
-		// 2. A location overrides the routes
 		await mailChannel({ location: 'marketing' }).send(delivery);
 
 		expect(sendMail).toHaveBeenLastCalledWith(expect.anything(), { location: 'marketing' });

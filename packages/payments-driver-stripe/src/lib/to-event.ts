@@ -45,20 +45,19 @@ export const toCompletedCheckout = (session: Stripe.Checkout.Session): Completed
  * changed something the mapping has to learn.
  */
 export const toEvent = (event: Stripe.Event): PaymentsEvent | null => {
-	// 1. What every event shares: Stripe's event id, the driver name, when it happened, the raw event
 	const base = { id: event.id, provider: PROVIDER, occurredAt: fromUnix(event.created) ?? new Date(), raw: event };
 
-	// 2. One branch per Stripe event type the kit acts on; everything else is dropped
+	// Every event type the kit does not act on is dropped.
 	switch (event.type) {
 		case 'checkout.session.completed':
 		case 'checkout.session.async_payment_succeeded':
-			// 3. One-off payments are not subscriptions; the kit's billing is subscriptions only
+			// The kit's billing is subscriptions only.
 			if (event.data.object.mode !== 'subscription') return null;
 
-			// 4. `checkout.completed` means the customer paid. A session completed on a delayed payment method is still
-			//    `unpaid`, and announcing it would provision a plan nobody paid for; `async_payment_succeeded` carries
-			//    the same session as `paid` once it settled, so the purchase is announced exactly once, and a session
-			//    that never settles (`async_payment_failed`) is never announced
+			// `checkout.completed` means the customer paid. A session completed on a delayed payment method is still
+			// `unpaid`, and announcing it would provision a plan nobody paid for; `async_payment_succeeded` carries the
+			// same session as `paid` once it settled, so the purchase is announced exactly once, and a session that
+			// never settles (`async_payment_failed`) is never announced.
 			if (event.data.object.payment_status === 'unpaid') return null;
 
 			return { ...base, type: 'checkout.completed', checkout: toCompletedCheckout(event.data.object) };

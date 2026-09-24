@@ -22,10 +22,10 @@ const NOTICE_BLOCK = /^::: notice\n+([\s\S]*?)\n+:::$/m;
  * @returns The changelog functions to hand to `changesets` and the map they fill.
  */
 export function processReleaseLines(): { defaultChangelogFunctions: ChangelogFunctions; changesets: Changesets } {
-	// 1. One map shared by the changelog functions and the caller, so the caller reads what `changesets` collected
+	// One map shared by the changelog functions and the caller, so the caller reads what `changesets` collected
 	const changesets: Changesets = new Map();
 
-	// 2. The release line hook is the only place `changesets` hands a changeset over, so collection happens here
+	// The release line hook is the only place `changesets` hands a changeset over, so collection happens here
 	/**
 	 * Collect a changeset, extracting an optional notice block from its summary.
 	 *
@@ -35,33 +35,33 @@ export function processReleaseLines(): { defaultChangelogFunctions: ChangelogFun
 	const getReleaseLine: GetReleaseLine = async (changeset) => {
 		const { id, summary, ...rest } = changeset;
 
-		// 1. `changesets` calls this once per affected package; the changeset itself only has to be recorded once
+		// `changesets` calls this once per affected package; the changeset itself only has to be recorded once
 		if (changesets.has(id)) {
 			return '';
 		}
 
-		// 2. `changesets` hands the summary over as written, so a changeset saved on Windows still carries CRLF line
-		//    endings; normalise them first, or the line-anchored notice pattern below never matches
+		// `changesets` hands the summary over as written, so a changeset saved on Windows still carries CRLF line
+		// endings; normalise them first, or the line-anchored notice pattern below never matches
 		const normalized = summary.replace(/\r\n?/g, '\n');
 
-		// 3. Find text inside a notice box with the following pattern and extract it from the normal changeset
-		//    summary, using the same pattern for both so the block is never removed without being captured:
+		// One pattern both captures the notice box and removes it from the summary, so the block is never removed
+		// without being captured:
 		//
-		//      ::: notice
-		//      <my-notice>
-		//      :::
+		//   ::: notice
+		//   <my-notice>
+		//   :::
 		//
-		//      <normal-changeset-summary>
+		//   <normal-changeset-summary>
 		const notice = normalized.match(NOTICE_BLOCK)?.[1];
 		const finalSummary = normalized.replace(NOTICE_BLOCK, '').trim();
 
-		// 4. Store the cleaned summary and the notice separately, so the notice can be rendered in its own place
+		// The notice is stored apart from the summary, so it can be rendered in its own place
 		changesets.set(id, { summary: finalSummary, notice, ...rest });
 
 		return '';
 	};
 
-	// 3. Dependency bumps carry no changeset of their own, so there is nothing to collect from them
+	// Dependency bumps carry no changeset of their own, so there is nothing to collect from them
 	/**
 	 * Ignore dependency release lines.
 	 *
@@ -73,7 +73,7 @@ export function processReleaseLines(): { defaultChangelogFunctions: ChangelogFun
 		return '';
 	};
 
-	// 4. Hand both functions to `changesets` under the names it looks up on the changelog module
+	// Hand both functions to `changesets` under the names it looks up on the changelog module
 	const defaultChangelogFunctions = {
 		getReleaseLine,
 		getDependencyReleaseLine,

@@ -16,19 +16,19 @@ const cases: [string, unknown][] = [
 ];
 
 test.each(cases)('%s', (_description, input) => {
-	// 1. Serializing answers with bytes, the form both backends store
+	// Serializing answers with bytes, the form both backends store
 	const serialized = serialize(input);
 
 	expect(serialized).toBeInstanceOf(Uint8Array);
 
-	// 2. Deserializing gives an equal value back — equal, not the same reference, which is the point of storing bytes
+	// Deserializing gives an equal value back — equal, not the same reference, which is the point of storing bytes
 	const deserialized = deserialize(serialized);
 
 	expect(deserialized).toEqual(input);
 });
 
 test('deserialize handles empty buffer', () => {
-	// 1. Redis can hand back an empty reply during a disconnect; it reads as "no value" rather than as a parse error
+	// Redis can hand back an empty reply during a disconnect; it reads as "no value" rather than as a parse error
 	const result = deserialize(new Uint8Array());
 	expect(result).toBeUndefined();
 });

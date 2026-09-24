@@ -21,7 +21,6 @@ afterEach(() => {
 
 describe('MailDriverSendmail', () => {
 	test('Builds the sendmail transport with defaults and overrides', () => {
-		// 1. No options: the stock Unix binary with Unix line endings
 		new MailDriverSendmail();
 
 		expect(nodemailer.createTransport).toHaveBeenLastCalledWith({
@@ -30,7 +29,6 @@ describe('MailDriverSendmail', () => {
 			path: '/usr/sbin/sendmail',
 		});
 
-		// 2. Both options override the defaults
 		new MailDriverSendmail({ path: '/usr/bin/msmtp', newLine: 'windows' });
 
 		expect(nodemailer.createTransport).toHaveBeenLastCalledWith({
@@ -41,7 +39,7 @@ describe('MailDriverSendmail', () => {
 	});
 
 	test('Takes the envelope as accepted when the transport reports nothing', async () => {
-		// 1. sendmail answers no acceptance list; the envelope is all the driver has
+		// sendmail answers no acceptance list; the envelope is all the driver has
 		const result = await new MailDriverSendmail().send({ to: 'ada@example.com', subject: 'Hi', text: 'x' });
 
 		expect(result).toStrictEqual({

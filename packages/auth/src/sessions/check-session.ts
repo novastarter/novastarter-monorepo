@@ -40,14 +40,14 @@ export type SessionCheck =
  * ```
  */
 export const checkSession = (session: SessionRecord | null | undefined): SessionCheck => {
-	// 1. No record, or one past its deadline, is no session; expiry is judged here so every application uses one clock
+	// No record, or one past its deadline, is no session; expiry is judged here so every application uses one clock
 	const now = Date.now();
 
 	if (!session || session.expiresAt <= now) {
 		return { status: 'invalid' };
 	}
 
-	// 2. Slide the idle deadline once half of the idle lifetime is gone, capped by the hard end
+	// Slide the idle deadline once half of the idle lifetime is gone, capped by the hard end
 	const idleTtl = authSettings().session?.idleTtl;
 
 	if (idleTtl && session.expiresAt - now < idleTtl / 2 && session.expiresAt < session.absoluteExpiresAt) {

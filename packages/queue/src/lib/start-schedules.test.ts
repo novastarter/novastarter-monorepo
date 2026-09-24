@@ -4,8 +4,8 @@
  * `@novastarter/logger`, `@novastarter/emitter` and the Redis client of `@novastarter/redis` are mocked for the test
  * that hands the package's own `enqueue()` over.
  */
-import { useEmitter } from '@novastarter/emitter';
-import { useLogger } from '@novastarter/logger';
+import { type Emitter, useEmitter } from '@novastarter/emitter';
+import { type Logger, useLogger } from '@novastarter/logger';
 import { KvDriverLocal } from '@novastarter/memory';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { z } from 'zod';
@@ -30,8 +30,8 @@ const logger = { info: vi.fn(), debug: vi.fn(), error: vi.fn() };
 
 beforeEach(() => {
 	vi.useFakeTimers({ now: new Date('2026-09-10T12:00:00.000Z') });
-	vi.mocked(useLogger).mockReturnValue({ error: vi.fn() } as any);
-	vi.mocked(useEmitter).mockReturnValue({ emitAction: vi.fn() } as any);
+	vi.mocked(useLogger).mockReturnValue({ error: vi.fn() } as unknown as Logger);
+	vi.mocked(useEmitter).mockReturnValue({ emitAction: vi.fn() } as unknown as Emitter);
 });
 
 afterEach(async () => {
@@ -51,7 +51,7 @@ describe('startSchedules', () => {
 		registerSchedule({ job: 'test.ping', cron: 'nonsense' } as never);
 
 		const enqueue = vi.fn(async () => ({ id: '1', name: 'test.ping', queue: 'test' }));
-		const running = startSchedules({ env: {}, kv, enqueue, logger: logger as any });
+		const running = startSchedules({ env: {}, kv, enqueue, logger: logger as unknown as Logger });
 
 		expect(running.schedules.map((schedule) => schedule.job)).toStrictEqual(['test.ping']);
 		expect(logger.debug).toHaveBeenCalledWith('Schedule of "test.ping" is disabled');
@@ -74,7 +74,7 @@ describe('startSchedules', () => {
 		registerSchedule({ job: 'test.ping', cron: '* * * * * *' } as never);
 
 		const enqueue = vi.fn().mockRejectedValue(new Error('queue down'));
-		const running = startSchedules({ env: {}, kv, enqueue, logger: logger as any });
+		const running = startSchedules({ env: {}, kv, enqueue, logger: logger as unknown as Logger });
 
 		await vi.advanceTimersByTimeAsync(2_000);
 
@@ -85,15 +85,15 @@ describe('startSchedules', () => {
 	});
 
 	test('Skips a schedule resolving to a rule another schedule of the job already took, out loud', async () => {
-		// 1. A string and a function resolving to the same rule pass `registerSchedule`, which cannot resolve the
-		//    function; sharing one clock, only the first would ever fire, and the second's payload would be lost
+		// A string and a function resolving to the same rule pass `registerSchedule`, which cannot resolve the
+		// function; sharing one clock, only the first would ever fire, and the second's payload would be lost
 		registerSchedule({ job: 'test.ping', cron: '* * * * * *', payload: { message: 'first' } } as never);
 		registerSchedule({ job: 'test.ping', cron: () => '* * * * * *', payload: { message: 'second' } } as never);
 
 		const enqueue = vi.fn(async () => ({ id: '1', name: 'test.ping', queue: 'test' }));
-		const running = startSchedules({ env: {}, kv, enqueue, logger: logger as any });
+		const running = startSchedules({ env: {}, kv, enqueue, logger: logger as unknown as Logger });
 
-		// 2. Only the first is started; the second is named in the log, not silently dropped
+		// Only the first is started; the second is named in the log, not silently dropped
 		expect(running.schedules).toHaveLength(1);
 
 		expect(logger.error).toHaveBeenCalledWith(
@@ -109,7 +109,7 @@ describe('startSchedules', () => {
 	});
 
 	test('Takes the enqueue() of the package as it is, as the readme shows', async () => {
-		// 1. The option is typed as the package's `enqueue`; a stub would not prove the readme's example compiles
+		// The option is typed as the package's `enqueue`; a stub would not prove the readme's example compiles
 		registerJob(defineJob({ name: 'test.ping', schema: z.object({ message: z.string().default('ping') }) }));
 
 		const handler = vi.fn(async () => {});
@@ -117,9 +117,9 @@ describe('startSchedules', () => {
 		useQueue().registerLocation('default', { driver: 'local', options: {} });
 		registerSchedule({ job: 'test.ping', cron: '* * * * * *' } as never);
 
-		const running = startSchedules({ env: {}, kv, enqueue, logger: logger as any });
+		const running = startSchedules({ env: {}, kv, enqueue, logger: logger as unknown as Logger });
 
-		// 2. The empty payload of the schedule is validated on the tick, the default applied where the job runs
+		// The empty payload of the schedule is validated on the tick, the default applied where the job runs
 		await vi.advanceTimersByTimeAsync(1_000);
 		expect(handler).toHaveBeenCalledWith({ message: 'ping' }, expect.objectContaining({ name: 'test.ping' }));
 

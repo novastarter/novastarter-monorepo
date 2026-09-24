@@ -4,8 +4,10 @@ import type { z } from 'zod';
  * How a job is retried, prioritised and cleaned up; the subset of BullMQ's `JobsOptions` every driver honours.
  *
  * The `local` driver runs the handler once and ignores the rest, which is fine for development and tests.
+ *
+ * @typeParam Payload - Parsed payload a `unique` function receives; `unknown` where the contract is not known.
  */
-export interface JobOptions {
+export interface JobOptions<Payload = unknown> {
 	/** Total tries including the first one. */
 	attempts?: number;
 	/** Wait between tries: a fixed number of milliseconds, or growing from `delay` on every failure. */
@@ -28,7 +30,7 @@ export interface JobOptions {
 	 * derived id is the deduplication key and the record gets an id of BullMQ's own, which is what `enqueue()`
 	 * answers.
 	 */
-	unique?: boolean | ((payload: any) => string);
+	unique?: boolean | ((payload: Payload) => string);
 }
 
 /**

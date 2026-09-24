@@ -4,17 +4,21 @@
  */
 import { describe, expect, test } from 'vitest';
 import { LemonSqueezyApiError as ApiErrorFromLib } from './lib/api.js';
-import PaymentsDriverLemonSqueezyDefault, { LemonSqueezyApiError, PaymentsDriverLemonSqueezy } from './index.js';
+import { PaymentsDriverLemonSqueezy as DriverFromLib } from './lib/driver.js';
+import * as entry from './index.js';
+import { LemonSqueezyApiError, PaymentsDriverLemonSqueezy } from './index.js';
 
 describe('package entry point', () => {
-	test('Re-exports the driver as the named and the default binding', () => {
-		// 1. Both spellings reach the same class, so a consumer can pick either without getting a different driver
-		expect(PaymentsDriverLemonSqueezy).toBe(PaymentsDriverLemonSqueezyDefault);
+	test('Re-exports the driver by name only', () => {
+		// The symbol has one name everywhere.
+		expect(PaymentsDriverLemonSqueezy).toBe(DriverFromLib);
+
+		expect('default' in entry).toBe(false);
 	});
 
 	test('Re-exports the refusal error the public methods document', () => {
-		// 1. The error is the driver's own class, not a copy: a refusal thrown by any method is classified with the
-		//    exported binding, and its prototype chain carries `status` and `errors`
+		// A refusal thrown by any method is classified with the exported binding, and its prototype chain carries
+		// `status` and `errors`.
 		expect(LemonSqueezyApiError).toBe(ApiErrorFromLib);
 
 		const refusal = new LemonSqueezyApiError(401, [{ status: '401', title: 'Unauthenticated' }]);

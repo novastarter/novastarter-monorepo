@@ -1,3 +1,4 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import { processId } from '@novastarter/utils/node';
 import { type BusDriver, BusDriverRedis } from '../../../bus/index.js';
 import type { Lock } from '../../../kv/types.js';
@@ -138,34 +139,33 @@ export class CacheDriverMulti implements CacheDriver {
 	 * Create both cache levels and subscribe to invalidations from other processes.
 	 *
 	 * @param config - Options of both levels.
-	 * @throws RangeError when `local.ttl` exceeds `redis.ttl`, when `redis.lockTimeout` is under 200 ms or above what
-	 * a timer can hold, or when the client sits on a database above 15, where Redlock cannot lock.
+	 * @throws `InvalidConfigError` when `local.ttl` exceeds `redis.ttl`; RangeError when `redis.lockTimeout` is under
+	 * 200 ms or above what a timer can hold, or when the client sits on a database above 15, where Redlock cannot lock.
 	 */
 	constructor(config: CacheDriverMultiConfig) {
-		// 1. L1 expires no later than L2: without a ttl of its own it takes the L2 one, and a longer one is refused,
-		//    since L2 expiry never reaches L1 — only writes publish invalidations — and the writing process would keep
-		//    serving from memory a key every other process already lost
+		// L1 expires no later than L2: without a ttl of its own it takes the L2 one, and a longer one is refused, since
+		// L2 expiry never reaches L1 — only writes publish invalidations — and the writing process would keep serving
+		// from memory a key every other process already lost
 		const ttl = config.local.ttl ?? config.redis.ttl;
 
 		if (config.redis.ttl !== undefined && ttl !== undefined && ttl > config.redis.ttl) {
-			throw new RangeError(
-				`CacheDriverMulti: "local.ttl" (${ttl} ms) must not exceed "redis.ttl" (${config.redis.ttl} ms)`,
-			);
+			throw new InvalidConfigError({
+				reason: `CacheDriverMulti needs "local.ttl" (${ttl} ms) no longer than "redis.ttl" (${config.redis.ttl} ms)`,
+			});
 		}
 
-		// 2. Build the two levels and a bus over the same Redis connection and namespace as L2
 		this.local = new CacheDriverLocal(ttl === undefined ? config.local : { ...config.local, ttl });
 		this.redis = new CacheDriverRedis(config.redis);
 		this.bus = new BusDriverRedis({ redis: config.redis.redis, namespace: config.redis.namespace });
 
-		// 3. Invalidations published while the subscriber connection was down are lost for good, and L1 may have no
-		//    ttl at all, so every reconnect drops the whole L1 and keeps the writes still in flight out of it: the next
-		//    reads go to L2, which holds what the missed messages announced
+		// Invalidations published while the subscriber connection was down are lost for good, and L1 may have no ttl at
+		// all, so every reconnect drops the whole L1 and keeps the writes still in flight out of it: the next reads go
+		// to L2, which holds what the missed messages announced
 		this.bus.onReconnect?.(() => this.onReconnect());
 
-		// 4. Subscribe right away, so invalidations are received before the first write; the no-op `catch` only marks a
-		//    failure as observed here, so it is reported where a write awaits it and not as an unhandled rejection
-		//    nobody can act on
+		// Subscribe right away, so invalidations are received before the first write; the no-op `catch` only marks a
+		// failure as observed here, so it is reported where a write awaits it and not as an unhandled rejection nobody
+		// can act on
 		this.subscribe().catch(() => {});
 	}
 
@@ -179,21 +179,24 @@ export class CacheDriverMulti implements CacheDriver {
 	 * @internal
 	 */
 	private subscribe(): Promise<void> {
-		// 1. A closed cache subscribes to nothing: its bus is gone, so a write after `close()` is refused rather than
-		//    let into an L1 nobody invalidates
+		// A closed cache subscribes to nothing: its bus is gone, so a write after `close()` is refused rather than let
+		// into an L1 nobody invalidates
 		if (this.closed) {
-			return Promise.reject(new Error('The multi cache is closed; it receives no invalidations any more'));
+			return Promise.reject(
+				new Error('CacheDriverMulti: the multi cache is closed; it receives no invalidations any more'),
+			);
 		}
 
-		// 2. Reuse the subscription under way or already confirmed; only a missing one — never started, or failed and
-		//    forgotten — starts a new `SUBSCRIBE`
+		// Reuse the subscription under way or already confirmed; only a missing one — never started, or failed and
+		// forgotten — starts a new `SUBSCRIBE`
 		if (this.subscribed === undefined) {
-			// 3. Wrap the handler in a lambda, so `this` still points at the cache when the bus calls it; a failure
-			//    clears the field before it is passed on, so the caller sees the error and the next call retries
+			// A lambda keeps `this` pointing at the cache when the bus calls the handler; a failure clears the field
+			// before it is passed on, so the caller sees the error and the next call retries
 			this.subscribed = this.bus
 				.subscribe<CacheMultiMessageClear>(CACHE_CHANNEL_KEY, (payload) => this.onMessageClear(payload))
 				.catch((error: unknown) => {
-					// 1. Forgotten, so the next `subscribe()` starts over; the error still reaches the caller awaiting this one
+					// Forgotten, so the next `subscribe()` starts over; the error still reaches the caller awaiting
+					// this one
 					this.subscribed = undefined;
 
 					throw error;
@@ -211,14 +214,14 @@ export class CacheDriverMulti implements CacheDriver {
 	 * @returns Cached value, or `undefined` when the key does not exist in either level.
 	 */
 	async get<T = unknown>(key: string): Promise<T | undefined> {
-		// 1. L1 is a memory lookup, so try it before paying for a Redis round trip
+		// L1 is a memory lookup, so try it before paying for a Redis round trip
 		const local = await this.local.get<T>(key);
 
 		if (local !== undefined) {
 			return local;
 		}
 
-		// 2. Fall back to L2; the value is not promoted into L1 here, only writes populate L1
+		// The value is not promoted into L1 here; only writes populate L1
 		return await this.redis.get<T>(key);
 	}
 
@@ -231,19 +234,19 @@ export class CacheDriverMulti implements CacheDriver {
 	 * a write this process could not be told to invalidate is refused.
 	 */
 	async set(key: string, value: unknown): Promise<void> {
-		// 1. Subscribed first: a key written into L1 by a process that receives no invalidations would go stale unseen
+		// Subscribed first: a key written into L1 by a process that receives no invalidations would go stale unseen
 		await this.subscribe();
 
-		// 2. Counted as under way before L2 takes the value, so an invalidation from another process that is handled
-		//    while the reply is still in flight is not lost on an L1 that does not hold the key yet
+		// Counted as under way before L2 takes the value, so an invalidation from another process that is handled while
+		// the reply is still in flight is not lost on an L1 that does not hold the key yet
 		const writing = this.writing.get(key) ?? { count: 0, invalidated: false };
 		writing.count += 1;
 		this.writing.set(key, writing);
 
-		// 3. L2 first, L1 only once L2 took the value: written the other way round, a Redis that refuses the write
-		//    (read-only replica, out of memory, timeout) would leave this process serving a value from L1 that L2 and
-		//    every other process lack, with no invalidation ever published for it. Settled either way, so a refused
-		//    write does not leave the key counted as under way for good
+		// L2 first, L1 only once L2 took the value: written the other way round, a Redis that refuses the write
+		// (read-only replica, out of memory, timeout) would leave this process serving a value from L1 that L2 and
+		// every other process lack, with no invalidation ever published for it. Settled either way, so a refused write
+		// does not leave the key counted as under way for good
 		let invalidated: boolean;
 
 		try {
@@ -257,13 +260,12 @@ export class CacheDriverMulti implements CacheDriver {
 			}
 		}
 
-		// 4. Into L1 only when no other process wrote the key meanwhile: their invalidation already dropped whatever L1
-		//    held, and this value may be older than what L2 holds now, so the next read fetches it from L2 instead
+		// Into L1 only when no other process wrote the key meanwhile: their invalidation already dropped whatever L1
+		// held, and this value may be older than what L2 holds now, so the next read fetches it from L2 instead
 		if (!invalidated) {
 			await this.local.set(key, value);
 		}
 
-		// 5. Tell other processes their L1 copy of this key is stale
 		await this.clearOthers(key);
 	}
 
@@ -275,20 +277,19 @@ export class CacheDriverMulti implements CacheDriver {
 	 * a write this process could not be told to invalidate is refused.
 	 */
 	async delete(key: string): Promise<void> {
-		// 1. Subscribed first, for the same reason as in `set`
+		// Subscribed first, for the same reason as in `set`
 		await this.subscribe();
 
-		// 2. A `set` of this process still waiting for its L2 reply would land in L1 after this delete, with L2 holding
-		//    nothing and no further invalidation coming, so the in-flight write is marked the way another process's
-		//    invalidation would mark it: it skips L1 once it settles
+		// A `set` of this process still waiting for its L2 reply would land in L1 after this delete, with L2 holding
+		// nothing and no further invalidation coming, so the in-flight write is marked the way another process's
+		// invalidation would mark it: it skips L1 once it settles
 		this.markWritesInvalidated(key);
 
-		// 3. L2 first, then L1, in the same order as `set`: a failed L2 delete leaves L1 as it was, which is a copy of
-		//    what L2 still holds
+		// L2 first, then L1, in the same order as `set`: a failed L2 delete leaves L1 as it was, which is a copy of
+		// what L2 still holds
 		await this.redis.delete(key);
 		await this.local.delete(key);
 
-		// 4. Other processes drop the key from their L1 as well
 		await this.clearOthers(key);
 	}
 
@@ -299,7 +300,7 @@ export class CacheDriverMulti implements CacheDriver {
 	 * @returns `true` when the key exists in L2.
 	 */
 	async has(key: string): Promise<boolean> {
-		// 1. L2 is the source of truth: a key can be missing from this process's L1 yet cached elsewhere
+		// L2 is the source of truth: a key can be missing from this process's L1 yet cached elsewhere
 		return await this.redis.has(key);
 	}
 
@@ -310,8 +311,8 @@ export class CacheDriverMulti implements CacheDriver {
 	 * @internal
 	 */
 	private async clearOthers(key?: string): Promise<void> {
-		// 1. Stamp the message with this process's id, so the sender can skip it when it comes back; the caller made
-		//    sure of the subscription before writing
+		// The process id lets the sender skip the message when it comes back; the caller made sure of the subscription
+		// before writing
 		await this.bus.publish(CACHE_CHANNEL_KEY, {
 			type: 'clear',
 			key: key,
@@ -325,18 +326,18 @@ export class CacheDriverMulti implements CacheDriver {
 	 * a write this process could not be told to invalidate is refused.
 	 */
 	async clear(): Promise<void> {
-		// 1. Subscribed first, for the same reason as in `set`
+		// Subscribed first, for the same reason as in `set`
 		await this.subscribe();
 
-		// 2. Every in-flight write of this process would land in L1 after this clear with L2 holding nothing, so all of
-		//    them are marked to skip L1, the way another process's keyless invalidation would mark them
+		// Every in-flight write of this process would land in L1 after this clear with L2 holding nothing, so all of
+		// them are marked to skip L1, the way another process's keyless invalidation would mark them
 		this.markWritesInvalidated();
 
-		// 3. L2 first, then L1, in the same order as `set`
+		// L2 first, then L1, in the same order as `set`
 		await this.redis.clear();
 		await this.local.clear();
 
-		// 4. A message without a key means "drop everything"
+		// A message without a key means "drop everything"
 		await this.clearOthers();
 	}
 
@@ -348,7 +349,7 @@ export class CacheDriverMulti implements CacheDriver {
 	 * @throws Error when the lock is still held once the L2 retry budget — about its `lockTimeout` — is spent.
 	 */
 	async acquireLock(key: string): Promise<Lock> {
-		// 1. Only the Redis lock is visible to other processes
+		// Only the Redis lock is visible to other processes
 		return await this.redis.acquireLock(key);
 	}
 
@@ -363,7 +364,7 @@ export class CacheDriverMulti implements CacheDriver {
 	 * whatever the callback throws.
 	 */
 	async usingLock<T>(key: string, callback: () => Promise<T>): Promise<T> {
-		// 1. Only the Redis lock is visible to other processes
+		// Only the Redis lock is visible to other processes
 		return await this.redis.usingLock(key, callback);
 	}
 
@@ -377,12 +378,12 @@ export class CacheDriverMulti implements CacheDriver {
 	 * @returns Once the server acknowledged the quit.
 	 */
 	async close(): Promise<void> {
-		// 1. Closed first, so a write racing the quit is already refused; the subscription is forgotten with the
-		//    connection it lived on
+		// Closed first, so a write racing the quit is already refused; the subscription is forgotten with the
+		// connection it lived on
 		this.closed = true;
 		this.subscribed = undefined;
 
-		// 2. The bus duplicated the L2 connection for subscribing; that duplicate is what would keep the process alive
+		// The bus duplicated the L2 connection for subscribing; that duplicate is what would keep the process alive
 		await this.bus.close?.();
 	}
 
@@ -393,16 +394,15 @@ export class CacheDriverMulti implements CacheDriver {
 	 * @internal
 	 */
 	private async onMessageClear(payload: CacheMultiMessageClear) {
-		// 1. Skip messages this process sent itself: `set` and `delete` already updated L1 before publishing, so
-		//    dropping the key again would only throw away fresh data. In-flight writes are the one exception a sender
-		//    cannot know about, which is why its own `delete` and `clear` mark them directly
+		// `set` and `delete` already updated L1 before publishing, so dropping the key again on this process's own
+		// message would only throw away fresh data. In-flight writes are the one exception a sender cannot know about,
+		// which is why its own `delete` and `clear` mark them directly
 		if (payload.origin === this.processId) return;
 
-		// 2. A write of this process still waiting for its L2 reply may be older than the one this message announces,
-		//    so it is kept out of L1 once it lands; a message without a key concerns every such write
+		// A write of this process still waiting for its L2 reply may be older than the one this message announces, so
+		// it is kept out of L1 once it lands; a message without a key concerns every such write
 		this.markWritesInvalidated(payload.key);
 
-		// 3. Drop the one key, or everything when the message carries no key
 		if (payload.key !== undefined) {
 			await this.local.delete(payload.key);
 		} else {
@@ -417,8 +417,8 @@ export class CacheDriverMulti implements CacheDriver {
 	 * @internal
 	 */
 	private async onReconnect(): Promise<void> {
-		// 1. Any in-flight write may be older than a missed invalidation, so it skips L1 the way a keyless message would
-		//    make it; then every local key goes, as the missed messages could have named any of them
+		// Any in-flight write may be older than a missed invalidation, so it skips L1 the way a keyless message would
+		// make it; then every local key goes, as the missed messages could have named any of them
 		this.markWritesInvalidated();
 
 		await this.local.clear();
@@ -435,7 +435,7 @@ export class CacheDriverMulti implements CacheDriver {
 	 * @internal
 	 */
 	private markWritesInvalidated(key?: string): void {
-		// 1. One entry marks one key's pending writes; a keyless invalidation concerns them all
+		// One entry marks one key's pending writes; a keyless invalidation concerns them all
 		if (key !== undefined) {
 			const writing = this.writing.get(key);
 

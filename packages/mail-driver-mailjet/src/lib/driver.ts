@@ -1,6 +1,7 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import { type CallOptions, type CallResponse, DEFAULT_REQUEST_TIMEOUT, type HttpApi, request } from '@novastarter/http';
 import type { MailDriver, MailMessage, MailResult } from '@novastarter/mail';
-import { Client, type LibraryResponse, type SendEmailV3_1 } from 'node-mailjet';
+import mailjet, { type Client, type LibraryResponse, type SendEmailV3_1 } from 'node-mailjet';
 import { describeError } from './describe-error.js';
 import { mailjetFetch } from './mailjet-fetch.js';
 import { toMailjetMessage } from './to-mailjet-message.js';
@@ -95,23 +96,23 @@ export class MailDriverMailjet implements MailDriver {
 	 * Create a driver on a client of its own for the given key pair.
 	 *
 	 * @param config - API key pair, sandbox switch and timeout.
-	 * @throws Error without both keys.
+	 * @throws InvalidConfigError without both keys.
 	 */
 	constructor(config: MailDriverMailjetConfig) {
-		// 1. Both keys are needed for a request; a missing one is reported by the options' names
 		if (!config.apiKey || !config.apiSecret) {
-			throw new Error('The mailjet mail driver needs "apiKey" and "apiSecret"');
+			throw new InvalidConfigError({ reason: 'The mailjet mail driver needs "apiKey" and "apiSecret"' });
 		}
 
-		// 2. The SDK sets no timeout of its own (axios' `0`, wait forever), so one is always passed: a stalled
-		//    connection then fails the send and `sendMail()` can fall back to the next location
+		// The SDK sets no timeout of its own (axios' `0`, wait forever), so one is always passed: a stalled connection
+		// then fails the send and `sendMail()` can fall back to the next location
 		const timeout = config.timeout ?? DEFAULT_REQUEST_TIMEOUT;
 
-		this.client = new Client({ apiKey: config.apiKey, apiSecret: config.apiSecret, options: { timeout } });
+		// node-mailjet is CommonJS, so Node exposes no named `Client` export to ESM; it is read off the default one
+		this.client = new mailjet.Client({ apiKey: config.apiKey, apiSecret: config.apiSecret, options: { timeout } });
 		this.sandbox = Boolean(config.sandbox);
 
-		// 3. The key pair and the timeout also go to the API of `call()`, the one request that goes around the SDK; its
-		//    `fetch` keeps Mailjet's 64-bit ids as strings, as the SDK does, since a plain `JSON.parse` would round them
+		// `call()` goes around the SDK, so its `fetch` keeps Mailjet's 64-bit ids as strings the way the SDK does; a
+		// plain `JSON.parse` would round them
 		const basic = Buffer.from(`${config.apiKey}:${config.apiSecret}`).toString('base64');
 
 		this.api = {
@@ -133,7 +134,7 @@ export class MailDriverMailjet implements MailDriver {
 	 * `success`; an error naming Mailjet with the SDK's error as the cause when the request itself fails.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
-		// 1. One message per request; the sandbox flag is a property of the whole body
+		// The sandbox flag is a property of the whole request body, not of a message
 		const body: SendEmailV3_1.Body = {
 			Messages: [await toMailjetMessage(message)],
 			...(this.sandbox ? { SandboxMode: true } : {}),
@@ -144,14 +145,14 @@ export class MailDriverMailjet implements MailDriver {
 		try {
 			result = await this.client.post('send', { version: 'v3.1' }).request<SendEmailV3_1.Response>(body);
 		} catch (error) {
-			// 2. A transport failure never reaches Mailjet; named like a refusal, the SDK's error as the cause
+			// A transport failure never reaches Mailjet; named like a refusal, the SDK's error as the cause
 			throw describeError(error);
 		}
 
 		const sent = result.body.Messages[0];
 
-		// 3. A rejected message comes back with status 200 and `Status: 'error'`; that is a failure for `sendMail()`,
-		//    the body kept as the cause so the refusal stays inspectable
+		// A rejected message comes back with status 200 and `Status: 'error'`; that is a failure for `sendMail()`, and
+		// the body is kept as the cause so the refusal stays inspectable
 		if (!sent || sent.Status !== 'success') {
 			const errors = (sent?.Errors ?? []).map((error) => error.ErrorMessage ?? JSON.stringify(error));
 
@@ -160,9 +161,8 @@ export class MailDriverMailjet implements MailDriver {
 			});
 		}
 
-		// 4. Mailjet reports every recipient it took, with a message id each. A message that came back `success` was
-		//    taken whole, so unlike the envelope-recipient drivers there is no rejected list to report: `accepted` is
-		//    the provider's list and `rejected` stays empty on purpose
+		// A message that came back `success` was taken whole, so unlike the envelope-recipient drivers there is no
+		// rejected list to report: `rejected` stays empty on purpose
 		const delivered = [...(sent.To ?? []), ...(sent.Cc ?? []), ...(sent.Bcc ?? [])];
 
 		return {
@@ -204,8 +204,8 @@ export class MailDriverMailjet implements MailDriver {
 		params?: Record<string, unknown>,
 		options?: CallOptions,
 	): Promise<CallResponse<T>> {
-		// 1. `request()` does the whole of it — placeholders, the host check before the keys are sent, the deadline,
-		//    the kit's errors with Mailjet's `ErrorMessage` and without the keys — over the constructor's API
+		// `request()` already handles the placeholders, the host check before the keys are sent, the deadline, and the
+		// kit's errors with Mailjet's `ErrorMessage` and without the keys
 		return request<T>(this.api, method, params, options);
 	}
 }

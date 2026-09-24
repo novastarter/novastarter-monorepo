@@ -53,7 +53,7 @@ export interface DecryptedValue {
  * @internal
  */
 const deriveKey = (secret: string, purpose: EncryptionPurpose): Buffer => {
-	// 1. No salt: the secret is already random, and HKDF with an empty salt is its standard extract step
+	// No salt: the secret is already random, and HKDF with an empty salt is its standard extract step
 	return Buffer.from(hkdfSync('sha256', secret, Buffer.alloc(0), `novastarter-auth/${purpose}`, 32));
 };
 
@@ -67,12 +67,12 @@ const deriveKey = (secret: string, purpose: EncryptionPurpose): Buffer => {
  * @internal
  */
 export const encrypt = (plaintext: string, secret: string, purpose: EncryptionPurpose): string => {
-	// 1. A fresh 96-bit IV per message: GCM must never reuse one under the same key
+	// A fresh 96-bit IV per message: GCM must never reuse one under the same key
 	const iv = randomBytes(12);
 	const cipher = createCipheriv('aes-256-gcm', deriveKey(secret, purpose), iv);
 	const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
 
-	// 2. The tag is what detects tampering on decrypt, so it travels with the ciphertext
+	// The tag is what detects tampering on decrypt, so it travels with the ciphertext
 	return [
 		VERSION,
 		iv.toString('base64url'),
@@ -97,21 +97,21 @@ export const encrypt = (plaintext: string, secret: string, purpose: EncryptionPu
  * @internal
  */
 export const decrypt = (payload: string, secrets: readonly string[], purpose: EncryptionPurpose): DecryptedValue => {
-	// 1. The format is checked before any cryptography, so a wrong value fails with a message that says so
+	// The format is checked before any cryptography, so a wrong value fails with a message that says so
 	const [version, iv, tag, ciphertext, extra] = payload.split('.');
 
 	if (version !== VERSION || !iv || !tag || ciphertext === undefined || extra !== undefined) {
-		throw new Error('The encrypted value is not in a known format');
+		throw new Error('@novastarter/auth: the encrypted value is not in a known format');
 	}
 
-	// 2. Only the full tag is accepted: GCM would verify a truncated one, and a 4-byte tag is forged in 2^32 guesses
+	// Only the full tag is accepted: GCM would verify a truncated one, and a 4-byte tag is forged in 2^32 guesses
 	const authTag = Buffer.from(tag, 'base64url');
 
 	if (authTag.length !== AUTH_TAG_LENGTH) {
-		throw new Error('The encrypted value is not in a known format');
+		throw new Error('@novastarter/auth: the encrypted value is not in a known format');
 	}
 
-	// 3. GCM verifies the tag in `final()`: another key throws there, so each secret is tried in turn until one opens it
+	// GCM verifies the tag in `final()`: another key throws there, so each secret is tried in turn until one opens it
 	for (const [keyIndex, secret] of secrets.entries()) {
 		const decipher = createDecipheriv('aes-256-gcm', deriveKey(secret, purpose), Buffer.from(iv, 'base64url'), {
 			authTagLength: AUTH_TAG_LENGTH,
@@ -128,6 +128,6 @@ export const decrypt = (payload: string, secrets: readonly string[], purpose: En
 		}
 	}
 
-	// 4. No secret opened it: tampered with, or encrypted under a secret no longer configured
-	throw new Error('The encrypted value does not open with any of the configured secrets');
+	// No secret opened it: tampered with, or encrypted under a secret no longer configured
+	throw new Error('@novastarter/auth: the encrypted value does not open with any of the configured secrets');
 };

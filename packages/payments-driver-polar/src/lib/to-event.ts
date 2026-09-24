@@ -24,8 +24,8 @@ export type PolarWebhookPayload = ReturnType<typeof validateEvent>;
  * @returns The checkout, with the subscription it created.
  */
 export const toCompletedCheckout = (checkout: Checkout): CompletedCheckout => {
-	// 1. A succeeded checkout always has a customer, but the SDK types it optional; an empty id keeps the shape rather
-	//    than failing a delivery the signature already verified
+	// A succeeded checkout always has a customer, but the SDK types it optional; an empty id keeps the shape rather
+	// than failing a delivery the signature already verified
 	return {
 		id: checkout.id,
 		customerId: checkout.customerId ?? '',
@@ -42,7 +42,7 @@ export const toCompletedCheckout = (checkout: Checkout): CompletedCheckout => {
  * @returns The id, or nothing for a record without it.
  */
 export const deliveryIdOf = <T extends Record<string, string | undefined>>(headers: T): T['webhook-id'] => {
-	// 1. The Standard Webhooks id is the one value that survives Polar's retries, so it is the id to deduplicate on
+	// The Standard Webhooks id is the one value that survives Polar's retries, so it is the id to deduplicate on
 	return headers['webhook-id'] as T['webhook-id'];
 };
 
@@ -66,13 +66,11 @@ export const deliveryIdOf = <T extends Record<string, string | undefined>>(heade
  * @throws Error for a status the kit does not know — a change on Polar's side the mapping has to learn.
  */
 export const toEvent = (payload: PolarWebhookPayload, id: string): PaymentsEvent | null => {
-	// 1. What every event shares: the delivery id, the driver name, when it happened, the raw payload
 	const base = { id, provider: PROVIDER, occurredAt: payload.timestamp, raw: payload };
 
-	// 2. One branch per Polar event type the kit acts on; everything else is dropped
 	switch (payload.type) {
 		case 'checkout.updated':
-			// 3. A checkout is updated many times; only the one that succeeded is a purchase
+			// A checkout is updated many times; only the one that succeeded is a purchase
 			if (payload.data.status !== 'succeeded') return null;
 
 			return { ...base, type: 'checkout.completed', checkout: toCompletedCheckout(payload.data) };
@@ -81,8 +79,8 @@ export const toEvent = (payload: PolarWebhookPayload, id: string): PaymentsEvent
 			return { ...base, type: 'subscription.created', subscription: toSubscription(payload.data) };
 
 		case 'subscription.updated':
-			// 4. The canceled status is the `subscription.revoked` event's news, which maps to the kit's deletion:
-			//    dropping the update keeps a retried or late one from re-announcing a deleted subscription
+			// The canceled status is the `subscription.revoked` event's news, which maps to the kit's deletion:
+			// dropping the update keeps a retried or late one from re-announcing a deleted subscription
 			if (payload.data.status === 'canceled') return null;
 
 			return { ...base, type: 'subscription.updated', subscription: toSubscription(payload.data) };

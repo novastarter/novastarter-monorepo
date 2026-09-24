@@ -15,13 +15,13 @@
  * ```
  */
 export function decamelize(string: string): string {
-	// 1. Put an underscore between a lower-case letter and the capital that follows it (`aB` -> `a_B`)
-	// 2. A digit followed by a capital is a boundary only when that capital starts a lower-case word: `1Date` is two
-	//    words, `2M` in `M2M` is not, since splitting it would break a listed acronym for good
-	// 3. Split a run of capitals from a following capitalized word (`XMLParser` -> `XML_Parser`), which the first pass
-	//    cannot see because both sides are upper-case. The word has to start with a letter: a digit after the capital
-	//    (`P3` in `MP3`) is part of the run, not a new word
-	// 4. Lower-case everything, so the caller can re-capitalize each word from a clean base
+	// Put an underscore between a lower-case letter and the capital that follows it (`aB` -> `a_B`)
+	// A digit followed by a capital is a boundary only when that capital starts a lower-case word: `1Date` is two
+	// words, `2M` in `M2M` is not, since splitting it would break a listed acronym for good
+	// Split a run of capitals from a following capitalized word (`XMLParser` -> `XML_Parser`), which the first pass
+	// cannot see because both sides are upper-case. The word has to start with a letter: a digit after the capital
+	// (`P3` in `MP3`) is part of the run, not a new word
+	// Lower-cased, so the caller can re-capitalize each word from a clean base.
 	return string
 		.replace(/([a-z])([A-Z])/g, '$1_$2')
 		.replace(/(\d)([A-Z])(?=[a-z])/g, '$1_$2')

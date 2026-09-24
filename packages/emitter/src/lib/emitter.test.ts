@@ -14,7 +14,7 @@ let emitter: Emitter;
 const logger = { warn: vi.fn() };
 
 beforeEach(() => {
-	vi.mocked(useLogger).mockReturnValue(logger as any);
+	vi.mocked(useLogger).mockReturnValue(logger as unknown as ReturnType<typeof useLogger>);
 	emitter = new Emitter();
 });
 
@@ -58,8 +58,8 @@ describe('emitFilter', () => {
 	});
 
 	test('Lets the real event name win over a meta event key', async () => {
-		// 1. The failure logs inside the wrappers name `meta.event`; a caller meta carrying an `event` key of its own
-		//    must not be able to shadow it
+		// The failure logs inside the wrappers name `meta.event`; a caller meta carrying an `event` key of its own
+		// must not be able to shadow it
 		const handler = vi.fn();
 		emitter.onFilter('items.create', handler);
 
@@ -74,7 +74,7 @@ describe('emitFilter', () => {
 
 	test('Passes the given context through', async () => {
 		const handler = vi.fn();
-		const context = { accountability: { user: 'u1' } as any, database: 'db' };
+		const context = { accountability: { user: 'u1' }, database: 'db' };
 		emitter.onFilter('items.create', handler);
 
 		await emitter.emitFilter('items.create', 'payload', {}, context);
@@ -116,8 +116,8 @@ describe('emitAction', () => {
 	});
 
 	test('Lets the real event name win over a meta event key', async () => {
-		// 1. The wrapper logs name `meta.event` on failure; a caller meta carrying an `event` key of its own must not
-		//    be able to shadow it
+		// The wrapper logs name `meta.event` on failure; a caller meta carrying an `event` key of its own must not
+		// be able to shadow it
 		const handler = vi.fn();
 		emitter.onAction('items.create', handler);
 
@@ -130,8 +130,8 @@ describe('emitAction', () => {
 	test('Logs a warning instead of rejecting when an async handler fails', async () => {
 		const error = new Error('boom');
 
-		// 1. The common case: a handler that rejects; the wrapper `onAction` adds turns a synchronous throw into the
-		//    same shape
+		// The common case: a handler that rejects; the wrapper `onAction` adds turns a synchronous throw into the
+		// same shape
 		emitter.onAction('items.create', async () => {
 			throw error;
 		});
@@ -144,8 +144,8 @@ describe('emitAction', () => {
 	});
 
 	test('Logs a handler that throws synchronously and still runs the handlers after it', async () => {
-		// 1. eventemitter2 calls the handlers in a plain loop: unwrapped, a throw before the first `await` would escape
-		//    `emitAsync` and skip every handler registered after the throwing one
+		// eventemitter2 calls the handlers in a plain loop: unwrapped, a throw before the first `await` would escape
+		// `emitAsync` and skip every handler registered after the throwing one
 		const error = new Error('sync boom');
 		const after = vi.fn();
 
@@ -165,7 +165,7 @@ describe('emitAction', () => {
 	});
 
 	test('Logs every failing handler, not only the first', async () => {
-		// 1. `emitAsync` is a `Promise.all`: unwrapped, the second rejection would never reach the log
+		// `emitAsync` is a `Promise.all`: unwrapped, the second rejection would never reach the log
 		emitter.onAction('items.create', async () => {
 			throw new Error('first');
 		});
@@ -190,7 +190,7 @@ describe('emitAction', () => {
 	});
 
 	test('offAction removes the handler onAction registered, on whichever event', async () => {
-		// 1. One handler on two events: removing it from the first must not touch the second, and vice versa
+		// One handler on two events: removing it from the first must not touch the second, and vice versa
 		const handler = vi.fn();
 
 		emitter.onAction('items.create', handler);
@@ -208,7 +208,7 @@ describe('emitAction', () => {
 	});
 
 	test('Wraps a thrown non-Error so its text reaches the log', async () => {
-		// 1. A string in first position would be pino's message and the text after it dropped; `toError` keeps both
+		// A string in first position would be pino's message and the text after it dropped; `toError` keeps both
 		emitter.onAction('items.create', async () => {
 			throw 'nope';
 		});
@@ -250,8 +250,8 @@ describe('emitInit', () => {
 	});
 
 	test('Lets the real event name win over a meta event key', async () => {
-		// 1. The wrapper logs name `meta.event` on failure; a caller meta carrying an `event` key of its own must not
-		//    be able to shadow it
+		// The wrapper logs name `meta.event` on failure; a caller meta carrying an `event` key of its own must not
+		// be able to shadow it
 		const handler = vi.fn();
 		emitter.onInit('app.before', handler);
 

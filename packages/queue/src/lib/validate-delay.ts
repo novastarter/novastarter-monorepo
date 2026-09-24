@@ -11,8 +11,8 @@
  * @throws `RangeError` when `delay` is negative, `NaN` or not finite.
  */
 export const validateJobDelay = (name: string, delay: number | undefined): void => {
-	// 1. Written as `!(effective >= 0)` so a `NaN` delay fails the check too; `Number.isFinite` refuses the
-	//    infinities on top, which pass `>= 0` but outrun any timer. A missing delay means no wait, which is allowed
+	// Written as `!(effective >= 0)` so a `NaN` delay fails the check too; `Number.isFinite` refuses the
+	// infinities on top, which pass `>= 0` but outrun any timer. A missing delay means no wait, which is allowed
 	const effective = delay ?? 0;
 
 	if (!(effective >= 0) || !Number.isFinite(effective)) {

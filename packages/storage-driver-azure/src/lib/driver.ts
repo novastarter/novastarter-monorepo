@@ -10,7 +10,7 @@ import {
 	SASProtocol,
 	StorageSharedKeyCredential,
 } from '@azure/storage-blob';
-import { toProviderCallError } from '@novastarter/errors';
+import { InvalidConfigError, InvalidPayloadError, toProviderCallError } from '@novastarter/errors';
 import {
 	type CallOptions,
 	type CallResponse,
@@ -202,23 +202,24 @@ export class StorageDriverAzure implements TusDriver {
 	 * Create a driver together with its credential and container handle.
 	 *
 	 * @param config - Connection and behaviour options.
-	 * @throws Error when `accountName`, `accountKey` or `containerName` is missing, or when resumable uploads are
-	 * enabled with a `chunkSize` that is not positive or exceeds {@link MAXIMUM_CHUNK_SIZE}.
+	 * @throws InvalidConfigError when `accountName`, `accountKey` or `containerName` is missing, or when resumable
+	 * uploads are enabled with a `chunkSize` that is not positive or exceeds {@link MAXIMUM_CHUNK_SIZE}.
 	 */
 	constructor(config: StorageDriverAzureConfig) {
-		// 1. Refuse a missing credential or container here: the SDK would only fail on the first request, with an error
-		//    that does not name the option
+		// Refused here: the SDK would only fail on the first request, with an error that does not name the option
 		for (const option of ['accountName', 'accountKey', 'containerName'] as const) {
 			if (!config[option]) {
-				throw new Error(`The azure storage driver needs ${option.startsWith('a') ? 'an' : 'a'} "${option}"`);
+				throw new InvalidConfigError({
+					reason: `The azure storage driver needs ${option.startsWith('a') ? 'an' : 'a'} "${option}"`,
+				});
 			}
 		}
 
-		// 2. Build the credential once; the SDK signs every request with it, so there is no per-call auth step
+		// The SDK signs every request with the credential, so there is no per-call auth step
 		this.signedCredentials = new StorageSharedKeyCredential(config.accountName, config.accountKey);
 
-		// 3. A custom endpoint wins over the derived one, so emulators and non-public clouds are never routed to
-		//    `blob.core.windows.net`
+		// A custom endpoint wins over the derived one, so emulators and non-public clouds are never routed to
+		// `blob.core.windows.net`
 		this.endpoint = config.endpoint ?? `https://${config.accountName}.blob.core.windows.net`;
 		this.containerName = config.containerName;
 
@@ -226,28 +227,28 @@ export class StorageDriverAzure implements TusDriver {
 
 		this.client = service.getContainerClient(config.containerName);
 
-		// 4. Strip the leading slash from the root: blob names are not paths, and a leading `/` would become part of
-		//    the name and produce blobs nobody can find by the expected key
-		//    `confinePath` also resolves `.` and `..` in the root, the way every key is resolved, so a root of `./media`
-		//    strips from listed keys as `media` does, and a root of `/` means the top of the bucket
+		// No leading slash: blob names are not paths, and a leading `/` would become part of the name and produce blobs
+		// nobody can find by the expected key. `confinePath` also resolves `.` and `..` in the root, the way every key
+		// is resolved, so a root of `./media` strips from listed keys as `media` does, and a root of `/` means the top
+		// of the container
 		this.root = config.root ? confinePath(config.root) : '';
 
-		// 5. Fail at construction rather than on the first chunk: the service rejects appended blocks above the limit,
-		//    and a misconfigured size would otherwise only surface mid-upload
-		//    https://learn.microsoft.com/en-us/rest/api/storageservices/append-block?tabs=microsoft-entra-id#remarks
+		// Fail at construction rather than on the first chunk: the service rejects appended blocks above the limit, and
+		// a misconfigured size would otherwise only surface mid-upload.
+		// https://learn.microsoft.com/en-us/rest/api/storageservices/append-block?tabs=microsoft-entra-id#remarks
 		if (config.tus?.enabled && config.tus.chunkSize && config.tus.chunkSize > MAXIMUM_CHUNK_SIZE) {
-			throw new Error('The azure storage driver got a "tus.chunkSize" above 100 MiB');
+			throw new InvalidConfigError({ reason: 'The azure storage driver got a "tus.chunkSize" above 100 MiB' });
 		}
 
-		// 6. A zero, negative or NaN size would be kept as the per-chunk bound and refuse every chunk that arrives; the
-		//    check is written as `!(size > 0)`, the NaN-safe form the S3 driver uses, since comparisons never catch NaN
+		// A zero, negative or NaN size would be kept as the per-chunk bound and refuse every chunk that arrives; the
+		// check is written as `!(size > 0)`, the NaN-safe form the S3 driver uses, since comparisons never catch NaN
 		if (config.tus?.enabled && config.tus.chunkSize !== undefined && !(config.tus.chunkSize > 0)) {
-			throw new Error('The azure storage driver got a "tus.chunkSize" below 1 byte');
+			throw new InvalidConfigError({ reason: 'The azure storage driver got a "tus.chunkSize" below 1 byte' });
 		}
 
-		// 7. One TUS chunk becomes one `Append Block` request, so the bound `writeChunk` enforces per chunk is the
-		//    configured size when resumable uploads are on — validated above to stay within the service limit — and the
-		//    service limit itself otherwise
+		// One TUS chunk becomes one `Append Block` request, so the bound `writeChunk` enforces per chunk is the
+		// configured size when resumable uploads are on — validated above to stay within the service limit — and the
+		// service limit itself otherwise
 		this.maximumChunkSize = config.tus?.enabled && config.tus.chunkSize ? config.tus.chunkSize : MAXIMUM_CHUNK_SIZE;
 	}
 
@@ -259,9 +260,9 @@ export class StorageDriverAzure implements TusDriver {
 	 * @internal
 	 */
 	private fullPath(filepath: string) {
-		// 1. Pin the caller path under the root before joining: resolved against `/` first, a leading `..` has nothing
-		//    to climb and is dropped by `confinePath`, so `../other/secret` cannot address a blob outside the location. `joinPath`
-		//    always produces the forward slashes blob names use, whatever the platform's separator
+		// The caller path is pinned under the root before joining: resolved against `/` first, a leading `..` has
+		// nothing to climb and is dropped by `confinePath`, so `../other/secret` cannot address a blob outside the
+		// location. `joinPath` always produces the forward slashes blob names use, whatever the platform's separator
 		return joinPath(this.root, confinePath(filepath));
 	}
 
@@ -278,13 +279,13 @@ export class StorageDriverAzure implements TusDriver {
 	async read(filepath: string, options?: ReadOptions): Promise<Readable> {
 		const { range } = options || {};
 
-		// 1. The SDK takes an offset and a count rather than a closed range, so `end` is turned into a count from the
-		//    start (inclusive, hence the `+ 1`); with no `end` the count stays undefined and the rest of the blob is
-		//    read. Presence, not truthiness: `end: 0` asks for the first byte, not for the whole blob
+		// The SDK takes an offset and a count rather than a closed range, so `end` is turned into a count from the
+		// start (inclusive, hence the `+ 1`); with no `end` the count stays undefined and the rest of the blob is read.
+		// Presence, not truthiness: `end: 0` asks for the first byte, not for the whole blob
 		let readableStreamBody: NodeJS.ReadableStream | undefined;
 
-		// 2. A 404 is the error every backend shares, so a caller tells a missing blob from a denied or failed read;
-		//    anything else says nothing about the blob and is rethrown
+		// A 404 becomes the error every backend shares, so a caller tells a missing blob from a denied or failed read;
+		// anything else says nothing about the blob and is rethrown
 		try {
 			({ readableStreamBody } = await this.client
 				.getBlobClient(this.fullPath(filepath))
@@ -297,10 +298,10 @@ export class StorageDriverAzure implements TusDriver {
 			throw error;
 		}
 
-		// 3. `readableStreamBody` is only set in Node (browsers get `blobBody` instead), so its absence here means there
-		//    is nothing to stream
+		// `readableStreamBody` is only set in Node (browsers get `blobBody` instead), so its absence here means there
+		// is nothing to stream
 		if (!readableStreamBody) {
-			throw new Error(`No stream returned for file "${filepath}"`);
+			throw new Error(`The azure storage driver got no stream for file "${filepath}"`);
 		}
 
 		return readableStreamBody as Readable;
@@ -319,8 +320,7 @@ export class StorageDriverAzure implements TusDriver {
 	async write(filepath: string, content: Readable, type = 'application/octet-stream'): Promise<void> {
 		const blockBlobClient = this.client.getBlockBlobClient(this.fullPath(filepath));
 
-		// 1. `uploadStream` splits the stream into blocks and commits them, so the size need not be known in advance;
-		//    buffer size and concurrency are left at the SDK defaults
+		// `uploadStream` splits the stream into blocks and commits them, so the size need not be known in advance
 		await blockBlobClient.uploadStream(content as Readable, undefined, undefined, {
 			blobHTTPHeaders: { blobContentType: type },
 		});
@@ -332,7 +332,7 @@ export class StorageDriverAzure implements TusDriver {
 	 * @param filepath - Blob path relative to the root.
 	 */
 	async delete(filepath: string): Promise<void> {
-		// 1. `deleteIfExists` rather than `delete`, so removing a blob that is already gone is a no-op instead of a 404
+		// `deleteIfExists` rather than `delete`, so removing a blob that is already gone is a no-op instead of a 404
 		await this.client.getBlockBlobClient(this.fullPath(filepath)).deleteIfExists();
 	}
 
@@ -347,9 +347,8 @@ export class StorageDriverAzure implements TusDriver {
 	async stat(filepath: string): Promise<Stat> {
 		let props: BlobGetPropertiesResponse;
 
-		// 1. `getProperties` is a HEAD request, so the metadata comes back without downloading the body. A 404 is the
-		//    one answer that confirms the blob is missing; it becomes the error every backend shares, anything else says
-		//    nothing about the blob and is rethrown
+		// `getProperties` is a HEAD request, so the metadata comes back without downloading the body. A 404 is the one
+		// answer that confirms the blob is missing; anything else says nothing about the blob and is rethrown
 		try {
 			props = await this.client.getBlobClient(this.fullPath(filepath)).getProperties();
 		} catch (error) {
@@ -360,10 +359,10 @@ export class StorageDriverAzure implements TusDriver {
 			throw error;
 		}
 
-		// 2. Both fields are optional in the SDK's types; a properties response without one is a broken answer and is
-		//    refused here rather than handed out as `undefined` under the non-optional `Stat` type
+		// Both fields are optional in the SDK's types; a properties response without one is a broken answer and is
+		// refused here rather than handed out as `undefined` under the non-optional `Stat` type
 		if (props.contentLength === undefined || props.lastModified === undefined) {
-			throw new Error(`No stat returned for file "${filepath}"`);
+			throw new Error(`The azure storage driver got no size or modified time for file "${filepath}"`);
 		}
 
 		return {
@@ -380,8 +379,8 @@ export class StorageDriverAzure implements TusDriver {
 	 * @throws The SDK error when the lookup itself fails, since that says nothing about the blob.
 	 */
 	async exists(filepath: string): Promise<boolean> {
-		// 1. The SDK only answers `false` for a missing blob; any other failure keeps travelling so callers never act on
-		//    a wrong answer
+		// The SDK only answers `false` for a missing blob; any other failure keeps travelling so callers never act on a
+		// wrong answer
 		return await this.client.getBlockBlobClient(this.fullPath(filepath)).exists();
 	}
 
@@ -392,7 +391,7 @@ export class StorageDriverAzure implements TusDriver {
 	 * @param dest - Path to move the blob to.
 	 */
 	async move(src: string, dest: string): Promise<void> {
-		// 1. Blob Storage has no rename, so a move is a server-side copy followed by deleting the source
+		// Blob Storage has no rename
 		await this.copy(src, dest);
 		await this.client.getBlockBlobClient(this.fullPath(src)).deleteIfExists();
 	}
@@ -407,9 +406,9 @@ export class StorageDriverAzure implements TusDriver {
 		const source = this.client.getBlockBlobClient(this.fullPath(src));
 		const target = this.client.getBlobClient(this.fullPath(dest));
 
-		// 1. The copy runs server-side and asynchronously and is awaited until done. The target is addressed as a plain
-		//    blob and replaced when its type differs, since a TUS upload leaves an append blob and `write()` a block
-		//    blob, and Azure refuses to copy one onto the other
+		// The copy runs server-side and asynchronously. The target is addressed as a plain blob and replaced when its
+		// type differs, since a TUS upload leaves an append blob and `write()` a block blob, and Azure refuses to copy
+		// one onto the other
 		await copyBlobReplacing(target, source.url);
 	}
 
@@ -421,21 +420,21 @@ export class StorageDriverAzure implements TusDriver {
 	 * that ADLS Gen2 and several upload tools create, are left out.
 	 */
 	async *list(prefix = ''): AsyncGenerator<string, void, unknown> {
-		// 1. A flat listing walks every blob under the prefix regardless of virtual folders, which is what a recursive
-		//    listing expects
+		// A flat listing walks every blob under the prefix regardless of virtual folders, which is what a recursive
+		// listing expects
 		const blobs = this.client.listBlobsFlat({
 			prefix: toListPrefix(this.fullPath(prefix), prefix),
 		});
 
-		// 2. Skip folder placeholder blobs, as the S3 and GCS drivers do: a name ending in `/` is a zero-byte marker an
-		//    empty "folder" is created with, not an object a caller can read, and listing it would hand a consumer a
-		//    path that only exists on this backend. Strip the root and its slash from the rest, so callers get paths in
-		//    the form they pass in
+		// Folder placeholder blobs are skipped, as the S3 and GCS drivers do: a name ending in `/` is a zero-byte
+		// marker an empty "folder" is created with, not an object a caller can read, and listing it would hand a
+		// consumer a path that only exists on this backend. The root is stripped so callers get paths in the form they
+		// pass in
 		for await (const blob of blobs) {
 			if ((blob.name as string).endsWith('/')) continue;
 
-			// 3. A resumable upload in flight stages its bytes in a `<name>.<id>.tmp` blob; it is not an object a caller
-			//    stored, so it is left out the way the local driver leaves out its staging files
+			// A resumable upload in flight stages its bytes in a `<name>.<id>.tmp` blob; it is not an object a caller
+			// stored, so it is left out the way the local driver leaves out its staging files
 			if (STAGING_SUFFIX_PATTERN.test(blob.name as string)) continue;
 
 			yield toRelativePath(this.root, blob.name as string);
@@ -448,10 +447,9 @@ export class StorageDriverAzure implements TusDriver {
 	 * @returns The extension names in the order the TUS server advertises them.
 	 */
 	get tusExtensions(): string[] {
-		// 1. Only the extensions the chunked-upload methods back are advertised: `creation` maps to
-		//    `createChunkedUpload`, `termination` to `deleteChunkedUpload`, and `expiration` lets the server announce
-		//    when an unfinished append blob may be discarded. Checksum and concatenation are left out because an append
-		//    blob can neither verify a chunk before it lands nor be assembled from several uploads
+		// `expiration` lets the server announce when an unfinished append blob may be discarded. Checksum and
+		// concatenation are left out because an append blob can neither verify a chunk before it lands nor be assembled
+		// from several uploads
 		return ['creation', 'termination', 'expiration'];
 	}
 
@@ -471,8 +469,8 @@ export class StorageDriverAzure implements TusDriver {
 	private stagingPath(filepath: string, context: ChunkedUploadContext) {
 		const stagingId = context.metadata?.[STAGING_ID_KEY];
 
-		// 1. The id is checked against the exact shape `createChunkedUpload` generates, so a context that lost it, or
-		//    one carrying a crafted value, can never point the upload at another blob
+		// Only the exact shape `createChunkedUpload` generates passes, so a context that lost the id, or one carrying a
+		// crafted value, can never point the upload at another blob
 		if (typeof stagingId !== 'string' || !STAGING_ID_PATTERN.test(stagingId)) {
 			throw new StorageFileNotFoundError({ filepath });
 		}
@@ -493,16 +491,16 @@ export class StorageDriverAzure implements TusDriver {
 	 * map is created when the context has none.
 	 */
 	async createChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<ChunkedUploadContext> {
-		// 1. The context is what the TUS server hands back on every later call, so the staging id goes into its
-		//    metadata and the driver keeps no state; a POST without `Upload-Metadata` arrives with no map at all
+		// The context is what the TUS server hands back on every later call, so the staging id goes into its metadata
+		// and the driver keeps no state; a POST without `Upload-Metadata` arrives with no map at all
 		const metadata = (context.metadata ??= {});
 
-		// 2. A random id per upload keeps two concurrent uploads of the same path from sharing one staging blob; it
-		//    overwrites any client-sent value under the same key
+		// A random id per upload keeps two concurrent uploads of the same path from sharing one staging blob; it
+		// overwrites any client-sent value under the same key
 		metadata[STAGING_ID_KEY] = randomBytes(6).toString('hex');
 
-		// 3. An append blob must exist before blocks can be appended. The name is new, so `create` never meets an old
-		//    blob whose length would make the first append at position 0 fail
+		// An append blob must exist before blocks can be appended. The name is new, so `create` never meets an old blob
+		// whose length would make the first append at position 0 fail
 		await this.client.getAppendBlobClient(this.stagingPath(filepath, context)).create();
 
 		return context;
@@ -517,8 +515,8 @@ export class StorageDriverAzure implements TusDriver {
 	 * @param context - Context carrying the staging id.
 	 * @returns The new upload offset: `offset` plus the bytes appended.
 	 * @throws StorageFileNotFoundError when the context carries no valid staging id.
-	 * @throws Error when the chunk exceeds the size configured as `tus.chunkSize`, or the append-block limit when no
-	 * size was configured.
+	 * @throws InvalidPayloadError when the chunk exceeds the size configured as `tus.chunkSize`, or the append-block
+	 * limit when no size was configured.
 	 */
 	async writeChunk(
 		filepath: string,
@@ -526,8 +524,8 @@ export class StorageDriverAzure implements TusDriver {
 		offset: number,
 		context: ChunkedUploadContext,
 	): Promise<number> {
-		// 1. Chunks go to the staging blob, never to the target, which keeps its previous content until
-		//    `finishChunkedUpload` starts copying the staging blob over it
+		// Chunks go to the staging blob, never to the target, which keeps its previous content until
+		// `finishChunkedUpload` starts copying the staging blob over it
 		const client = this.client.getAppendBlobClient(this.stagingPath(filepath, context));
 
 		let bytesUploaded = offset || 0;
@@ -535,10 +533,9 @@ export class StorageDriverAzure implements TusDriver {
 
 		const chunks: Buffer[] = [];
 
-		// 2. Buffer the chunk as it streams in, counting bytes on the way: `appendBlock` needs the exact byte length
-		//    up front, which a stream cannot give; the moment the incoming chunk crosses the bound the stream is
-		//    destroyed and the error thrown, so an oversized chunk is refused while it is still arriving rather than
-		//    after the whole of it has been buffered
+		// `appendBlock` needs the exact byte length up front, which a stream cannot give, so the chunk is buffered. The
+		// moment it crosses the bound the stream is destroyed, so an oversized chunk is refused while it is still
+		// arriving rather than after the whole of it has been buffered
 		for await (let chunk of content) {
 			if (!Buffer.isBuffer(chunk)) chunk = Buffer.from(chunk);
 
@@ -546,23 +543,23 @@ export class StorageDriverAzure implements TusDriver {
 			bytesUploaded += chunk.length;
 			chunks.push(chunk);
 
-			// 3. One TUS chunk becomes one `Append Block` request, so a chunk above the bound is refused here, with the
-			//    size named, instead of as a service error mid-upload
+			// One TUS chunk becomes one `Append Block` request, so a chunk above the bound is refused here, with the
+			// size named, instead of as a service error mid-upload
 			if (chunkSize > this.maximumChunkSize) {
-				throw new Error(
-					`The chunk of ${chunkSize} bytes exceeds the chunk size limit of ${this.maximumChunkSize} bytes`,
-				);
+				throw new InvalidPayloadError({
+					reason: `The chunk of ${chunkSize} bytes exceeds the chunk size limit of ${this.maximumChunkSize} bytes`,
+				});
 			}
 		}
 
 		const chunk = Buffer.concat(chunks);
 
-		// 4. Skip the request for an empty chunk; the service rejects a zero-length append
+		// The service rejects a zero-length append
 		if (chunk.length > 0) {
-			// 5. The append position is pinned to the offset the chunk claims to start at: append blobs always append
-			//    at the current end, so a PATCH whose response was lost and which the TUS client resends at the same
-			//    offset would otherwise append the same bytes a second time, silently growing the blob past its
-			//    declared size. With the condition the service answers 412 instead of corrupting the upload
+			// Append blobs always append at the current end, so a PATCH whose response was lost and which the TUS
+			// client resends at the same offset would otherwise append the same bytes a second time, silently growing
+			// the blob past its declared size. Pinned to the offset the chunk claims, the service answers 412 instead
+			// of corrupting the upload
 			await client.appendBlock(chunk, chunk.length, { conditions: { appendPosition: offset } });
 		}
 
@@ -608,17 +605,17 @@ export class StorageDriverAzure implements TusDriver {
 		params?: Record<string, unknown>,
 		options?: CallOptions,
 	): Promise<CallResponse<T>> {
-		// 1. Reads only: a write's body — XML, a blob — is the SDK's job, and a read's parameters belong in the query
+		// Reads only: a write's body — XML, a blob — is the SDK's job, and a read's parameters belong in the query
 		const { verb } = parseCallMethod(method);
 
 		if (verb !== 'GET' && verb !== 'HEAD' && verb !== 'DELETE') {
 			throw new Error(`The azure call "${method}" is not a GET, HEAD or DELETE; writes go through the client`);
 		}
 
-		// 2. A SAS for this request only — signed locally, it leaves the process only with the request, after the host
-		//    check: read, delete, list and tag, the permissions the operations above need — a list for `comp=list`, a tag
-		//    for `comp=tags`, never write or create, so a SAS that leaks cannot change anything — and a lifetime of
-		//    minutes. The start lies a minute back, so a service clock slightly behind still accepts it
+		// A SAS for this request only — signed locally, it leaves the process only with the request, after the host
+		// check: read, delete, list and tag, the permissions the operations above need — a list for `comp=list`, a tag
+		// for `comp=tags`, never write or create, so a SAS that leaks cannot change anything — and a lifetime of
+		// minutes. The start lies a minute back, so a service clock slightly behind still accepts it
 		const now = Date.now();
 
 		const sas = generateAccountSASQueryParameters(
@@ -633,9 +630,8 @@ export class StorageDriverAzure implements TusDriver {
 			this.signedCredentials,
 		);
 
-		// 3. The API for this call: the SAS in the query, the API version it was signed for in a header, `{container}`
-		//    the location's; a refusal loses the signature, should Azure quote it, and a failure to reach Azure its
-		//    cause, which may quote the signed URL
+		// A refusal loses the signature, should Azure quote it, and a failure to reach Azure its cause, which may quote
+		// the signed URL
 		const api: HttpApi = {
 			provider: 'azure',
 			baseUrl: this.endpoint,
@@ -675,12 +671,12 @@ export class StorageDriverAzure implements TusDriver {
 		const staging = this.client.getAppendBlobClient(this.stagingPath(filepath, context));
 		const target = this.client.getBlobClient(this.fullPath(filepath));
 
-		// 1. Copy over the target. The copy is not atomic: while it is pending the target may read as empty, and a
-		//    failed copy leaves it empty. A missing staging blob means the upload is unknown or already finished
+		// The copy is not atomic: while it is pending the target may read as empty, and a failed copy leaves it empty.
+		// A missing staging blob means the upload is unknown or already finished
 		try {
-			// 2. A target of another blob type, a block blob from `write()`, is removed and the copy repeated. If this
-			//    second copy fails, the old target is already gone and the path stays empty; the error propagates before
-			//    step 3, so the staging blob survives and a retried finish copies it onto the now free path
+			// A target of another blob type, a block blob from `write()`, is removed and the copy repeated. If this
+			// second copy fails, the old target is already gone and the path stays empty; the error propagates before
+			// the staging blob is removed, so it survives and a retried finish copies it onto the now free path
 			await copyBlobReplacing(target, staging.url);
 		} catch (error) {
 			const { statusCode } = (error ?? {}) as { statusCode?: number };
@@ -690,8 +686,8 @@ export class StorageDriverAzure implements TusDriver {
 			throw error;
 		}
 
-		// 3. The staging blob is removed only now that the target holds its bytes, so every failure above keeps it for
-		//    a retry
+		// The staging blob is removed only now that the target holds its bytes, so every failure above keeps it for a
+		// retry
 		await staging.deleteIfExists();
 	}
 
@@ -703,8 +699,8 @@ export class StorageDriverAzure implements TusDriver {
 	 * @throws StorageFileNotFoundError when the context carries no valid staging id.
 	 */
 	async deleteChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<void> {
-		// 1. Only the staging blob is removed: the target was never written by this upload, so whatever it held before
-		//    stays in place. `deleteIfExists` keeps a termination of an upload whose blob is already gone from failing
+		// The target was never written by this upload, so whatever it held before stays in place. `deleteIfExists`
+		// keeps a termination of an upload whose blob is already gone from failing
 		await this.client.getAppendBlobClient(this.stagingPath(filepath, context)).deleteIfExists();
 	}
 }
@@ -718,7 +714,7 @@ export class StorageDriverAzure implements TusDriver {
  * @internal
  */
 async function copyBlob(target: BlobClient, sourceUrl: string): Promise<void> {
-	// 1. `Copy Blob` may finish asynchronously, so the poller is awaited instead of returning while it is pending
+	// `Copy Blob` may finish asynchronously, so the poller is awaited instead of returning while it is pending
 	const poller = await target.beginCopyFromURL(sourceUrl);
 	await poller.pollUntilDone();
 }
@@ -736,17 +732,16 @@ async function copyBlob(target: BlobClient, sourceUrl: string): Promise<void> {
  * @internal
  */
 async function copyBlobReplacing(target: BlobClient, sourceUrl: string): Promise<void> {
-	// 1. The common case: the target is missing or of the same type, so a single copy overwrites it
 	try {
 		await copyBlob(target, sourceUrl);
 	} catch (error) {
-		// 2. Only a blob type mismatch is recoverable here; any other failure, such as a copy still pending on the
-		//    target, propagates untouched so the target is not lost
+		// Only a blob type mismatch is recoverable here; any other failure, such as a copy still pending on the target,
+		// propagates untouched so the target is not lost
 		const { statusCode, code } = (error ?? {}) as { statusCode?: number; code?: string };
 
 		if (statusCode !== 409 || code !== 'InvalidBlobType') throw error;
 
-		// 3. Remove the mismatched target so the second copy creates the path afresh with the source's type
+		// The mismatched target is removed so the second copy creates the path afresh with the source's type
 		await target.deleteIfExists();
 		await copyBlob(target, sourceUrl);
 	}
@@ -763,13 +758,12 @@ async function copyBlobReplacing(target: BlobClient, sourceUrl: string): Promise
  * @internal
  */
 const unreachableWithoutCause: HttpCallFetch = async (url, { body, ...init }) => {
-	// 1. A body only when there is one; an abort passes on its own reason
 	try {
 		return await fetch(url, body === undefined ? init : { ...init, body });
 	} catch (error) {
 		if (init.signal.aborted) throw init.signal.reason;
 
-		// 2. Only the code survives — `ENOTFOUND`, `ECONNRESET`
+		// Only the code survives, such as `ENOTFOUND` or `ECONNRESET`
 		const code = (error as { cause?: { code?: unknown } } | null)?.cause?.code;
 		const suffix = typeof code === 'string' ? ` (${code})` : '';
 
@@ -789,10 +783,8 @@ const unreachableWithoutCause: HttpCallFetch = async (url, { body, ...init }) =>
  * @internal
  */
 const refuseRedacted = (response: HttpCallResponse, method: string, signature: string): Error | undefined => {
-	// 1. A success is left alone
 	if (response.status >= 200 && response.status < 300) return undefined;
 
-	// 2. The kit's error — a 429 the rate-limit one — with the answer's text redacted
 	return toProviderCallError({
 		provider: 'azure',
 		method,
@@ -811,7 +803,7 @@ const refuseRedacted = (response: HttpCallResponse, method: string, signature: s
  * @internal
  */
 const redact = (text: string, signature: string): string => {
-	// 1. Both forms, since Azure may quote the URL it was sent as well as the decoded value
+	// Both forms, since Azure may quote the URL it was sent as well as the decoded value
 	if (!signature) return text;
 
 	return text.replaceAll(signature, '[redacted]').replaceAll(encodeURIComponent(signature), '[redacted]');

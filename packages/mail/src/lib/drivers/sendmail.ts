@@ -43,7 +43,7 @@ export class MailDriverSendmail implements MailDriver {
 	 * @param config - Binary and line endings.
 	 */
 	constructor(config: MailDriverSendmailConfig = {}) {
-		// 1. The defaults are the ones of a stock Unix host, so a bare `sendmail` location works without options
+		// The defaults are the ones of a stock Unix host, so a bare `sendmail` location works without options
 		this.transporter = nodemailer.createTransport({
 			sendmail: true,
 			newline: config.newLine ?? 'unix',
@@ -59,7 +59,7 @@ export class MailDriverSendmail implements MailDriver {
 	 * @throws nodemailer's error when the binary fails.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
-		// 1. The binary answers nothing usable, so the result is built from the envelope
+		// The binary answers nothing usable, so the result is built from the envelope
 		return toMailResult(await this.transporter.sendMail(toNodemailerMessage(message)));
 	}
 }

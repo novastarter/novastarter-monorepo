@@ -1,3 +1,5 @@
+import { InvalidConfigError } from '@novastarter/errors';
+
 /**
  * Name of the location every manager answers with when {@link LocationManager.location} is called without one — the
  * one a deployment with a single server, bucket or provider registers.
@@ -67,7 +69,7 @@ export abstract class LocationManager<Instance, Config extends unknown[]> {
 	 * @param config - What {@link LocationManager.build} receives when the location is first asked for.
 	 */
 	registerLocation(name: string, ...config: Config): void {
-		// 1. Only the configuration is kept: the instance is built when the location is first asked for
+		// Only the configuration is kept: the instance is built when the location is first asked for
 		this.configs.set(name, config);
 		this.instances.delete(name);
 	}
@@ -78,24 +80,25 @@ export abstract class LocationManager<Instance, Config extends unknown[]> {
 	 * @param name - Location identifier passed to {@link LocationManager.registerLocation}; {@link DEFAULT_LOCATION}
 	 * when omitted.
 	 * @returns The instance bound to that location; the same one on every later call.
-	 * @throws Error when no location of that name is registered.
+	 * @throws InvalidConfigError when no location of that name is registered.
 	 */
 	location(name: string = DEFAULT_LOCATION): Instance {
-		// 1. Serve the instance built earlier, so every consumer shares the connections it holds. Presence is checked
-		//    with `has`, not by truthiness: a driver that builds to `0`, `''` or `false` is an instance all the same
+		// Every consumer shares the instance built earlier and the connections it holds. Presence is checked with
+		// `has`, not by truthiness: a driver that builds to `0`, `''` or `false` is an instance all the same.
 		if (this.instances.has(name)) {
 			return this.instances.get(name) as Instance;
 		}
 
-		// 2. Fail loudly instead of returning `undefined`: callers chain calls on the result, and a missing location
-		//    is a configuration bug that deserves a clear message
+		// Fail loudly instead of returning `undefined`: callers chain calls on the result, and a missing location
+		// is a configuration bug that deserves a clear message
 		const config = this.configs.get(name);
 
 		if (!config) {
-			throw new Error(`Location "${name}" doesn't exist.`);
+			throw new InvalidConfigError({
+				reason: `Location "${name}" doesn't exist; register it with registerLocation() before using it`,
+			});
 		}
 
-		// 3. First use builds the instance and keeps it
 		const instance = this.build(...config);
 		this.instances.set(name, instance);
 
@@ -109,7 +112,7 @@ export abstract class LocationManager<Instance, Config extends unknown[]> {
 	 * @returns `true` when {@link LocationManager.registerLocation} was called with that name.
 	 */
 	hasLocation(name: string): boolean {
-		// 1. Registration is what counts, not whether the instance was built yet
+		// Registration is what counts, not whether the instance was built yet
 		return this.configs.has(name);
 	}
 
@@ -119,7 +122,7 @@ export abstract class LocationManager<Instance, Config extends unknown[]> {
 	 * @returns The names.
 	 */
 	locationNames(): string[] {
-		// 1. A copy, so a caller iterating while registering more locations never sees the map change under it
+		// A copy, so a caller iterating while registering more locations never sees the map change under it
 		return [...this.configs.keys()];
 	}
 
@@ -131,7 +134,7 @@ export abstract class LocationManager<Instance, Config extends unknown[]> {
 	 * @returns The built instances, in order of first use.
 	 */
 	instantiated(): Map<string, Instance> {
-		// 1. A copy, so closing an instance and dropping it cannot disturb a caller still iterating
+		// A copy, so closing an instance and dropping it cannot disturb a caller still iterating
 		return new Map(this.instances);
 	}
 
@@ -152,8 +155,8 @@ export abstract class LocationManager<Instance, Config extends unknown[]> {
 	 * several failed — after every instance was released and dropped, so a later `close()` releases nothing twice.
 	 */
 	async close(): Promise<void> {
-		// 1. A release run under way is waited for, never doubled: releasing an instance twice — a second `quit()` on
-		//    a client — would fail. Its failure is kept for the end, so this caller learns of it too
+		// A release run under way is waited for, never doubled: releasing an instance twice — a second `quit()` on
+		// a client — would fail. Its failure is kept for the end, so this caller learns of it too
 		let joined: { error: unknown } | undefined;
 
 		if (this.closing) {
@@ -164,9 +167,9 @@ export abstract class LocationManager<Instance, Config extends unknown[]> {
 			}
 		}
 
-		// 2. A run of this call's own, for whatever the registry holds now — nothing, most of the time, or the
-		//    instances a `location()` built while the joined run was releasing. The field is cleared once it settles,
-		//    so a later `close()` starts afresh
+		// A run of this call's own, for whatever the registry holds now — nothing, most of the time, or the
+		// instances a `location()` built while the joined run was releasing. The field is cleared once it settles,
+		// so a later `close()` starts afresh
 		this.closing ??= this.releaseAll().finally(() => {
 			this.closing = undefined;
 		});
@@ -179,8 +182,8 @@ export abstract class LocationManager<Instance, Config extends unknown[]> {
 			own = { error };
 		}
 
-		// 3. The failures come out after every release is done, so nothing stays open because of them: the one as it
-		//    came, both together when the joined run and this call's own run failed
+		// The failures come out after every release is done, so nothing stays open because of them: the one as it
+		// came, both together when the joined run and this call's own run failed
 		if (joined && own) {
 			throw new AggregateError([joined.error, own.error], 'Two close runs failed');
 		}
@@ -198,19 +201,19 @@ export abstract class LocationManager<Instance, Config extends unknown[]> {
 	 * @internal
 	 */
 	private async releaseAll(): Promise<void> {
-		// 1. Out of the registry before the first release starts, so a `location()` during the run builds a fresh
-		//    instance instead of being handed one that is about to be closed under it; what it builds stays for the
-		//    next `close()`
+		// Out of the registry before the first release starts, so a `location()` during the run builds a fresh
+		// instance instead of being handed one that is about to be closed under it; what it builds stays for the
+		// next `close()`
 		const released = [...this.instances.values()];
 		this.instances.clear();
 
-		// 2. Only the instances built so far hold anything; they release in parallel, each its own connections, and
-		//    every outcome is waited for, so one failure does not abandon the releases still running. Each release
-		//    starts inside an async function, so a `release()` that throws before returning a promise is a rejection
-		//    like any other rather than an exception that would stop the others from being started
+		// Only the instances built so far hold anything; they release in parallel, each its own connections, and
+		// every outcome is waited for, so one failure does not abandon the releases still running. Each release
+		// starts inside an async function, so a `release()` that throws before returning a promise is a rejection
+		// like any other rather than an exception that would stop the others from being started
 		const outcomes = await Promise.allSettled(released.map(async (instance) => await this.release(instance)));
 
-		// 3. Report the failures once nothing is left open: the one error as it came, several as an `AggregateError`
+		// Report the failures once nothing is left open: the one error as it came, several as an `AggregateError`
 		const failures = outcomes.filter((outcome) => outcome.status === 'rejected').map((outcome) => outcome.reason);
 
 		if (failures.length === 1) {

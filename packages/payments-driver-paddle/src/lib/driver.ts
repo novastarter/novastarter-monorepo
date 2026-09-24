@@ -1,4 +1,4 @@
-import { InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
+import { InvalidConfigError, InvalidCredentialsError, InvalidPayloadError } from '@novastarter/errors';
 import { type CallOptions, type CallResponse, type HttpApi, request } from '@novastarter/http';
 import type {
 	CancelSubscriptionInput,
@@ -171,22 +171,22 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	 * Create a driver from its location options.
 	 *
 	 * @param config - API key, webhook secret, environment, checkout page.
-	 * @throws Error without a key or a webhook secret — a deployment that cannot verify webhooks would drift from
-	 * Paddle silently.
+	 * @throws InvalidConfigError without a key or a webhook secret — a deployment that cannot verify webhooks would
+	 * drift from Paddle silently.
 	 */
 	constructor(config: PaymentsDriverPaddleConfig) {
-		// 1. Fail at registration for the two values nothing works without, rather than on the first request
+		// Fail at registration for the two values nothing works without, rather than on the first request
 		if (!config.apiKey) {
-			throw new Error('The paddle payments driver needs an "apiKey"');
+			throw new InvalidConfigError({ reason: 'The paddle payments driver needs an "apiKey"' });
 		}
 
 		if (!config.webhookSecret) {
-			throw new Error('The paddle payments driver needs a "webhookSecret"');
+			throw new InvalidConfigError({ reason: 'The paddle payments driver needs a "webhookSecret"' });
 		}
 
-		// 2. The SDK takes a base URL in place of an environment name, which is how a stand-in is reached; the option
-		//    is typed as the SDK's string enum, so an arbitrary URL reaches it through `unknown` — a plain
-		//    `as Environment` would assert the URL is a member of the enum
+		// The SDK takes a base URL in place of an environment name, which is how a stand-in is reached; the option
+		// is typed as the SDK's string enum, so an arbitrary URL reaches it through `unknown` — a plain
+		// `as Environment` would assert the URL is a member of the enum
 		const environment = config.environment === 'sandbox' ? Environment.sandbox : Environment.production;
 
 		this.client =
@@ -196,7 +196,7 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 		this.webhookSecret = config.webhookSecret;
 		this.checkoutUrl = config.checkoutUrl;
 
-		// 3. The SDK has no raw request, so `call()` makes its own with the same key against the same API
+		// The SDK has no raw request, so `call()` makes its own with the same key against the same API
 		this.api = {
 			provider: 'paddle',
 			baseUrl: config.apiUrl ?? PADDLE_API_URLS[config.environment === 'sandbox' ? 'sandbox' : 'production'],
@@ -213,14 +213,13 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	 * @throws Paddle's `ApiError` when the request is refused, or the fetch error when Paddle cannot be reached.
 	 */
 	async createCustomer(input: CreateCustomerInput): Promise<PaymentsCustomer> {
-		// 1. Optional fields are only sent when given; the metadata becomes Paddle's custom data
 		const customer = await this.client.customers.create({
 			email: input.email,
 			...(input.name !== undefined ? { name: input.name } : {}),
 			...(input.metadata !== undefined ? { customData: input.metadata } : {}),
 		});
 
-		// 2. Custom data comes back as JSON; the kit's metadata is flat strings
+		// Custom data comes back as JSON; the kit's metadata is flat strings
 		return { id: customer.id, email: customer.email, name: customer.name, metadata: toMetadata(customer.customData) };
 	}
 
@@ -233,11 +232,11 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	 * @returns The transaction and its payment link.
 	 * @throws Paddle's `ApiError` when the request is refused — an unknown price or customer — or the fetch error
 	 * when Paddle cannot be reached.
-	 * @throws Error when Paddle hands back no payment link — the account has no default payment link and the
-	 * location names no checkout page.
+	 * @throws InvalidConfigError when Paddle hands back no payment link — the account has no default payment link and
+	 * the location names no checkout page.
 	 */
 	async createCheckoutSession(input: CreateCheckoutSessionInput): Promise<CheckoutSession> {
-		// 1. A transaction for the price and the seats; the checkout page is the configured one or Paddle's default
+		// The checkout page is the configured one or Paddle's default payment link
 		const transaction = await this.client.transactions.create({
 			items: [{ priceId: input.priceId, quantity: input.quantity ?? 1 }],
 			customerId: input.customerId,
@@ -245,14 +244,14 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 			...(this.checkoutUrl !== undefined ? { checkout: { url: this.checkoutUrl } } : {}),
 		});
 
-		// 2. Without a payment link there is nowhere to send the browser; Paddle only fills it when a page is known
+		// Without a payment link there is nowhere to send the browser; Paddle only fills it when a page is known
 		if (!transaction.checkout?.url) {
-			throw new Error(
-				`Paddle transaction "${transaction.id}" has no checkout URL: set the "checkoutUrl" option or a default payment link in Paddle`,
-			);
+			throw new InvalidConfigError({
+				reason: `Paddle transaction "${transaction.id}" has no checkout URL: set the "checkoutUrl" option or a default payment link in Paddle`,
+			});
 		}
 
-		// 3. A transaction does not expire the way a hosted session does
+		// A transaction does not expire the way a hosted session does
 		return { id: transaction.id, url: transaction.checkout.url, expiresAt: null };
 	}
 
@@ -264,7 +263,7 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	 * @throws Paddle's `ApiError` when there is no such customer, or the fetch error when Paddle cannot be reached.
 	 */
 	async createPortalSession(input: CreatePortalSessionInput): Promise<PortalSession> {
-		// 1. No subscription ids: the overview link covers every subscription of the customer
+		// Without subscription ids, the overview link covers every subscription of the customer
 		const session = await this.client.customerPortalSessions.create(input.customerId, []);
 
 		return { url: session.urls.general.overview };
@@ -279,7 +278,7 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	 * reached.
 	 */
 	async getSubscription(subscriptionId: string): Promise<Subscription> {
-		// 1. The entity carries the items with their prices, which is all the mapping reads
+		// The entity carries the items with their prices, which is all the mapping reads
 		return toSubscription(await this.client.subscriptions.get(subscriptionId));
 	}
 
@@ -291,23 +290,23 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	 *
 	 * @param input - Subscription, new price and/or seats, proration.
 	 * @returns The subscription after the change.
-	 * @throws Error when neither a price nor a seat count is given.
+	 * @throws InvalidPayloadError when neither a price nor a seat count is given.
 	 * @throws Paddle's `ApiError` when the request is refused — no such subscription, an unknown price, a quantity
 	 * outside the price's limits — or the fetch error when Paddle cannot be reached.
 	 */
 	async updateSubscription(input: UpdateSubscriptionInput): Promise<Subscription> {
-		// 1. An update with nothing to change is a caller's mistake, not a request to send
+		// An update with nothing to change is a caller's mistake, not a request to send
 		if (input.priceId === undefined && input.quantity === undefined) {
-			throw new Error(
-				`Nothing to update on Paddle subscription "${input.subscriptionId}": give a priceId or a quantity`,
-			);
+			throw new InvalidPayloadError({
+				reason: `Nothing to update on Paddle subscription "${input.subscriptionId}": give a priceId or a quantity`,
+			});
 		}
 
-		// 2. The subscription as it is: the raw entity keeps every item, the mapped one the price and quantity that stay
+		// The raw entity keeps every item; the mapped one gives the price and quantity that stay
 		const raw = await this.client.subscriptions.get(input.subscriptionId);
 		const current = toSubscription(raw);
 
-		// 3. Paddle takes the full item list and removes what is left out, so every other item (an add-on added on the
+		// Paddle takes the full item list and removes what is left out, so every other item (an add-on added on the
 		// dashboard or through `call()`) is sent back unchanged and only the first one gets the merged price and quantity
 		const items = raw.items.map((item, index) =>
 			index === 0
@@ -315,7 +314,6 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 				: { priceId: item.price.id, quantity: item.quantity },
 		);
 
-		// 4. One update carries the item list and the proration mode mapped onto Paddle's
 		const updated = await this.client.subscriptions.update(input.subscriptionId, {
 			items,
 			prorationBillingMode: PRORATION[input.proration ?? 'prorate'],
@@ -335,7 +333,7 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	 * when Paddle cannot be reached.
 	 */
 	async cancelSubscription(input: CancelSubscriptionInput): Promise<Subscription> {
-		// 1. One call either way: the effective date is what tells a scheduled cancellation from an immediate one
+		// The effective date is what tells a scheduled cancellation from an immediate one
 		const subscription = await this.client.subscriptions.cancel(input.subscriptionId, {
 			effectiveFrom: input.immediately ? 'immediately' : 'next_billing_period',
 		});
@@ -352,11 +350,10 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	 * @throws Paddle's `ApiError` when the request is refused, or the fetch error when Paddle cannot be reached.
 	 */
 	async listInvoices(input: ListInvoicesInput): Promise<Invoice[]> {
-		// 1. This many transactions are asked for; the caller's default otherwise
 		const limit = input.limit ?? 20;
 
-		// 2. Only the billed states: a draft or an abandoned checkout is not an invoice. Paddle caps a page at
-		// `PADDLE_MAX_PER_PAGE`, so a larger limit is asked for in pages of that size
+		// A draft or an abandoned checkout is not an invoice. Paddle caps a page at `PADDLE_MAX_PER_PAGE`, so a larger
+		// limit is asked for in pages of that size
 		const page = this.client.transactions.list({
 			customerId: [input.customerId],
 			status: ['billed', 'paid', 'completed', 'past_due', 'canceled'],
@@ -364,14 +361,14 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 			perPage: Math.min(limit, PADDLE_MAX_PER_PAGE),
 		});
 
-		// 3. Pages are read until the limit is reached or Paddle has no more, so a limit above one page is not cut short
+		// Pages are read until the limit is reached or Paddle has no more, so a limit above one page is not cut short
 		const transactions: Awaited<ReturnType<typeof page.next>> = [];
 
 		do {
 			transactions.push(...(await page.next()));
 		} while (transactions.length < limit && page.hasMore);
 
-		// 4. The last page may overshoot the limit; only the requested number goes back
+		// The last page may overshoot the limit
 		return transactions.slice(0, limit).map(toInvoice);
 	}
 
@@ -390,32 +387,32 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	 * tolerance.
 	 */
 	async parseWebhook(rawBody: string, headers: WebhookHeaders): Promise<PaymentsEvent | null> {
-		// 1. Without a signature header there is nothing to verify against; the delivery is malformed, not forged
+		// Without a signature header there is nothing to verify against; the delivery is malformed, not forged
 		const signature = headers[SIGNATURE_HEADER];
 
 		if (!signature) {
 			throw new InvalidPayloadError({ reason: `The delivery carries no ${SIGNATURE_HEADER} header` });
 		}
 
-		// 2. The header must name the timestamp and the digest; one without them is malformed (400), not forged
+		// The header must name the timestamp and the digest; one without them is malformed (400), not forged
 		const parts = signaturePartsOf(signature);
 
-		// 3. The HMAC is recomputed and compared in constant time before the SDK sees the body, the SDK's signed
-		//    payload and replay window reproduced exactly — its own comparison would leak how much of a guessed
-		//    signature was right
+		// The HMAC is recomputed and compared in constant time before the SDK sees the body, the SDK's signed
+		// payload and replay window reproduced exactly — its own comparison would leak how much of a guessed
+		// signature was right
 		if (!verifySignature(rawBody, parts, this.webhookSecret)) {
 			throw new InvalidCredentialsError();
 		}
 
-		// 4. The signature is verified; `unmarshal` now only parses the body — its own verification runs again inside
-		//    as a formality, so a failure there is no longer expected
+		// The signature is verified; `unmarshal` now only parses the body — its own verification runs again inside
+		// as a formality, so a failure there is no longer expected
 		let event;
 
 		try {
 			event = await this.client.webhooks.unmarshal(rawBody, this.webhookSecret, signature);
 		} catch (error) {
-			// 5. An SDK signature error here can only be the replay window closing between the two checks — still a
-			//    credentials problem, not a payload one; anything else it throws is a payload problem
+			// An SDK signature error here can only be the replay window closing between the two checks — still a
+			// credentials problem, not a payload one; anything else it throws is a payload problem
 			if (toErrorMessage(error).startsWith('[Paddle]')) {
 				throw new InvalidCredentialsError(undefined, { cause: error });
 			}
@@ -423,13 +420,12 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 			throw new InvalidPayloadError({ reason: toErrorMessage(error) });
 		}
 
-		// 6. A verified body that is not an event is the sender's problem, reported as such — the SDK reads an unknown
-		//    type as a generic event and a non-event as one without a type or an id
+		// A verified body that is not an event is the sender's problem, reported as such — the SDK reads an unknown
+		// type as a generic event and a non-event as one without a type or an id
 		if (typeof event.eventType !== 'string' || typeof event.eventId !== 'string') {
 			throw new InvalidPayloadError({ reason: 'The body is not a Paddle event' });
 		}
 
-		// 7. The mapping decides which Paddle events the kit acts on
 		return toEvent(event);
 	}
 
@@ -470,8 +466,8 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 		params?: Record<string, unknown>,
 		options?: CallOptions,
 	): Promise<CallResponse<T>> {
-		// 1. The shared request does it all: placeholders, Paddle's hosts only — so the key never travels elsewhere —
-		//    the deadline, and an error status turned into the kit's error with Paddle's `{ error }`
+		// The shared request does it all: placeholders, Paddle's hosts only — so the key never travels elsewhere —
+		// the deadline, and an error status turned into the kit's error with Paddle's `{ error }`
 		return request<T>(this.api, method, params, options);
 	}
 
@@ -481,7 +477,7 @@ export class PaymentsDriverPaddle implements PaymentsDriver {
 	 * @throws Paddle's `ApiError` when it does not.
 	 */
 	async verify(): Promise<void> {
-		// 1. The event types need nothing but a valid key and answer the same for every account
+		// The event types need nothing but a valid key and answer the same for every account
 		await this.client.eventTypes.list();
 	}
 }

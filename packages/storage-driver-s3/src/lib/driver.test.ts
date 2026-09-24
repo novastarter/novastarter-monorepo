@@ -37,7 +37,7 @@ import {
 	randGitShortSha as randUnique,
 	randWord,
 } from '@ngneat/falso';
-import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
+import { HitRateLimitError, InvalidConfigError, InvalidPayloadError, ProviderCallError } from '@novastarter/errors';
 import { StorageFileNotFoundError } from '@novastarter/storage';
 import { confinePath, joinPath, retry, withTimeout } from '@novastarter/utils';
 import { isReadableStream } from '@novastarter/utils/node';
@@ -92,7 +92,7 @@ let sample: {
 let driver: StorageDriverS3;
 
 beforeEach(() => {
-	// 1. Fresh random values per test; falso keeps them realistic enough to catch accidental string handling
+	// Fresh random values per test; falso keeps them realistic enough to catch accidental string handling
 	sample = {
 		config: {
 			key: randAlphaNumeric({ length: 20 }).join(''),
@@ -127,15 +127,15 @@ beforeEach(() => {
 		},
 	};
 
-	// 2. Every SDK module is mocked above, so constructing the driver only records calls and never opens a socket
+	// Every SDK module is mocked above, so constructing the driver only records calls and never opens a socket
 	driver = new StorageDriverS3({
 		key: sample.config.key,
 		secret: sample.config.secret,
 		bucket: sample.config.bucket,
 	});
 
-	// 3. Stub the private path resolver with a lookup table, so assertions can match exact keys without depending on
-	//    the mocked `joinPath`
+	// A lookup table stands in for the private path resolver, so assertions can match exact keys without depending on
+	// the mocked `joinPath`
 	driver['fullPath'] = vi.fn().mockImplementation((input) => {
 		if (input === sample.path.src) return sample.path.srcFull;
 		if (input === sample.path.dest) return sample.path.destFull;
@@ -146,7 +146,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	// 1. Reset call history and implementations, so a `mockReturnValue` set in one test cannot leak into the next
+	// Implementations are reset too, so a `mockReturnValue` set in one test cannot leak into the next
 	vi.resetAllMocks();
 });
 
@@ -155,8 +155,8 @@ describe('#constructor', () => {
 	let sampleClient: S3Client;
 
 	beforeEach(() => {
-		// 1. Swap `getClient` on the prototype before construction, so the constructor's own call is observable; the
-		//    original is restored afterwards because the other describe blocks rely on it
+		// Swap `getClient` on the prototype before construction, so the constructor's own call is observable; the
+		// original is restored afterwards because the other describe blocks rely on it
 		getClientBackup = StorageDriverS3.prototype['getClient'];
 		sampleClient = {} as S3Client;
 		StorageDriverS3.prototype['getClient'] = vi.fn().mockReturnValue(sampleClient);
@@ -167,25 +167,25 @@ describe('#constructor', () => {
 	});
 
 	test('Saves passed config to local property', () => {
-		// 1. The config must be kept by reference: the other describe blocks tweak it on the instance after construction
+		// The config must be kept by reference: the other describe blocks tweak it on the instance after construction
 		const driver = new StorageDriverS3(sample.config);
 		expect(driver['config']).toBe(sample.config);
 	});
 
 	test('Creates shared client', () => {
-		// 1. The client is built inside the constructor, so a bad config fails early; the stub only records that call
+		// The client is built inside the constructor, so a bad config fails early; the stub only records that call
 		const driver = new StorageDriverS3(sample.config);
 		expect(driver['getClient']).toHaveBeenCalledOnce();
 		expect(driver['client']).toBe(sampleClient);
 	});
 
 	test('Defaults root to empty string', () => {
-		// 1. No root given: keys are placed at the top of the bucket, so the prefix must be empty rather than `/`
+		// No root given: keys are placed at the top of the bucket, so the prefix must be empty rather than `/`
 		expect(driver['root']).toBe('');
 	});
 
 	test('Normalizes config path when root is given', () => {
-		// 1. `confinePath` is auto-mocked; a fixed return value shows the driver stores the confined result, not the raw root
+		// `confinePath` is auto-mocked; a fixed return value shows the driver stores the confined result, not the raw root
 		const mockRoot = randDirectoryPath();
 
 		vi.mocked(confinePath).mockReturnValue(mockRoot);
@@ -197,14 +197,14 @@ describe('#constructor', () => {
 			root: sample.config.root,
 		});
 
-		// 2. The root is confined like every key: no leading slash, `.` and `..` resolved
+		// The root is confined like every key: no leading slash, `.` and `..` resolved
 		expect(confinePath).toHaveBeenCalledWith(sample.config.root);
 		expect(driver['root']).toBe(mockRoot);
 	});
 
 	test.each([[1024], [5_242_879], [Number.NaN]])('Refuses a tus.chunkSize of %s, below the S3 minimum', (chunkSize) => {
-		// 1. Every part but the last has to reach the S3 minimum, so a smaller preferred size could never advance an
-		//    upload; it is refused at construction with the minimum named rather than on the first PATCH
+		// Every part but the last has to reach the S3 minimum, so a smaller preferred size could never advance an
+		// upload; it is refused at construction with the minimum named rather than on the first PATCH
 		expect(
 			() =>
 				new StorageDriverS3({
@@ -213,11 +213,13 @@ describe('#constructor', () => {
 					bucket: sample.config.bucket,
 					tus: { chunkSize },
 				}),
-		).toThrowError('The s3 storage driver needs a "tus.chunkSize" of at least 5242880 bytes');
+		).toThrowError(
+			new InvalidConfigError({ reason: 'The s3 storage driver needs a "tus.chunkSize" of at least 5242880 bytes' }),
+		);
 	});
 
 	test('Takes a tus.chunkSize at the S3 minimum or above as the preferred part size', () => {
-		// 1. The minimum itself is allowed: it is the smallest part S3 accepts, and the default when nothing is given
+		// The minimum itself is allowed: it is the smallest part S3 accepts, and the default when nothing is given
 		const chunkSize = rand([5_242_880, 16 * 1024 * 1024]);
 
 		const driver = new StorageDriverS3({
@@ -233,30 +235,30 @@ describe('#constructor', () => {
 
 describe('#getClient', () => {
 	test('Throws error if bucket missing', () => {
-		// 1. The constructor calls `getClient` itself, so every case here is driven through `new` rather than a direct
-		//    call. Every command targets the bucket, so its absence is refused at construction rather than on the first
-		//    request
+		// The constructor calls `getClient` itself, so every case here is driven through `new` rather than a direct
+		// call. Every command targets the bucket, so its absence is refused at construction rather than on the first
+		// request
 		expect(() => new StorageDriverS3({ bucket: '' })).toThrowErrorMatchingInlineSnapshot(
-			`[Error: The s3 storage driver needs a "bucket"]`,
+			`[NovastarterError: Invalid config. The s3 storage driver needs a "bucket".]`,
 		);
 	});
 
 	test('Throws error if key defined but secret missing', () => {
-		// 1. The constructor builds the client, so half a credential pair must throw before any client exists
+		// The constructor builds the client, so half a credential pair must throw before any client exists
 		expect(() => new StorageDriverS3({ key: 'key', bucket: 'bucket' })).toThrowError(
-			'The s3 storage driver needs "key" and "secret" together',
+			new InvalidConfigError({ reason: 'The s3 storage driver needs "key" and "secret" together' }),
 		);
 	});
 
 	test('Throws error if secret defined but key missing', () => {
-		// 1. The constructor builds the client, so half a credential pair must throw before any client exists
+		// The constructor builds the client, so half a credential pair must throw before any client exists
 		expect(() => new StorageDriverS3({ secret: 'secret', bucket: 'bucket' })).toThrowError(
-			'The s3 storage driver needs "key" and "secret" together',
+			new InvalidConfigError({ reason: 'The s3 storage driver needs "key" and "secret" together' }),
 		);
 	});
 
 	test('Creates S3Client without key / secret (based on machine config)', () => {
-		// 1. Without a key pair no `credentials` entry may appear, so the SDK falls back to its own provider chain
+		// Without a key pair no `credentials` entry may appear, so the SDK falls back to its own provider chain
 		const driver = new StorageDriverS3({ bucket: 'bucket' });
 
 		expect(S3Client).toHaveBeenCalledWith({
@@ -267,7 +269,7 @@ describe('#getClient', () => {
 	});
 
 	test('Creates S3Client with key / secret configuration', () => {
-		// 1. The shared driver from `beforeEach` was built with both halves, so its constructor call is already recorded
+		// The shared driver from `beforeEach` was built with both halves, so its constructor call is already recorded
 		expect(S3Client).toHaveBeenCalledWith({
 			credentials: {
 				accessKeyId: sample.config.key,
@@ -280,7 +282,7 @@ describe('#getClient', () => {
 	});
 
 	test('Sets http endpoints', () => {
-		// 1. A plain-http endpoint must keep its scheme; only local setups use it, so it is never assumed
+		// A plain-http endpoint must keep its scheme; only local setups use it, so it is never assumed
 		const sampleDomain = randDomainName();
 		const sampleHttpEndpoint = `http://${sampleDomain}`;
 
@@ -291,7 +293,7 @@ describe('#getClient', () => {
 			endpoint: sampleHttpEndpoint,
 		});
 
-		// 2. The SDK takes the endpoint as a hostname/protocol/path triple, so the driver must split the URL itself
+		// The SDK takes the endpoint as a hostname/protocol/path triple, so the driver must split the URL itself
 		expect(S3Client).toHaveBeenCalledWith({
 			endpoint: {
 				hostname: sampleDomain,
@@ -307,7 +309,7 @@ describe('#getClient', () => {
 	});
 
 	test('Sets https endpoints', () => {
-		// 1. https is the assumed scheme; the prefix is stripped from the hostname either way
+		// https is the assumed scheme; the prefix is stripped from the hostname either way
 		const sampleDomain = randDomainName();
 		const sampleHttpEndpoint = `https://${sampleDomain}`;
 
@@ -318,7 +320,7 @@ describe('#getClient', () => {
 			endpoint: sampleHttpEndpoint,
 		});
 
-		// 2. Same triple as for http, with the scheme carried in `protocol` rather than in the hostname
+		// Same triple as for http, with the scheme carried in `protocol` rather than in the hostname
 		expect(S3Client).toHaveBeenCalledWith({
 			endpoint: {
 				hostname: sampleDomain,
@@ -334,8 +336,8 @@ describe('#getClient', () => {
 	});
 
 	test('Keeps a path prefix and a port of a custom endpoint', () => {
-		// 1. An S3-compatible service mounted under a path prefix loses it when the endpoint is split by string
-		//    replacement, and a port ends up inside `hostname`; the URL parser forwards both to their own fields
+		// An S3-compatible service mounted under a path prefix loses it when the endpoint is split by string
+		// replacement, and a port ends up inside `hostname`; the URL parser forwards both to their own fields
 		new StorageDriverS3({
 			key: sample.config.key,
 			secret: sample.config.secret,
@@ -359,7 +361,7 @@ describe('#getClient', () => {
 	});
 
 	test('Sets region', () => {
-		// 1. Region is optional; when given it must reach the SDK unchanged, next to the credentials
+		// Region is optional; when given it must reach the SDK unchanged, next to the credentials
 		new StorageDriverS3({
 			key: sample.config.key,
 			secret: sample.config.secret,
@@ -378,8 +380,8 @@ describe('#getClient', () => {
 	});
 
 	test('Sets force path style', () => {
-		// 1. `false` is a meaningful value here, so the flag must be forwarded whenever it is defined; the random
-		//    boolean covers both cases over time
+		// `false` is a meaningful value here, so the flag must be forwarded whenever it is defined; the random
+		// boolean covers both cases over time
 		new StorageDriverS3({
 			key: sample.config.key,
 			secret: sample.config.secret,
@@ -398,8 +400,8 @@ describe('#getClient', () => {
 	});
 
 	test('Sets checksum policies', () => {
-		// 1. Both policies must reach the SDK unchanged; `WHEN_REQUIRED` is what S3-compatible services without
-		//    flexible checksums (Cloudflare R2) need to accept PutObject / UploadPart
+		// Both policies must reach the SDK unchanged; `WHEN_REQUIRED` is what S3-compatible services without
+		// flexible checksums (Cloudflare R2) need to accept PutObject / UploadPart
 		new StorageDriverS3({
 			key: sample.config.key,
 			secret: sample.config.secret,
@@ -422,25 +424,24 @@ describe('#getClient', () => {
 
 describe('#fullPath', () => {
 	test('Returns normalized joined path', () => {
-		// 1. Use a fresh driver: the shared one has `fullPath` stubbed out in the top-level `beforeEach`
+		// Use a fresh driver: the shared one has `fullPath` stubbed out in the top-level `beforeEach`
 		const driver = new StorageDriverS3({
 			key: sample.config.key,
 			secret: sample.config.secret,
 			bucket: sample.config.bucket,
 		});
 
-		// 2. `joinPath` is auto-mocked; a fixed return value lets the assertions check the wiring, not real path logic
+		// `joinPath` is auto-mocked; a fixed return value lets the assertions check the wiring, not real path logic
 		vi.mocked(joinPath).mockReturnValue(sample.path.inputFull);
 		vi.mocked(confinePath).mockReturnValue(sample.path.input);
 
-		// 3. Point the driver at a root, since the shared config leaves it empty
+		// The shared config leaves the root empty
 		// @ts-expect-error - mutating private attribute
 		driver['root'] = sample.config.root;
 
-		// 4. `joinPath` must get root and path in that order, and its result is the key
 		const result = driver['fullPath'](sample.path.input);
 
-		// 5. The caller path is confined first, so a leading `..` is dropped before the root is joined
+		// The caller path is confined first, so a leading `..` is dropped before the root is joined
 		expect(confinePath).toHaveBeenCalledWith(sample.path.input);
 		expect(joinPath).toHaveBeenCalledWith(sample.config.root, sample.path.input);
 		expect(result).toBe(sample.path.inputFull);
@@ -449,7 +450,7 @@ describe('#fullPath', () => {
 
 describe('#read', () => {
 	beforeEach(() => {
-		// 1. `isReadableStream` is auto-mocked and would return `undefined`, so it is forced to accept the bare `Readable`
+		// `isReadableStream` is auto-mocked and would return `undefined`, so it is forced to accept the bare `Readable`
 		vi.mocked(driver['client'].send).mockReturnValue({
 			Body: new Readable(),
 		} as unknown as void);
@@ -458,7 +459,7 @@ describe('#read', () => {
 	});
 
 	test('Throws StorageFileNotFoundError when S3 answers 404, rethrows anything else', async () => {
-		// 1. `NoSuchKey` is the error every backend shares; a denied read says nothing about the object
+		// `NoSuchKey` is the error every backend shares; a denied read says nothing about the object
 		vi.mocked(driver['client'].send).mockRejectedValueOnce(
 			Object.assign(new Error('NoSuchKey'), { $metadata: { httpStatusCode: 404 } }) as never,
 		);
@@ -472,7 +473,6 @@ describe('#read', () => {
 	});
 
 	test('Uses fullPath key / bucket in command input', async () => {
-		// 1. No options: the command must carry only Key and Bucket, with no Range header
 		await driver.read(sample.path.input);
 
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
@@ -484,7 +484,7 @@ describe('#read', () => {
 	});
 
 	test('Optionally allows setting start range offset', async () => {
-		// 1. An open end must serialise as `bytes=start-`, so S3 reads up to the last byte
+		// An open end must serialise as `bytes=start-`, so S3 reads up to the last byte
 		await driver.read(sample.path.input, {
 			range: { start: sample.range.start },
 		});
@@ -497,8 +497,8 @@ describe('#read', () => {
 	});
 
 	test('Optionally allows setting end range offset', async () => {
-		// 1. Only `end` set: the header becomes `bytes=0-end`, the first bytes up to `end`; `bytes=-end` would be a
-		//    suffix range, the last N bytes, which is not what an `end` offset means
+		// Only `end` set: the header becomes `bytes=0-end`, the first bytes up to `end`; `bytes=-end` would be a
+		// suffix range, the last N bytes, which is not what an `end` offset means
 		await driver.read(sample.path.input, { range: { end: sample.range.end } });
 
 		expect(GetObjectCommand).toHaveBeenCalledWith({
@@ -509,7 +509,7 @@ describe('#read', () => {
 	});
 
 	test('Optionally allows setting start and end range offset', async () => {
-		// 1. Both bounds present: an inclusive `bytes=start-end` header
+		// Both bounds present: an inclusive `bytes=start-end` header
 		await driver.read(sample.path.input, { range: sample.range });
 
 		expect(GetObjectCommand).toHaveBeenCalledWith({
@@ -520,27 +520,27 @@ describe('#read', () => {
 	});
 
 	test('Throws an error when no stream is returned', async () => {
-		// 1. A response without a body must surface as a failed read, not as an `undefined` return
+		// A response without a body must surface as a failed read, not as an `undefined` return
 		vi.mocked(driver['client'].send).mockReturnValue({
 			Body: undefined,
 		} as unknown as void);
 
 		await expect(driver.read(sample.path.input, { range: sample.range })).rejects.toThrowError(
-			`No stream returned for file "${sample.path.input}"`,
+			`The s3 storage driver got no stream for file "${sample.path.input}"`,
 		);
 	});
 
 	test('Throws an error when returned stream is not a readable stream', async () => {
-		// 1. A body that is not a Node readable (for example a Web stream) is rejected the same way
+		// A body that is not a Node readable (for example a Web stream) is rejected the same way
 		vi.mocked(isReadableStream).mockReturnValue(false);
 
 		await expect(driver.read(sample.path.input, { range: sample.range })).rejects.toThrowError(
-			new Error(`No stream returned for file "${sample.path.input}"`),
+			new Error(`The s3 storage driver got no stream for file "${sample.path.input}"`),
 		);
 	});
 
 	test('Returns stream from S3 client', async () => {
-		// 1. Stub the command constructor too, so the exact instance handed to `send` can be asserted
+		// The stubbed constructor lets the test assert the exact instance handed to `send`
 		const mockGetObjectCommand = {} as GetObjectCommand;
 
 		vi.mocked(driver['client'].send).mockReturnValue({
@@ -549,7 +549,7 @@ describe('#read', () => {
 
 		vi.mocked(GetObjectCommand).mockReturnValue(mockGetObjectCommand);
 
-		// 2. The body must come back untouched, without any wrapping
+		// The body must come back untouched, without any wrapping
 		const stream = await driver.read(sample.path.input, {
 			range: sample.range,
 		});
@@ -561,7 +561,7 @@ describe('#read', () => {
 
 describe('#stat', () => {
 	beforeEach(() => {
-		// 1. A HEAD response carries these two fields; the driver must map them onto `size` and `modified`
+		// A HEAD response carries these two fields; the driver must map them onto `size` and `modified`
 		vi.mocked(driver['client'].send).mockResolvedValue({
 			ContentLength: sample.file.size,
 			LastModified: sample.file.modified,
@@ -569,7 +569,7 @@ describe('#stat', () => {
 	});
 
 	test('Uses HeadObjectCommand with fullPath', async () => {
-		// 1. HEAD instead of GET keeps the body off the wire; the key must still go through `fullPath`
+		// HEAD instead of GET keeps the body off the wire; the key must still go through `fullPath`
 		await driver.stat(sample.path.input);
 
 		expect(driver['fullPath']).toHaveBeenCalledWith(sample.path.input);
@@ -581,7 +581,7 @@ describe('#stat', () => {
 	});
 
 	test('Calls #send with HeadObjectCommand', async () => {
-		// 1. Stub the command constructor, so the exact instance handed to `send` can be asserted
+		// The stubbed constructor lets the test assert the exact instance handed to `send`
 		const mockHeadObjectCommand = {} as HeadObjectCommand;
 		vi.mocked(HeadObjectCommand).mockReturnValue(mockHeadObjectCommand);
 
@@ -591,7 +591,7 @@ describe('#stat', () => {
 	});
 
 	test('Returns size/modified from returned send data', async () => {
-		// 1. The SDK field names differ from the storage contract, so the driver has to rename them
+		// The SDK field names differ from the storage contract, so the driver has to rename them
 		const result = await driver.stat(sample.path.input);
 
 		expect(result).toStrictEqual({
@@ -601,8 +601,8 @@ describe('#stat', () => {
 	});
 
 	test('Maps a 404 to the kit error', async () => {
-		// 1. Only a 404 in `$metadata` means "missing"; the driver turns it into the error every backend shares and
-		//    keeps the SDK error as cause
+		// Only a 404 in `$metadata` means "missing"; the driver turns it into the error every backend shares and
+		// keeps the SDK error as cause
 		const cause = Object.assign(new Error(), { $metadata: { httpStatusCode: 404 } });
 		vi.mocked(driver['client'].send).mockRejectedValue(cause as unknown as void);
 
@@ -613,7 +613,7 @@ describe('#stat', () => {
 	});
 
 	test('Rethrows any other SDK error', async () => {
-		// 1. A 403 covers rejected credentials as much as a missing object, so it must not be reported as "not found"
+		// A 403 covers rejected credentials as much as a missing object, so it must not be reported as "not found"
 		const error = Object.assign(new Error(), { $metadata: { httpStatusCode: 403 } });
 		vi.mocked(driver['client'].send).mockRejectedValue(error as unknown as void);
 
@@ -621,24 +621,24 @@ describe('#stat', () => {
 	});
 
 	test('Refuses a HEAD response missing size or modification time', async () => {
-		// 1. Both fields are optional in the SDK's types; answering `undefined` under the non-optional `Stat` type
-		//    would fail far from its cause, so a broken response is refused with the path named
+		// Both fields are optional in the SDK's types; answering `undefined` under the non-optional `Stat` type
+		// would fail far from its cause, so a broken response is refused with the path named
 		vi.mocked(driver['client'].send).mockResolvedValue({} as unknown as void);
 
 		await expect(driver.stat(sample.path.input)).rejects.toThrowError(
-			`No stat returned for file "${sample.path.input}"`,
+			`The s3 storage driver got no stat for file "${sample.path.input}"`,
 		);
 	});
 });
 
 describe('#exists', () => {
 	beforeEach(() => {
-		// 1. `exists` is a thin wrapper over `stat`; stubbing `stat` keeps these tests about the error mapping alone
+		// `exists` is a thin wrapper over `stat`; stubbing `stat` keeps these tests about the error mapping alone
 		driver.stat = vi.fn();
 	});
 
 	test('Returns true if stat returns the stats', async () => {
-		// 1. Any successful HEAD proves existence; the returned values themselves do not matter here
+		// Any successful HEAD proves existence; the returned values themselves do not matter here
 		vi.mocked(driver.stat).mockResolvedValue({
 			size: sample.file.size,
 			modified: sample.file.modified,
@@ -650,7 +650,7 @@ describe('#exists', () => {
 	});
 
 	test('Returns false if the object is not found', async () => {
-		// 1. `stat` reduces a 404 to the kit's "not found", which is the one error `exists` may read as `false`
+		// `stat` reduces a 404 to the kit's "not found", which is the one error `exists` may read as `false`
 		vi.mocked(driver.stat).mockRejectedValue(new StorageFileNotFoundError({ filepath: sample.path.input }));
 
 		const exists = await driver.exists(sample.path.input);
@@ -673,7 +673,7 @@ describe('#exists', () => {
 		['a socket timeout', { name: 'TimeoutError', $metadata: { attempts: 3 } }],
 		['a refused connection', { code: 'ECONNREFUSED' }],
 	])('Throws if the lookup failed with %s', async (_, shape) => {
-		// 1. Every non-404 failure must propagate unchanged, so callers can tell an outage from a missing file
+		// Every non-404 failure must propagate unchanged, so callers can tell an outage from a missing file
 		const error = Object.assign(new Error(), shape);
 
 		vi.mocked(driver.stat).mockRejectedValue(error);
@@ -684,7 +684,7 @@ describe('#exists', () => {
 
 describe('#move', () => {
 	beforeEach(async () => {
-		// 1. Stub both halves and run the move once; the tests below only assert the delegation
+		// The tests below only assert the delegation, so both halves are stubbed
 		driver.copy = vi.fn();
 		driver.delete = vi.fn();
 
@@ -692,24 +692,23 @@ describe('#move', () => {
 	});
 
 	test('Calls copy with given src and dest', async () => {
-		// 1. The copy is the half that carries the data, so it must get both paths untouched
+		// The copy is the half that carries the data, so it must get both paths untouched
 		expect(driver.copy).toHaveBeenCalledWith(sample.path.src, sample.path.dest);
 	});
 
 	test('Calls delete on successful copy', async () => {
-		// 1. Only the source goes: deleting the destination would undo the copy
+		// Only the source goes: deleting the destination would undo the copy
 		expect(driver.delete).toHaveBeenCalledWith(sample.path.src);
 	});
 
 	test('Does nothing when both paths resolve to the same key', async () => {
-		// 1. Clear the calls of the move run in `beforeEach` and make the destination resolve to the source key
 		vi.mocked(driver.copy).mockClear();
 		vi.mocked(driver.delete).mockClear();
 		vi.mocked(driver['fullPath']).mockReturnValue(sample.path.srcFull);
 
 		await driver.move(sample.path.src, sample.path.dest);
 
-		// 2. With encryption configured S3 accepts a copy onto itself, so the delete would remove the only copy
+		// With encryption configured S3 accepts a copy onto itself, so the delete would remove the only copy
 		expect(driver.copy).not.toHaveBeenCalled();
 		expect(driver.delete).not.toHaveBeenCalled();
 	});
@@ -725,7 +724,7 @@ const encodedKey = (key: string): string => key.split('/').map(encodeURIComponen
 
 describe('#copy', () => {
 	test('URL-encodes the reserved characters of the source key, segment by segment', async () => {
-		// 1. S3 reads `x-amz-copy-source` URL-encoded: a raw `+` is a space, a raw `?` starts the version query
+		// S3 reads `x-amz-copy-source` URL-encoded: a raw `+` is a space, a raw `?` starts the version query
 		driver['fullPath'] = vi.fn((input: string) =>
 			input === 'a+b/c?d%e.png' ? 'media/a+b/c?d%e.png' : sample.path.destFull,
 		);
@@ -738,7 +737,7 @@ describe('#copy', () => {
 	});
 
 	test('Constructs params object based on config', async () => {
-		// 1. With the minimal config the request must carry no ACL or encryption headers, only the source and target keys
+		// With the minimal config the request must carry no ACL or encryption headers, only the source and target keys
 		await driver.copy(sample.path.src, sample.path.dest);
 
 		expect(CopyObjectCommand).toHaveBeenCalledWith({
@@ -749,7 +748,7 @@ describe('#copy', () => {
 	});
 
 	test('Optionally sets ServerSideEncryption', async () => {
-		// 1. Encryption alone, with no KMS key id configured, so only the mode header may appear whatever the mode
+		// Encryption alone, with no KMS key id configured, so only the mode header may appear whatever the mode
 		driver['config'].serverSideEncryption = sample.config.serverSideEncryption!;
 
 		await driver.copy(sample.path.src, sample.path.dest);
@@ -765,7 +764,7 @@ describe('#copy', () => {
 	test.each([[ServerSideEncryption.aws_kms], [ServerSideEncryption.aws_kms_dsse]])(
 		'Optionally sets ServerSideEncryptionKMSKeyId ',
 		async (sse) => {
-			// 1. For the KMS modes the configured key id must travel with the mode
+			// For the KMS modes the configured key id must travel with the mode
 			driver['config'].serverSideEncryption = sse;
 			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId!;
 
@@ -784,7 +783,7 @@ describe('#copy', () => {
 	test.each([[ServerSideEncryption.AES256], [ServerSideEncryption.aws_fsx]])(
 		'Does not set ServerSideEncryptionKMSKeyId if ServerSideEncryption is not aws:kms or aws:kms:dsse',
 		async (sse) => {
-			// 1. For the non-KMS modes the key id must be dropped even though it is configured: S3 rejects it
+			// For the non-KMS modes the key id must be dropped even though it is configured: S3 rejects it
 			driver['config'].serverSideEncryption = sse;
 			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId!;
 
@@ -801,7 +800,7 @@ describe('#copy', () => {
 	);
 
 	test('Optionally sets ACL', async () => {
-		// 1. The ACL is restated on the copy, since S3 does not carry it over from the source object
+		// The ACL is restated on the copy, since S3 does not carry it over from the source object
 		driver['config'].acl = sample.config.acl!;
 
 		await driver.copy(sample.path.src, sample.path.dest);
@@ -815,7 +814,7 @@ describe('#copy', () => {
 	});
 
 	test('Executes CopyObjectCommand', async () => {
-		// 1. Stub the command constructor, so the exact instance handed to `send` can be asserted
+		// The stubbed constructor lets the test assert the exact instance handed to `send`
 		const mockCommand = {} as CopyObjectCommand;
 		vi.mocked(CopyObjectCommand).mockReturnValue(mockCommand);
 
@@ -827,7 +826,7 @@ describe('#copy', () => {
 
 describe('#write', () => {
 	test('Passes streams to body as is', async () => {
-		// 1. The stream must reach `Upload` untouched; buffering it would defeat streaming uploads
+		// The stream must reach `Upload` untouched; buffering it would defeat streaming uploads
 		await driver.write(sample.path.input, sample.stream);
 
 		expect(Upload).toHaveBeenCalledWith({
@@ -841,7 +840,7 @@ describe('#write', () => {
 	});
 
 	test('Optionally sets ContentType', async () => {
-		// 1. The MIME type maps onto `ContentType`, which S3 later serves back as the object's Content-Type
+		// The MIME type maps onto `ContentType`, which S3 later serves back as the object's Content-Type
 		await driver.write(sample.path.input, sample.stream, sample.file.type);
 
 		expect(Upload).toHaveBeenCalledWith({
@@ -856,7 +855,7 @@ describe('#write', () => {
 	});
 
 	test('Optionally sets ServerSideEncryption', async () => {
-		// 1. Encryption alone, with no KMS key id configured, so only the mode header may appear whatever the mode
+		// Encryption alone, with no KMS key id configured, so only the mode header may appear whatever the mode
 		driver['config'].serverSideEncryption = sample.config.serverSideEncryption!;
 
 		await driver.write(sample.path.input, sample.stream);
@@ -875,7 +874,7 @@ describe('#write', () => {
 	test.each([[ServerSideEncryption.aws_kms], [ServerSideEncryption.aws_kms_dsse]])(
 		'Optionally sets ServerSideEncryptionKmsKeyId',
 		async (sse) => {
-			// 1. For the KMS modes the configured key id must travel with the mode
+			// For the KMS modes the configured key id must travel with the mode
 			driver['config'].serverSideEncryption = sse;
 			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId!;
 
@@ -897,7 +896,7 @@ describe('#write', () => {
 	test.each([[ServerSideEncryption.aws_fsx], [ServerSideEncryption.AES256]])(
 		'Does not set ServerSideEncryptionKmsKeyId when ServerSideEncryption is not aws:kms or aws:kms:dsse',
 		async (sse) => {
-			// 1. For the non-KMS modes the key id must be dropped even though it is configured: S3 rejects it
+			// For the non-KMS modes the key id must be dropped even though it is configured: S3 rejects it
 			driver['config'].serverSideEncryption = sse;
 			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId!;
 
@@ -917,7 +916,7 @@ describe('#write', () => {
 	);
 
 	test('Optionally sets ACL', async () => {
-		// 1. The ACL applies per object, so the configured value must be part of every write
+		// The ACL applies per object, so the configured value must be part of every write
 		driver['config'].acl = sample.config.acl!;
 
 		await driver.write(sample.path.input, sample.stream);
@@ -934,7 +933,7 @@ describe('#write', () => {
 	});
 
 	test('Waits for upload to be done', async () => {
-		// 1. `Upload` is auto-mocked, so a `done` has to be supplied to prove the driver awaits it
+		// `Upload` is auto-mocked, so a `done` has to be supplied to prove the driver awaits it
 		const mockUpload = { done: vi.fn() };
 		vi.mocked(Upload).mockReturnValue(mockUpload as unknown as Upload);
 
@@ -946,7 +945,7 @@ describe('#write', () => {
 
 describe('#delete', () => {
 	test('Constructs params based on input', async () => {
-		// 1. The key goes through `fullPath`; no version id is involved since the driver never enables versioning
+		// The key goes through `fullPath`; no version id is involved since the driver never enables versioning
 		await driver.delete(sample.path.input);
 
 		expect(DeleteObjectCommand).toHaveBeenCalledWith({
@@ -956,7 +955,7 @@ describe('#delete', () => {
 	});
 
 	test('Executes DeleteObjectCommand', async () => {
-		// 1. Stub the command constructor, so the exact instance handed to `send` can be asserted
+		// The stubbed constructor lets the test assert the exact instance handed to `send`
 		const mockDeleteObjectCommand = {} as DeleteObjectCommand;
 		vi.mocked(DeleteObjectCommand).mockReturnValue(mockDeleteObjectCommand);
 
@@ -975,7 +974,7 @@ describe('#call', () => {
 	 * @returns The error.
 	 */
 	const serviceError = (status: number, name: string): S3ServiceException => {
-		// 1. Built through the mocked class so `instanceof` in the driver holds; the constructor sets nothing itself
+		// Built through the mocked class so `instanceof` in the driver holds; the constructor sets nothing itself
 		const error = new S3ServiceException({ name, $fault: 'client', $metadata: {} });
 
 		Object.assign(error, { name, message: `${name} happened`, $metadata: { httpStatusCode: status } });
@@ -984,12 +983,12 @@ describe('#call', () => {
 	};
 
 	beforeEach(() => {
-		// 1. The real deadline, so the timeout tests see a real `TimeoutError` and an aborted signal
+		// The real deadline, so the timeout tests see a real `TimeoutError` and an aborted signal
 		vi.mocked(withTimeout).mockImplementation(withTimeoutActual);
 	});
 
 	test('Sends the named command with the location bucket and answers the output without $metadata', async () => {
-		// 1. The command instance handed to `send` is the one built from the caller's input and the default bucket
+		// The command instance handed to `send` is the one built from the caller's input and the default bucket
 		const command = {} as GetBucketVersioningCommand;
 		vi.mocked(GetBucketVersioningCommand).mockReturnValue(command);
 
@@ -1010,7 +1009,7 @@ describe('#call', () => {
 	});
 
 	test('Accepts the Command suffix and a bucket of the caller', async () => {
-		// 1. `PutBucketVersioningCommand` names the same class as `PutBucketVersioning`; a given bucket wins
+		// `PutBucketVersioningCommand` names the same class as `PutBucketVersioning`; a given bucket wins
 		vi.mocked(driver['client'].send).mockResolvedValue({ $metadata: {} } as never);
 
 		const result = await driver.call('PutBucketVersioningCommand', { Bucket: 'other' });
@@ -1022,24 +1021,25 @@ describe('#call', () => {
 	test.each(['NoSuchThing', 'getBucketVersioning', 'S3Client', 'GetBucketVersioning; x', ''])(
 		'Refuses %j before anything is sent',
 		async (method) => {
-			// 1. Only commands the SDK exports run; the client is never reached
+			// Only commands the SDK exports run; the client is never reached
 			await expect(driver.call(method)).rejects.toThrow('is not a command of @aws-sdk/client-s3');
+			await expect(driver.call(method)).rejects.toBeInstanceOf(InvalidPayloadError);
 
 			expect(driver['client'].send).not.toHaveBeenCalled();
 		},
 	);
 
 	test('Refuses headers before anything is sent, rather than dropping them', async () => {
-		// 1. The SDK builds and signs its own request; a header of the call or the location could never reach it
-		await expect(driver.call('GetBucketVersioning', {}, { headers: { 'x-trace': '1' } })).rejects.toThrow(
-			'S3 call() sends no extra headers; use the SDK client',
+		// The SDK builds and signs its own request; a header of the call or the location could never reach it
+		await expect(driver.call('GetBucketVersioning', {}, { headers: { 'x-trace': '1' } })).rejects.toThrowError(
+			new InvalidPayloadError({ reason: 'The s3 call() sends no extra headers; use the SDK client' }),
 		);
 
 		expect(driver['client'].send).not.toHaveBeenCalled();
 	});
 
 	test('Turns an answer of S3 into a ProviderCallError with its status and body', async () => {
-		// 1. A 404 of S3 keeps its status and error code for the caller; no credential is in the message
+		// A 404 of S3 keeps its status and error code for the caller; no credential is in the message
 		vi.mocked(driver['client'].send).mockRejectedValue(serviceError(404, 'NoSuchBucket') as never);
 
 		const error = await driver.call('GetBucketVersioning').catch((thrown: unknown) => thrown);
@@ -1058,7 +1058,7 @@ describe('#call', () => {
 	});
 
 	test('Turns a 429 into a HitRateLimitError', async () => {
-		// 1. S3 asking to slow down becomes the kit's rate-limit error
+		// S3 asking to slow down becomes the kit's rate-limit error
 		vi.mocked(driver['client'].send).mockRejectedValue(serviceError(429, 'TooManyRequests') as never);
 
 		await expect(driver.call('GetBucketVersioning')).rejects.toBeInstanceOf(HitRateLimitError);
@@ -1070,7 +1070,7 @@ describe('#call', () => {
 		[503, 'RequestLimitExceeded'],
 		[400, 'TooManyRequestsException'],
 	])('Turns a %s %s into a HitRateLimitError', async (status, name) => {
-		// 1. S3 throttles with a 503 `SlowDown`, other AWS services with their own codes; each is the kit's 429
+		// S3 throttles with a 503 `SlowDown`, other AWS services with their own codes; each is the kit's 429
 		vi.mocked(driver['client'].send).mockRejectedValue(serviceError(status, name) as never);
 
 		const error = await driver.call('GetBucketVersioning').catch((thrown: unknown) => thrown);
@@ -1079,7 +1079,7 @@ describe('#call', () => {
 	});
 
 	test('Keeps another 503 a ProviderCallError, without the SDK error as its cause', async () => {
-		// 1. Only the throttling codes become a 429; the SDK's error, with its raw response, is not carried along
+		// Only the throttling codes become a 429; the SDK's error, with its raw response, is not carried along
 		vi.mocked(driver['client'].send).mockRejectedValue(serviceError(503, 'ServiceUnavailable') as never);
 
 		const error = await driver.call('GetBucketVersioning').catch((thrown: unknown) => thrown);
@@ -1090,7 +1090,7 @@ describe('#call', () => {
 	});
 
 	test('Passes a failure that is not an answer of S3 on as it is', async () => {
-		// 1. A network failure has no status to report
+		// A network failure has no status to report
 		const failure = new Error('socket hang up');
 		vi.mocked(driver['client'].send).mockRejectedValue(failure as never);
 
@@ -1098,8 +1098,8 @@ describe('#call', () => {
 	});
 
 	test('Gives up at the timeout of the caller and aborts the request', async () => {
-		// 1. A command that never answers; the signal handed to the SDK is aborted at the deadline. The error is matched
-		//    by shape, since `@novastarter/utils` — and the `TimeoutError` class it exports — is mocked in this file
+		// A command that never answers; the signal handed to the SDK is aborted at the deadline. The error is matched
+		// by shape, since `@novastarter/utils` — and the `TimeoutError` class it exports — is mocked in this file
 		let abortSignal: AbortSignal | undefined;
 
 		vi.mocked(driver['client'].send).mockImplementation(((_command: unknown, options: { abortSignal: AbortSignal }) => {
@@ -1119,7 +1119,7 @@ describe('#call', () => {
 
 describe('#close', () => {
 	test('Destroys the SDK client', async () => {
-		// 1. The auto-mocked S3Client records the call; nothing else is released
+		// The auto-mocked S3Client records the call; nothing else is released
 		await driver.close();
 
 		expect(driver['client'].destroy).toHaveBeenCalledOnce();
@@ -1128,12 +1128,12 @@ describe('#close', () => {
 
 describe('#list', () => {
 	test('Constructs list objects params based on input prefix', async () => {
-		// 1. An empty page ends the generator after one request, so a single `next()` is enough to trigger it
+		// An empty page ends the generator after one request, so a single `next()` is enough to trigger it
 		vi.mocked(driver['client'].send).mockResolvedValue({} as unknown as void);
 
 		await driver.list(sample.path.input).next();
 
-		// 2. `MaxKeys` is pinned to the S3 page maximum, so large prefixes take as few round trips as possible
+		// `MaxKeys` is pinned to the S3 page maximum, so large prefixes take as few round trips as possible
 		expect(ListObjectsV2Command).toHaveBeenCalledWith({
 			Bucket: sample.config.bucket,
 			Prefix: sample.path.inputFull,
@@ -1142,7 +1142,7 @@ describe('#list', () => {
 	});
 
 	test('Calls send with the command', async () => {
-		// 1. Stub the command constructor and answer with an empty page, so one `next()` triggers exactly one send
+		// An empty page makes one `next()` trigger exactly one send
 		const mockListObjectsV2Command = {} as ListObjectsV2Command;
 		vi.mocked(ListObjectsV2Command).mockReturnValue(mockListObjectsV2Command);
 		vi.mocked(driver['client'].send).mockResolvedValue({} as unknown as void);
@@ -1153,8 +1153,8 @@ describe('#list', () => {
 	});
 
 	test('Yields file Key omitting root', async () => {
-		// 1. Build the key as `root/file`, so stripping the root and its slash must yield exactly `file`; a leading
-		//    slash on the yielded path would not be the form a caller passes in
+		// Build the key as `root/file`, so stripping the root and its slash must yield exactly `file`; a leading
+		// slash on the yielded path would not be the form a caller passes in
 		const sampleRoot = randDirectoryPath();
 		const sampleFile = randFilePath().replace(/^\/+/, '');
 		const sampleFull = `${sampleRoot}/${sampleFile}`;
@@ -1167,11 +1167,10 @@ describe('#list', () => {
 			],
 		} as unknown as void);
 
-		// 2. Set the root directly: the shared driver was built without one
+		// The shared driver was built without a root
 		// @ts-expect-error - mutating private attribute
 		driver['root'] = sampleRoot;
 
-		// 3. Drain the generator; the single key must come back with the root stripped
 		const iterator = driver.list(sample.path.input);
 
 		const output = [];
@@ -1184,7 +1183,7 @@ describe('#list', () => {
 	});
 
 	test('Continuously fetches until all pages are returned', async () => {
-		// 1. Three pages: the first two carry a continuation token, the last one does not, which must end the loop
+		// Three pages: the first two carry a continuation token, the last one does not, which must end the loop
 		vi.mocked(driver['client'].send)
 			.mockResolvedValueOnce({
 				NextContinuationToken: randWord(),
@@ -1214,7 +1213,7 @@ describe('#list', () => {
 				],
 			} as unknown as void);
 
-		// 2. Draining the generator must issue one request per page and yield every key across them
+		// Draining the generator must issue one request per page and yield every key across them
 		const iterator = driver.list(sample.path.input);
 
 		const output = [];
@@ -1230,15 +1229,15 @@ describe('#list', () => {
 
 describe('#createChunkedUpload', () => {
 	beforeEach(() => {
-		// 1. The driver copies `UploadId` from the response into the context, so the mock has to return one
+		// The driver copies `UploadId` from the response into the context, so the mock has to return one
 		vi.mocked(driver['client'].send).mockResolvedValue({
 			UploadId: 'test-upload-id',
 		} as unknown as void);
 	});
 
 	test('Creates the metadata map when the context has none and keeps the upload id in it', async () => {
-		// 1. A POST without `Upload-Metadata` hands over no map; the id must still be stored, or the upload S3 just
-		//    opened could never be continued or aborted
+		// A POST without `Upload-Metadata` hands over no map; the id must still be stored, or the upload S3 just
+		// opened could never be continued or aborted
 		const context = { metadata: undefined };
 
 		const result = await driver.createChunkedUpload(sample.path.input, context);
@@ -1254,8 +1253,8 @@ describe('#createChunkedUpload', () => {
 	});
 
 	test('Forwards the content headers from the metadata and adds the upload id next to them', async () => {
-		// 1. S3 only takes `ContentType` and `CacheControl` when the upload is created, so both must travel with the
-		//    create request; the id is added to the same map the client keys live in
+		// S3 only takes `ContentType` and `CacheControl` when the upload is created, so both must travel with the
+		// create request; the id is added to the same map the client keys live in
 		const context = { metadata: { contentType: sample.file.type, cacheControl: 'max-age=60' } };
 
 		await driver.createChunkedUpload(sample.path.input, context);
@@ -1274,7 +1273,7 @@ describe('#createChunkedUpload', () => {
 	test.each([[ServerSideEncryption.aws_kms], [ServerSideEncryption.aws_kms_dsse]])(
 		'Optionally sets ServerSideEncryptionKMSKeyId ',
 		async (sse) => {
-			// 1. For the KMS modes the configured key id must travel with the mode; empty metadata adds no content headers
+			// For the KMS modes the configured key id must travel with the mode; empty metadata adds no content headers
 			driver['config'].serverSideEncryption = sse;
 			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId!;
 
@@ -1293,7 +1292,7 @@ describe('#createChunkedUpload', () => {
 	test.each([[ServerSideEncryption.AES256], [ServerSideEncryption.aws_fsx]])(
 		'Does not set SSEKMSKeyId if ServerSideEncryption is not aws:kms or aws:kms:dsse',
 		async (sse) => {
-			// 1. For the non-KMS modes the key id must be dropped even though it is configured: S3 rejects it
+			// For the non-KMS modes the key id must be dropped even though it is configured: S3 rejects it
 			driver['config'].serverSideEncryption = sse;
 			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId!;
 
@@ -1310,7 +1309,7 @@ describe('#createChunkedUpload', () => {
 	);
 
 	test('Sets the configured canned ACL on the create request', async () => {
-		// 1. S3 takes the ACL only when the multipart upload is created, so a TUS upload gets it here or not at all
+		// S3 takes the ACL only when the multipart upload is created, so a TUS upload gets it here or not at all
 		driver['config'].acl = 'public-read';
 
 		await driver.createChunkedUpload(sample.path.input, { metadata: {} });
@@ -1337,14 +1336,14 @@ describe('#deleteChunkedUpload', () => {
 		Object.assign(new Error('NoSuchUpload'), { name: 'NoSuchUpload', $metadata: { httpStatusCode: 404 } });
 
 	beforeEach(() => {
-		// 1. The lookup is stubbed, so each test states whether an object sits under the key without a HEAD round trip
+		// The lookup is stubbed, so each test states whether an object sits under the key without a HEAD round trip
 		driver.exists = vi.fn().mockResolvedValue(true);
 		vi.mocked(driver['client'].send).mockResolvedValue({} as unknown as void);
 	});
 
 	test('Aborts a live upload and keeps the object it was meant to replace', async () => {
-		// 1. A live upload: the abort answers, so the upload never wrote the key and the object there is an older file
-		//    that a cancelled replacement must not destroy
+		// A live upload: the abort answers, so the upload never wrote the key and the object there is an older file
+		// that a cancelled replacement must not destroy
 		await driver.deleteChunkedUpload(sample.path.input, context);
 
 		expect(AbortMultipartUploadCommand).toHaveBeenCalledWith({
@@ -1358,8 +1357,8 @@ describe('#deleteChunkedUpload', () => {
 	});
 
 	test('Still removes the object when the upload was completed before', async () => {
-		// 1. After completion S3 answers the abort with `NoSuchUpload`, yet the assembled object is there: a termination
-		//    must remove it instead of answering 404 and leaving the file behind
+		// After completion S3 answers the abort with `NoSuchUpload`, yet the assembled object is there: a termination
+		// must remove it instead of answering 404 and leaving the file behind
 		vi.mocked(driver['client'].send).mockRejectedValueOnce(noSuchUpload() as never);
 
 		await driver.deleteChunkedUpload(sample.path.input, context);
@@ -1373,8 +1372,8 @@ describe('#deleteChunkedUpload', () => {
 	});
 
 	test('Rejects when S3 refuses to delete the object', async () => {
-		// 1. The single-object delete throws on a refusal, so the termination fails instead of reporting a success
-		//    while the file stays in the bucket
+		// The single-object delete throws on a refusal, so the termination fails instead of reporting a success
+		// while the file stays in the bucket
 		const denied = Object.assign(new Error('AccessDenied'), {
 			name: 'AccessDenied',
 			$metadata: { httpStatusCode: 403 },
@@ -1388,7 +1387,7 @@ describe('#deleteChunkedUpload', () => {
 	});
 
 	test('Throws the TUS not-found error when neither the upload nor an object exists', async () => {
-		// 1. Nothing to abort and nothing under the key: the TUS server answers 404, and no delete is sent for nothing
+		// Nothing to abort and nothing under the key: the TUS server answers 404, and no delete is sent for nothing
 		vi.mocked(driver['client'].send).mockRejectedValueOnce(noSuchUpload() as never);
 		vi.mocked(driver.exists).mockResolvedValue(false);
 
@@ -1397,7 +1396,7 @@ describe('#deleteChunkedUpload', () => {
 	});
 
 	test('Checks for the object when no upload id was ever recorded', async () => {
-		// 1. Without an id there is nothing to abort, so the object is what decides between a delete and a 404
+		// Without an id there is nothing to abort, so the object is what decides between a delete and a 404
 		vi.mocked(driver.exists).mockResolvedValue(false);
 
 		await expect(driver.deleteChunkedUpload(sample.path.input, { metadata: undefined })).rejects.toBe(
@@ -1408,8 +1407,8 @@ describe('#deleteChunkedUpload', () => {
 	});
 
 	test('Rethrows any other abort failure without touching the object', async () => {
-		// 1. A denied abort says nothing about the upload; deleting the object on top of it would destroy data the
-		//    caller was not allowed to touch
+		// A denied abort says nothing about the upload; deleting the object on top of it would destroy data the
+		// caller was not allowed to touch
 		const denied = Object.assign(new Error('AccessDenied'), {
 			name: 'AccessDenied',
 			$metadata: { httpStatusCode: 403 },
@@ -1441,7 +1440,7 @@ describe('#finishChunkedUpload', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 
-		// 1. `retry` is auto-mocked with the rest of utils; the real one runs here, since its pacing is what is tested
+		// `retry` is auto-mocked with the rest of utils; the real one runs here, since its pacing is what is tested
 		vi.mocked(retry).mockImplementation(retryActual);
 	});
 
@@ -1450,7 +1449,7 @@ describe('#finishChunkedUpload', () => {
 	});
 
 	test('Completes the upload once the listing shows every part', async () => {
-		// 1. A full listing on the first call: no pause, one listing, and every part handed to the completion in order
+		// A full listing on the first call: no pause, one listing, and every part handed to the completion in order
 		vi.mocked(driver['client'].send).mockResolvedValue(listing(partSize, partSize, partSize) as unknown as void);
 
 		await driver.finishChunkedUpload(sample.path.input, context);
@@ -1472,8 +1471,8 @@ describe('#finishChunkedUpload', () => {
 	});
 
 	test('Completes an upload of uneven parts once their bytes add up to the size', async () => {
-		// 1. A client whose requests do not line up with the part size leaves more, smaller parts than the size divided
-		//    by the part size predicts; the bytes are what count, so four parts summing to the size complete at once
+		// A client whose requests do not line up with the part size leaves more, smaller parts than the size divided
+		// by the part size predicts; the bytes are what count, so four parts summing to the size complete at once
 		vi.mocked(driver['client'].send).mockResolvedValue(
 			listing(partSize, partSize, partSize / 2, partSize / 2) as unknown as void,
 		);
@@ -1497,8 +1496,8 @@ describe('#finishChunkedUpload', () => {
 	});
 
 	test('Keeps polling while the bytes fall short even when the part count would match', async () => {
-		// 1. Three parts that are still a half part short must not pass for complete; the fourth part shows up on the
-		//    second listing and only then is the completion sent
+		// Three parts that are still a half part short must not pass for complete; the fourth part shows up on the
+		// second listing and only then is the completion sent
 		vi.mocked(driver['client'].send)
 			.mockResolvedValueOnce(listing(partSize, partSize, partSize / 2) as unknown as void)
 			.mockResolvedValue(listing(partSize, partSize, partSize / 2, partSize / 2) as unknown as void);
@@ -1513,7 +1512,7 @@ describe('#finishChunkedUpload', () => {
 	});
 
 	test('Polls the listing with growing pauses until every part shows', async () => {
-		// 1. Two short listings, then a full one: the completion goes out after 0.5 s + 1 s of waiting
+		// Two short listings, then a full one: the completion goes out after 0.5 s + 1 s of waiting
 		vi.mocked(driver['client'].send)
 			.mockResolvedValueOnce(listing(partSize, partSize) as unknown as void)
 			.mockResolvedValueOnce(listing(partSize, partSize) as unknown as void)
@@ -1529,7 +1528,7 @@ describe('#finishChunkedUpload', () => {
 	});
 
 	test('Refuses with the TUS error object when parts are still missing after three retries', async () => {
-		// 1. Four short listings — the first attempt and three retries — and nothing is completed
+		// Four short listings — the first attempt and three retries — and nothing is completed
 		vi.mocked(driver['client'].send).mockResolvedValue(listing(partSize, partSize) as unknown as void);
 
 		const run = driver.finishChunkedUpload(sample.path.input, context);
@@ -1543,8 +1542,8 @@ describe('#finishChunkedUpload', () => {
 	});
 
 	test('Leaves out parts past the size that a failed chunk left behind', async () => {
-		// 1. Parts 1 and 2 hold the whole upload; part 3 is a leftover of a chunk that failed half-way and was resent
-		//    in fewer parts, so it is not completed and S3 discards it instead of the listing never adding up
+		// Parts 1 and 2 hold the whole upload; part 3 is a leftover of a chunk that failed half-way and was resent
+		// in fewer parts, so it is not completed and S3 discards it instead of the listing never adding up
 		vi.mocked(driver['client'].send).mockResolvedValue(listing(2 * partSize, partSize, partSize) as unknown as void);
 
 		await driver.finishChunkedUpload(sample.path.input, context);
@@ -1564,7 +1563,7 @@ describe('#finishChunkedUpload', () => {
 	});
 
 	test('Throws a failing listing at once, without retrying it', async () => {
-		// 1. A rejected `ListParts` is a real error, not a listing that lags: it goes out as it is after one call
+		// A rejected `ListParts` is a real error, not a listing that lags: it goes out as it is after one call
 		const failure = new Error('connection reset');
 
 		vi.mocked(driver['client'].send).mockRejectedValue(failure);
@@ -1575,13 +1574,13 @@ describe('#finishChunkedUpload', () => {
 	});
 
 	test('Writes an empty object directly when the upload has a zero size', async () => {
-		// 1. A zero-length upload produces no parts, and S3 refuses `CompleteMultipartUpload` with an empty `Parts`
-		//    list; the multipart upload is aborted and the empty object is written with a plain PutObject instead
+		// A zero-length upload produces no parts, and S3 refuses `CompleteMultipartUpload` with an empty `Parts`
+		// list; the multipart upload is aborted and the empty object is written with a plain PutObject instead
 		vi.mocked(driver['client'].send).mockResolvedValue({} as unknown as void);
 
 		await driver.finishChunkedUpload(sample.path.input, { metadata: { 'upload-id': uploadId }, size: 0 });
 
-		// 2. The completion is never attempted with an empty parts list, and no listing is polled for nothing
+		// The completion is never attempted with an empty parts list, and no listing is polled for nothing
 		expect(ListPartsCommand).not.toHaveBeenCalled();
 		expect(CompleteMultipartUploadCommand).not.toHaveBeenCalled();
 
@@ -1599,8 +1598,8 @@ describe('#finishChunkedUpload', () => {
 	});
 
 	test('Restates the content headers and encryption on the empty object', async () => {
-		// 1. The client-sent headers and the encryption settings only travel with the create request on the multipart
-		//    path, so the empty write must carry them again for the object to come out as configured
+		// The client-sent headers and the encryption settings only travel with the create request on the multipart
+		// path, so the empty write must carry them again for the object to come out as configured
 		driver['config'].serverSideEncryption = ServerSideEncryption.aws_kms;
 		driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId!;
 
@@ -1623,7 +1622,7 @@ describe('#finishChunkedUpload', () => {
 	});
 
 	test('Sets the configured canned ACL on the empty object', async () => {
-		// 1. The empty object is created by the PutObject, so the ACL must travel with it like on the multipart path
+		// The empty object is created by the PutObject, so the ACL must travel with it like on the multipart path
 		driver['config'].acl = 'public-read';
 
 		vi.mocked(driver['client'].send).mockResolvedValue({} as unknown as void);
@@ -1644,7 +1643,7 @@ describe('#writeChunk', () => {
 	const context = { metadata: { 'upload-id': uploadId }, size: 100 };
 
 	beforeEach(() => {
-		// 1. Both halves are stubbed: the listing decides the next part number, the part upload reports the bytes
+		// Both halves are stubbed: the listing decides the next part number, the part upload reports the bytes
 		driver['retrieveParts'] = vi.fn().mockResolvedValue([
 			{ PartNumber: 1, Size: 5 },
 			{ PartNumber: 2, Size: 5 },
@@ -1654,8 +1653,8 @@ describe('#writeChunk', () => {
 	});
 
 	test('Continues after the highest listed part and reports the bytes S3 accepted', async () => {
-		// 1. S3 is the record of which parts exist, so the next number follows the last listed one; the new offset is
-		//    the requested one plus what the upload accepted, not the chunk length
+		// S3 is the record of which parts exist, so the next number follows the last listed one; the new offset is
+		// the requested one plus what the upload accepted, not the chunk length
 		await expect(driver.writeChunk(sample.path.input, sample.stream, 10, context)).resolves.toBe(17);
 
 		expect(driver['retrieveParts']).toHaveBeenCalledWith(sample.path.inputFull, uploadId);
@@ -1663,8 +1662,8 @@ describe('#writeChunk', () => {
 	});
 
 	test('Numbers the parts from the offset, over parts a failed chunk left past it', async () => {
-		// 1. Parts 3 and 4 reached S3 before a sibling part failed, so the chunk threw and the offset stayed at 10. The
-		//    resent chunk goes into part 3 again, overwriting the leftovers instead of storing the same bytes twice
+		// Parts 3 and 4 reached S3 before a sibling part failed, so the chunk threw and the offset stayed at 10. The
+		// resent chunk goes into part 3 again, overwriting the leftovers instead of storing the same bytes twice
 		vi.mocked(driver['retrieveParts']).mockResolvedValue([
 			{ PartNumber: 1, Size: 5 },
 			{ PartNumber: 2, Size: 5 },
@@ -1678,8 +1677,8 @@ describe('#writeChunk', () => {
 	});
 
 	test('Numbers the parts from the offset when a failed chunk left a gap', async () => {
-		// 1. Part 3 failed while part 4 landed: the gap means part 4 holds bytes out of order, so the resent chunk
-		//    starts again at part 3 and overwrites part 4 as it goes
+		// Part 3 failed while part 4 landed: the gap means part 4 holds bytes out of order, so the resent chunk
+		// starts again at part 3 and overwrites part 4 as it goes
 		vi.mocked(driver['retrieveParts']).mockResolvedValue([
 			{ PartNumber: 1, Size: 5 },
 			{ PartNumber: 2, Size: 5 },
@@ -1692,8 +1691,8 @@ describe('#writeChunk', () => {
 	});
 
 	test('Follows the highest part when the listing does not reach the offset', async () => {
-		// 1. A listing that lags behind the offset cannot say where the offset falls, so the number follows the last
-		//    listed part as before
+		// A listing that lags behind the offset cannot say where the offset falls, so the number follows the last
+		// listed part as before
 		vi.mocked(driver['retrieveParts']).mockResolvedValue([{ PartNumber: 1, Size: 5 }]);
 
 		await driver.writeChunk(sample.path.input, sample.stream, 10, context);
@@ -1702,8 +1701,8 @@ describe('#writeChunk', () => {
 	});
 
 	test('Lets a failure of the part upload through unchanged', async () => {
-		// 1. The TUS-shaped refusal of a chunk that could not be stored has to reach the server as it is, so it becomes
-		//    the HTTP response
+		// The TUS-shaped refusal of a chunk that could not be stored has to reach the server as it is, so it becomes
+		// the HTTP response
 		const refusal = { status_code: 400, body: 'too short' };
 		vi.mocked(driver['uploadParts']).mockRejectedValue(refusal);
 
@@ -1711,8 +1710,8 @@ describe('#writeChunk', () => {
 	});
 
 	test('Accepts a chunk while the length is still deferred', async () => {
-		// 1. A deferred-length upload has no total yet; the size passes through as `undefined`, so the parts are sized
-		//    for the largest object S3 allows and no part is treated as the final one
+		// A deferred-length upload has no total yet; the size passes through as `undefined`, so the parts are sized
+		// for the largest object S3 allows and no part is treated as the final one
 		const context = { metadata: { 'upload-id': uploadId }, size: undefined };
 
 		await expect(driver.writeChunk(sample.path.input, sample.stream, 10, context)).resolves.toBe(17);
@@ -1730,7 +1729,7 @@ describe('#writeChunk', () => {
 
 describe('#calcOptimalPartSize', () => {
 	test('Plans for the largest object when the size is unknown', () => {
-		// 1. A deferred-length upload must never overflow the part count, so the part size grows to fit the S3 maximum
+		// A deferred-length upload must never overflow the part count, so the part size grows to fit the S3 maximum
 		expect(driver['calcOptimalPartSize'](undefined)).toBe(Math.ceil(driver.maxUploadSize / driver.maxMultipartParts));
 	});
 });
@@ -1748,8 +1747,8 @@ describe('#uploadParts', () => {
 	const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 	beforeEach(() => {
-		// 1. Tiny parts, so the real splitter cuts a few bytes the way it cuts megabytes; the part upload is stubbed,
-		//    since only the bookkeeping around it is under test
+		// Tiny parts, so the real splitter cuts a few bytes the way it cuts megabytes; the part upload is stubbed,
+		// since only the bookkeeping around it is under test
 		driver['calcOptimalPartSize'] = vi.fn().mockReturnValue(partSize);
 		driver['uploadPart'] = vi.fn().mockResolvedValue('etag');
 
@@ -1758,8 +1757,8 @@ describe('#uploadParts', () => {
 	});
 
 	test('Sends the full parts and skips a short trailing one without opening its file', async () => {
-		// 1. Seventeen bytes cut at ten: the first part is sent, the seven-byte remainder is not final and too short,
-		//    so it is left out of the count and no read stream is ever opened over its file
+		// Seventeen bytes cut at ten: the first part is sent, the seven-byte remainder is not final and too short,
+		// so it is left out of the count and no read stream is ever opened over its file
 		const createReadStream = vi.spyOn(fs, 'createReadStream');
 		const source = Readable.from([Buffer.alloc(17, 'a')]);
 
@@ -1772,7 +1771,7 @@ describe('#uploadParts', () => {
 	});
 
 	test('Sends a short part when it is the last one of the upload', async () => {
-		// 1. The last part may be smaller than the minimum: seven bytes at offset 93 of a 100-byte upload go out
+		// The last part may be smaller than the minimum: seven bytes at offset 93 of a 100-byte upload go out
 		const source = Readable.from([Buffer.alloc(7, 'a')]);
 
 		const bytes = await driver['uploadParts'](key, uploadId, 100, source, 4, 93);
@@ -1782,8 +1781,8 @@ describe('#uploadParts', () => {
 	});
 
 	test('Skips a short trailing part while the length is deferred', async () => {
-		// 1. With an unknown size no part can be recognised as the final one, so a trailing part under the minimum is
-		//    skipped like any non-final part and the client resends those bytes once the length is declared
+		// With an unknown size no part can be recognised as the final one, so a trailing part under the minimum is
+		// skipped like any non-final part and the client resends those bytes once the length is declared
 		const createReadStream = vi.spyOn(fs, 'createReadStream');
 		const source = Readable.from([Buffer.alloc(17, 'a')]);
 
@@ -1795,8 +1794,8 @@ describe('#uploadParts', () => {
 	});
 
 	test('Destroys the read stream when the part upload rejects', async () => {
-		// 1. A rejected `UploadPart` leaves the file half-read; the stream must be destroyed so the descriptor is
-		//    closed, or every failed part would hold one open until the process exits
+		// A rejected `UploadPart` leaves the file half-read; the stream must be destroyed so the descriptor is
+		// closed, or every failed part would hold one open until the process exits
 		const failure = new Error('RequestTimeout');
 		vi.mocked(driver['uploadPart']).mockRejectedValue(failure);
 
@@ -1810,9 +1809,9 @@ describe('#uploadParts', () => {
 	});
 
 	test('Handles a part-upload failure that lands while the chunk is still streaming', async () => {
-		// 1. Fifteen bytes cut at ten: the first part's upload rejects at once, while the rest of the chunk is still
-		//    open on disk — with the rejection unhandled until the pipeline settles, Node's default
-		//    `unhandledRejection: 'throw'` would crash the process before the error could reach the caller
+		// Fifteen bytes cut at ten: the first part's upload rejects at once, while the rest of the chunk is still
+		// open on disk — with the rejection unhandled until the pipeline settles, Node's default
+		// `unhandledRejection: 'throw'` would crash the process before the error could reach the caller
 		const failure = new Error('SlowDown');
 
 		vi.mocked(driver['uploadPart']).mockRejectedValueOnce(failure).mockResolvedValue('etag');
@@ -1826,20 +1825,20 @@ describe('#uploadParts', () => {
 		try {
 			const run = driver['uploadParts'](key, uploadId, 100, source, 1, 0);
 
-			// 2. The first ten bytes finalize the first part; its upload fails while the pipeline is still waiting
-			//    for the rest of the chunk
+			// The first ten bytes finalize the first part; its upload fails while the pipeline is still waiting
+			// for the rest of the chunk
 			source.write(Buffer.alloc(15, 'a'));
 
 			await vi.waitFor(() => expect(driver['uploadPart']).toHaveBeenCalledTimes(1));
 
-			// 3. Give a rejection nobody handles every chance to surface before the chunk completes
+			// Give a rejection nobody handles every chance to surface before the chunk completes
 			await new Promise((resolve) => setTimeout(resolve, 50));
 
 			expect(unhandled).toStrictEqual([]);
 
 			source.end();
 
-			// 4. The part failure still reaches the caller unchanged once the pipeline settles
+			// The part failure still reaches the caller unchanged once the pipeline settles
 			await expect(run).rejects.toBe(failure);
 			expect(unhandled).toStrictEqual([]);
 		} finally {
@@ -1848,8 +1847,8 @@ describe('#uploadParts', () => {
 	});
 
 	test('Refuses a chunk that finished with every byte unsent', async () => {
-		// 1. Seven bytes that are not the last of the upload: nothing can be sent, and returning the unchanged offset
-		//    would make the client resend the same chunk forever, so the chunk is refused in the TUS shape
+		// Seven bytes that are not the last of the upload: nothing can be sent, and returning the unchanged offset
+		// would make the client resend the same chunk forever, so the chunk is refused in the TUS shape
 		const source = Readable.from([Buffer.alloc(7, 'a')]);
 
 		await expect(driver['uploadParts'](key, uploadId, 100, source, 1, 0)).rejects.toEqual({
@@ -1861,7 +1860,7 @@ describe('#uploadParts', () => {
 	});
 
 	test('Turns back a permit granted after the pipeline failed and opens no part file for it', async () => {
-		// 1. One permit, already taken: the first part of the chunk has to wait for it
+		// One permit, already taken: the first part of the chunk has to wait for it
 		const semaphore = new Semaphore(1);
 		const held = await semaphore.acquire();
 		driver['partUploadSemaphore'] = semaphore;
@@ -1870,15 +1869,15 @@ describe('#uploadParts', () => {
 		const source = new PassThrough();
 		const run = driver['uploadParts'](key, uploadId, 100, source, 1, 0);
 
-		// 2. The stream dies while the part is still waiting; the pipeline error is what the caller gets
+		// The stream dies while the part is still waiting; the pipeline error is what the caller gets
 		source.write(Buffer.alloc(4, 'a'));
 		await tick();
 		source.destroy(new Error('connection reset'));
 
 		await expect(run).rejects.toThrow('connection reset');
 
-		// 3. The permit is granted only now, to a part nobody will consume: it must go straight back and no temp
-		//    file may be opened, or sixty such events would stall every later upload on this driver
+		// The permit is granted only now, to a part nobody will consume: it must go straight back and no temp
+		// file may be opened, or sixty such events would stall every later upload on this driver
 		await held.release();
 		await tick();
 
@@ -1887,15 +1886,21 @@ describe('#uploadParts', () => {
 	});
 
 	test('Keeps a part permit checked out until its upload settles, even when another chunk fails', async () => {
-		// 1. One permit shared by the whole driver: the first part holds it through an upload the test controls, so
-		//    every later part of every upload on this driver waits for it
+		// One permit shared by the whole driver: the first part holds it through an upload the test controls, so
+		// every later part of every upload on this driver waits for it
 		const semaphore = new Semaphore(1);
 		driver['partUploadSemaphore'] = semaphore;
 
-		// 2. Both uploads hang until the test releases them, so a permit wrongly freed mid-failure would visibly admit
-		//    the second upload before the first one settles
+		// Both uploads hang until the test releases them, so a permit wrongly freed mid-failure would visibly admit
+		// the second upload before the first one settles
+		/**
+		 * Finish the first upload's part with an ETag; a no-op until the part's own resolver replaces it.
+		 */
 		let finishFirst: (etag: string) => void = () => {};
 
+		/**
+		 * Finish the second upload's part with an ETag; a no-op until the part's own resolver replaces it.
+		 */
 		let finishSecond: (etag: string) => void = () => {};
 
 		vi.mocked(driver['uploadPart'])
@@ -1905,22 +1910,22 @@ describe('#uploadParts', () => {
 		const source1 = new PassThrough();
 		const run1 = driver['uploadParts'](key, uploadId, 100, source1, 1, 0);
 
-		// 3. Fifteen bytes cut at ten: the first part is complete and its upload hangs onto the only permit, while the
-		//    remainder waits for a permit before its part file is opened
+		// Fifteen bytes cut at ten: the first part is complete and its upload hangs onto the only permit, while the
+		// remainder waits for a permit before its part file is opened
 		source1.write(Buffer.alloc(15, 'a'));
 		await vi.waitFor(() => expect(driver['uploadPart']).toHaveBeenCalledTimes(1));
 
-		// 4. A second upload arrives and its part must wait for the permit, since the first upload is still in flight
+		// A second upload arrives and its part must wait for the permit, since the first upload is still in flight
 		const source2 = new PassThrough();
 		const run2 = driver['uploadParts'](key, uploadId, 100, source2, 1, 0);
 		source2.write(Buffer.alloc(10, 'a'));
 		source2.end();
 		await tick();
 
-		// 5. The first chunk dies while its part uploads: the failure must not free the in-flight part's permit, or the
-		//    waiting upload would be admitted while the first upload is still running, past the concurrency cap. The
-		//    pause gives a wrongly freed permit every chance to surface through the real file system instead of
-		//    racing past it
+		// The first chunk dies while its part uploads: the failure must not free the in-flight part's permit, or the
+		// waiting upload would be admitted while the first upload is still running, past the concurrency cap. The
+		// pause gives a wrongly freed permit every chance to surface through the real file system instead of
+		// racing past it
 		source1.destroy(new Error('connection reset'));
 
 		await expect(run1).rejects.toThrow('connection reset');
@@ -1928,7 +1933,7 @@ describe('#uploadParts', () => {
 
 		expect(driver['uploadPart']).toHaveBeenCalledTimes(1);
 
-		// 6. The permit comes back when the in-flight upload settles, and only then does the waiting upload proceed
+		// The permit comes back when the in-flight upload settles, and only then does the waiting upload proceed
 		finishFirst('etag');
 		await vi.waitFor(() => expect(driver['uploadPart']).toHaveBeenCalledTimes(2));
 

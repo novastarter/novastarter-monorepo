@@ -1,3 +1,4 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import { toArray, toNumber, tryParseJSON } from '@novastarter/utils';
 import { getCastFlag } from '../utils/has-cast-prefix.js';
 
@@ -17,8 +18,8 @@ import { getCastFlag } from '../utils/has-cast-prefix.js';
  *
  * @param value - Raw value, possibly carrying a cast prefix.
  * @returns The converted value, or the value untouched.
- * @throws Error when a `number:` payload is not a finite number, a `boolean:` payload is not `true`, `1`, `false` or
- * `0`, or a `regex:` payload is not a valid pattern.
+ * @throws InvalidConfigError when a `number:` payload is not a finite number, a `boolean:` payload is not `true`, `1`,
+ * `false` or `0`, or a `regex:` payload is not a valid pattern.
  * @example
  * ```ts
  * cast('number:8055');
@@ -29,27 +30,26 @@ import { getCastFlag } from '../utils/has-cast-prefix.js';
  * ```
  */
 export const cast = (value: unknown): unknown => {
-	// 1. Only a string can carry a prefix: a number or an object from a JS/YAML config is already typed
+	// Only a string can carry a prefix: a number or an object from a JS/YAML config is already typed
 	if (typeof value !== 'string') {
 		return value;
 	}
 
-	// 2. Only an explicit prefix converts; without one the value is the application's to interpret
+	// Only an explicit prefix converts; without one the value is the application's to interpret
 	const castFlag = getCastFlag(value);
 
 	if (!castFlag) {
 		return value;
 	}
 
-	// 3. Strip the prefix and its colon, so the remainder is the actual payload
 	const payload = value.substring(castFlag.length + 1);
 
-	// 4. Apply the conversion. A payload the prefix cannot read — `number:` with no number, `regex:` with a broken
-	//    pattern, `boolean:` with anything but `true`/`1`/`false`/`0` — is refused: cast to `undefined` or `false`,
-	//    it would take a schema default or switch a feature off and boot the wrong way with nothing logged, where a
-	//    typo should stop the start-up and name itself. Array members recurse: they carry
-	//    their own prefixes or stay strings, and an empty member (a trailing comma) is dropped. A `json:` payload
-	//    that is not JSON — a plain word such as `production` — is kept as the string it is
+	// A payload the prefix cannot read — `number:` with no number, `regex:` with a broken pattern, `boolean:` with
+	// anything but `true`/`1`/`false`/`0` — is refused: cast to `undefined` or `false`, it would take a schema default
+	// or switch a feature off and boot the wrong way with nothing logged, where a typo should stop the start-up and
+	// name itself. Array members recurse: they carry their own prefixes or stay strings, and an empty member (a
+	// trailing comma) is dropped. A `json:` payload that is not JSON — a plain word such as `production` — is kept as
+	// the string it is
 	switch (castFlag) {
 		case 'string':
 			return payload;
@@ -74,15 +74,15 @@ export const cast = (value: unknown): unknown => {
  * @param value - The whole value, prefix included, for the message.
  * @param payload - The text after the prefix.
  * @returns The number.
- * @throws Error when the payload is not a finite number.
+ * @throws InvalidConfigError when the payload is not a finite number.
  * @internal
  */
 const toCastNumber = (value: string, payload: string): number => {
-	// 1. `toNumber` answers `undefined` for anything that is not a finite number; here that is a broken value
+	// `toNumber` answers `undefined` for anything that is not a finite number; here that is a broken value
 	const number = toNumber(payload);
 
 	if (number === undefined) {
-		throw new Error(`Cannot cast "${value}" to a number`);
+		throw new InvalidConfigError({ reason: `"${value}" is not a number` });
 	}
 
 	return number;
@@ -97,11 +97,11 @@ const toCastNumber = (value: string, payload: string): number => {
  * @param value - The whole value, prefix included, for the message.
  * @param payload - The text after the prefix.
  * @returns The boolean.
- * @throws Error when the payload is not one of the four accepted spellings.
+ * @throws InvalidConfigError when the payload is not one of the four accepted spellings.
  * @internal
  */
 const toCastBoolean = (value: string, payload: string): boolean => {
-	// 1. Match the accepted spellings explicitly, so an unknown one is an error rather than a silent `false`
+	// The accepted spellings are matched explicitly, so an unknown one is an error rather than a silent `false`
 	if (payload === 'true' || payload === '1') {
 		return true;
 	}
@@ -110,8 +110,8 @@ const toCastBoolean = (value: string, payload: string): boolean => {
 		return false;
 	}
 
-	// 2. Anything else is a broken value; name it so the log line says which variable to fix
-	throw new Error(`Cannot cast "${value}" to a boolean`);
+	// Anything else is a broken value; name it so the log line says which variable to fix
+	throw new InvalidConfigError({ reason: `"${value}" is not one of true, 1, false or 0` });
 };
 
 /**
@@ -120,15 +120,15 @@ const toCastBoolean = (value: string, payload: string): boolean => {
  * @param value - The whole value, prefix included, for the message.
  * @param pattern - Source of the regular expression, without delimiters or flags.
  * @returns The compiled expression.
- * @throws Error, with the `SyntaxError` as `cause`, when `pattern` does not compile.
+ * @throws InvalidConfigError, with the `SyntaxError` as `cause`, when `pattern` does not compile.
  * @internal
  */
 const toRegExp = (value: string, pattern: string): RegExp => {
-	// 1. `RegExp` throws a `SyntaxError` on a broken pattern; it is rethrown naming the value, so the log line says
-	//    which variable to fix
+	// `RegExp` throws a `SyntaxError` on a broken pattern; it is rethrown naming the value, so the log line says
+	// which variable to fix
 	try {
 		return new RegExp(pattern);
 	} catch (error) {
-		throw new Error(`Cannot cast "${value}" to a regular expression`, { cause: error });
+		throw new InvalidConfigError({ reason: `"${value}" is not a valid regular expression` }, { cause: error });
 	}
 };

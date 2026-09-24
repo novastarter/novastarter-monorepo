@@ -16,19 +16,19 @@ import type { IRateLimiterRes, RateLimiterAbstract } from 'rate-limiter-flexible
  * @throws `HitRateLimitError` when the key has no points left; any other error the limiter raised.
  */
 export const consume = async (limiter: RateLimiterAbstract, key: string, availablePoints: number): Promise<void> => {
-	// 1. Let the library do the bookkeeping; it rejects when the budget is spent
+	// The library rejects when the budget is spent
 	try {
 		await limiter.consume(key);
 	} catch (error) {
-		// 2. Real errors (connection problems and the like) are not rate-limit hits; rethrow them as they are
+		// Real errors (connection problems and the like) are not rate-limit hits
 		if (error instanceof Error) {
 			throw error;
 		}
 
-		// 3. The rejection value is the limiter result; `msBeforeNext` is always set on it despite the optional
-		//    type, so the non-null assertion is safe. The library reports `-1` for a key without expiry — one written
-		//    under an older configuration, say — which must not become a reset in the past and a "retry after -1ms":
-		//    the earliest the caller may try again is now
+		// The rejection value is the limiter result; `msBeforeNext` is always set on it despite the optional type, so
+		// the non-null assertion is safe. The library reports `-1` for a key without expiry — one written under an
+		// older configuration, say — which must not become a reset in the past and a "retry after -1ms": the earliest
+		// the caller may try again is now
 		const { msBeforeNext } = error as IRateLimiterRes;
 
 		throw new HitRateLimitError({

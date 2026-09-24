@@ -29,7 +29,7 @@ export const TOTP_WINDOW = 1;
  * @internal
  */
 export const totpStep = (now: number): number => {
-	// 1. RFC 6238: T = floor((time − T0) / X), with T0 = 0 and X the period
+	// RFC 6238: T = floor((time − T0) / X), with T0 = 0 and X the period
 	return Math.floor(now / 1000 / TOTP_PERIOD);
 };
 
@@ -42,15 +42,15 @@ export const totpStep = (now: number): number => {
  * @internal
  */
 export const hotp = (secret: Uint8Array, counter: number): string => {
-	// 1. The counter as an 8-byte big-endian integer, HMAC-SHA1'd with the secret — SHA-1 is what authenticator apps
-	//    implement, and within HMAC it is not weakened by SHA-1's collisions
+	// The counter as an 8-byte big-endian integer, HMAC-SHA1'd with the secret — SHA-1 is what authenticator apps
+	// implement, and within HMAC it is not weakened by SHA-1's collisions
 	const message = Buffer.alloc(8);
 
 	message.writeBigUInt64BE(BigInt(counter));
 
 	const digest = createHmac('sha1', secret).update(message).digest();
 
-	// 2. Dynamic truncation: four bytes at the offset the last nibble names, the top bit masked off
+	// Dynamic truncation: four bytes at the offset the last nibble names, the top bit masked off
 	const offset = digest[digest.length - 1]! & 0x0f;
 	const binary = digest.readUInt32BE(offset) & 0x7fffffff;
 
@@ -67,7 +67,7 @@ export const hotp = (secret: Uint8Array, counter: number): string => {
  * @internal
  */
 export const matchTotp = (secret: Uint8Array, code: string, now: number): number | null => {
-	// 1. Every step of the window is computed, so the time taken does not tell which one matched
+	// Every step of the window is computed, so the time taken does not tell which one matched
 	const current = totpStep(now);
 	let matched: number | null = null;
 
@@ -90,7 +90,7 @@ export const matchTotp = (secret: Uint8Array, code: string, now: number): number
  * @internal
  */
 export const otpauthUri = (secret: string, issuer: string, accountName: string): string => {
-	// 1. The issuer goes into both the label and the parameter: older apps read one, newer ones the other
+	// The issuer goes into both the label and the parameter: older apps read one, newer ones the other
 	const label = encodeURIComponent(`${issuer}:${accountName}`);
 
 	const params = new URLSearchParams({

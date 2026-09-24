@@ -1,6 +1,7 @@
 /**
  * Tests of `env/lib/cast`.
  */
+import { InvalidConfigError } from '@novastarter/errors';
 import { toArray, toNumber, tryParseJSON } from '@novastarter/utils';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { getCastFlag } from '../utils/has-cast-prefix.js';
@@ -47,7 +48,7 @@ describe('Type extraction', () => {
 		expect(cast('8055')).toBe('8055');
 		expect(cast('true')).toBe('true');
 
-		// 1. A non-string never carries a prefix, so the flag is not even looked up
+		// A non-string never carries a prefix, so the flag is not even looked up
 		expect(cast(42)).toBe(42);
 		expect(getCastFlag).not.toHaveBeenCalledWith(42);
 	});
@@ -77,11 +78,11 @@ describe('Casting', () => {
 	});
 
 	test('Refuses a boolean payload it cannot read, naming the value', () => {
-		// 1. Read as `false`, a typo would switch a feature off with nothing logged
+		// Read as `false`, a typo would switch a feature off with nothing logged
 		vi.mocked(getCastFlag).mockReturnValue('boolean');
-		expect(() => cast('boolean:TRUE')).toThrow('Cannot cast "boolean:TRUE" to a boolean');
-		expect(() => cast('boolean:yes')).toThrow('Cannot cast "boolean:yes" to a boolean');
-		expect(() => cast('boolean:')).toThrow('Cannot cast "boolean:" to a boolean');
+		expect(() => cast('boolean:TRUE')).toThrow('Invalid config. "boolean:TRUE" is not one of true, 1, false or 0.');
+		expect(() => cast('boolean:yes')).toThrow('Invalid config. "boolean:yes" is not one of true, 1, false or 0.');
+		expect(() => cast('boolean:')).toThrow('Invalid config. "boolean:" is not one of true, 1, false or 0.');
 	});
 
 	test('Uses RegExp for regex types', () => {
@@ -90,15 +91,16 @@ describe('Casting', () => {
 	});
 
 	test('Refuses a broken regex pattern, naming the value', () => {
-		// 1. A typo in a prefixed value is a broken configuration, not a missing variable a schema default would cover
+		// A typo in a prefixed value is a broken configuration, not a missing variable a schema default would cover
 		vi.mocked(getCastFlag).mockReturnValue('regex');
-		expect(() => cast('regex:(')).toThrow('Cannot cast "regex:(" to a regular expression');
+		expect(() => cast('regex:(')).toThrow('Invalid config. "regex:(" is not a valid regular expression.');
+		expect(() => cast('regex:(')).toThrow(InvalidConfigError);
 	});
 
 	test('Refuses a number payload that is not a finite number, naming the value', () => {
 		vi.mocked(getCastFlag).mockReturnValue('number');
 		vi.mocked(toNumber).mockReturnValue(undefined);
-		expect(() => cast('number:80O0')).toThrow('Cannot cast "number:80O0" to a number');
+		expect(() => cast('number:80O0')).toThrow('Invalid config. "number:80O0" is not a number.');
 	});
 
 	test('Uses toArray for array types', () => {
@@ -133,8 +135,8 @@ describe('Casting', () => {
 		vi.mocked(toArray).mockReturnValue(['number:1', 'number:']);
 		vi.mocked(toNumber).mockReturnValueOnce(1).mockReturnValueOnce(undefined);
 
-		// 1. `number:` with no number is a broken member; a list silently one shorter would pass a schema unnoticed
-		expect(() => cast('array:number:1,number:')).toThrow('Cannot cast "number:" to a number');
+		// `number:` with no number is a broken member; a list silently one shorter would pass a schema unnoticed
+		expect(() => cast('array:number:1,number:')).toThrow('Invalid config. "number:" is not a number.');
 	});
 
 	test('Uses tryParseJSON for json types, keeping the payload when it is not JSON', () => {

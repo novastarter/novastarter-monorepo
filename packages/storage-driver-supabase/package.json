@@ -26,6 +26,7 @@
 	},
 	"dependencies": {
 		"@novastarter/constants": "workspace:*",
+		"@novastarter/errors": "workspace:*",
 		"@novastarter/http": "workspace:*",
 		"@novastarter/storage": "workspace:*",
 		"@novastarter/utils": "workspace:*",
@@ -35,7 +36,6 @@
 	},
 	"devDependencies": {
 		"@ngneat/falso": "catalog:",
-		"@novastarter/errors": "workspace:*",
 		"@novastarter/tsconfig": "workspace:*",
 		"@types/node": "catalog:",
 		"@vitest/coverage-v8": "catalog:",

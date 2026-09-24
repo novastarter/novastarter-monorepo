@@ -106,9 +106,9 @@ drivers built so far — the FCM app, the APNs HTTP/2 sessions — for a clean s
    routed by its own target, so a subscription redirected to a token goes through the token's location.
 3. Picks the location: the option, else the message's `location`, else the route of the target's platform, else the
    location named after the platform (`webpush`, `fcm`, `apns`). A name nobody registered, or one whose driver does not
-   deliver to the platform, throws. There is no fallback chain — a browser subscription only works with the VAPID key
-   pair it was created for, a token only with its Firebase project or its Apple app, so a second location could not take
-   a target the first one refused.
+   deliver to the platform, throws `InvalidConfigError`. There is no fallback chain — a browser subscription only works
+   with the VAPID key pair it was created for, a token only with its Firebase project or its Apple app, so a second
+   location could not take a target the first one refused.
 4. Sends. `push.sent` is emitted with the result; a `PushTargetGoneError` from the driver is emitted as `push.gone` (a
    listener deletes the stored subscription) and passed on — unless a `push.send` handler redirected the message to
    another target, in which case it becomes the `cause` of a plain `Error`, so a caller deleting its own subscription on

@@ -3,6 +3,8 @@
  * has its own tests in `create-worker.test.ts`.
  */
 import { EventEmitter } from 'node:events';
+import { InvalidConfigError } from '@novastarter/errors';
+import type { Logger } from '@novastarter/logger';
 import { createRedis } from '@novastarter/redis';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { z } from 'zod';
@@ -107,8 +109,8 @@ describe('toJobsOptions', () => {
 	});
 
 	test('Makes a unique id the deduplication key, not the record id, so a failed record does not block the next run', () => {
-		// 1. A record under the derived id would be answered with by BullMQ for as long as it is kept, failed included;
-		//    the deduplication key ends with the job instead
+		// A record under the derived id would be answered with by BullMQ for as long as it is kept, failed included;
+		// the deduplication key ends with the job instead
 		expect(toJobsOptions({ unique: true }, 'test.echo_abc')).toStrictEqual({
 			deduplication: { id: 'test.echo_abc' },
 			removeOnFail: DEFAULT_REMOVE_ON_FAIL,
@@ -116,7 +118,7 @@ describe('toJobsOptions', () => {
 
 		expect(toJobsOptions({ unique: () => 'x' }, 'test.echo_x')).toMatchObject({ deduplication: { id: 'test.echo_x' } });
 
-		// 2. An explicit id names the record, `unique` or not
+		// An explicit id names the record, `unique` or not
 		expect(toJobsOptions({ unique: true, jobId: 'nightly' }, 'nightly')).toStrictEqual({
 			jobId: 'nightly',
 			removeOnFail: DEFAULT_REMOVE_ON_FAIL,
@@ -126,16 +128,17 @@ describe('toJobsOptions', () => {
 
 describe('QueueDriverBullmq', () => {
 	test('Refuses a missing connection instead of letting ioredis pick localhost', () => {
-		expect(() => new QueueDriverBullmq({ connection: undefined as never, logger: logger as any })).toThrow(
-			'The bullmq queue driver needs a "connection"',
-		);
+		const open = () => new QueueDriverBullmq({ connection: undefined as never, logger: logger as unknown as Logger });
+
+		expect(open).toThrow(InvalidConfigError);
+		expect(open).toThrow('Invalid config. The bullmq queue driver needs a "connection".');
 
 		expect(createRedis).not.toHaveBeenCalled();
 	});
 
 	test('close() waits for a queue still opening, so it is closed rather than left behind', async () => {
 		// The first use awaits the `bullmq` import; a close racing it must not resolve before that queue exists
-		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as any });
+		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as unknown as Logger });
 
 		const enqueued = driver.enqueue(contract, { value: 'a' }, contract.options, 'id-1');
 		await driver.close();
@@ -153,14 +156,14 @@ describe('QueueDriverBullmq', () => {
 			connection: { host: 'redis' },
 			prefix: 'acme',
 			telemetry: telemetry as never,
-			logger: logger as any,
+			logger: logger as unknown as Logger,
 		});
 
-		// 1. A URL or options open a client of the driver's own, pinned to what BullMQ requires
+		// A URL or options open a client of the driver's own, pinned to what BullMQ requires
 		expect(createRedis).toHaveBeenCalledWith({ host: 'redis' }, { maxRetriesPerRequest: null });
 		expect(driver.connection).toMatchObject({ config: { host: 'redis' } });
 
-		// 2. Two first uses in the same tick share one opening: BullMQ's `Queue` is built once, not once per call
+		// Two first uses in the same tick share one opening: BullMQ's `Queue` is built once, not once per call
 		const [first, second] = await Promise.all([
 			driver.enqueue(contract, { value: 'a' }, contract.options, 'id-1'),
 			driver.enqueue(contract, { value: 'b' }, { ...contract.options, delay: 50 }),
@@ -171,7 +174,7 @@ describe('QueueDriverBullmq', () => {
 
 		expect(FakeQueue.instances).toHaveLength(1);
 
-		// 3. The queue opens with the client, the prefix and the telemetry add-on of the driver
+		// The queue opens with the client, the prefix and the telemetry add-on of the driver
 		expect(FakeQueue.instances[0]).toMatchObject({
 			name: 'test',
 			opts: { connection: driver.connection, prefix: 'acme', telemetry },
@@ -191,35 +194,35 @@ describe('QueueDriverBullmq', () => {
 			expect.objectContaining({ delay: 50 }),
 		);
 
-		// 4. Connection errors are logged, not thrown into the process
+		// Connection errors are logged, not thrown into the process
 		FakeQueue.instances[0]!.emit('error', new Error('down'));
 		expect(logger.error).toHaveBeenCalledWith(expect.any(Error), 'Queue "test" connection error');
 
-		// 5. Closing closes the queue and the client the driver opened itself
+		// Closing closes the queue and the client the driver opened itself
 		await driver.close();
 		expect(FakeQueue.instances[0]!.close).toHaveBeenCalled();
 		expect(driver.connection.quit).toHaveBeenCalled();
 	});
 
 	test('Drops a finished record under an explicit id before adding, so the id runs again after a failure', async () => {
-		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as any });
+		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as unknown as Logger });
 
-		// 1. A record still queued is left alone: BullMQ collapses the add into it
+		// A record still queued is left alone: BullMQ collapses the add into it
 		FakeQueue.states['nightly'] = 'waiting';
 		await driver.enqueue(contract, { value: 'a' }, { ...contract.options, jobId: 'nightly' }, 'nightly');
 		expect(FakeQueue.instances[0]!.remove).not.toHaveBeenCalled();
 
-		// 2. A failed one, kept for inspection, would make the add a permanent no-op; it goes first
+		// A failed one, kept for inspection, would make the add a permanent no-op; it goes first
 		FakeQueue.states['nightly'] = 'failed';
 		await driver.enqueue(contract, { value: 'a' }, { ...contract.options, jobId: 'nightly' }, 'nightly');
 		expect(FakeQueue.instances[0]!.remove).toHaveBeenCalledWith('nightly');
 
-		// 3. A completed one kept by `removeOnComplete: N` likewise
+		// A completed one kept by `removeOnComplete: N` likewise
 		FakeQueue.states['nightly'] = 'completed';
 		await driver.enqueue(contract, { value: 'a' }, { ...contract.options, jobId: 'nightly' }, 'nightly');
 		expect(FakeQueue.instances[0]!.remove).toHaveBeenCalledTimes(2);
 
-		// 4. A derived or random id never looks the record up: deduplication is BullMQ's
+		// A derived or random id never looks the record up: deduplication is BullMQ's
 		await driver.enqueue(contract, { value: 'a' }, { ...contract.options, unique: true }, 'test.echo_abc');
 		expect(FakeQueue.instances[0]!.getJobState).toHaveBeenCalledTimes(3);
 
@@ -233,9 +236,9 @@ describe('QueueDriverBullmq', () => {
 	});
 
 	test('Refuses a negative or NaN delay, exactly as the local driver refuses it', async () => {
-		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as any });
+		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as unknown as Logger });
 
-		// 1. The same RangeError the `local` driver throws, so both locations answer a bad delay identically
+		// The same RangeError the `local` driver throws, so both locations answer a bad delay identically
 		await expect(driver.enqueue(contract, { value: 'x' }, { ...contract.options, delay: -1 })).rejects.toThrow(
 			RangeError,
 		);
@@ -244,7 +247,7 @@ describe('QueueDriverBullmq', () => {
 			'The delay of job "test.echo" must be 0 or more milliseconds, got NaN',
 		);
 
-		// 2. A refused job never reaches Redis: no queue was opened for it
+		// A refused job never reaches Redis: no queue was opened for it
 		expect(FakeQueue.instances).toHaveLength(0);
 
 		await driver.close();
@@ -252,7 +255,7 @@ describe('QueueDriverBullmq', () => {
 
 	test('Uses a given client as is and leaves it open', async () => {
 		const client = { quit: vi.fn(async () => 'OK') };
-		const driver = new QueueDriverBullmq({ connection: client as never, logger: logger as any });
+		const driver = new QueueDriverBullmq({ connection: client as never, logger: logger as unknown as Logger });
 
 		expect(createRedis).not.toHaveBeenCalled();
 		expect(driver.connection).toBe(client);
@@ -262,14 +265,14 @@ describe('QueueDriverBullmq', () => {
 	});
 
 	test('close() disconnects a client that never reached ready instead of waiting for a quit', async () => {
-		// 1. `quit` sends QUIT through the command path, so a client that never connected would reconnect forever to
-		//    deliver it and the close would hang; the close drops the socket with `disconnect` instead
+		// `quit` sends QUIT through the command path, so a client that never connected would reconnect forever to
+		// deliver it and the close would hang; the close drops the socket with `disconnect` instead
 		const quit = vi.fn(async () => 'OK');
 		const disconnect = vi.fn();
 
 		vi.mocked(createRedis).mockReturnValueOnce({ status: 'connecting', quit, disconnect } as never);
 
-		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as any });
+		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as unknown as Logger });
 
 		await driver.close();
 
@@ -278,9 +281,9 @@ describe('QueueDriverBullmq', () => {
 	});
 
 	test('Reports the counts of the given queues, folding prioritised work into waiting, zero for states BullMQ leaves out', async () => {
-		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as any });
+		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as unknown as Logger });
 
-		// 1. Three `waiting` plus two `prioritized`: a job with a priority never sits in BullMQ's `waiting` list
+		// Three `waiting` plus two `prioritized`: a job with a priority never sits in BullMQ's `waiting` list
 		await expect(driver.stats(['test', 'mail'])).resolves.toStrictEqual([
 			{ name: 'test', counts: { waiting: 5, active: 1, delayed: 0, failed: 2, completed: 0 } },
 			{ name: 'mail', counts: { waiting: 5, active: 1, delayed: 0, failed: 2, completed: 0 } },
@@ -288,7 +291,7 @@ describe('QueueDriverBullmq', () => {
 
 		expect(FakeQueue.instances.map((queue) => queue.name)).toEqual(['test', 'mail']);
 
-		// 2. Every state queued work can be in is asked for, not only the plain list
+		// Every state queued work can be in is asked for, not only the plain list
 		expect(FakeQueue.instances[0]!.getJobCounts).toHaveBeenCalledWith(
 			...WAITING_STATES,
 			'active',
@@ -301,7 +304,7 @@ describe('QueueDriverBullmq', () => {
 	});
 
 	test('Refuses to enqueue or count after close(), rather than reopening a queue nothing will close', async () => {
-		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as any });
+		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as unknown as Logger });
 
 		await driver.enqueue(contract, { value: 'a' }, contract.options, 'id-1');
 		await driver.close();

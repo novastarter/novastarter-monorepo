@@ -18,7 +18,7 @@ const subscriptionOf = (name: string): LsWebhookPayload<LsSubscriptionAttributes
 
 describe('toSubscription', () => {
 	test('Maps a subscription: the variant as the price, the first item’s seats, the renewal as the period end', () => {
-		// 1. Every field of the kit's shape, so a field silently dropped or renamed on either side shows up
+		// Every field of the kit's shape, so a field silently dropped or renamed on either side shows up.
 		expect(
 			toSubscription(subscriptionOf('subscription_created'), { interval: 'month', metadata: { a: 'b' } }),
 		).toStrictEqual({
@@ -41,8 +41,6 @@ describe('toSubscription', () => {
 	});
 
 	test('A cancelled subscription is active on its grace period; an expired one is over', () => {
-		// 1. `cancelled` is paid for until `ends_at`: the kit's `active` with `cancelAtPeriodEnd`, cancelled when it
-		//    was last updated
 		expect(toSubscription(subscriptionOf('subscription_cancelled'), { interval: 'month' })).toMatchObject({
 			status: 'active',
 			cancelAtPeriodEnd: true,
@@ -51,7 +49,6 @@ describe('toSubscription', () => {
 			endedAt: null,
 		});
 
-		// 2. `expired` is the one that is over: the kit's `canceled`, ended at `ends_at`
 		expect(toSubscription(subscriptionOf('subscription_expired'), { interval: 'month' })).toMatchObject({
 			status: 'canceled',
 			cancelAtPeriodEnd: false,
@@ -60,7 +57,7 @@ describe('toSubscription', () => {
 	});
 
 	test('Refuses an unknown status', () => {
-		// 1. A status the map does not know is a change on Lemon Squeezy's side: loud, naming the status
+		// A status the map does not know is a change on Lemon Squeezy's side.
 		const data = subscriptionOf('subscription_created');
 		const frozen = { ...data, attributes: { ...data.attributes, status: 'frozen' } };
 

@@ -9,6 +9,7 @@ import {
 	toMigrationConfig,
 	toUnavailableError,
 } from '@novastarter/database';
+import { InvalidConfigError } from '@novastarter/errors';
 import { sql } from 'drizzle-orm';
 import { drizzle, type DrizzleD1Database } from 'drizzle-orm/d1';
 import { migrate } from 'drizzle-orm/d1/migrator';
@@ -97,16 +98,15 @@ export class DatabaseDriverD1<
 	 * Create a driver over a binding.
 	 *
 	 * @param config - Binding, schema and logging options.
-	 * @throws Error when `binding` is missing.
+	 * @throws InvalidConfigError when `binding` is missing.
 	 */
 	constructor(config: DatabaseDriverD1Config<Schema>) {
-		// 1. Refuse a missing binding up front: Drizzle would fail on the first query with a `prepare` of `undefined`,
-		//    far from the wrangler configuration that forgot the binding
+		// Drizzle would otherwise fail on the first query with a `prepare` of `undefined`, far from the wrangler
+		// configuration that forgot the binding
 		if (!config.binding) {
-			throw new Error('The d1 database driver needs a "binding"');
+			throw new InvalidConfigError({ reason: 'The d1 database driver needs a "binding"' });
 		}
 
-		// 2. Drizzle over the binding, with the schema and, when asked for, the query logger bound to the label
 		this.label = config.label;
 		this.db = drizzle(config.binding, toDrizzleOptions(config, resolveLogger(config)));
 	}
@@ -118,11 +118,11 @@ export class DatabaseDriverD1<
 	 * @throws DatabaseUnavailableError naming the location, with what D1 raised as its `cause`.
 	 */
 	async ping(): Promise<void> {
-		// 1. The cheapest statement; through Drizzle, so the same path the queries take is proven
+		// Through Drizzle, so the same path the queries take is proven
 		try {
 			await this.db.run(sql`select 1`);
 		} catch (error) {
-			// 2. One error for every backend, 503, naming the location; D1's error stays as `cause`
+			// One error for every backend; D1's error stays as `cause`
 			throw toUnavailableError(error, this.label);
 		}
 	}
@@ -135,10 +135,9 @@ export class DatabaseDriverD1<
 	 *
 	 * @param options - The folder and, optionally, the journal table; `migrationsSchema` means nothing to SQLite.
 	 * @returns Once every pending migration ran.
-	 * @throws Error when `migrationsFolder` is missing; what the migrator raised otherwise.
+	 * @throws InvalidConfigError when `migrationsFolder` is missing; what the migrator raised otherwise.
 	 */
 	async migrate(options: MigrateOptions): Promise<void> {
-		// 1. The migrator batches the pending files onto the binding
 		await migrate(this.db, toMigrationConfig(options));
 	}
 }

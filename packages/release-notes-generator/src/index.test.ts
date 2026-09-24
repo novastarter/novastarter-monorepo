@@ -39,7 +39,7 @@ vi.mock('./utils/process-packages.js', () => ({
 const listenersBefore = process.listeners('beforeExit');
 
 // Imported after the listeners are captured, since the module registers its hook at import
-const { run, default: changelogFunctions } = await import('./index.js');
+const { run, getReleaseLine } = await import('./index.js');
 
 /**
  * The hook the module registered at import.
@@ -96,7 +96,7 @@ function changesetsWith(summary: string): Changesets {
 }
 
 beforeEach(async () => {
-	// 1. The notes go to stdout, so they are captured instead of cluttering the test output
+	// The notes go to stdout, so they are captured instead of cluttering the test output
 	log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 	warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
@@ -112,7 +112,7 @@ beforeEach(async () => {
 afterEach(async () => {
 	vi.restoreAllMocks();
 
-	// 1. The hook failure test sets a failing exit code; it must not leak into the test runner's own exit
+	// The hook failure test sets a failing exit code; it must not leak into the test runner's own exit
 	process.exitCode = undefined;
 
 	await rm(outputDir, { recursive: true, force: true });
@@ -158,7 +158,7 @@ describe('run', () => {
 	});
 
 	test('should not warn when only versions were published', async () => {
-		// 1. A dependency-only bump has versions but no changeset text, which is still something to release
+		// A dependency-only bump has versions but no changeset text, which is still something to release
 		mockVersions.packageVersions = [{ name: '@novastarter/ui', version: '2.0.1' }];
 
 		await run(new Map(), { workspaceRoot: 'mock-workspace' });
@@ -167,7 +167,7 @@ describe('run', () => {
 	});
 
 	test('should forward the forced version and the workspace root to processPackages', async () => {
-		// 1. The deployment inputs are read by the caller and handed down; `run` must pass them on untouched
+		// The deployment inputs are read by the caller and handed down; `run` must pass them on untouched
 		await run(new Map(), { workspaceRoot: 'mock-workspace', forcedVersion: '2.0.0' });
 
 		expect(processPackages).toHaveBeenCalledWith({ workspaceRoot: 'mock-workspace', forcedVersion: '2.0.0' });
@@ -183,7 +183,7 @@ describe('run', () => {
 
 		const output = await readFile(outputFile, 'utf8');
 
-		// 1. The heredoc delimiter is random per run, so it is captured here and stitched into the expectation
+		// The heredoc delimiter is random per run, so it is captured here and stitched into the expectation
 		const delimiter = output.match(/^NOVASTARTER_RELEASE_NOTES<<(\S+)$/m)?.[1];
 
 		expect(delimiter).toMatch(/^EOF_RELEASE_NOTES_[0-9a-f]{16}$/);
@@ -201,7 +201,7 @@ describe('run', () => {
 
 		const output = await readFile(outputFile, 'utf8');
 
-		// 1. Two runs append two note blocks; a delimiter that repeats could be forged by the first run's notes
+		// Two runs append two note blocks; a delimiter that repeats could be forged by the first run's notes
 		const delimiters = output.match(/^NOVASTARTER_RELEASE_NOTES<<(\S+)$/gm) ?? [];
 
 		expect(delimiters).toHaveLength(2);
@@ -211,8 +211,8 @@ describe('run', () => {
 	test('should keep a forged delimiter line inside the notes', async () => {
 		const outputFile = join(outputDir, 'output');
 
-		// 1. A crafted summary whose line equals the old fixed delimiter must not end the heredoc early and spill
-		//    the lines after it into step outputs
+		// A crafted summary whose line equals the old fixed delimiter must not end the heredoc early and spill
+		// the lines after it into step outputs
 		await run(changesetsWith('Honest change\nEOF_RELEASE_NOTES\nFORGED_OUTPUT=1'), {
 			workspaceRoot: 'mock-workspace',
 			githubOutput: outputFile,
@@ -220,8 +220,8 @@ describe('run', () => {
 
 		const output = await readFile(outputFile, 'utf8');
 
-		// 2. The forged lines survive verbatim inside the notes, no bare delimiter line exists, and the block ends
-		//    at the random delimiter
+		// The forged lines survive verbatim inside the notes, no bare delimiter line exists, and the block ends
+		// at the random delimiter
 		expect(output).toMatch(/^ {4}EOF_RELEASE_NOTES$/m);
 		expect(output).toMatch(/^ {4}FORGED_OUTPUT=1$/m);
 		expect(output).not.toMatch(/^EOF_RELEASE_NOTES$/m);
@@ -257,7 +257,7 @@ describe('run', () => {
 	});
 
 	test('should append to an existing step output file', async () => {
-		// 1. Earlier workflow steps already wrote their outputs; overwriting the file would lose them
+		// Earlier workflow steps already wrote their outputs; overwriting the file would lose them
 		const outputFile = join(outputDir, 'output');
 
 		await run(new Map(), { workspaceRoot: 'mock-workspace', githubOutput: outputFile });
@@ -280,7 +280,7 @@ describe('beforeExit hook', () => {
 		expect(beforeExitHook).toBeTypeOf('function');
 	});
 
-	test('should print the changesets collected through the default export and exit', async () => {
+	test('should print the changesets collected through the release line hook and exit', async () => {
 		const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 
 		const changeset: NewChangesetWithCommit = {
@@ -290,8 +290,8 @@ describe('beforeExit hook', () => {
 			releases: [{ name: '@novastarter/ui', type: 'patch' }],
 		};
 
-		// 1. `changesets` feeds the changelog functions; the hook must see the very same map afterwards
-		await changelogFunctions.getReleaseLine(changeset, 'patch', null);
+		// `changesets` feeds the changelog functions; the hook must see the very same map afterwards
+		await getReleaseLine(changeset, 'patch', null);
 
 		await (beforeExitHook as () => Promise<void>)();
 
@@ -303,8 +303,8 @@ describe('beforeExit hook', () => {
 		const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 		const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-		// 1. `run` throws when the versions on disk are inconsistent; the hook must surface that instead of dying
-		//    on an unhandled rejection inside `beforeExit`, which would print nothing
+		// `run` throws when the versions on disk are inconsistent; the hook must surface that instead of dying
+		// on an unhandled rejection inside `beforeExit`, which would print nothing
 		mockVersions.failure = new Error(
 			'Main version of the NOVASTARTER_VERSION environment variable ("nope") is missing or invalid',
 		);

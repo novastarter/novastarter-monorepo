@@ -40,8 +40,8 @@ const affixRules: ReadonlySet<string> = new Set([
  * @internal
  */
 const distinctCount = (values: unknown[]): number => {
-	// 1. Only numbers are stringified: `null` and `'null'`, or `true` and `'true'`, stay distinct because
-	//    `generateJoi` gives no twin to those
+	// Only numbers are stringified: `null` and `'null'`, or `true` and `'true'`, stay distinct because
+	// `generateJoi` gives no twin to those
 	return new Set(values.map((value) => (typeof value === 'number' ? String(value) : value))).size;
 };
 
@@ -57,7 +57,7 @@ const distinctCount = (values: unknown[]): number => {
  * @internal
  */
 const comparable = (value: unknown): string | number => {
-	// 1. `String` covers booleans, bigints and `null` alike, mirroring the zod side
+	// `String` covers booleans, bigints and `null` alike, mirroring the zod side
 	return typeof value === 'number' || typeof value === 'string' ? value : String(value);
 };
 
@@ -73,10 +73,9 @@ const comparable = (value: unknown): string | number => {
  * @internal
  */
 const rangeLimit = (limit: unknown): string | number => {
-	// 1. A Date bound would render timezone-dependently via `String()`, so it is normalised to its ISO form
+	// A Date bound would render timezone-dependently via `String()`, so it is normalised to its ISO form
 	if (limit instanceof Date) return limit.toISOString();
 
-	// 2. Everything else is a number or a string already, or is stringified like in `comparable`
 	return comparable(limit);
 };
 
@@ -115,7 +114,7 @@ export const joiValidationErrorItemToErrorExtensions = (
 	validationErrorItem: ValidationErrorItem,
 	path?: (string | number)[],
 ): FailedValidationErrorExtensions => {
-	// 1. The first path segment is the field; the rest is where the value sits inside it
+	// The first path segment is the field; the rest is where the value sits inside it
 	const extensions: Partial<FailedValidationErrorExtensions> = {
 		field: validationErrorItem.path[0] as string,
 		path: [...(path ?? []), ...validationErrorItem.path.slice(1)],
@@ -123,11 +122,9 @@ export const joiValidationErrorItemToErrorExtensions = (
 
 	const joiType = validationErrorItem.type;
 
-	// 2. `.only` covers eq, in, null and empty: one allowed value, or a list of them. The list is counted with numeric
-	//    twins merged, so `_eq: 18` (built as `[18, '18']`) reads as `eq` with the caller's value, not as `in`; the
-	//    reported values pass through `comparable`, so a boolean compares as `'true'` / `'false'` like on the zod side.
-	//    An empty list is the rule a malformed filter degrades to (`_in: []` and friends): no value is allowed, which
-	//    reads as `in` with nothing to pick from rather than as an `eq` against `undefined`
+	// Numeric twins are merged before counting, so `_eq: 18` (built as `[18, '18']`) reads as `eq` with the caller's
+	// value, not as `in`. An empty list is the rule a malformed filter degrades to (`_in: []` and friends), so it reads
+	// as `in` with nothing to pick from rather than as an `eq` against `undefined`
 	if (joiType.endsWith('only')) {
 		const valids: unknown[] = validationErrorItem.context?.['valids'] ?? [];
 
@@ -148,8 +145,7 @@ export const joiValidationErrorItemToErrorExtensions = (
 		}
 	}
 
-	// 3. `.invalid` is the mirror image: neq, nin, nnull and nempty, with the same twin handling and the same
-	//    `comparable` normalisation as step 2
+	// Mirror of the `.only` branch above, with the same twin handling
 	if (joiType.endsWith('invalid')) {
 		const invalids: unknown[] = validationErrorItem.context?.['invalids'] ?? [];
 
@@ -170,8 +166,7 @@ export const joiValidationErrorItemToErrorExtensions = (
 		}
 	}
 
-	// 4. Range rules; Joi calls the inclusive bounds min / max and the exclusive ones greater / less. The bound is
-	//    normalised through `rangeLimit`, since a date bound arrives as a Date object
+	// Joi calls the inclusive bounds min / max and the exclusive ones greater / less
 	if (joiType.endsWith('greater')) {
 		extensions.type = 'gt';
 		extensions.valid = rangeLimit(validationErrorItem.context?.['limit']);
@@ -192,9 +187,8 @@ export const joiValidationErrorItemToErrorExtensions = (
 		extensions.valid = rangeLimit(validationErrorItem.context?.['limit']);
 	}
 
-	// 5. Substring rules of the extended Joi: the rule name is the operator and the substring is the original
-	//    argument, straight from the rule context. The name is compared whole, since `ncontains` and `icontains` end
-	//    with `contains` and would otherwise all report as `contains`
+	// The rule name is compared whole, since `ncontains` and `icontains` end with `contains` and would otherwise all
+	// report as `contains`
 	const rule = joiType.slice(joiType.lastIndexOf('.') + 1);
 
 	if (joiType.startsWith('string.') && substringRules.has(rule)) {
@@ -202,33 +196,31 @@ export const joiValidationErrorItemToErrorExtensions = (
 		extensions.substring = validationErrorItem.context?.['substring'];
 	}
 
-	// 6. Prefix / suffix rules of the extended Joi, same shape as the substring rules above
 	if (joiType.startsWith('string.') && affixRules.has(rule)) {
 		extensions.type = rule as FailedValidationErrorExtensions['type'];
 		extensions.substring = validationErrorItem.context?.['substring'];
 	}
 
-	// 7. A missing value, or a value of the wrong base type, both read as "required" to the client
+	// A value of the wrong base type reads as "required" too, since that is the closest thing the client can say about it
 	if (joiType.endsWith('required') || joiType.endsWith('.base')) {
 		extensions.type = 'required';
 	}
 
-	// 8. Joi's stock string type rejects `''` before any rule runs. `generateJoi` lifts that with `min(0)`, but a
-	//    caller's own string schema may not, and the rejection means exactly "must not be empty"
+	// Joi's stock string type rejects `''` before any rule runs. `generateJoi` lifts that with `min(0)`, but a
+	// caller's own string schema may not, and the rejection means exactly "must not be empty"
 	if (joiType === 'string.empty') {
 		extensions.type = 'nempty';
 	}
 
-	// 9. The substring rules are built as string-or-array alternatives; a value of neither type fails both by type,
-	//    which is the same situation as a wrong base type above
+	// The substring rules are built as string-or-array alternatives; a value of neither type fails both by type,
+	// which is the same situation as a wrong base type above
 	if (joiType === 'alternatives.types') {
 		extensions.type = 'required';
 	}
 
-	// 10. `_nbetween` is two exclusive bounds ORed as alternatives, so a value inside the range fails both and Joi
-	//     wraps the pair as `alternatives.match`. The bounds come back out of the wrapped details — the low bound
-	//     from the `.less` failure, the high bound from `.greater` — normalised like the single-bound ranges above.
-	//     A pair of any other shape is not `_nbetween` and stays unknown, so it fails loudly below
+	// `_nbetween` is two exclusive bounds ORed as alternatives, so a value inside the range fails both and Joi wraps the
+	// pair as `alternatives.match`; the bounds come back out of the wrapped `.less` and `.greater` details. A pair of any
+	// other shape is not `_nbetween` and stays unknown, so it fails loudly below
 	if (joiType === 'alternatives.match') {
 		const details = (validationErrorItem.context?.['details'] ?? []) as ValidationErrorItem[];
 
@@ -241,8 +233,8 @@ export const joiValidationErrorItemToErrorExtensions = (
 		}
 	}
 
-	// 11. Array forms of the substring rules: no item contained the substring, or an item contained the forbidden one.
-	//     Joi does not hand the substring back from these rules, so only the operator is reported
+	// Joi does not hand the substring back from the array forms of the substring rules, so only the operator is
+	// reported
 	if (joiType === 'array.includesRequiredUnknowns') {
 		extensions.type = 'contains';
 	}
@@ -251,22 +243,24 @@ export const joiValidationErrorItemToErrorExtensions = (
 		extensions.type = 'ncontains';
 	}
 
-	// 12. A bare pattern is the `_regex` rule; the pattern is reported, so the client can show what the value had to
-	//     match — the same `invalid` meaning the zod converter gives a regex failure
+	// The pattern is reported, so the client can show what the value had to match; the zod converter gives a regex
+	// failure the same `invalid` meaning
 	if (joiType.endsWith('.pattern.base')) {
 		extensions.type = 'regex';
 		extensions.invalid = String(validationErrorItem.context?.['regex']);
 	}
 
-	// 13. Outside the safe integer range, or infinite: neither is a number the client can act on, and Joi rejects
-	//     `Infinity` with a rule of its own before any range check runs
+	// Outside the safe integer range, or infinite: neither is a number the client can act on, and Joi rejects
+	// `Infinity` with a rule of its own before any range check runs
 	if (joiType === 'number.unsafe' || joiType === 'number.infinity') {
 		extensions.type = 'unsafe';
 	}
 
-	// 14. Anything else is a rule `generateJoi` never emits; failing loudly beats a message without a type
+	// A rule `generateJoi` never emits fails loudly, which beats a message without a type
 	if (!extensions.type) {
-		throw new Error(`Couldn't extract validation error type from Joi validation error item`);
+		throw new Error(
+			`[@novastarter/validation] joiValidationErrorItemToErrorExtensions: Joi rule "${joiType}" has no matching validation error type`,
+		);
 	}
 
 	return extensions as FailedValidationErrorExtensions;

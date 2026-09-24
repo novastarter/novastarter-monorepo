@@ -6,11 +6,10 @@ import { featureFlagDefinitionSchema, featureFlagKeySchema } from './types.js';
 
 describe('featureFlagKeySchema', () => {
 	test('Accepts lower-case keys with dashes and refuses the rest', () => {
-		// 1. The shape that reads the same in code, URLs and upper-cased variable names
+		// The shape that reads the same in code, URLs and upper-cased variable names
 		expect(featureFlagKeySchema.safeParse('new-billing').success).toBe(true);
 		expect(featureFlagKeySchema.safeParse('beta2').success).toBe(true);
 
-		// 2. Upper case, a leading digit or dash, underscores, empty and over-long keys are all mistakes
 		expect(featureFlagKeySchema.safeParse('New-Billing').success).toBe(false);
 		expect(featureFlagKeySchema.safeParse('2fa').success).toBe(false);
 		expect(featureFlagKeySchema.safeParse('-billing').success).toBe(false);
@@ -22,7 +21,7 @@ describe('featureFlagKeySchema', () => {
 
 describe('featureFlagDefinitionSchema', () => {
 	test('Accepts a definition with or without rules', () => {
-		// 1. The rules are optional and nullable: both mean "on for everyone while enabled"
+		// The rules are optional and nullable: both mean "on for everyone while enabled"
 		expect(featureFlagDefinitionSchema.safeParse({ key: 'a', enabled: true }).success).toBe(true);
 		expect(featureFlagDefinitionSchema.safeParse({ key: 'a', enabled: false, rules: null }).success).toBe(true);
 
@@ -37,7 +36,7 @@ describe('featureFlagDefinitionSchema', () => {
 	});
 
 	test('Refuses a percentage out of range or not whole, and empty ids', () => {
-		// 1. A rollout share is a whole percent of 0–100; anything else is a typo worth failing on
+		// A rollout share is a whole percent of 0–100; anything else is a typo worth failing on
 		expect(featureFlagDefinitionSchema.safeParse({ key: 'a', enabled: true, rules: { percentage: 101 } }).success).toBe(
 			false,
 		);
@@ -50,7 +49,7 @@ describe('featureFlagDefinitionSchema', () => {
 			false,
 		);
 
-		// 2. An empty id names nobody — an empty id of a context never matches — so it can only be a typo
+		// An empty id names nobody — an empty id of a context never matches — so it can only be a typo
 		expect(featureFlagDefinitionSchema.safeParse({ key: 'a', enabled: true, rules: { users: [''] } }).success).toBe(
 			false,
 		);

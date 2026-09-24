@@ -26,6 +26,7 @@
 	},
 	"dependencies": {
 		"@novastarter/emitter": "workspace:*",
+		"@novastarter/errors": "workspace:*",
 		"@novastarter/mail": "workspace:*",
 		"@novastarter/memory": "workspace:*",
 		"@novastarter/messenger": "workspace:*",

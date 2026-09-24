@@ -1,5 +1,7 @@
 /**
  * The built-in bus drivers: `local` and `redis`.
  */
-export * from './local.js';
-export * from './redis.js';
+export { BusDriverLocal } from './local.js';
+export type { BusDriverLocalConfig } from './local.js';
+export { BusDriverRedis } from './redis.js';
+export type { BusDriverRedisConfig } from './redis.js';

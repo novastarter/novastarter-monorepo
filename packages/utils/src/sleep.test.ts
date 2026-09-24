@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 test('Resolves once the time is up, not before', async () => {
-	// 1. The promise stays pending short of the deadline and settles exactly at it
+	// The promise stays pending short of the deadline and settles exactly at it
 	const settled = vi.fn();
 	const wait = sleep(1000).then(settled);
 
@@ -27,7 +27,7 @@ test('Resolves once the time is up, not before', async () => {
 });
 
 test('Rejects with the abort reason when the signal aborts during the wait', async () => {
-	// 1. Aborting mid-wait ends it at once with the signal's reason, and the timer is gone
+	// Aborting mid-wait ends it at once with the signal's reason, and the timer is gone
 	const controller = new AbortController();
 	const wait = sleep(10_000, controller.signal);
 
@@ -39,7 +39,7 @@ test('Rejects with the abort reason when the signal aborts during the wait', asy
 });
 
 test('Rejects at once with a signal already aborted', async () => {
-	// 1. No timer is armed when there is nothing to wait for
+	// No timer is armed when there is nothing to wait for
 	const controller = new AbortController();
 	controller.abort(new Error('already'));
 
@@ -48,8 +48,8 @@ test('Rejects at once with a signal already aborted', async () => {
 });
 
 test('Removes its abort listener once the wait ended, so a long-lived signal keeps no reference', async () => {
-	// 1. The listener is there while the wait runs and gone on resolution, so a late abort finds nothing to call and a
-	//    signal shared by many waits does not accumulate one listener per finished wait
+	// The listener is there while the wait runs and gone on resolution, so a late abort finds nothing to call and a
+	// signal shared by many waits does not accumulate one listener per finished wait
 	const controller = new AbortController();
 	const wait = sleep(100, controller.signal);
 
@@ -63,13 +63,13 @@ test('Removes its abort listener once the wait ended, so a long-lived signal kee
 });
 
 test('Refuses a wait the timer cannot hold instead of ending it at once', async () => {
-	// 1. Negative, NaN and overlong delays would all become a 1 ms timer in Node; each is a RangeError instead
+	// Negative, NaN and overlong delays would all become a 1 ms timer in Node; each is a RangeError instead
 	await expect(sleep(-1)).rejects.toThrow(RangeError);
 	await expect(sleep(Number.NaN)).rejects.toThrow(RangeError);
 	await expect(sleep(MAX_TIMER_DELAY + 1)).rejects.toThrow(RangeError);
 	expect(vi.getTimerCount()).toBe(0);
 
-	// 2. The bounds themselves are fine
+	// The bounds themselves are fine
 	const zero = sleep(0);
 	const max = sleep(MAX_TIMER_DELAY);
 

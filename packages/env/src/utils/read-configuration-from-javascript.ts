@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { InvalidConfigError } from '@novastarter/errors';
 import { isPlainObject } from 'lodash-es';
 
 /**
@@ -10,41 +11,41 @@ import { isPlainObject } from 'lodash-es';
  *
  * @param path - Path to the `.js`, `.cjs` or `.mjs` file.
  * @returns The configuration object.
- * @throws When the export is neither a function nor a plain object, or a function export does not return a plain
- * object.
+ * @throws InvalidConfigError when the export is neither a function nor a plain object, or a function export does not
+ * return a plain object.
  */
 export const readConfigurationFromJavaScript = (path: string): Record<string, unknown> => {
-	// 1. A `require` bound to this module, since ESM has no global one
+	// A `require` bound to this module, since ESM has no global one
 	const require = createRequire(import.meta.url);
 
 	const module = require(path);
 
-	// 2. Declared outside the block so the error below can name the type of whatever was found (or `undefined`);
-	//    `unknown` because `require` returns `any` and the checks below are the runtime validation
+	// Declared outside the block so the error below can name the type of whatever was found (or `undefined`);
+	// `unknown` because `require` returns `any` and the checks below are the runtime validation
 	let exported: unknown;
 
-	// 3. ESM-style `default` export and CJS `module.exports` are both accepted; `typeof null` is `object` too, so a
-	//    null export must be excluded before the `in` operator below touches it — otherwise it would crash with a raw
-	//    TypeError instead of the documented error
+	// ESM-style `default` export and CJS `module.exports` are both accepted; `typeof null` is `object` too, so a
+	// null export must be excluded before the `in` operator below touches it — otherwise it would crash with a raw
+	// TypeError instead of the documented error
 	if ((typeof module === 'object' && module !== null) || typeof module === 'function') {
 		exported = 'default' in module ? module.default : module;
 
-		// 4. A factory gets the raw environment so it can compute values from it; its result must be a plain object,
-		//    like the export of a data module, so a factory returning nothing is rejected below instead of flowing
-		//    into the merge as `undefined`
+		// A factory gets the raw environment so it can compute values from it; its result must be a plain object,
+		// like the export of a data module, so a factory returning nothing is rejected below instead of flowing
+		// into the merge as `undefined`
 		if (typeof exported === 'function') {
 			exported = exported(process.env);
 		}
 
-		// 5. Class instances and arrays are rejected on purpose; configuration is a plain key/value map
+		// Class instances and arrays are rejected on purpose; configuration is a plain key/value map
 		if (isPlainObject(exported)) {
 			return exported as Record<string, unknown>;
 		}
 	}
 
-	// 6. Reached when the export was neither a plain object nor a factory returning one: the refusal names the
-	//    type that was actually found (or `undefined`), so the author sees what the file handed over
-	throw new Error(
-		`Invalid JS configuration file export type. Requires one of "function", "object", received: "${typeof exported}"`,
-	);
+	// Reached when the export was neither a plain object nor a factory returning one: the refusal names the
+	// type that was actually found (or `undefined`), so the author sees what the file handed over
+	throw new InvalidConfigError({
+		reason: `The JavaScript configuration file must export an object or a function returning one, not "${typeof exported}"`,
+	});
 };

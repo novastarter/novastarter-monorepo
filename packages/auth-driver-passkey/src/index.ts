@@ -1,15 +1,17 @@
 /**
- * Public entry point of `@novastarter/auth-driver-passkey`: the {@link AuthDriverPasskey} class and its options, the
- * registration of a new key — {@link startPasskeyRegistration} and {@link finishPasskeyRegistration} — and the default
- * export for consumers that import the driver without a named binding.
+ * Public entry point of `@novastarter/auth-driver-passkey`: the {@link AuthDriverPasskey} class and its options, and
+ * the registration of a new key — {@link startPasskeyRegistration} and {@link finishPasskeyRegistration}.
  */
-import { AuthDriverPasskey } from './lib/driver.js';
-
 export {
 	AuthDriverPasskey,
 	type AuthDriverPasskeyConfig,
 	type PasskeyCredential,
 	type PasskeyRegistrationParams,
 } from './lib/driver.js';
-export * from './lib/registration.js';
-export default AuthDriverPasskey;
+export {
+	finishPasskeyRegistration,
+	type FinishPasskeyRegistrationParams,
+	PASSKEY_REGISTRATION_PURPOSE,
+	type StartedPasskeyRegistration,
+	startPasskeyRegistration,
+} from './lib/registration.js';

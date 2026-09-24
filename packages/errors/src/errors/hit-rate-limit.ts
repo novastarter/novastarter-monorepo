@@ -19,11 +19,11 @@ export interface HitRateLimitErrorExtensions {
  * @returns Message telling the caller how long to wait, in a human-readable duration.
  */
 export const hitRateLimitMessage = (extensions: HitRateLimitErrorExtensions): string => {
-	// 1. Express the wait relative to now, since that is what the caller needs to know
+	// Relative to now, since that is what the caller needs to know
 	const msBeforeNext = extensions.reset.getTime() - Date.now();
 
-	// 2. Clamp at zero: a reset in the past means "retry now", not a negative duration, and an invalid Date yields
-	//    `NaN` — which `ms` would throw on — so it lands on zero too
+	// Clamp at zero: a reset in the past means "retry now", not a negative duration, and an invalid Date yields
+	// `NaN` — which `ms` would throw on — so it lands on zero too
 	const retryAfter = Number.isNaN(msBeforeNext) ? 0 : Math.max(0, msBeforeNext);
 
 	return `Too many requests, retry after ${ms(retryAfter)}.`;

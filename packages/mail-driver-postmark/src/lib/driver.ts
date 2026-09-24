@@ -1,3 +1,4 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import { type CallOptions, type CallResponse, type HttpApi, request } from '@novastarter/http';
 import {
 	bareMailAddress,
@@ -90,22 +91,20 @@ export class MailDriverPostmark implements MailDriver {
 	 * Create a driver on a client of its own for the given token.
 	 *
 	 * @param config - Server token, streams and timeout.
-	 * @throws Error without a server token.
+	 * @throws InvalidConfigError without a server token.
 	 */
 	constructor(config: MailDriverPostmarkConfig) {
-		// 1. A missing token is a configuration error; report it by the option's name
 		if (!config.serverToken) {
-			throw new Error('The postmark mail driver needs a "serverToken"');
+			throw new InvalidConfigError({ reason: 'The postmark mail driver needs a "serverToken"' });
 		}
 
-		// 2. The SDK's `Configuration` is `(useHttps, requestHost, timeout)`; only the timeout is ours to set
+		// The SDK's `Configuration` is `(useHttps, requestHost, timeout)`; only the timeout is ours to set
 		this.client = new ServerClient(
 			config.serverToken,
 			config.timeout !== undefined ? { timeout: config.timeout } : undefined,
 		);
 
-		// 3. The streams per category, and the API of raw calls, which bypass the SDK — the location's timeout is in
-		//    seconds, the API's in milliseconds
+		// Raw calls bypass the SDK; the location's timeout is in seconds, the API's in milliseconds
 		this.streams = { messageStream: config.messageStream, broadcastStream: config.broadcastStream };
 
 		this.api = {
@@ -126,8 +125,8 @@ export class MailDriverPostmark implements MailDriver {
 	 * own error unchanged when the message cannot be built.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
-		// 1. Translate first, so a failure of the mapper (no sender, unreadable attachment) surfaces the kit's own
-		//    error before the request instead of a re-wrapped API error
+		// Translated first, so a mapper failure (no sender, unreadable attachment) surfaces the kit's own error before
+		// the request instead of a re-wrapped API error
 		const postmarkMessage = await toPostmarkMessage(message, this.streams);
 
 		let response: Awaited<ReturnType<ServerClient['sendEmail']>>;
@@ -135,11 +134,11 @@ export class MailDriverPostmark implements MailDriver {
 		try {
 			response = await this.client.sendEmail(postmarkMessage);
 		} catch (error) {
-			// 2. The SDK throws on a refusal; wrapped so the log names the provider, the SDK's error as the cause
+			// Wrapped so the log names the provider, with the SDK's error as the cause
 			throw describeError(error);
 		}
 
-		// 3. Postmark takes a message whole or refuses it, so every recipient counts as accepted
+		// Postmark takes a message whole or refuses it, so every recipient counts as accepted
 		return {
 			messageId: response.MessageID,
 			accepted: toMailAddressList(message.to).map(bareMailAddress),
@@ -155,7 +154,7 @@ export class MailDriverPostmark implements MailDriver {
 	 * Postmark refuses.
 	 */
 	async verify(): Promise<void> {
-		// 1. The cheapest authenticated call: the server's own record
+		// The cheapest authenticated call
 		await this.client.getServer().catch((error: unknown) => {
 			throw describeError(error);
 		});
@@ -194,8 +193,6 @@ export class MailDriverPostmark implements MailDriver {
 		params?: Record<string, unknown>,
 		options?: CallOptions,
 	): Promise<CallResponse<T>> {
-		// 1. `request()` does the whole of it — placeholders, the host check before the token is sent, the deadline,
-		//    the kit's errors without the token — over the API the constructor described
 		return request<T>(this.api, method, params, options);
 	}
 }

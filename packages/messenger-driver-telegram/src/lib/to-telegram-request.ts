@@ -17,8 +17,8 @@ export interface TelegramRequest {
  * @returns The parse mode, or `undefined` for plain text.
  */
 export const toParseMode = (format: MessengerFormat | undefined): string | undefined => {
-	// 1. `MarkdownV2`, not the legacy `Markdown`: the old one cannot escape everything and Telegram keeps it for
-	//    compatibility only
+	// `MarkdownV2`, not the legacy `Markdown`: the old one cannot escape everything and Telegram keeps it for
+	// compatibility only
 	if (format === 'markdown') return 'MarkdownV2';
 	if (format === 'html') return 'HTML';
 
@@ -33,7 +33,7 @@ export const toParseMode = (format: MessengerFormat | undefined): string | undef
  * @internal
  */
 const toSource = (attachment: MessengerAttachment): string | Blob => {
-	// 1. A `File` keeps its own name; a bare `Blob` gets the attachment's, or a neutral one, since Telegram shows it
+	// A `File` keeps its own name; a bare `Blob` gets the attachment's, or a neutral one, since Telegram shows it
 	if (typeof attachment.source === 'string' || attachment.source instanceof File) {
 		return attachment.source;
 	}
@@ -56,7 +56,6 @@ const toSource = (attachment: MessengerAttachment): string | Blob => {
  * @returns The method and its parameters; `undefined` values are left out.
  */
 export const toTelegramRequest = (message: MessengerMessage, defaultFormat?: MessengerFormat): TelegramRequest => {
-	// 1. What every method shares: the chat, the silence, the parse mode of the text or caption
 	const attachments = message.attachments ?? [];
 	const parseMode = toParseMode(message.format ?? defaultFormat);
 
@@ -70,12 +69,10 @@ export const toTelegramRequest = (message: MessengerMessage, defaultFormat?: Mes
 	const markup = (field: string): Record<string, unknown> =>
 		text === undefined ? {} : { [field]: text, ...(parseMode ? { parse_mode: parseMode } : {}) };
 
-	// 2. Text only
 	if (attachments.length === 0) {
 		return { method: 'sendMessage', params: { ...base, ...markup('text'), ...message.raw } };
 	}
 
-	// 3. One file: its own method, named after its kind, with the text as the caption
 	if (attachments.length === 1) {
 		const [attachment] = attachments as [MessengerAttachment];
 		const method = attachment.kind === 'photo' ? 'sendPhoto' : 'sendDocument';
@@ -86,7 +83,7 @@ export const toTelegramRequest = (message: MessengerMessage, defaultFormat?: Mes
 		};
 	}
 
-	// 4. Several files: an album; a file is referenced from the list by the name of its multipart part
+	// A file is referenced from the album's list by the name of its multipart part
 	const files: Record<string, unknown> = {};
 
 	const media = attachments.map((attachment, index) => {

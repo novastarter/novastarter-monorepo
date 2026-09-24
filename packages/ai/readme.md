@@ -148,4 +148,4 @@ extra `headers`. `data` is the body parsed as JSON, else its text, `undefined` w
 
 A 429 throws `HitRateLimitError`; any other error status throws `ProviderCallError` with the provider's `status` and
 `body` in `extensions`. An unknown provider throws `AiProviderNotFoundError` (`AI_PROVIDER_NOT_FOUND`); a provider
-registered without `api` throws an `Error`.
+registered without `api` throws `InvalidConfigError` (`INVALID_CONFIG`).

@@ -11,7 +11,6 @@ afterEach(() => {
 
 describe('useMessenger', () => {
 	test('Returns the same manager on every call, and a fresh one after a reset', () => {
-		// 1. Built on the first call, cached for every later one
 		const first = useMessenger();
 
 		expect(first).toBeInstanceOf(MessengerManager);

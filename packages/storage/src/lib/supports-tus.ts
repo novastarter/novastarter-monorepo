@@ -15,7 +15,7 @@ import type { StorageDriver, TusDriver } from '../driver.js';
  * ```
  */
 export function supportsTus(driver: StorageDriver): driver is TusDriver {
-	// 1. Presence of the getter is the only reliable runtime signal: `StorageDriver` is ambient, so there is no base
-	//    class or marker symbol to test against
+	// Presence of the getter is the only reliable runtime signal: `StorageDriver` is ambient, so there is no base
+	// class or marker symbol to test against
 	return 'tusExtensions' in driver;
 }

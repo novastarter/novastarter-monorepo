@@ -27,11 +27,11 @@ export interface NodemailerInfo {
  * ```
  */
 export const toMailResult = (info: NodemailerInfo): MailResult => {
-	// 1. nodemailer reports recipients as strings or as address objects depending on the transport
+	// nodemailer reports recipients as strings or as address objects depending on the transport
 	const toAddress = (entry: string | { address: string }): string =>
 		typeof entry === 'string' ? entry : entry.address;
 
-	// 2. Transports without an acceptance report get the envelope: the message left the process
+	// Transports without an acceptance report get the envelope: the message left the process
 	return {
 		messageId: info.messageId,
 		accepted: (info.accepted ?? info.envelope?.to ?? []).map(toAddress),

@@ -7,5 +7,5 @@ import { toErrorMessage } from '@novastarter/utils';
  * @returns The error to raise.
  */
 export const describeError = (error: unknown): Error =>
-	// 1. The SDK's message already carries its details; the provider's name is added, so the log says who refused
+	// The SDK's message already carries its details; the provider's name is added, so the log says who refused
 	new Error(`Mailjet: ${toErrorMessage(error)}`, { cause: error });

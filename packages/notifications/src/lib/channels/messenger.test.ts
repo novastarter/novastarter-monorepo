@@ -10,7 +10,7 @@ import { messengerChannel } from './messenger.js';
 vi.mock('@novastarter/messenger', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@novastarter/messenger')>();
 
-	// 1. Only the transport is faked, so `instanceof MessengerTargetGoneError` is the real check
+	// Only the transport is faked, so `instanceof MessengerTargetGoneError` is the real check
 	return { ...actual, sendMessage: vi.fn(async () => null) };
 });
 
@@ -34,18 +34,16 @@ afterEach(() => {
 
 describe('messengerChannel', () => {
 	test('Is named after its location unless named otherwise, and reaches a user with a chat there', () => {
-		// 1. The name is what preferences and `render` see
+		// The name is what preferences and `render` see
 		expect(messengerChannel({ location: 'telegram' }).name).toBe('telegram');
 		expect(messengerChannel({ location: 'telegram', name: 'tg' }).name).toBe('tg');
 
-		// 2. A chat on another location is no chat here
 		expect(messengerChannel({ location: 'telegram' }).reaches(RECIPIENT)).toBe(true);
 		expect(messengerChannel({ location: 'slack' }).reaches(RECIPIENT)).toBe(false);
 		expect(messengerChannel({ location: 'telegram' }).reaches({ userId: 'u1' })).toBe(false);
 	});
 
 	test('Sends the content to the user’s chat through the location, whatever the content says', async () => {
-		// 1. The chat and the location are the channel's
 		await messengerChannel({ location: 'telegram' }).send({
 			...DELIVERY,
 			content: { ...DELIVERY.content, to: 'evil', location: 'other' } as never,
@@ -60,13 +58,11 @@ describe('messengerChannel', () => {
 	test('Hands a gone chat to onGone without failing, and passes other failures on', async () => {
 		const onGone = vi.fn(async () => undefined);
 
-		// 1. A blocked bot: forgotten, not retried
 		vi.mocked(sendMessage).mockRejectedValueOnce(new MessengerTargetGoneError({ reason: 'blocked' }));
 
 		await expect(messengerChannel({ location: 'telegram', onGone }).send(DELIVERY)).resolves.toBeUndefined();
 		expect(onGone).toHaveBeenCalledWith('telegram', '123', 'u1');
 
-		// 2. Anything else is for the job to retry
 		const failure = new Error('down');
 
 		vi.mocked(sendMessage).mockRejectedValueOnce(failure);

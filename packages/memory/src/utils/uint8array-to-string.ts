@@ -12,6 +12,6 @@ const decoder = new TextDecoder();
  * @returns Decoded text.
  */
 export const uint8ArrayToString = (val: Uint8Array): string => {
-	// 1. Mirror of `stringToUint8Array`: UTF-8 in, UTF-8 out
+	// Mirror of `stringToUint8Array`: UTF-8 in, UTF-8 out
 	return decoder.decode(val);
 };

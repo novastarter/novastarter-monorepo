@@ -7,6 +7,6 @@
  * `joiValidationErrorItemToErrorExtensions` / `zodErrorToErrorExtensions` the converters for callers that run Joi or
  * zod themselves, so every rejected payload is reported in the same shape.
  */
-export * from './errors/index.js';
-export * from './lib/index.js';
-export * from './utils/index.js';
+export { FailedValidationError, type FailedValidationErrorExtensions, messageConstructor } from './errors/index.js';
+export { generateJoi, Joi, type JoiOptions, type StringSchema, validatePayload } from './lib/index.js';
+export { joiValidationErrorItemToErrorExtensions, zodErrorToErrorExtensions } from './utils/index.js';

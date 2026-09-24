@@ -9,12 +9,29 @@
  * {@link toUnavailableError}.
  */
 export type { DatabaseDriver } from './driver.js';
-export * from './errors/index.js';
-export * from './lib/create-query-logger.js';
-export * from './lib/database-manager.js';
-export * from './lib/ensure-directory.js';
-export * from './lib/resolve-logger.js';
-export * from './lib/to-drizzle-options.js';
-export * from './lib/to-migration-config.js';
-export * from './lib/use-database.js';
-export * from './types.js';
+export {
+	DatabaseUnavailableError,
+	type DatabaseUnavailableErrorExtensions,
+	toUnavailableError,
+} from './errors/index.js';
+export { createQueryLogger } from './lib/create-query-logger.js';
+export {
+	type DatabaseDrivers,
+	type DatabaseLocations,
+	DatabaseManager,
+	type LocationDb,
+} from './lib/database-manager.js';
+export { ensureDirectory } from './lib/ensure-directory.js';
+export { resolveLogger } from './lib/resolve-logger.js';
+export { toDrizzleOptions } from './lib/to-drizzle-options.js';
+export { type MigrationConfig, toMigrationConfig } from './lib/to-migration-config.js';
+export { useDatabase } from './lib/use-database.js';
+export type {
+	DatabaseCapabilities,
+	DatabaseCasing,
+	DatabaseDriverCommonConfig,
+	DrizzleOptions,
+	MigrateOptions,
+	QueryLogger,
+	QueryLoggingOptions,
+} from './types.js';

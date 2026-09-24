@@ -8,7 +8,7 @@ import { tryParseJSON } from './try-parse-json.js';
 vi.mock('./parse-json.js', { spy: true });
 
 test('Parses valid JSON', () => {
-	// 1. Every JSON value kind parses as it would with `parseJSON`; the fallback plays no part
+	// Every JSON value kind parses as it would with `parseJSON`; the fallback plays no part
 	expect(tryParseJSON('{"a":1}')).toEqual({ a: 1 });
 	expect(tryParseJSON('[1,2]')).toEqual([1, 2]);
 	expect(tryParseJSON('null')).toBeNull();
@@ -16,25 +16,25 @@ test('Parses valid JSON', () => {
 });
 
 test('Answers with the fallback when the text is not JSON', () => {
-	// 1. A plain word is the common case: it comes back as whatever the caller wants to keep
+	// A plain word is the common case: it comes back as whatever the caller wants to keep
 	expect(tryParseJSON('production', 'production')).toBe('production');
 	expect(tryParseJSON('{broken', null)).toBeNull();
 });
 
 test('Answers undefined without a fallback', () => {
-	// 1. No fallback means `undefined`, for text that is not JSON and for empty text alike
+	// No fallback means `undefined`, for text that is not JSON and for empty text alike
 	expect(tryParseJSON('nope')).toBeUndefined();
 	expect(tryParseJSON('')).toBeUndefined();
 });
 
 test('Goes through the prototype-safe parser', () => {
-	// 1. `__proto__` keys are dropped, the same as `parseJSON` does, since the text may be untrusted
+	// `__proto__` keys are dropped, the same as `parseJSON` does, since the text may be untrusted
 	expect(tryParseJSON('{"__proto__":{"admin":true},"name":"x"}')).toEqual({ name: 'x' });
 	expect(parseJSON).toHaveBeenCalled();
 });
 
 test('Rethrows errors other than a syntax error', () => {
-	// 1. Only "not JSON" is expected; anything else is a fault the caller must see
+	// Only "not JSON" is expected; anything else is a fault the caller must see
 	vi.mocked(parseJSON).mockImplementationOnce(() => {
 		throw new RangeError('too deep');
 	});
@@ -43,8 +43,8 @@ test('Rethrows errors other than a syntax error', () => {
 });
 
 test('Types the answer from an explicit type argument, with and without a fallback', () => {
-	// 1. With one explicit type argument the fallback's type defaults to it — no second argument needed — and without
-	//    a fallback the answer admits `undefined`; both lines fail `tsc` if the overloads regress
+	// With one explicit type argument the fallback's type defaults to it — no second argument needed — and without
+	// a fallback the answer admits `undefined`; both lines fail `tsc` if the overloads regress
 	interface Config {
 		a: number;
 	}

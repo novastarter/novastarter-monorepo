@@ -22,6 +22,6 @@ export const migrationsFolder = (): string => join(process.cwd(), 'drizzle');
  * @throws What the migrator raised — a failing statement, a missing folder.
  */
 export const migrateDatabase = async (): Promise<void> => {
-	// 1. The location's own `migrate()` picks the migrator of its dialect
+	// The location's own `migrate()` picks the migrator of its dialect
 	await useDatabase().location().migrate({ migrationsFolder: migrationsFolder() });
 };

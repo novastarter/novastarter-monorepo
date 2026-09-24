@@ -18,7 +18,6 @@ afterEach(() => {
 
 describe('useDatabase', () => {
 	test('Returns the same empty manager on every call', () => {
-		// 1. Nothing is built until asked, and every later call returns the cached instance
 		const first = useDatabase();
 
 		expect(first).toBeInstanceOf(DatabaseManager);
@@ -26,7 +25,6 @@ describe('useDatabase', () => {
 	});
 
 	test('Shares the registrations with every later caller', () => {
-		// 1. Registrations made at start-up are visible everywhere, and a location is built once
 		const mockDriver = vi.fn();
 
 		useDatabase().registerDriver('test-driver', mockDriver);

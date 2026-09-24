@@ -5,7 +5,7 @@ import type {
 	CallbackParams,
 	OAuthCallbackResult,
 } from '@novastarter/auth';
-import { toProviderCallError } from '@novastarter/errors';
+import { InvalidConfigError, toProviderCallError } from '@novastarter/errors';
 import { type CallResponse, type HttpApi, type HttpCallResponse, request } from '@novastarter/http';
 import { MAX_TIMER_DELAY } from '@novastarter/utils';
 import { buildAuthorizeUrl } from './build-authorize-url.js';
@@ -117,35 +117,34 @@ export class AuthDriverGithub implements AuthDriver {
 	 * Create a driver for one OAuth app.
 	 *
 	 * @param config - App credentials, scopes and timeout.
-	 * @throws Error without a client id or secret.
-	 * @throws RangeError for a timeout that is not a whole number from 1 to `MAX_TIMER_DELAY` — refused here, at the
+	 * @throws InvalidConfigError without a client id or secret.
+	 * @throws InvalidConfigError for a timeout that is not a whole number from 1 to `MAX_TIMER_DELAY` — refused here, at the
 	 * location's first use, rather than on a sign-in.
 	 */
 	constructor(config: AuthDriverGithubConfig) {
-		// 1. Missing credentials are a configuration error; report them by the option's name
 		if (!config.clientId) {
-			throw new Error('The github auth driver needs a "clientId"');
+			throw new InvalidConfigError({ reason: 'The github auth driver needs a "clientId"' });
 		}
 
 		if (!config.clientSecret) {
-			throw new Error('The github auth driver needs a "clientSecret"');
+			throw new InvalidConfigError({ reason: 'The github auth driver needs a "clientSecret"' });
 		}
 
-		// 2. A timeout a timer cannot hold would fail every request at once instead of never, so it is refused now
+		// A timeout a timer cannot hold would fail every request at once instead of never, so it is refused now
 		const timeout = config.timeout ?? DEFAULT_TIMEOUT;
 
 		if (!(Number.isInteger(timeout) && timeout >= 1 && timeout <= MAX_TIMER_DELAY)) {
-			throw new RangeError(
-				`The github auth driver needs a "timeout" between 1 and ${MAX_TIMER_DELAY} ms, got ${config.timeout}`,
-			);
+			throw new InvalidConfigError({
+				reason: `The github auth driver needs a "timeout" between 1 and ${MAX_TIMER_DELAY} ms, got ${config.timeout}`,
+			});
 		}
 
 		this.clientId = config.clientId;
 		this.clientSecret = config.clientSecret;
 		this.scopes = config.scopes ?? DEFAULT_SCOPES;
 
-		// 3. The platform's fetch unless a test hands in its own, bound to the global object: `fetch` throws
-		//    `Illegal invocation` on some runtimes when called with another receiver, which `context.fetch(...)` is
+		// Bound to the global object: `fetch` throws `Illegal invocation` on some runtimes when called with another
+		// receiver, which `context.fetch(...)` is
 		this.context = {
 			fetch: config.fetch ?? (globalThis.fetch.bind(globalThis) as unknown as AuthFetch),
 			timeout,
@@ -160,7 +159,6 @@ export class AuthDriverGithub implements AuthDriver {
 	 * @returns The URL to redirect the browser to.
 	 */
 	async authorize(params: AuthorizeParams): Promise<URL> {
-		// 1. Nothing to ask GitHub yet: the URL is built from the parameters alone
 		return buildAuthorizeUrl(params, this.clientId, this.scopes);
 	}
 
@@ -175,7 +173,6 @@ export class AuthDriverGithub implements AuthDriver {
 	 * @throws HitRateLimitError when GitHub refuses the addresses for a spent rate limit, reset at GitHub's wait.
 	 */
 	async callback(params: CallbackParams): Promise<OAuthCallbackResult> {
-		// 1. The code, bound to this sign-in by the PKCE verifier, buys the tokens
 		const tokens = await exchangeCode(this.context, {
 			code: params.code,
 			codeVerifier: params.codeVerifier,
@@ -184,8 +181,8 @@ export class AuthDriverGithub implements AuthDriver {
 			clientSecret: this.clientSecret,
 		});
 
-		// 2. The access token reads who signed in, then goes back with the identity; `finishOAuth()` takes it off before
-		//    anything else sees the identity, and keeping it is the application's call
+		// `finishOAuth()` takes the tokens off before anything else sees the identity, and keeping them is the
+		// application's call
 		return { ...toIdentity(await fetchProfile(this.context, tokens.accessToken)), tokens };
 	}
 
@@ -228,9 +225,9 @@ export class AuthDriverGithub implements AuthDriver {
 		params?: Record<string, unknown>,
 		options: AuthCallOptions = {},
 	): Promise<CallResponse<T>> {
-		// 1. The app's client id put in for the placeholder of GitHub's app endpoints first — the Basic credentials are
-		//    this app's, so no parameter names another one; the token stays out of the options handed on, so it is
-		//    never sent as a header of its own
+		// The Basic credentials are this app's, so the placeholder of GitHub's app endpoints takes this app's client id
+		// and no parameter names another one; the token stays out of the options handed on, so it is never sent as a
+		// header of its own
 		const { accessToken, ...rest } = options;
 
 		return request<T>(
@@ -251,8 +248,7 @@ export class AuthDriverGithub implements AuthDriver {
 	 * @internal
 	 */
 	private api(accessToken: string | undefined): HttpApi {
-		// 1. The person's token when the caller has one, the app's own credentials otherwise — so the API is built per
-		//    call
+		// The token is the caller's when it has one, so the API is built per call
 		const authorization = accessToken
 			? `Bearer ${accessToken}`
 			: `Basic ${Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64')}`;
@@ -284,12 +280,11 @@ export class AuthDriverGithub implements AuthDriver {
  * @internal
  */
 const refuseRateLimit = (response: HttpCallResponse, method: string): Error | undefined => {
-	// 1. The wait GitHub names, if the refusal is a rate limit at all
 	const wait = githubRateLimitWait(response.status, response.headers, response.body);
 
 	if (wait === undefined) return undefined;
 
-	// 2. The kit's error names the method and GitHub's reason, never the credentials, which stay in the request
+	// The error names the method and GitHub's reason, never the credentials, which stay in the request
 	return toProviderCallError({
 		provider: PROVIDER,
 		method,

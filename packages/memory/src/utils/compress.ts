@@ -23,7 +23,7 @@ const gunzip = promisify(gunzipCallback);
  * @returns Compressed bytes, including the gzip header {@link isCompressed} recognises.
  */
 export const compress = async (input: Uint8Array): Promise<Uint8Array<ArrayBufferLike>> => {
-	// 1. zlib works with buffers, so convert back to the array type the rest of the package uses
+	// zlib works with buffers, so convert back to the array type the rest of the package uses
 	const buffer = await gzip(input);
 
 	return bufferToUint8Array(buffer);
@@ -37,7 +37,6 @@ export const compress = async (input: Uint8Array): Promise<Uint8Array<ArrayBuffe
  * @throws When `input` is not valid gzip data.
  */
 export const decompress = async (input: Uint8Array): Promise<Uint8Array<ArrayBufferLike>> => {
-	// 1. Same round trip as `compress`, in the other direction
 	const buffer = await gunzip(input);
 
 	return bufferToUint8Array(buffer);

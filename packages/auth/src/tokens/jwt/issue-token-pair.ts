@@ -71,7 +71,7 @@ export const makeTokenPair = async (
 	const accessTtl = keys.settings.accessTtl ?? DEFAULT_ACCESS_TOKEN_TTL;
 	const refreshTtl = keys.settings.refreshTtl ?? DEFAULT_REFRESH_TOKEN_TTL;
 
-	// 1. Custom claims first, the registered ones over them, so no caller can forge a `sub` or stretch an `exp`
+	// Custom claims first, the registered ones over them, so no caller can forge a `sub` or stretch an `exp`
 	const custom = Object.fromEntries(Object.entries(claims).filter(([name]) => !RESERVED_CLAIMS.has(name)));
 
 	let jwt = new SignJWT(custom)
@@ -84,7 +84,7 @@ export const makeTokenPair = async (
 	if (keys.settings.issuer) jwt = jwt.setIssuer(keys.settings.issuer);
 	if (keys.settings.audience) jwt = jwt.setAudience(keys.settings.audience);
 
-	// 2. The refresh token is opaque and stateful: only a stored one refreshes, so it can be revoked
+	// The refresh token is opaque and stateful: only a stored one refreshes, so it can be revoked
 	const refreshToken = randomToken();
 
 	const refresh: RefreshRecord = {
@@ -118,7 +118,7 @@ export const makeTokenPair = async (
  * @param userId - The user, in the application's own id format.
  * @param options - Extra claims of the access token.
  * @returns The pair for the client and the refresh record to store.
- * @throws Error when the JWT settings are missing or unusable.
+ * @throws InvalidConfigError when the JWT settings are missing or unusable.
  * @example
  * ```ts
  * const { pair, refresh } = await issueTokenPair(identity.subject, { claims: { role: 'admin' } });
@@ -128,6 +128,6 @@ export const makeTokenPair = async (
  * ```
  */
 export const issueTokenPair = async (userId: string, options: IssueTokenPairOptions = {}): Promise<IssuedTokenPair> => {
-	// 1. A sign-in starts a family of its own, so revoking one device's chain leaves the others signed in
+	// A sign-in starts a family of its own, so revoking one device's chain leaves the others signed in
 	return makeTokenPair(userId, randomUUID(), options.claims);
 };

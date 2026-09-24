@@ -34,8 +34,8 @@ export const createError = <Extensions = void>(
 	message: string | ((extensions: Extensions) => string),
 	status = 500,
 ): NovastarterErrorConstructor<Extensions> => {
-	// 1. Return an anonymous subclass, so `instanceof Error` and stack traces keep working while the fields below
-	//    give every instance the shared shape
+	// Subclassing keeps `instanceof Error` and stack traces working, while the fields below give every instance the
+	// shared shape
 	return class extends Error implements NovastarterError<Extensions> {
 		/** Fixed name every error made by this factory shares; the type guard relies on it. */
 		override name = 'NovastarterError';
@@ -56,12 +56,12 @@ export const createError = <Extensions = void>(
 		 * @param options - Standard `ErrorOptions`, for example a `cause`.
 		 */
 		constructor(extensions: Extensions, options?: ErrorOptions) {
-			// 1. Resolve the message before `super`, since a function message needs the extensions to build the text
+			// Resolved before `super`, since a function message needs the extensions to build the text
 			const msg = typeof message === 'string' ? message : message(extensions as Extensions);
 
 			super(msg, options);
 
-			// 2. Keep the details on the instance for consumers that read them after catching
+			// Consumers read the details after catching
 			this.extensions = extensions;
 		}
 
@@ -71,7 +71,7 @@ export const createError = <Extensions = void>(
 		 * @returns Single-line representation of the error.
 		 */
 		override toString(): string {
-			// 1. Put the code between name and message, the way a log reader scans for it
+			// A log reader scans for the code between name and message
 			return `${this.name} [${this.code}]: ${this.message}`;
 		}
 	};

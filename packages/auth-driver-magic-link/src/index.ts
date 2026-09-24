@@ -1,9 +1,6 @@
 /**
- * Public entry point of `@novastarter/auth-driver-magic-link`: the {@link AuthDriverMagicLink} class, its options
- * and the default export for consumers that import the driver without a named binding.
+ * Public entry point of `@novastarter/auth-driver-magic-link`: the {@link AuthDriverMagicLink} class and its options.
  */
-import { AuthDriverMagicLink } from './lib/driver.js';
-
 export {
 	AuthDriverMagicLink,
 	type AuthDriverMagicLinkConfig,
@@ -11,4 +8,3 @@ export {
 	type MagicLinkMessage,
 	type MagicLinkUser,
 } from './lib/driver.js';
-export default AuthDriverMagicLink;

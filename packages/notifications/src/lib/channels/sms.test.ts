@@ -13,13 +13,11 @@ afterEach(() => {
 
 describe('smsChannel', () => {
 	test('Reaches a user with a number only', () => {
-		// 1. No number, nothing to send to
 		expect(smsChannel().reaches({ userId: 'u1', phone: '+15555550100' })).toBe(true);
 		expect(smsChannel().reaches({ userId: 'u1' })).toBe(false);
 	});
 
 	test('Sends the text to the user’s number, through the location when one is given', async () => {
-		// 1. The recipient is the channel's; the location is passed on
 		await smsChannel({ location: 'twilio' }).send({
 			notification: { type: 'invoice.paid', userId: 'u1' },
 			recipient: { userId: 'u1', phone: '+15555550100' },

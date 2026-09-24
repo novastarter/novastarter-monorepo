@@ -41,7 +41,7 @@ export const mailChannel = (options: MailChannelOptions = {}): NotificationChann
 	 * @throws What `sendMail()` throws when every location failed.
 	 */
 	async send({ recipient, content }: NotificationDelivery<MailContent>): Promise<void> {
-		// 1. The recipient is the channel's to fill in, so a template cannot send someone else's notification elsewhere
+		// The recipient is the channel's to fill in, so a template cannot send someone else's notification elsewhere
 		const message: MailMessage = { ...content, to: recipient.email! };
 
 		await sendMail(message, options.location ? { location: options.location } : {});

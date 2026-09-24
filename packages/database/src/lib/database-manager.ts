@@ -75,19 +75,19 @@ export class DatabaseManager extends DriverManager<DatabaseDriver, DatabaseDrive
 	 *
 	 * @param name - Location name.
 	 * @param config - Driver name and options.
-	 * @throws Error when `config.driver` names a driver that has not been registered.
+	 * @throws InvalidConfigError when `config.driver` names a driver that has not been registered.
 	 */
 	override registerLocation(name: string, config: LocationConfig<DatabaseDrivers>): void {
-		// 1. Read the options through the shared shape: the union cannot be spread without widening it
+		// The union cannot be spread without widening it, so the options are read through the shared shape
 		const location = config as AnyLocation;
 
-		// 2. A shallow copy with the label filled in, so the caller's object stays as it was
+		// A shallow copy, so the caller's object stays as it was
 		const labelled: AnyLocation = {
 			...location,
 			options: { ...location.options, label: location.options.label ?? name },
 		};
 
-		// 3. Back to the union the base class checks; nothing changed at runtime but one key
+		// Back to the union the base class checks; nothing changed at runtime but one key
 		super.registerLocation(name, labelled as LocationConfig<DatabaseDrivers>);
 	}
 
@@ -97,11 +97,11 @@ export class DatabaseManager extends DriverManager<DatabaseDriver, DatabaseDrive
 	 * @typeParam Name - The location name, so the map can be looked up at the type level.
 	 * @param name - Location name; {@link DEFAULT_LOCATION} when omitted.
 	 * @returns The driver built on the location's first use, its `db` typed by the map — `unknown` for a name it lacks.
-	 * @throws Error when no location of that name is registered.
+	 * @throws InvalidConfigError when no location of that name is registered.
 	 */
 	override location<Name extends string = typeof DEFAULT_LOCATION>(name?: Name): DatabaseDriver<LocationDb<Name>> {
-		// 1. The base builds and caches; only the static type is narrowed here, from the map the application augmented,
-		//    so the cast changes nothing at runtime
+		// The base builds and caches; only the static type is narrowed here, from the map the application augmented,
+		// so the cast changes nothing at runtime
 		return super.location(name) as DatabaseDriver<LocationDb<Name>>;
 	}
 }

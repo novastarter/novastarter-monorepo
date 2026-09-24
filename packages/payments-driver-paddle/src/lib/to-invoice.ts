@@ -34,18 +34,18 @@ export const TRANSACTION_STATUS: Record<string, InvoiceStatus> = {
  * @returns The normalised invoice.
  */
 export const toInvoice = (transaction: PaddleTransactionLike): Invoice => {
-	// 1. Totals arrive as strings in the minor unit; an unknown status reads as open, the safer default
+	// Totals arrive as strings in the minor unit; an unknown status reads as open, the safer default
 	const status = TRANSACTION_STATUS[transaction.status] ?? 'open';
 	const totals = transaction.details?.totals;
 	const total = Number(totals?.grandTotal ?? totals?.total ?? 0);
 	const balance = Number(totals?.balance ?? 0);
 	const captured = transaction.payments.find((payment) => payment.status === 'captured');
 
-	// 2. `capturedAt` is the moment of payment; a completed transaction without one was billed and settled at once
+	// `capturedAt` is the moment of payment; a completed transaction without one was billed and settled at once
 	const paidAt = status === 'paid' ? (captured?.capturedAt ?? transaction.billedAt ?? transaction.createdAt) : null;
 
-	// 3. Paid means paid in full; otherwise what was captured so far is the balance's complement. Paddle sends the
-	//    currency in upper case, while the kit's contract reads it in lower case
+	// Paid means paid in full; otherwise what was captured so far is the balance's complement. Paddle sends the
+	// currency in upper case, while the kit's contract reads it in lower case
 	return {
 		id: transaction.id,
 		number: transaction.invoiceNumber,

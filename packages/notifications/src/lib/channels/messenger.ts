@@ -56,14 +56,15 @@ export const messengerChannel = (options: MessengerChannelOptions): Notification
 	 * @throws What `sendMessage()` throws when the messenger failed, or what `onGone` throws.
 	 */
 	async send({ recipient, content }: NotificationDelivery<MessengerContent>): Promise<void> {
-		// 1. The chat and the location are the channel's to fill in, whatever the content carries
+		// The channel fills in the chat and the location, whatever the content carries, so a template cannot redirect
+		// the message
 		const chatId = recipient.messengers![options.location]!;
 		const { to: _to, location: _location, ...message } = content as MessengerMessage;
 
 		try {
 			await sendMessage({ ...message, to: chatId }, { location: options.location });
 		} catch (error) {
-			// 2. A gone chat is forgotten, not retried; any other failure goes to the job
+			// A gone chat is forgotten, not retried; any other failure goes to the job
 			if (!(error instanceof MessengerTargetGoneError)) {
 				throw error;
 			}

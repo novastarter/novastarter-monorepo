@@ -3,7 +3,8 @@
  *
  * `@novastarter/logger` and the Redis client of `@novastarter/redis` are mocked.
  */
-import { useLogger } from '@novastarter/logger';
+import { InvalidConfigError } from '@novastarter/errors';
+import { type Logger, useLogger } from '@novastarter/logger';
 import { createRedis } from '@novastarter/redis';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { QueueDriverBullmq } from './drivers/bullmq.js';
@@ -18,7 +19,7 @@ vi.mock('@novastarter/redis', () => ({
 }));
 
 beforeEach(() => {
-	vi.mocked(useLogger).mockReturnValue({ error: vi.fn() } as any);
+	vi.mocked(useLogger).mockReturnValue({ error: vi.fn() } as unknown as Logger);
 
 	// Every test starts from a local default location, as an application without Redis would register it
 	useQueue().registerLocation('default', {
@@ -34,7 +35,7 @@ afterEach(() => {
 
 describe('QueueManager', () => {
 	test('Registers the built-in drivers and serves the default location for any queue', () => {
-		// 1. The built-in drivers come with the manager, so the application only registers locations
+		// The built-in drivers come with the manager, so the application only registers locations
 		expect(useQueue().location('anything')).toBeInstanceOf(QueueDriverLocal);
 	});
 
@@ -61,7 +62,11 @@ describe('QueueManager', () => {
 	test('Names the queue when neither its location nor the default one exists', () => {
 		useQueue.reset();
 
-		expect(() => useQueue().location('mail')).toThrow('Queue "mail" has no location of its own and no "default" one.');
+		expect(() => useQueue().location('mail')).toThrow(InvalidConfigError);
+
+		expect(() => useQueue().location('mail')).toThrow(
+			'Invalid config. Queue "mail" has no location of its own and no "default" one; register either.',
+		);
 	});
 
 	test('Refuses a location of a driver nobody registered', () => {

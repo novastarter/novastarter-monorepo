@@ -6,14 +6,14 @@ import { toMigrationConfig } from './to-migration-config.js';
 
 describe('toMigrationConfig', () => {
 	test('Throws when the folder is missing', () => {
-		// 1. An empty string is as missing as an absent key: Drizzle would try to read a journal at `/meta/_journal.json`
+		// An empty string is as missing as an absent key: Drizzle would try to read a journal at `/meta/_journal.json`
 		expect(() => toMigrationConfig({ migrationsFolder: '' })).toThrowErrorMatchingInlineSnapshot(
-			`[Error: DatabaseDriver.migrate needs a "migrationsFolder"]`,
+			`[NovastarterError: Invalid config. DatabaseDriver.migrate needs a "migrationsFolder".]`,
 		);
 	});
 
 	test('Answers the folder alone when nothing else is given', () => {
-		// 1. `toStrictEqual` sees an undefined key as a key: the journal fields may not be present
+		// `toStrictEqual` sees an undefined key as a key: the journal fields may not be present
 		expect(
 			toMigrationConfig({ migrationsFolder: './drizzle', migrationsTable: undefined, migrationsSchema: undefined }),
 		).toStrictEqual({ migrationsFolder: './drizzle' });

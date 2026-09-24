@@ -4,6 +4,7 @@
  * `pino` and `pino-pretty` are mocked, so these check which streams and options reach pino for given options rather
  * than any real output.
  */
+import { InvalidConfigError } from '@novastarter/errors';
 import { pino } from 'pino';
 import { build as pinoPretty } from 'pino-pretty';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -24,7 +25,7 @@ vi.mock('pino', async (importOriginal) => {
 const prettyStream = { pretty: true };
 
 beforeEach(() => {
-	vi.mocked(pinoPretty).mockReturnValue(prettyStream as any);
+	vi.mocked(pinoPretty).mockReturnValue(prettyStream as unknown as ReturnType<typeof pinoPretty>);
 });
 
 afterEach(() => {
@@ -54,7 +55,6 @@ describe('buildRedactOptions', () => {
 	});
 
 	test('Adds the paths of the array form to the built-in ones', () => {
-		// 1. A repeated built-in path is not listed twice
 		expect(buildRedactOptions(['password', 'req.headers.cookie'])).toStrictEqual({
 			paths: [
 				'req.headers.authorization',
@@ -147,17 +147,18 @@ describe('createLogger', () => {
 	});
 
 	test('Throws on an unknown logsStream level instead of building a logger that writes nothing', () => {
-		// 1. pino's multistream resolves an unknown level name to `undefined` and then drops every line, the console
-		//    stream included, so the factory must fail at start-up, as loud as pino's own `unknown level` error
-		expect(() => createLogger({ logsStream: { stream: {} as LogsStream, level: 'nope' } })).toThrow(
-			'unknown level nope',
-		);
+		// pino's multistream resolves an unknown level name to `undefined` and then drops every line, the console
+		// stream included, so the factory must fail at start-up, as loud as pino's own `unknown level` error.
+		const build = () => createLogger({ logsStream: { stream: {} as LogsStream, level: 'nope' } });
+
+		expect(build).toThrow(InvalidConfigError);
+		expect(build).toThrow('unknown level "nope"');
 
 		expect(pino).not.toHaveBeenCalled();
 	});
 
 	test('Hands the multistream the custom levels, so it does not drop every line of a custom level', () => {
-		// 1. Without `levels` the multistream resolves `notice` to `undefined` and writes nothing, not even errors
+		// Without `levels` the multistream resolves `notice` to `undefined` and writes nothing, not even errors.
 		createLogger({ level: 'notice', pino: { customLevels: { notice: 35 } } });
 
 		expect(pino.multistream).toHaveBeenCalledWith([{ level: 'notice', stream: process.stdout }], {
@@ -177,7 +178,7 @@ describe('createLogger', () => {
 	});
 
 	test('Keeps the built-in redaction when the caller passes its own redact paths', () => {
-		// 1. lodash merges arrays index by index; the caller's list must add to the credentials, not overwrite them
+		// lodash merges arrays index by index; the caller's list must add to the credentials, not overwrite them.
 		createLogger({ pino: { redact: { paths: ['password'] } } });
 
 		expect(pino).toHaveBeenCalledWith(

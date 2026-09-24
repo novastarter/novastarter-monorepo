@@ -5,11 +5,11 @@
  * their modules.
  */
 import { AuthProviderFailedError } from '@novastarter/auth';
-import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
+import { HitRateLimitError, InvalidConfigError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import { createLocalJWKSet, type CryptoKey, exportJWK, generateKeyPair, type JWK, SignJWT } from 'jose';
 import { beforeAll, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import * as entry from '../index.js';
 import { JWKS_URL, TOKEN_URL } from './constants.js';
 import { AuthDriverGoogle } from './driver.js';
 import type { AuthFetch } from './request.js';
@@ -23,7 +23,7 @@ let jwks: ReturnType<typeof createLocalJWKSet>;
 let publicJwk: JWK;
 
 beforeAll(async () => {
-	// 1. One RS256 pair for the whole file: generating keys is the slow part
+	// One RS256 pair for the whole file: generating keys is the slow part
 	const pair = await generateKeyPair('RS256');
 
 	privateKey = pair.privateKey;
@@ -99,10 +99,10 @@ describe('AuthDriverGoogle', () => {
 			redirectUri: 'https://acme.test/auth/google/callback',
 		});
 
-		// 1. The location's scope, with `openid` added so an ID token comes back
+		// `openid` is added so an ID token comes back
 		expect(url.searchParams.get('scope')).toBe('openid email');
 		expect(url.searchParams.get('client_id')).toBe('client-1');
-		expect(defaultExport).toBe(AuthDriverGoogle);
+		expect(entry.AuthDriverGoogle).toBe(AuthDriverGoogle);
 	});
 
 	test('Exchanges the code and answers the identity of the verified ID token, with the tokens', async () => {
@@ -116,8 +116,7 @@ describe('AuthDriverGoogle', () => {
 
 		const driver = new AuthDriverGoogle({ clientId: 'client-1', clientSecret: 'secret-1', fetch, jwks });
 
-		// 1. The whole callback: one request to the token endpoint, the rest is read from the signed token; the access
-		//    and refresh tokens come back beside the identity for `finishOAuth()` to hand on
+		// One request to the token endpoint; the rest is read from the signed token
 		expect(await driver.callback(callbackParams)).toMatchObject({
 			provider: 'google',
 			subject: '1234567890',
@@ -134,7 +133,6 @@ describe('AuthDriverGoogle', () => {
 	});
 
 	test('Refuses a refused code and a token from another sign-in', async () => {
-		// 1. Google refuses the code: the OAuth error is the reason
 		const refused = new AuthDriverGoogle({
 			clientId: 'client-1',
 			clientSecret: 'secret-1',
@@ -144,7 +142,6 @@ describe('AuthDriverGoogle', () => {
 
 		await expect(refused.callback(callbackParams)).rejects.toBeInstanceOf(AuthProviderFailedError);
 
-		// 2. A token signed for another nonce is refused, however good its signature
 		const replayed = new AuthDriverGoogle({
 			clientId: 'client-1',
 			clientSecret: 'secret-1',
@@ -156,7 +153,6 @@ describe('AuthDriverGoogle', () => {
 	});
 
 	test('Refuses missing credentials and a timeout a timer cannot hold', () => {
-		// 1. Each missing option is named, so the fix is obvious from the message
 		expect(() => new AuthDriverGoogle({ clientId: '', clientSecret: 'secret-1' })).toThrow(
 			'The google auth driver needs a "clientId"',
 		);
@@ -165,17 +161,17 @@ describe('AuthDriverGoogle', () => {
 			'The google auth driver needs a "clientSecret"',
 		);
 
-		// 2. Zero, fractions and values past the timer's bound would fail every request; they are refused up front
+		// Zero, fractions and values past the timer's bound would fail every request
 		for (const timeout of [0, 1.5, 2 ** 31, Number.NaN]) {
 			expect(() => new AuthDriverGoogle({ clientId: 'client-1', clientSecret: 'secret-1', timeout })).toThrow(
-				RangeError,
+				InvalidConfigError,
 			);
 		}
 	});
 
 	test('Reads the key set of a callback through the injected fetch, redirect and all', async () => {
-		// 1. No local key set is handed in, so the callback must fetch Google's — over the injected fetch, or a location
-		//    behind an egress proxy would read it around the fetch it configured
+		// No local key set is handed in, so the callback must fetch Google's over the injected fetch, or a location
+		// behind an egress proxy would read it around the fetch it configured
 		const fetch = vi.fn<AuthFetch>(async (url) => {
 			if (url === TOKEN_URL) {
 				return {
@@ -199,7 +195,7 @@ describe('AuthDriverGoogle', () => {
 			email: 'ada@example.com',
 		});
 
-		// 2. The key set came from the injected fetch, asked to keep redirects manual so nothing is followed
+		// Redirects stay manual, so nothing is followed
 		const jwksCall = fetch.mock.calls.find(([url]) => url === JWKS_URL);
 
 		expect(jwksCall).toBeDefined();
@@ -207,7 +203,6 @@ describe('AuthDriverGoogle', () => {
 	});
 
 	test('Verifies by reading the key set', async () => {
-		// 1. A set with keys passes, and it is Google's URL that was read
 		const fetch = answer(200, { keys: [{ kty: 'RSA', kid: 'k1' }] });
 
 		await expect(
@@ -216,7 +211,6 @@ describe('AuthDriverGoogle', () => {
 
 		expect(fetch.mock.calls[0]![0]).toBe(JWKS_URL);
 
-		// 2. An empty set or a refusal fails the check
 		await expect(
 			new AuthDriverGoogle({
 				clientId: 'client-1',
@@ -243,7 +237,6 @@ describe('AuthDriverGoogle', () => {
 				},
 			);
 
-			// 1. The parsed answer, from the API root, with the token and no body
 			expect(list).toStrictEqual({ items: [{ id: 'primary' }] });
 
 			const [url, init] = fetch.mock.calls[0]!;
@@ -259,7 +252,7 @@ describe('AuthDriverGoogle', () => {
 			const fetch = respond(200, { id: 'e1' });
 			const driver = new AuthDriverGoogle({ ...credentials, fetch, jwks });
 
-			// 1. A full URL on another googleapis.com host is Google's own
+			// A full URL on another googleapis.com host is Google's own
 			await driver.call('POST https://people.googleapis.com/v1/people:searchContacts', { query: 'Ada' });
 
 			const [url, init] = fetch.mock.calls[0]!;
@@ -280,7 +273,6 @@ describe('AuthDriverGoogle', () => {
 				{ accessToken: ACCESS_TOKEN },
 			);
 
-			// 1. `{calendarId}` takes its param, encoded, and only `maxResults` is left for the query
 			const url = new URL(fetch.mock.calls[0]![0]);
 
 			expect(url.pathname).toBe('/calendar/v3/calendars/team%40group.calendar.google.com/events');
@@ -291,7 +283,7 @@ describe('AuthDriverGoogle', () => {
 			const fetch = respond(200, {});
 			const driver = new AuthDriverGoogle({ ...credentials, fetch, jwks });
 
-			// 1. Sent, `{calendarId}` would reach Google as `%7BcalendarId%7D`
+			// Sent, `{calendarId}` would reach Google as `%7BcalendarId%7D`
 			await expect(driver.call('GET /calendar/v3/calendars/{calendarId}/events')).rejects.toThrow(
 				'needs a "calendarId" parameter',
 			);
@@ -305,7 +297,6 @@ describe('AuthDriverGoogle', () => {
 
 			const result = await driver.call('GET /calendar/v3/users/me/calendarList');
 
-			// 1. Header names come lower-cased
 			expect(result).toStrictEqual({
 				status: 200,
 				headers: { 'content-type': 'application/json', etag: '"p1"' },
@@ -316,7 +307,6 @@ describe('AuthDriverGoogle', () => {
 		test('Answers nothing for a 204', async () => {
 			const driver = new AuthDriverGoogle({ ...credentials, fetch: respond(204), jwks });
 
-			// 1. An empty answer is `undefined`
 			await expect(
 				driver.call('DELETE /calendar/v3/calendars/c1/events/e1', {}, { accessToken: ACCESS_TOKEN }),
 			).resolves.toMatchObject({ status: 204, data: undefined });
@@ -326,10 +316,10 @@ describe('AuthDriverGoogle', () => {
 			const fetch = respond(200, {});
 			const driver = new AuthDriverGoogle({ ...credentials, fetch, jwks });
 
-			// 1. A look-alike host and a plain foreign one; the token would go to someone else, so nothing is sent
+			// The token would go to someone else, so nothing is sent
 			for (const target of ['https://googleapis.com.evil.example/x', 'https://evil.example/googleapis.com']) {
 				await expect(driver.call(`GET ${target}`, {}, { accessToken: ACCESS_TOKEN })).rejects.toThrow(
-					'The call URL is not on a host of this provider',
+					/the call URL is not on a host of this provider/i,
 				);
 			}
 
@@ -341,7 +331,6 @@ describe('AuthDriverGoogle', () => {
 			const body = { error: { code: 403, message: 'Request had insufficient authentication scopes.' } };
 			const driver = new AuthDriverGoogle({ ...credentials, fetch: respond(403, body), jwks });
 
-			// 1. Google's status and answer are kept for the caller; the message names the method and the reason only
 			const error = (await driver
 				.call('GET /drive/v3/files', {}, { accessToken: ACCESS_TOKEN })
 				.catch((thrown: unknown) => thrown)) as InstanceType<typeof ProviderCallError>;
@@ -363,7 +352,6 @@ describe('AuthDriverGoogle', () => {
 			const fetch = respond(429, { error: { message: 'Quota exceeded' } }, { 'retry-after': '30' });
 			const driver = new AuthDriverGoogle({ ...credentials, fetch, jwks });
 
-			// 1. The wait Google names is when the limit resets
 			const before = Date.now();
 
 			const error = (await driver
@@ -375,7 +363,7 @@ describe('AuthDriverGoogle', () => {
 		});
 
 		test('Takes the caller headers over its own, and the caller timeout over the location one', async () => {
-			// 1. A fetch that never answers until aborted, so only the deadline can end it
+			// A fetch that never answers until aborted, so only the deadline can end it
 			const fetch = vi.fn<AuthFetch>(
 				(_url, init) =>
 					new Promise((_resolve, reject) => {

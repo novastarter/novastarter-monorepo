@@ -17,10 +17,9 @@
  * ```
  */
 export const githubRateLimitWait = (status: number, headers: Headers, body?: unknown): number | undefined => {
-	// 1. Only a 403 or a 429 can be a rate limit
 	if (status !== 403 && status !== 429) return undefined;
 
-	// 2. A secondary limit's own wait comes first; an unreadable value still marks the refusal as a limit
+	// A secondary limit's own wait comes first; an unreadable value still marks the refusal as a limit
 	const retryAfter = headers.get('retry-after');
 
 	if (retryAfter !== null) {
@@ -29,16 +28,15 @@ export const githubRateLimitWait = (status: number, headers: Headers, body?: unk
 		return Number.isFinite(seconds) && retryAfter.trim() !== '' ? seconds : SECONDARY_LIMIT_WAIT;
 	}
 
-	// 3. The primary limit: the budget is spent, and the reset says when it refills
 	if (headers.get('x-ratelimit-remaining') === '0') {
 		const reset = Number(headers.get('x-ratelimit-reset'));
 
-		// 1. A reset already past — a clock ahead of GitHub's — means no wait rather than a negative one
+		// A reset already past means a clock ahead of GitHub's, so no wait rather than a negative one
 		return Number.isFinite(reset) && reset > 0 ? Math.max(0, reset - Date.now() / 1000) : SECONDARY_LIMIT_WAIT;
 	}
 
-	// 4. A 429 with no word on the wait, or a 403 whose message names a secondary limit, is still a limit; any other
-	//    bare 403 is a permission GitHub refused
+	// A 429 with no word on the wait, or a 403 whose message names a secondary limit, is still a limit; any other bare
+	// 403 is a permission GitHub refused
 	return status === 429 || isSecondaryLimitMessage(body) ? SECONDARY_LIMIT_WAIT : undefined;
 };
 
@@ -50,7 +48,6 @@ export const githubRateLimitWait = (status: number, headers: Headers, body?: unk
  * @internal
  */
 const isSecondaryLimitMessage = (body: unknown): boolean => {
-	// 1. GitHub's errors are `{ message }`; anything else says nothing about a limit
 	const message = (body as { message?: unknown } | null | undefined)?.message;
 
 	return typeof message === 'string' && /secondary rate limit/i.test(message);

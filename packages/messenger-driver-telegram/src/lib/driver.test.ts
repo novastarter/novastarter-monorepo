@@ -2,13 +2,14 @@
  * Tests of the Telegram driver class with `fetch` stubbed: what reaches the Bot API — URL, body, headers — and what
  * the driver makes of its answer.
  *
- * Covered: the constructor check and the default export, a text message, an upload as multipart, an album, `call()`
+ * Covered: the constructor check and the named export, a text message, an upload as multipart, an album, `call()`
  * for a method without a wrapper, `verify()`, a refusal, an answer that is not JSON, and the timeout.
  */
+import { InvalidConfigError } from '@novastarter/errors';
 import { MessengerTargetGoneError } from '@novastarter/messenger';
 import { TimeoutError } from '@novastarter/utils';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import * as entry from '../index.js';
 import { MessengerDriverTelegram, TELEGRAM_API_URL } from './driver.js';
 
 /**
@@ -23,7 +24,7 @@ const fetchMock = vi.fn();
  * @param status - The HTTP status.
  */
 const answer = (body: unknown, status = 200): void => {
-	// 1. A real `Response`, so the driver reads it the way it reads Telegram's
+	// A real `Response`, so the driver reads it the way it reads Telegram's
 	fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(body), { status }));
 };
 
@@ -34,7 +35,6 @@ const answer = (body: unknown, status = 200): void => {
  * @returns The URL and the init.
  */
 const request = (index = 0): { url: string; init: RequestInit } => {
-	// 1. Read back from the stub, as `fetch(url, init)` was called
 	const [url, init] = fetchMock.mock.calls[index] as [string, RequestInit];
 
 	return { url, init };
@@ -50,14 +50,18 @@ afterEach(() => {
 });
 
 describe('constructor', () => {
-	test('Refuses a missing token, and is the default export', () => {
-		// 1. Fails at the location's first use rather than on the first message
-		expect(() => new MessengerDriverTelegram({ token: '' })).toThrow('The Telegram driver needs a bot "token"');
-		expect(defaultExport).toBe(MessengerDriverTelegram);
+	test('Refuses a missing token, and is exported by name only', () => {
+		// Fails at the location's first use rather than on the first message
+		expect(() => new MessengerDriverTelegram({ token: '' })).toThrow(
+			new InvalidConfigError({ reason: 'The Telegram driver needs a bot "token"' }),
+		);
+
+		expect(entry.MessengerDriverTelegram).toBe(MessengerDriverTelegram);
+		expect(entry).not.toHaveProperty('default');
 	});
 
 	test('Refuses an apiUrl that is not a URL, naming neither it nor the token', () => {
-		// 1. Caught here, a call never builds an invalid URL whose `TypeError` would hold the token
+		// Caught here, a call never builds an invalid URL whose `TypeError` would hold the token
 		const error = ((): Error | undefined => {
 			try {
 				new MessengerDriverTelegram({ token: '123:secret-token', apiUrl: 'not a url' });
@@ -68,14 +72,15 @@ describe('constructor', () => {
 			}
 		})();
 
-		expect(error?.message).toBe('The Telegram driver\'s "apiUrl" is not a valid URL');
+		expect(error).toBeInstanceOf(InvalidConfigError);
+		expect(error?.message).toBe('Invalid config. The Telegram driver\'s "apiUrl" is not a valid URL.');
 		expect(JSON.stringify(error)).not.toContain('secret-token');
 		expect(error?.message).not.toContain('not a url');
 	});
 
 	test('Refuses a malformed token before it can corrupt the request URL, naming neither', () => {
-		// 1. A `#`, `?` or `/` in the token would split the path of `/bot<token>/<method>` into a confusing 404; a bot
-		//    token is `<id>:<hash>`, so anything else is refused here, at construction
+		// A `#`, `?` or `/` in the token would split the path of `/bot<token>/<method>` into a confusing 404; a bot
+		// token is `<id>:<hash>`, so anything else is refused here, at construction
 		const error = ((): Error | undefined => {
 			try {
 				new MessengerDriverTelegram({ token: '123:bad#token' });
@@ -86,7 +91,12 @@ describe('constructor', () => {
 			}
 		})();
 
-		expect(error?.message).toBe('The Telegram driver\'s "token" is not a bot token of the shape "<id>:<hash>"');
+		expect(error).toBeInstanceOf(InvalidConfigError);
+
+		expect(error?.message).toBe(
+			'Invalid config. The Telegram driver\'s "token" is not a bot token of the shape "<id>:<hash>".',
+		);
+
 		expect(JSON.stringify(error)).not.toContain('bad#token');
 	});
 });
@@ -95,7 +105,6 @@ describe('send', () => {
 	test('Posts a text message as JSON to the bot’s method and answers its id', async () => {
 		answer({ ok: true, result: { message_id: 7 } });
 
-		// 1. The id as a string, the answer as `raw`
 		await expect(
 			new MessengerDriverTelegram({ token: '123:abc' }).send({ to: '42', text: 'Hi' }),
 		).resolves.toStrictEqual({
@@ -103,7 +112,6 @@ describe('send', () => {
 			raw: { message_id: 7 },
 		});
 
-		// 2. One POST to the method under the token, the parameters as JSON
 		const { url, init } = request();
 
 		expect(url).toBe(`${TELEGRAM_API_URL}/bot123:abc/sendMessage`);
@@ -123,7 +131,6 @@ describe('send', () => {
 
 		const driver = new MessengerDriverTelegram({ token: '123:abc', apiUrl: 'http://bot-api.local/' });
 
-		// 1. An album with a file: the first message's id stands for it
 		await expect(
 			driver.send({
 				to: '42',
@@ -134,7 +141,6 @@ describe('send', () => {
 			}),
 		).resolves.toMatchObject({ messageId: '8' });
 
-		// 2. The trailing slash of the server is dropped; the form carries the list as JSON and the file as a part
 		const { url, init } = request();
 		const form = init.body as FormData;
 
@@ -153,7 +159,6 @@ describe('send', () => {
 	test('Passes a refusal on as the kit’s error', async () => {
 		answer({ ok: false, error_code: 403, description: 'Forbidden: bot was blocked by the user' }, 403);
 
-		// 1. A blocked bot is a gone recipient
 		await expect(
 			new MessengerDriverTelegram({ token: '123:abc' }).send({ to: '42', text: 'Hi' }),
 		).rejects.toBeInstanceOf(MessengerTargetGoneError);
@@ -164,7 +169,6 @@ describe('call', () => {
 	test('Calls a method without a wrapper and answers its result, leaving undefined parameters out', async () => {
 		answer({ ok: true, result: true });
 
-		// 1. Any method, any parameters: the Bot API is the same POST for all
 		await expect(
 			new MessengerDriverTelegram({ token: '123:abc' }).call<boolean>('setMessageReaction', {
 				chat_id: '42',
@@ -180,7 +184,6 @@ describe('call', () => {
 	test('Sends a File parameter as multipart with its own name, numbers as text', async () => {
 		answer({ ok: true, result: { message_id: 1 } });
 
-		// 1. The switch to a form is automatic
 		await new MessengerDriverTelegram({ token: '123:abc' }).call('sendPhoto', {
 			chat_id: 42,
 			photo: new File(['png'], 'chart.png'),
@@ -195,7 +198,7 @@ describe('call', () => {
 	test('Refuses an answer that is not JSON without leaking the token', async () => {
 		fetchMock.mockResolvedValueOnce(new Response('<html>Bad Gateway</html>', { status: 502 }));
 
-		// 1. The status is named; the URL, with the token in it, is not
+		// The status is named; the URL, with the token in it, is not
 		const error = (await new MessengerDriverTelegram({ token: '123:secret' })
 			.call('getMe')
 			.catch((caught: unknown) => caught)) as Error;
@@ -205,7 +208,6 @@ describe('call', () => {
 	});
 
 	test('Gives up at the timeout and aborts the request', async () => {
-		// 1. A request that only ends when its signal aborts
 		fetchMock.mockImplementationOnce(
 			(_url: string, init: RequestInit) =>
 				new Promise((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(init.signal?.reason))),
@@ -219,7 +221,7 @@ describe('call', () => {
 	});
 
 	test('Gives up at the timeout when the headers arrive but the body never ends', async () => {
-		// 1. The headers come at once; the body sends one chunk and then stalls, never closing
+		// The headers come at once; the body sends one chunk and then stalls, never closing
 		fetchMock.mockImplementationOnce(
 			async () =>
 				new Response(
@@ -232,7 +234,7 @@ describe('call', () => {
 				),
 		);
 
-		// 2. Reading the body is under the deadline too, so the call fails at the timeout instead of hanging
+		// Reading the body is under the deadline too, so the call fails at the timeout instead of hanging
 		await expect(new MessengerDriverTelegram({ token: '123:abc', timeout: 10 }).call('getMe')).rejects.toBeInstanceOf(
 			TimeoutError,
 		);
@@ -243,7 +245,6 @@ describe('call', () => {
 	test('Takes a timeout, extra headers and a signal per call', async () => {
 		answer({ ok: true, result: true });
 
-		// 1. The caller's headers go on top of the JSON type
 		await new MessengerDriverTelegram({ token: '123:abc' }).call('getMe', {}, { headers: { 'x-trace': '1' } });
 
 		expect(request().init.headers).toStrictEqual({
@@ -253,7 +254,6 @@ describe('call', () => {
 			'x-trace': '1',
 		});
 
-		// 2. An aborted signal stops the call before it is sent
 		const controller = new AbortController();
 
 		controller.abort(new Error('stop'));
@@ -268,7 +268,6 @@ describe('call', () => {
 			new Response('{"ok":true,"result":{"id":1}}', { status: 200, headers: { 'X-Request-Id': 'r1' } }),
 		);
 
-		// 1. The `result` as the data, not the whole `{ ok, result }` envelope
 		await expect(new MessengerDriverTelegram({ token: '123:abc' }).call('getMe')).resolves.toMatchObject({
 			status: 200,
 			headers: { 'x-request-id': 'r1' },
@@ -281,7 +280,6 @@ describe('verify', () => {
 	test('Asks for the bot with getMe', async () => {
 		answer({ ok: true, result: { id: 1, is_bot: true } });
 
-		// 1. A token Telegram accepts
 		await expect(new MessengerDriverTelegram({ token: '123:abc' }).verify()).resolves.toBeUndefined();
 		expect(request().url).toBe(`${TELEGRAM_API_URL}/bot123:abc/getMe`);
 	});

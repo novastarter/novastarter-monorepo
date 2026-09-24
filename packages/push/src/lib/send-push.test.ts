@@ -4,7 +4,7 @@
  * `@novastarter/logger` and `@novastarter/emitter` are mocked.
  */
 import { useEmitter } from '@novastarter/emitter';
-import { InvalidPayloadError } from '@novastarter/errors';
+import { InvalidConfigError, InvalidPayloadError } from '@novastarter/errors';
 import { useLogger } from '@novastarter/logger';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { PushDriver } from '../driver.js';
@@ -60,7 +60,6 @@ const okDriver = (platforms: PushPlatform[]): typeof PushDriver =>
 		 * @returns A fixed id.
 		 */
 		async send(message: PushMessage): Promise<PushResult> {
-			// 1. Recorded for the assertions, accepted as given
 			sent.push(message);
 
 			return { messageId: 'ok-1', status: 'accepted' };
@@ -80,7 +79,7 @@ class DownDriver implements PushDriver {
 	 * @throws Always.
 	 */
 	async send(): Promise<PushResult> {
-		// 1. A plain `Error`, the way an SDK reports an unreachable service; it becomes the `cause` of the one thrown
+		// A plain `Error`, the way an SDK reports an unreachable service; it becomes the `cause` of the one thrown
 		throw new Error('push service is down');
 	}
 }
@@ -98,7 +97,7 @@ class GoneDriver implements PushDriver {
 	 * @throws PushTargetGoneError always.
 	 */
 	async send(): Promise<PushResult> {
-		// 1. The error a driver throws for a 410: `sendPush()` must pass it on untouched, not wrap it
+		// The error a driver throws for a 410: `sendPush()` must pass it on untouched, not wrap it
 		throw new PushTargetGoneError({ platform: 'webpush', reason: '410 from https://push.example' });
 	}
 }
@@ -116,7 +115,7 @@ class RudeDriver implements PushDriver {
 	 * @throws Always, a string.
 	 */
 	async send(): Promise<PushResult> {
-		// 1. Not an `Error` on purpose: pino would take a string for the message and drop the location from the line
+		// Not an `Error` on purpose: pino would take a string for the message and drop the location from the line
 		throw 'rate limited';
 	}
 }
@@ -127,7 +126,7 @@ class RudeDriver implements PushDriver {
  * @param locations - Location name to driver name.
  */
 const register = (locations: Record<string, 'ok-web' | 'ok-token' | 'down' | 'gone' | 'rude'>): void => {
-	// 1. Every driver is always known; the test decides which locations exist
+	// Every driver is always known; the test decides which locations exist
 	const manager = usePush();
 
 	manager.registerDriver('ok-web', okDriver(['webpush']));
@@ -155,8 +154,8 @@ const subscription = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys
 const message: PushMessage = { subscription, title: 'Paid', body: 'Invoice #1', url: '/billing' };
 
 beforeEach(() => {
-	vi.mocked(useLogger).mockReturnValue(logger as any);
-	vi.mocked(useEmitter).mockReturnValue(emitter as any);
+	vi.mocked(useLogger).mockReturnValue(logger as unknown as ReturnType<typeof useLogger>);
+	vi.mocked(useEmitter).mockReturnValue(emitter as unknown as ReturnType<typeof useEmitter>);
 });
 
 afterEach(() => {
@@ -171,11 +170,9 @@ describe('sendPush', () => {
 
 		const result = await sendPush(message);
 
-		// 1. The answer names the location and the platform that delivered, on top of what the driver said
 		expect(result).toStrictEqual({ messageId: 'ok-1', status: 'accepted', location: 'webpush', platform: 'webpush' });
 		expect(sent[0]).toBe(message);
 
-		// 2. The filter ran before, the action after, with the target and the title for a listener's log
 		expect(emitter.emitFilter).toHaveBeenCalledWith(PUSH_SEND_FILTER, message, { platform: 'webpush' });
 
 		expect(emitter.emitAction).toHaveBeenCalledWith(PUSH_SENT_EVENT, {
@@ -189,11 +186,10 @@ describe('sendPush', () => {
 		register({ web: 'ok-web', android: 'ok-token', other: 'ok-token' });
 		usePush().registerRoutes({ webpush: 'web', fcm: 'android' });
 
-		// 1. The route of the platform: a subscription goes to `web`, a token to `android`
 		expect((await sendPush(message))?.location).toBe('web');
 		expect((await sendPush({ token: 'tok', title: 'Hi' }))?.location).toBe('android');
 
-		// 2. The message's own location wins over the route, the option over both
+		// The message's own location wins over the route, the option over both
 		expect((await sendPush({ token: 'tok', title: 'Hi', location: 'other' }))?.location).toBe('other');
 
 		expect((await sendPush({ token: 'tok', title: 'Hi', location: 'other' }, { location: 'android' }))?.location).toBe(
@@ -204,11 +200,10 @@ describe('sendPush', () => {
 	test('Refuses a message without a title or a target before any driver runs', async () => {
 		register({ webpush: 'ok-web' });
 
-		// 1. A blank title and a missing target are both the payload's fault
 		await expect(sendPush({ subscription, title: ' ' })).rejects.toThrow(InvalidPayloadError);
 		await expect(sendPush({ title: 'Hi' })).rejects.toMatchObject({ code: 'INVALID_PAYLOAD' });
 
-		// 2. Refused before the filter, so no handler and no driver ever sees it
+		// Refused before the filter, so no handler and no driver ever sees it
 		expect(sent).toHaveLength(0);
 		expect(emitter.emitFilter).not.toHaveBeenCalled();
 	});
@@ -216,16 +211,18 @@ describe('sendPush', () => {
 	test('Refuses a location that does not exist or does not deliver to the platform', async () => {
 		register({ webpush: 'ok-web' });
 
-		// 1. No route and no location for the platform of a token
 		await expect(sendPush({ token: 'tok', title: 'Hi' })).rejects.toThrow('No push location delivers to fcm');
+		await expect(sendPush({ token: 'tok', title: 'Hi' })).rejects.toThrow(InvalidConfigError);
 
-		// 2. A name nobody registered
-		await expect(sendPush(message, { location: 'nope' })).rejects.toThrow('Push location "nope" doesn\'t exist.');
+		await expect(sendPush(message, { location: 'nope' })).rejects.toThrow('Push location "nope" doesn\'t exist');
+		await expect(sendPush(message, { location: 'nope' })).rejects.toThrow(InvalidConfigError);
 
-		// 3. A token routed to a web push location is refused before the driver sees it
+		// A token routed to a web push location is refused before the driver sees it
 		await expect(sendPush({ token: 'tok', title: 'Hi', location: 'webpush' })).rejects.toThrow(
 			'Push location "webpush" does not deliver to fcm',
 		);
+
+		await expect(sendPush({ token: 'tok', title: 'Hi', location: 'webpush' })).rejects.toThrow(InvalidConfigError);
 
 		expect(sent).toHaveLength(0);
 	});
@@ -233,13 +230,11 @@ describe('sendPush', () => {
 	test('Lets a filter rewrite or drop the message', async () => {
 		register({ webpush: 'ok-web' });
 
-		// 1. A rewrite reaches the driver
 		emitter.emitFilter.mockResolvedValueOnce({ ...message, title: '[test] Paid' });
 		await sendPush(message);
 
 		expect(sent[0]?.title).toBe('[test] Paid');
 
-		// 2. A veto answers `null` and sends nothing
 		emitter.emitFilter.mockResolvedValueOnce(null);
 
 		expect(await sendPush(message)).toBeNull();
@@ -250,8 +245,8 @@ describe('sendPush', () => {
 		register({ web: 'ok-web', android: 'ok-token' });
 		usePush().registerRoutes({ webpush: 'web', fcm: 'android' });
 
-		// 1. A redirect to a test phone: the filter still hears the incoming platform, the send goes to the token
-		//    location, and the events carry the phone's token
+		// A redirect to a test phone: the filter still hears the incoming platform, the send goes to the token location,
+		// and the events carry the phone's token
 		const redirected: PushMessage = { token: 'dev-phone', title: 'Hi' };
 		emitter.emitFilter.mockResolvedValueOnce(redirected);
 
@@ -271,7 +266,7 @@ describe('sendPush', () => {
 	test('Refuses a rewrite without a title or a target before any driver runs', async () => {
 		register({ webpush: 'ok-web' });
 
-		// 1. A handler that blanked the title or dropped the target made the payload unusable, like the caller would have
+		// A handler that blanked the title or dropped the target made the payload unusable, like the caller would have
 		emitter.emitFilter.mockResolvedValueOnce({ ...message, title: ' ' });
 		await expect(sendPush(message)).rejects.toThrow(InvalidPayloadError);
 
@@ -285,7 +280,7 @@ describe('sendPush', () => {
 	test('Passes a gone target on as is, after push.gone', async () => {
 		register({ webpush: 'gone' });
 
-		// 1. The driver's error travels untouched: the caller matches on it to delete the subscription
+		// The caller matches on the driver's error to delete the subscription, so it travels untouched
 		await expect(sendPush(message)).rejects.toBeInstanceOf(PushTargetGoneError);
 
 		expect(emitter.emitAction).toHaveBeenCalledWith(PUSH_GONE_EVENT, {
@@ -302,8 +297,8 @@ describe('sendPush', () => {
 	test('Does not pass a gone target on as is when a filter redirected the message', async () => {
 		register({ webpush: 'ok-web', fcm: 'gone' });
 
-		// 1. A redirect to a test phone whose token expired: the caller's own subscription was never contacted, so the
-		//    error it deletes subscriptions on must not reach it; the gone error travels as the cause instead
+		// A redirect to a test phone whose token expired: the caller's own subscription was never contacted, so the error
+		// it deletes subscriptions on must not reach it; the gone error travels as the cause instead
 		emitter.emitFilter.mockResolvedValueOnce({ token: 'dev-phone', title: 'Hi' });
 
 		const error = await sendPush(message).catch((caught: unknown) => caught);
@@ -312,7 +307,7 @@ describe('sendPush', () => {
 		expect(error).toBeInstanceOf(Error);
 		expect((error as Error).cause).toBeInstanceOf(PushTargetGoneError);
 
-		// 2. push.gone still names the token that is actually gone, for a listener that cleans up test devices
+		// push.gone still names the token that is actually gone, for a listener that cleans up test devices
 		expect(emitter.emitAction).toHaveBeenCalledWith(PUSH_GONE_EVENT, {
 			location: 'fcm',
 			platform: 'fcm',
@@ -320,7 +315,7 @@ describe('sendPush', () => {
 			reason: '410 from https://push.example',
 		});
 
-		// 3. A rewrite that keeps the target (a title prefix) still passes the error on as is
+		// A rewrite that keeps the target (a title prefix) still passes the error on as is
 		emitter.emitFilter.mockResolvedValueOnce({ ...message, title: '[test] Paid' });
 		usePush().registerRoutes({ webpush: 'fcm' });
 
@@ -330,8 +325,8 @@ describe('sendPush', () => {
 	test('Does not pass a gone target on as is when a filter redirected the message in place', async () => {
 		register({ webpush: 'gone', fcm: 'gone' });
 
-		// 1. The handler swaps the token on the caller's own object and returns nothing, which the emitter treats as
-		//    "keep it"; the target compared against must still be the caller's token, not the mutated one
+		// The handler swaps the token on the caller's own object and returns nothing, which the emitter treats as "keep
+		// it"; the target compared against must still be the caller's token, not the mutated one
 		emitter.emitFilter.mockImplementationOnce(async (_event: string, payload: unknown) => {
 			(payload as PushMessage).token = 'dev-phone';
 
@@ -343,7 +338,7 @@ describe('sendPush', () => {
 		expect(error).not.toBeInstanceOf(PushTargetGoneError);
 		expect((error as Error).cause).toBeInstanceOf(PushTargetGoneError);
 
-		// 2. The same for a subscription whose endpoint the handler swaps in place
+		// The same for a subscription whose endpoint the handler swaps in place
 		emitter.emitFilter.mockImplementationOnce(async (_event: string, payload: unknown) => {
 			(payload as PushMessage).subscription!.endpoint = 'https://fcm.googleapis.com/fcm/send/dev-browser';
 
@@ -361,7 +356,6 @@ describe('sendPush', () => {
 	test('Wraps any other failure, after push.failed', async () => {
 		register({ webpush: 'down' });
 
-		// 1. The push service's error is the cause of the one thrown
 		await expect(sendPush(message)).rejects.toMatchObject({
 			message: 'Push location "webpush" failed to send',
 			cause: expect.objectContaining({ message: 'push service is down' }),
@@ -380,7 +374,7 @@ describe('sendPush', () => {
 	test('Logs a non-Error rejection as an Error, keeping the location in the line', async () => {
 		register({ webpush: 'rude' });
 
-		// 1. The string is wrapped, so pino keeps the kit's line and the location; the raw value stays as the cause
+		// The string is wrapped, so pino keeps the kit's line and the location; the raw value stays as the cause
 		await expect(sendPush(message)).rejects.toMatchObject({
 			message: 'Push location "webpush" failed to send',
 			cause: 'rate limited',

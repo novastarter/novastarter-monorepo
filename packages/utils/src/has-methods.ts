@@ -16,11 +16,11 @@
  * ```
  */
 export const hasMethods = <T extends object>(value: unknown, methods: readonly (keyof T & string)[]): value is T => {
-	// 1. Only an object or a function can carry methods; `typeof null` is `'object'`, hence the extra check
+	// `typeof null` is `'object'`, hence the extra check.
 	if ((typeof value !== 'object' && typeof value !== 'function') || value === null) {
 		return false;
 	}
 
-	// 2. Every named member must be callable; a bare options object carries data under these names at most
+	// Every member must be callable: a bare options object may carry data under these names.
 	return methods.every((method) => typeof (value as Record<string, unknown>)[method] === 'function');
 };

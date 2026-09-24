@@ -53,8 +53,7 @@ export class PushDriverConsole implements PushDriver {
 	 * @param config - Logger.
 	 */
 	constructor(config: PushDriverConsoleConfig = {}) {
-		// 1. The application logger is resolved here, not at send time, so a swapped logger does not split one
-		//    location's output across two destinations
+		// Resolved here, not at send time, so a swapped logger does not split one location's output across two destinations
 		this.logger = config.logger ?? useLogger();
 	}
 
@@ -65,14 +64,13 @@ export class PushDriverConsole implements PushDriver {
 	 * @returns A sequential id and the status `logged`.
 	 */
 	async send(message: PushMessage): Promise<PushResult> {
-		// 1. A counter stands in for the push service's id, so a test can tell two sends apart
+		// Stands in for the push service's id, so a test can tell two sends apart
 		this.sent += 1;
 
 		const messageId = `console-${this.sent}`;
 		const platform = platformOf(message);
 		const target = platform === 'webpush' ? message.subscription?.endpoint : message.token;
 
-		// 2. One structured line per message, the text in it: what a developer reads
 		this.logger.info(
 			{
 				platform,
@@ -105,11 +103,10 @@ export class PushDriverConsole implements PushDriver {
 		params: Record<string, unknown> = {},
 		_options?: CallOptions,
 	): Promise<CallResponse<T>> {
-		// 1. A file stands for itself by its name, so the log line stays readable
+		// A file stands for itself by its name, so the log line stays readable
 		const logged = Object.fromEntries(Object.entries(params).map(([key, value]) => [key, describeValue(value)]));
 
-		// 2. One line per request, what a developer reads; a plain 200 comes back, as no provider answered, so code
-		//    reading the status runs too
+		// A plain 200 comes back, as no provider answered, so code reading the status runs too
 		this.logger.info({ method, params: logged }, `Push call ${method}`);
 
 		return { status: 200, headers: {}, data: undefined as T };
@@ -124,7 +121,7 @@ export class PushDriverConsole implements PushDriver {
  * @internal
  */
 const describeValue = (value: unknown): unknown => {
-	// 1. A `File` has a name worth showing; a bare `Blob` only its kind
+	// A `File` has a name worth showing; a bare `Blob` only its kind
 	if (value instanceof File) return value.name;
 	if (value instanceof Blob) return 'blob';
 

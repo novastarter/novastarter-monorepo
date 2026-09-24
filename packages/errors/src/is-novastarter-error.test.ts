@@ -5,6 +5,7 @@ import { beforeEach, expect, expectTypeOf, test } from 'vitest';
 import { ErrorCode } from './codes.js';
 import { createError } from './create-error.js';
 import { HitRateLimitError, type HitRateLimitErrorExtensions } from './errors/hit-rate-limit.js';
+import { InvalidConfigError, type InvalidConfigErrorExtensions } from './errors/invalid-config.js';
 import { InvalidPayloadError, type InvalidPayloadErrorExtensions } from './errors/invalid-payload.js';
 import { ProviderCallError, type ProviderCallErrorExtensions } from './errors/provider-call.js';
 import { isNovastarterError } from './is-novastarter-error.js';
@@ -43,12 +44,12 @@ test('Reports false for non Novastarter-errors', () => {
 });
 
 test('Reports false instead of throwing for a revoked Proxy', () => {
-	// 1. A revoked Proxy throws a TypeError on every structural probe (`Array.isArray`, `in`, property reads), so it
-	//    exercises the guard's totality: caught `unknown` values must be safe to pass
+	// A revoked Proxy throws a TypeError on every structural probe (`Array.isArray`, `in`, property reads), so it
+	// exercises the guard's totality: caught `unknown` values must be safe to pass
 	const { proxy, revoke } = Proxy.revocable<Record<string, unknown>>({}, {});
 	revoke();
 
-	// 2. Both the plain check and the code check must return false rather than throw
+	// Both the plain check and the code check must return false rather than throw
 	expect(isNovastarterError(proxy)).toBe(false);
 	expect(isNovastarterError(proxy, sample.code)).toBe(false);
 });
@@ -67,7 +68,8 @@ test('Check against optional error code', () => {
 });
 
 test('Narrows the extensions of every kit code that carries details', () => {
-	// 1. All errors are typed `unknown`, the way they arrive in a `catch`, so only the guard can narrow them
+	// All errors are typed `unknown`, the way they arrive in a `catch`, so only the guard can narrow them
+	const config: unknown = new InvalidConfigError({ reason: 'The mysql database driver needs a "connection"' });
 	const payload: unknown = new InvalidPayloadError({ reason: 'Field "email" is required' });
 	const rateLimit: unknown = new HitRateLimitError({ limit: 10, reset: new Date(Date.now() + 5_000) });
 
@@ -78,11 +80,17 @@ test('Narrows the extensions of every kit code that carries details', () => {
 		body: { error: { message: 'No such charge' } },
 	});
 
-	// 2. Every branch below must run, or a guard returning `false` would pass the test without checking a type
-	expect.assertions(6);
+	// Every branch below must run, or a guard returning `false` would pass the test without checking a type
+	expect.assertions(8);
 
-	// 3. A kit code missing from the extensions map narrows to `never`, and reading a field then fails to compile,
-	//    so the field access is the regression check here, not only the type assertion
+	// A kit code missing from the extensions map narrows to `never`, and reading a field then fails to compile,
+	// so the field access is the regression check here, not only the type assertion
+	if (isNovastarterError(config, ErrorCode.InvalidConfig)) {
+		expectTypeOf(config.extensions).toEqualTypeOf<InvalidConfigErrorExtensions>();
+		expect(config.extensions.reason).toBe('The mysql database driver needs a "connection"');
+		expect(config.status).toBe(500);
+	}
+
 	if (isNovastarterError(payload, ErrorCode.InvalidPayload)) {
 		expectTypeOf(payload.extensions).toEqualTypeOf<InvalidPayloadErrorExtensions>();
 		expect(payload.extensions.reason).toBe('Field "email" is required');
@@ -103,7 +111,7 @@ test('Narrows the extensions of every kit code that carries details', () => {
 });
 
 test('Narrows a custom code to the extensions type the caller names', () => {
-	// 1. A code outside `ErrorCode` has no map entry, so the type has to come from the call site
+	// A code outside `ErrorCode` has no map entry, so the type has to come from the call site
 	const InvalidThingError = createError<{ thing: string }>(
 		'INVALID_THING',
 		({ thing }) => `Thing "${thing}" is invalid.`,
@@ -112,16 +120,16 @@ test('Narrows a custom code to the extensions type the caller names', () => {
 
 	const error: unknown = new InvalidThingError({ thing: 'foo' });
 
-	// 2. Every branch below must run, or a guard returning `false` would pass the test without checking a type
+	// Every branch below must run, or a guard returning `false` would pass the test without checking a type
 	expect.assertions(2);
 
-	// 3. With the type parameter the extensions are readable, which is the shape the readme example relies on
+	// With the type parameter the extensions are readable, which is the shape the readme example relies on
 	if (isNovastarterError<{ thing: string }>(error, 'INVALID_THING')) {
 		expectTypeOf(error.extensions).toEqualTypeOf<{ thing: string }>();
 		expect(error.extensions.thing).toBe('foo');
 	}
 
-	// 4. Without it the guard cannot know the details and must leave them `unknown` rather than guess
+	// Without it the guard cannot know the details and must leave them `unknown` rather than guess
 	if (isNovastarterError(error, 'INVALID_THING')) {
 		expectTypeOf(error.extensions).toEqualTypeOf<unknown>();
 		expect(error.status).toBe(400);

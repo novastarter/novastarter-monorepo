@@ -32,19 +32,20 @@ const WEB_PUSH_HOSTS: readonly string[] = [
  * subscription cannot make the server post to an internal host.
  */
 export const platformOf = (message: Pick<PushMessage, 'subscription' | 'token' | 'platform'>): PushPlatform => {
-	// 1. Exactly one target: a message to "a subscription or a token" would go through two drivers
+	// A message to both a subscription and a token would go through two drivers
 	if (message.subscription && message.token) {
 		throw new InvalidPayloadError({ reason: 'A push message targets either a subscription or a token, not both' });
 	}
 
-	// 2. A blank token would be posted as a real one and refused by the push service; caught here as the payload's
-	//    fault, before a driver mistakes the refusal for a gone target
+	// A blank token would be posted as a real one and refused by the push service; caught here as the payload's fault,
+	// before a driver mistakes the refusal for a gone target
 	if (message.token) {
 		if (typeof message.token !== 'string' || message.token.trim() === '') {
 			throw new InvalidPayloadError({ reason: 'The push token is empty' });
 		}
 
-		// 3. A token looks the same on every platform; the message says which one, FCM being the one before APNs came
+		// A token looks the same on every platform, so the message says which one; FCM is the default, being the one before
+		// APNs came
 		const platform = message.platform ?? 'fcm';
 
 		if (!TOKEN_PLATFORMS.includes(platform)) {
@@ -54,26 +55,26 @@ export const platformOf = (message: Pick<PushMessage, 'subscription' | 'token' |
 		return platform;
 	}
 
-	// 4. Neither target: nothing to route, so the message is refused instead of guessing a platform
+	// Refused instead of guessing a platform
 	if (!message.subscription) {
 		throw new InvalidPayloadError({ reason: 'A push message needs a subscription or a token' });
 	}
 
-	// 5. Web push needs the endpoint to post to and both keys to encrypt with; a subscription stored without them
-	//    cannot be delivered to and is reported as the payload's problem
+	// Web push needs the endpoint to post to and both keys to encrypt with; a subscription stored without them cannot be
+	// delivered to and is reported as the payload's problem
 	const { endpoint, keys } = message.subscription;
 
 	if (typeof endpoint !== 'string' || !/^https:\/\//.test(endpoint)) {
 		throw new InvalidPayloadError({ reason: 'The push subscription has no https endpoint' });
 	}
 
-	// 6. The endpoint is client-supplied, so only a known push service host is posted to; this also rules out IP
-	//    literals, `localhost` and internal names without a DNS lookup
+	// The endpoint is client-supplied, so only a known push service host is posted to; this also rules out IP literals,
+	// `localhost` and internal names without a DNS lookup
 	if (!isWebPushHost(endpoint)) {
 		throw new InvalidPayloadError({ reason: 'The push subscription endpoint is not a known push service' });
 	}
 
-	// 7. Both keys are needed to encrypt the payload for the browser
+	// Both keys are needed to encrypt the payload for the browser
 	if (!keys || typeof keys.p256dh !== 'string' || !keys.p256dh || typeof keys.auth !== 'string' || !keys.auth) {
 		throw new InvalidPayloadError({ reason: 'The push subscription has no p256dh / auth keys' });
 	}
@@ -89,8 +90,8 @@ export const platformOf = (message: Pick<PushMessage, 'subscription' | 'token' |
  * @internal
  */
 const isWebPushHost = (endpoint: string): boolean => {
-	// 1. `URL` resolves the host the request would really go to, so `user@host` and similar tricks do not fool it; an
-	//    unparsable endpoint is simply not a push service
+	// `URL` resolves the host the request would really go to, so `user@host` and similar tricks do not fool it; an
+	// unparsable endpoint is not a push service
 	let hostname: string;
 
 	try {
@@ -99,9 +100,9 @@ const isWebPushHost = (endpoint: string): boolean => {
 		return false;
 	}
 
-	// 2. A trailing dot names the same host in DNS, so it is dropped before matching
+	// A trailing dot names the same host in DNS, so it is dropped before matching
 	const host = hostname.endsWith('.') ? hostname.slice(0, -1) : hostname;
 
-	// 3. Match the host itself or a subdomain, with the dot, so a look-alike such as `evilpush.apple.com` fails
+	// Matched with the dot, so a look-alike such as `evilpush.apple.com` fails
 	return WEB_PUSH_HOSTS.some((known) => host === known || host.endsWith(`.${known}`));
 };

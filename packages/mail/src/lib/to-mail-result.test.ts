@@ -6,7 +6,7 @@ import { toMailResult } from './to-mail-result.js';
 
 describe('toMailResult', () => {
 	test('Flattens the accepted and rejected lists, strings and address objects alike', () => {
-		// 1. The SMTP transport mixes both shapes; the result reports addresses only
+		// The SMTP transport mixes both shapes; the result reports addresses only
 		expect(
 			toMailResult({
 				messageId: '<id@acme>',
@@ -23,7 +23,7 @@ describe('toMailResult', () => {
 	});
 
 	test('Takes the envelope as accepted when the transport reports no acceptance', () => {
-		// 1. sendmail and stream transports only know the message left the process; the envelope is all there is
+		// sendmail and stream transports only know the message left the process; the envelope is all there is
 		expect(toMailResult({ messageId: '<x>', envelope: { to: ['ada@example.com'] } })).toStrictEqual({
 			messageId: '<x>',
 			accepted: ['ada@example.com'],
@@ -31,10 +31,8 @@ describe('toMailResult', () => {
 			response: undefined,
 		});
 
-		// 2. An empty acceptance list is a report, not an absence: the envelope does not fill it in
 		expect(toMailResult({ accepted: [], envelope: { to: ['ada@example.com'] } })).toMatchObject({ accepted: [] });
 
-		// 3. Nothing at all still answers a well-formed result
 		expect(toMailResult({})).toStrictEqual({ messageId: undefined, accepted: [], rejected: [], response: undefined });
 	});
 });

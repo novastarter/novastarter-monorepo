@@ -1,3 +1,4 @@
+import { InvalidPayloadError } from '@novastarter/errors';
 import { withTimeout } from '@novastarter/utils';
 import { request as octokitRequest } from '@octokit/request';
 import type { CallVerb } from './call.js';
@@ -14,7 +15,8 @@ import type { CallVerb } from './call.js';
  * @param target - A path from that root, or a full URL.
  * @param allowedHosts - The hosts a full URL may point at, besides the base's own; `*.twilio.com` matches subdomains.
  * @returns The URL.
- * @throws Error when a `{name}` placeholder is left unfilled, or a full URL points at a host of another party.
+ * @throws InvalidPayloadError when a `{name}` placeholder is left unfilled.
+ * @throws Error when a full URL points at a host of another party.
  * @example
  * ```ts
  * resolveCallUrl('https://api.stripe.com', '/v1/customers', []); // https://api.stripe.com/v1/customers
@@ -22,16 +24,18 @@ import type { CallVerb } from './call.js';
  * ```
  */
 export const resolveCallUrl = (base: string, target: string, allowedHosts: readonly string[] = []): URL => {
-	// 1. A placeholder nobody filled — neither a parameter nor the driver — is a mistake of the caller; sent, it would
-	//    reach the provider as `%7Bname%7D`
+	// A placeholder nobody filled — neither a parameter nor the driver — is a mistake of the caller; sent, it would
+	// reach the provider as `%7Bname%7D`
 	const unfilled = /\{([A-Za-z_][\w-]*)\}/.exec(target);
 
 	if (unfilled) {
-		throw new Error(`The call path needs a "${unfilled[1]}" parameter for its {${unfilled[1]}} placeholder`);
+		throw new InvalidPayloadError({
+			reason: `The call path needs a "${unfilled[1]}" parameter for its {${unfilled[1]}} placeholder`,
+		});
 	}
 
-	// 2. A path goes under the base: the base's own path kept in front, and a query the base carries — an API version —
-	//    kept after the target's own
+	// A path goes under the base: the base's own path kept in front, and a query the base carries — an API version —
+	// kept after the target's own
 	const root = new URL(base);
 
 	if (target.startsWith('/')) {
@@ -44,20 +48,20 @@ export const resolveCallUrl = (base: string, target: string, allowedHosts: reado
 		return url;
 	}
 
-	// 3. A full URL only on the base's host or one the driver allows — anywhere else would receive the credentials. The
-	//    allowed hosts are read the way `URL` writes a host, lower-cased and in punycode, so `API.x.com` matches
+	// A full URL only on the base's host or one the driver allows — anywhere else would receive the credentials. The
+	// allowed hosts are read the way `URL` writes a host, lower-cased and in punycode, so `API.x.com` matches
 	const url = new URL(target);
 
 	const allowed = [root.host, ...allowedHosts.map(normalizeHost)].some((host) =>
 		host.startsWith('*.') ? url.host.endsWith(host.slice(1)) : url.host === host,
 	);
 
-	// 4. HTTPS everywhere but on the base's own host, which may be a plain-HTTP stand-in in tests; the provider's real
-	//    hosts are never reached without TLS
+	// HTTPS everywhere but on the base's own host, which may be a plain-HTTP stand-in in tests; the provider's real
+	// hosts are never reached without TLS
 	const secure = url.host === root.host ? url.protocol === root.protocol : url.protocol === 'https:';
 
 	if (!allowed || !secure) {
-		throw new Error(`The call URL is not on a host of this provider: ${url.host}`);
+		throw new Error(`@novastarter/http: the call URL is not on a host of this provider: ${url.host}`);
 	}
 
 	return url;
@@ -71,7 +75,7 @@ export const resolveCallUrl = (base: string, target: string, allowedHosts: reado
  * @internal
  */
 const normalizeHost = (host: string): string => {
-	// 1. The wildcard is not part of a hostname, so it is set aside while `URL` normalizes the rest
+	// The wildcard is not part of a hostname, so it is set aside while `URL` normalizes the rest
 	const wildcard = host.startsWith('*.');
 	const normalized = new URL(`https://${wildcard ? host.slice(2) : host}`).host;
 
@@ -89,7 +93,7 @@ const normalizeHost = (host: string): string => {
  * @internal
  */
 const toFieldValue = (item: unknown): string => {
-	// 1. A date first, since it is an object too; then JSON for objects and plain text for scalars
+	// A date first, since it is an object too; then JSON for objects and plain text for scalars
 	if (item instanceof Date) return item.toISOString();
 
 	return typeof item === 'object' ? JSON.stringify(item) : String(item);
@@ -109,7 +113,7 @@ const toFieldValue = (item: unknown): string => {
 export const toQueryString = (params: Record<string, unknown> = {}): string => {
 	const search = new URLSearchParams();
 
-	// 1. One pair per scalar, one per item of a list; `null` and `undefined` mean "not given"
+	// One pair per scalar, one per item of a list; `null` and `undefined` mean "not given"
 	for (const [key, value] of Object.entries(params)) {
 		for (const item of Array.isArray(value) ? value : [value]) {
 			if (item === undefined || item === null) continue;
@@ -212,7 +216,7 @@ export const MAX_CALL_REDIRECTS = 5;
  * ```
  */
 export const httpCall = async (request: HttpCallRequest): Promise<HttpCallResponse> => {
-	// 1. The parameters go into the query of a GET, HEAD or DELETE and the body otherwise
+	// The parameters go into the query of a GET, HEAD or DELETE and the body otherwise
 	const params = request.params ?? {};
 	const inQuery = request.verb === 'GET' || request.verb === 'HEAD' || request.verb === 'DELETE';
 	const url = new URL(request.url);
@@ -223,8 +227,8 @@ export const httpCall = async (request: HttpCallRequest): Promise<HttpCallRespon
 		}
 	}
 
-	// 2. Header names folded to lower case, so the driver's `Content-Type` and the default one are one header, not two;
-	//    a neutral `accept` and `user-agent` replace the GitHub ones `@octokit/request` would send
+	// Header names folded to lower case, so the driver's `Content-Type` and the default one are one header, not two;
+	// a neutral `accept` and `user-agent` replace the GitHub ones `@octokit/request` would send
 	const headers: Record<string, string> = Object.fromEntries(
 		Object.entries({ accept: 'application/json', 'user-agent': 'novastarter', ...request.headers }).map(
 			([name, value]) => [name.toLowerCase(), value],
@@ -234,9 +238,9 @@ export const httpCall = async (request: HttpCallRequest): Promise<HttpCallRespon
 	const body = inQuery ? undefined : toBody(params, request.bodyType ?? 'json', headers);
 	const fetcher: HttpCallFetch = request.fetch ?? globalFetch;
 
-	// 3. `@octokit/request` makes the request, through a `fetch` that follows the redirects safely and reads the answer
-	//    itself — Octokit's own reading turns big numbers into `BigInt`s, swallows a broken body and drops a repeated
-	//    header; all of it under one deadline, the caller's signal aborting it too
+	// `@octokit/request` makes the request, through a `fetch` that follows the redirects safely and reads the answer
+	// itself — Octokit's own reading turns big numbers into `BigInt`s, swallows a broken body and drops a repeated
+	// header; all of it under one deadline, the caller's signal aborting it too
 	return withTimeout(
 		async (signal) => {
 			let answer: HttpCallResponse | undefined;
@@ -264,14 +268,14 @@ export const httpCall = async (request: HttpCallRequest): Promise<HttpCallRespon
 					},
 				});
 			} catch {
-				// 4. A failure to reach the provider — a redirect refused, the abort reason — goes on as it was thrown,
-				//    untouched by Octokit and never as its error, which quotes the request's headers
-				throw failure ? failure.error : new Error('The request could not be sent');
+				// A failure to reach the provider — a redirect refused, the abort reason — goes on as it was thrown,
+				// untouched by Octokit and never as its error, which quotes the request's headers
+				throw failure ? failure.error : new Error('@novastarter/http: the request could not be sent');
 			}
 
-			// 5. The answer as read on the way, whatever its status: the caller judges it
+			// The answer as read on the way, whatever its status: the caller judges it
 			if (!answer) {
-				throw new Error('The request ended without an answer');
+				throw new Error('@novastarter/http: the request ended without an answer');
 			}
 
 			return answer;
@@ -312,7 +316,7 @@ const readingFetch = (
 	onFailure: (error: unknown) => void,
 ) => {
 	return async (_url: string, init: { method?: string; headers?: unknown; body?: unknown; signal?: AbortSignal }) => {
-		// 1. Octokit's headers are a plain record; a form body keeps no content type, so `fetch` writes its boundary
+		// Octokit's headers are a plain record; a form body keeps no content type, so `fetch` writes its boundary
 		const headers = { ...(init.headers as Record<string, string>) };
 		const body = init.body as string | FormData | undefined;
 
@@ -321,7 +325,7 @@ const readingFetch = (
 		}
 
 		try {
-			// 2. The request, its redirects, and the whole answer read — the headers kept as `Headers`, repeats included
+			// The request, its redirects, and the whole answer read — the headers kept as `Headers`, repeats included
 			const response = await follow(fetcher, target, init.method ?? 'GET', headers, body, init.signal as AbortSignal);
 			const text = await response.text();
 
@@ -331,11 +335,11 @@ const readingFetch = (
 				body: parseBody(text, response.headers.get('content-type')),
 			});
 		} catch (error) {
-			// 3. What was thrown is kept for the caller, out of Octokit's reach
+			// What was thrown is kept for the caller, out of Octokit's reach
 			onFailure(error);
 
 			// eslint-disable-next-line preserve-caught-error -- Octokit must not reach the error: it marks an abort reason
-			throw new Error('The request failed');
+			throw new Error('@novastarter/http: the request failed');
 		}
 
 		return new Response(null, { status: 204 });
@@ -351,7 +355,7 @@ const readingFetch = (
  * @internal
  */
 const globalFetch: HttpCallFetch = (input, { body, ...init }) => {
-	// 1. `exactOptionalPropertyTypes` refuses an explicit `body: undefined`, so it is left out instead
+	// `exactOptionalPropertyTypes` refuses an explicit `body: undefined`, so it is left out instead
 	return fetch(input, body === undefined ? init : { ...init, body });
 };
 
@@ -388,7 +392,7 @@ const follow = async (
 	let sentHeaders = headers;
 	let sentBody = body;
 
-	// 1. One request per hop; an answer that is not a redirect ends the chain
+	// One request per hop; an answer that is not a redirect ends the chain
 	for (let hop = 0; hop <= MAX_CALL_REDIRECTS; hop++) {
 		const response = await fetcher(url.href, {
 			method,
@@ -404,9 +408,9 @@ const follow = async (
 			return response;
 		}
 
-		// 2. The next hop: a `303`, or a `301`/`302` of a `POST`, becomes a `GET` without a body, the way browsers do —
-		//    a `HEAD` stays a `HEAD` on a `303`, so a redirect does not smuggle a full GET body into a caller that asked
-		//    for headers only
+		// The next hop: a `303`, or a `301`/`302` of a `POST`, becomes a `GET` without a body, the way browsers do —
+		// a `HEAD` stays a `HEAD` on a `303`, so a redirect does not smuggle a full GET body into a caller that asked
+		// for headers only
 		const next = new URL(location, url);
 
 		if (
@@ -418,26 +422,26 @@ const follow = async (
 			delete sentHeaders['content-type'];
 		}
 
-		// 3. Another origin gets no credentials, is reached over TLS when the chain started on it, and never gets a body:
-		//    what the caller sent was meant for the provider, not for wherever it points
+		// Another origin gets no credentials, is reached over TLS when the chain started on it, and never gets a body:
+		// what the caller sent was meant for the provider, not for wherever it points
 		if (next.origin !== url.origin) {
 			if (url.protocol === 'https:' && next.protocol !== 'https:') {
-				throw new Error(`The call was redirected to another origin without TLS: ${next.host}`);
+				throw new Error(`@novastarter/http: the call was redirected to another origin without TLS: ${next.host}`);
 			}
 
 			if (sentBody !== undefined) {
-				throw new Error(`The call was redirected to another origin with its body: ${next.host}`);
+				throw new Error(`@novastarter/http: the call was redirected to another origin with its body: ${next.host}`);
 			}
 
 			sentHeaders = { accept: headers['accept'] ?? 'application/json' };
 		}
 
-		// 4. The redirect's own body is dropped, so the connection is released before the next request
+		// The redirect's own body is dropped, so the connection is released before the next request
 		await response.body?.cancel();
 		url = next;
 	}
 
-	throw new Error(`The call was redirected more than ${MAX_CALL_REDIRECTS} times`);
+	throw new Error(`@novastarter/http: the call was redirected more than ${MAX_CALL_REDIRECTS} times`);
 };
 
 /**
@@ -450,11 +454,11 @@ const follow = async (
  * @internal
  */
 const parseBody = (text: string, type: string | null): unknown => {
-	// 1. An empty body — a 204 — is nothing
+	// An empty body — a 204 — is nothing
 	if (text.length === 0) return undefined;
 
-	// 2. JSON when the answer says so, says nothing, or is an object or a list whatever its type — providers label JSON
-	//    as text now and then; a bare scalar under a text type — `"0012"` as text/plain — stays the text it is
+	// JSON when the answer says so, says nothing, or is an object or a list whatever its type — providers label JSON
+	// as text now and then; a bare scalar under a text type — `"0012"` as text/plain — stays the text it is
 	const media = type?.split(';')[0]?.trim().toLowerCase();
 	const json = !media || media === 'application/json' || media.endsWith('+json') || /^\s*[{[]/.test(text);
 
@@ -486,9 +490,9 @@ const toBody = (
 	const entries = Object.entries(params).filter(([, value]) => value !== undefined);
 	const type = headers['content-type']?.split(';')[0]?.trim().toLowerCase();
 
-	// 1. A file among the parameters — or in a list of them — or a caller asking for `multipart/form-data` makes it
-	//    multipart; `fetch` sets the type with its boundary, so a type set before is dropped. A list repeats its field,
-	//    `null` is left out as in a query
+	// A file among the parameters — or in a list of them — or a caller asking for `multipart/form-data` makes it
+	// multipart; `fetch` sets the type with its boundary, so a type set before is dropped. A list repeats its field,
+	// `null` is left out as in a query
 	const isFile = (value: unknown): boolean => value instanceof Blob;
 	const hasFile = entries.some(([, value]) => isFile(value) || (Array.isArray(value) && value.some(isFile)));
 
@@ -512,14 +516,14 @@ const toBody = (
 		return form;
 	}
 
-	// 2. A form when the driver's API wants one or the caller asked for it with the content type
+	// A form when the driver's API wants one or the caller asked for it with the content type
 	if (type === 'application/x-www-form-urlencoded' || (type === undefined && bodyType === 'form')) {
 		headers['content-type'] ??= 'application/x-www-form-urlencoded';
 
 		return toQueryString(Object.fromEntries(entries)).slice(1);
 	}
 
-	// 3. JSON otherwise, under the caller's own type when given — `application/vnd.api+json` stays
+	// JSON otherwise, under the caller's own type when given — `application/vnd.api+json` stays
 	headers['content-type'] ??= 'application/json';
 
 	return JSON.stringify(Object.fromEntries(entries));

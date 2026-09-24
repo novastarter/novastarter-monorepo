@@ -39,8 +39,8 @@ export class MessengerManager extends DriverManager<MessengerDriver, MessengerDr
 	constructor() {
 		super();
 
-		// 1. The driver of the package is known up front; registering it here spares every application the same line,
-		//    and a replacement under the same name still wins
+		// Registering the package's own driver here spares every application the same line, and a replacement under the
+		// same name still wins
 		this.registerDriver('console', MessengerDriverConsole);
 	}
 }

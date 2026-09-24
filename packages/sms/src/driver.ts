@@ -59,7 +59,6 @@ export declare class SmsDriver {
 	 * });
 	 * ```
 	 */
-
 	call?<T = unknown>(method: string, params?: Record<string, unknown>, options?: CallOptions): Promise<CallResponse<T>>;
 
 	/**

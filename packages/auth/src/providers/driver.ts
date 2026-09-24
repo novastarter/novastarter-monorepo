@@ -108,7 +108,6 @@ export declare class AuthDriver {
 	 * const { status, headers, data } = await driver.call!('GET /user/repos', {}, { accessToken });
 	 * ```
 	 */
-
 	call?<T = unknown>(
 		method: string,
 		params?: Record<string, unknown>,

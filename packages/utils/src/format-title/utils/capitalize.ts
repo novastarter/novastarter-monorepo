@@ -13,6 +13,6 @@
  * ```
  */
 export function capitalize(word: string): string {
-	// 1. `charAt` returns an empty string past the end, so an empty word passes through without throwing
+	// `charAt` returns an empty string past the end, so an empty word passes through without throwing
 	return word.charAt(0).toUpperCase() + word.substring(1);
 }

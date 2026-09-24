@@ -65,16 +65,16 @@ export interface Singleton<T, Args extends unknown[] = []> {
  * ```
  */
 export const singleton = <T, Args extends unknown[] = []>(build: (...args: Args) => T): Singleton<T, Args> => {
-	// 1. Held in a closure rather than a module-level binding, so each accessor keeps its own instance and nothing
-	//    but `replace()` and `reset()` can touch it. A flag says whether there is one, rather than the instance being
-	//    compared with `undefined`: a builder may well answer with `undefined`, and that answer is kept like any other
+	// Held in a closure rather than a module-level binding, so each accessor keeps its own instance and nothing
+	// but `replace()` and `reset()` can touch it. A flag says whether there is one, rather than the instance being
+	// compared with `undefined`: a builder may well answer with `undefined`, and that answer is kept like any other
 	let instance: T | undefined;
 	let built = false;
 
 	const use = (...args: Args | []): T => {
-		// 1. Build on the first call; a second instance would split the process in two, each half with its own
-		//    locations. The call that builds is the one that carries the builder's arguments, which the signature
-		//    cannot express — hence the cast
+		// Build on the first call; a second instance would split the process in two, each half with its own
+		// locations. The call that builds is the one that carries the builder's arguments, which the signature
+		// cannot express — hence the cast
 		if (!built) {
 			instance = build(...(args as Args));
 			built = true;
@@ -82,9 +82,9 @@ export const singleton = <T, Args extends unknown[] = []>(build: (...args: Args)
 			return instance as T;
 		}
 
-		// 2. Arguments after the build would change nothing: refusing them is what keeps a caller from believing its
-		//    options took effect. An explicit `undefined` — a helper forwarding an optional parameter it was not
-		//    given — carries no options and passes
+		// Arguments after the build would change nothing: refusing them is what keeps a caller from believing its
+		// options took effect. An explicit `undefined` — a helper forwarding an optional parameter it was not
+		// given — carries no options and passes
 		if (args.some((arg) => arg !== undefined)) {
 			throw new Error('singleton: the instance exists already; arguments are only taken by the call that builds it');
 		}
@@ -92,16 +92,16 @@ export const singleton = <T, Args extends unknown[] = []>(build: (...args: Args)
 		return instance as T;
 	};
 
-	// 2. `replace()` and `reset()` ride on the function itself, so a registration or a test goes through the same
-	//    import the code uses
+	// `replace()` and `reset()` ride on the function itself, so a registration or a test goes through the same
+	// import the code uses
 	use.replace = (next: T): void => {
-		// 1. Counts as built, so the builder never runs over a replaced instance
+		// Counts as built, so the builder never runs over a replaced instance
 		instance = next;
 		built = true;
 	};
 
 	use.reset = (): void => {
-		// 1. Both go, so the next call builds — and takes its arguments — as if it were the first
+		// Both go, so the next call builds — and takes its arguments — as if it were the first
 		instance = undefined;
 		built = false;
 	};

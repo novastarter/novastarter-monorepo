@@ -11,16 +11,15 @@ afterEach(() => {
 
 describe('useNotifications', () => {
 	test('Throws before any registration', () => {
-		// 1. A forgotten registration fails loudly instead of dropping every notification
+		// A forgotten registration fails loudly instead of dropping every notification
 		expect(() => useNotifications()).toThrowErrorMatchingInlineSnapshot(
-			`[Error: Notifications are not registered; call registerNotifications() at start-up.]`,
+			`[NovastarterError: Invalid config. Notifications are not registered; call registerNotifications() at start-up.]`,
 		);
 	});
 });
 
 describe('registerNotifications', () => {
 	test('Makes the registration the process-wide one, and replaces it on a second call', () => {
-		// 1. One object for the process
 		registerNotifications({ channels: [], findRecipient: async () => null, render: async () => null });
 
 		const first = useNotifications();
@@ -28,7 +27,7 @@ describe('registerNotifications', () => {
 		expect(first).toBeInstanceOf(Notifications);
 		expect(useNotifications()).toBe(first);
 
-		// 2. The second registration is the whole configuration
+		// The second registration is the whole configuration
 		registerNotifications({
 			channels: [{ name: 'mail', reaches: () => true, send: async () => undefined }],
 			findRecipient: async () => null,

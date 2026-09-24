@@ -12,15 +12,15 @@ import { readFileSync } from 'node:fs';
  * with `stop_hook_active` once a block has already fired, and the hook lets that turn end to avoid an endless loop.
  */
 
-// 1. Claude Code hands the event over stdin as JSON; `stop_hook_active` means this turn already answered a block
+// Claude Code hands the event over stdin as JSON; `stop_hook_active` means this turn already answered a block
 const input = JSON.parse(readFileSync(0, 'utf8'));
 
 if (input.stop_hook_active) {
 	process.exit(0);
 }
 
-// 2. Read every uncommitted path, NUL-separated so spaces and renames parse safely; a rename carries the old path
-//    as an extra NUL-terminated chunk that has to be skipped
+// Read every uncommitted path, NUL-separated so spaces and renames parse safely; a rename carries the old path as an
+// extra NUL-terminated chunk that has to be skipped
 const status = spawnSync('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
 	cwd: process.env.CLAUDE_PROJECT_DIR,
 	encoding: 'utf8',
@@ -42,13 +42,13 @@ for (let i = 0; i < chunks.length; i++) {
 	}
 }
 
-// 3. A touched CHANGELOG.md means `changeset version` ran: the changesets were consumed on purpose, nothing to demand
+// A touched CHANGELOG.md means `changeset version` ran: the changesets were consumed on purpose, nothing to demand
 if (paths.some((path) => /(^|\/)CHANGELOG\.md$/.test(path))) {
 	process.exit(0);
 }
 
-// 4. Code changes live under `packages/` and `apps/`; a changeset is any Markdown file in `.changeset/` except the
-//    generated README
+// Code changes live under `packages/` and `apps/`; a changeset is any Markdown file in `.changeset/` except the
+// generated README
 const code = paths.filter((path) => /^(packages|apps)\/[^/]+\//.test(path));
 const changesets = paths.filter((path) => /^\.changeset\/(?!README\.md$)[^/]+\.md$/.test(path));
 
@@ -56,7 +56,6 @@ if (code.length === 0 || changesets.length > 0) {
 	process.exit(0);
 }
 
-// 5. Block the stop and tell the agent exactly which files still lack a changeset and where the rules live
 const shown = code.slice(0, 10).join(', ') + (code.length > 10 ? `, … (${code.length - 10} more)` : '');
 
 process.stdout.write(

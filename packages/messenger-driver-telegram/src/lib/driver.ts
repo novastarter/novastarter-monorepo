@@ -1,3 +1,4 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import { type CallOptions, type CallResponse, httpCall, toHeaderRecord } from '@novastarter/http';
 import type { MessengerDriver, MessengerFormat, MessengerMessage, MessengerResult } from '@novastarter/messenger';
 import { type TelegramErrorAnswer, toTelegramError } from './to-telegram-error.js';
@@ -91,32 +92,35 @@ export class MessengerDriverTelegram implements MessengerDriver {
 	 * Create the driver from its location options.
 	 *
 	 * @param config - The token, and the server, timeout and format when not the defaults.
-	 * @throws Error without a token, with a token that is not `<id>:<hash>`, or with an `apiUrl` that is not a URL.
+	 * @throws InvalidConfigError without a token, with a token that is not `<id>:<hash>`, or with an `apiUrl` that is
+	 * not a URL.
 	 */
 	constructor(config: MessengerDriverTelegramConfig) {
-		// 1. A missing token would only fail on the first message, far from the configuration that forgot it
+		// A missing token would only fail on the first message, far from the configuration that forgot it
 		if (typeof config.token !== 'string' || config.token.length === 0) {
-			throw new Error('The Telegram driver needs a bot "token"');
+			throw new InvalidConfigError({ reason: 'The Telegram driver needs a bot "token"' });
 		}
 
-		// 2. The token goes into the request URL raw, so one holding `#`, `?` or `/` would split the path and end as a
-		//    confusing 404. A bot token is `<id>:<hash>`; anything else is refused here, at construction, and the value
-		//    is left out of the message — it is a secret
+		// The token goes into the request URL raw, so one holding `#`, `?` or `/` would split the path and end as a
+		// confusing 404. A bot token is `<id>:<hash>`; anything else is refused here, at construction, and the value is
+		// left out of the message — it is a secret
 		if (!/^\d+:[\w-]+$/.test(config.token)) {
-			throw new Error('The Telegram driver\'s "token" is not a bot token of the shape "<id>:<hash>"');
+			throw new InvalidConfigError({
+				reason: 'The Telegram driver\'s "token" is not a bot token of the shape "<id>:<hash>"',
+			});
 		}
 
-		// 3. A server that is not a URL is refused here, on its own: the URL a call builds holds the token, and the
-		//    `TypeError` of an invalid one would carry it in its `input`. The value is left out of the message too
+		// A server that is not a URL is refused here, on its own: the URL a call builds holds the token, and the
+		// `TypeError` of an invalid one would carry it in its `input`. The value is left out of the message too
 		const apiUrl = (config.apiUrl ?? TELEGRAM_API_URL).replace(/\/+$/, '');
 
 		try {
 			new URL(apiUrl);
 		} catch {
-			throw new Error('The Telegram driver\'s "apiUrl" is not a valid URL');
+			throw new InvalidConfigError({ reason: 'The Telegram driver\'s "apiUrl" is not a valid URL' });
 		}
 
-		// 4. A trailing slash on the server, dropped above, would double up in every URL
+		// A trailing slash on the server, dropped above, would double up in every URL
 		this.config = {
 			token: config.token,
 			apiUrl,
@@ -132,14 +136,14 @@ export class MessengerDriverTelegram implements MessengerDriver {
 	 * @returns The id of the (first) message Telegram made, and its answer.
 	 * @throws MessengerTargetGoneError when the bot was blocked or the chat is gone.
 	 * @throws HitRateLimitError when Telegram asks to slow down.
-	 * @throws Error when Telegram refused the message or could not be reached.
+	 * @throws ProviderCallError when Telegram refused the message — its status and answer in `extensions`.
+	 * @throws Error when Telegram could not be reached.
 	 */
 	async send(message: MessengerMessage): Promise<MessengerResult> {
-		// 1. The method and its parameters, then the call
 		const { method, params } = toTelegramRequest(message, this.config.defaultFormat);
 		const { data: result } = await this.call<{ message_id?: number } | { message_id?: number }[]>(method, params);
 
-		// 2. An album answers a list of messages; the first one stands for it
+		// An album answers a list of messages; the first one stands for it
 		const first = Array.isArray(result) ? result[0] : result;
 
 		return { ...(first?.message_id !== undefined ? { messageId: String(first.message_id) } : {}), raw: result };
@@ -148,7 +152,8 @@ export class MessengerDriverTelegram implements MessengerDriver {
 	/**
 	 * Check the token by asking Telegram who the bot is.
 	 *
-	 * @throws Error when the token is refused or Telegram cannot be reached.
+	 * @throws ProviderCallError when the token is refused.
+	 * @throws Error when Telegram cannot be reached.
 	 */
 	async verify(): Promise<void> {
 		await this.call('getMe');
@@ -170,7 +175,8 @@ export class MessengerDriverTelegram implements MessengerDriver {
 	 * @throws MessengerTargetGoneError when the bot was blocked or the chat is gone.
 	 * @throws HitRateLimitError when Telegram asks to slow down.
 	 * @throws TimeoutError when the call takes longer than the timeout.
-	 * @throws Error when Telegram refused the call or answered something that is not JSON.
+	 * @throws ProviderCallError when Telegram refused the call — its status and answer in `extensions`.
+	 * @throws Error when Telegram answered something that is not JSON.
 	 * @example
 	 * ```ts
 	 * const { data } = await telegram.call<{ message_id: number }>('sendPhoto', {
@@ -185,9 +191,9 @@ export class MessengerDriverTelegram implements MessengerDriver {
 		params: Record<string, unknown> = {},
 		options: CallOptions = {},
 	): Promise<CallResponse<T>> {
-		// 1. With a file among the parameters the call is multipart, and the Bot API reads every other field of a form
-		//    as text: a number as its digits, an object — `media`, `reply_markup` — as its JSON. `httpCall()` would
-		//    repeat a list's field instead, so the values are turned into text here; without a file it sends JSON as is
+		// With a file among the parameters the call is multipart, and the Bot API reads every other field of a form as
+		// text: a number as its digits, an object — `media`, `reply_markup` — as its JSON. `httpCall()` would repeat a
+		// list's field instead, so the values are turned into text here; without a file it sends JSON as is
 		const defined = Object.entries(params).filter(([, value]) => value !== undefined);
 		const multipart = defined.some(([, value]) => value instanceof Blob);
 
@@ -200,8 +206,8 @@ export class MessengerDriverTelegram implements MessengerDriver {
 				)
 			: Object.fromEntries(defined);
 
-		// 2. One `POST /bot<token>/<method>`, its answer read under the same deadline; the method is encoded so it
-		//    stays one path segment. The token is in the URL; `httpCall()` puts nothing of the request into an error
+		// The method is encoded so it stays one path segment. The token is in the URL; `httpCall()` puts nothing of the
+		// request into an error
 		const response = await httpCall({
 			url: new URL(`${this.config.apiUrl}/bot${this.config.token}/${encodeURIComponent(method)}`),
 			verb: 'POST',
@@ -211,14 +217,14 @@ export class MessengerDriverTelegram implements MessengerDriver {
 			signal: options.signal,
 		});
 
-		// 3. Telegram answers JSON even on a refusal; anything else is a proxy or an outage in between
+		// Telegram answers JSON even on a refusal; anything else is a proxy or an outage in between
 		const answer = response.body as TelegramAnswer<T> | TelegramErrorAnswer | undefined;
 
 		if (typeof answer !== 'object' || answer === null || !('ok' in answer)) {
 			throw new Error(`Telegram answered ${method} with HTTP ${response.status} and no JSON`);
 		}
 
-		// 4. A refusal becomes the kit's error for it; an accepted call answers its `result`, not the envelope
+		// An accepted call answers its `result`, not the envelope
 		if (!answer.ok) {
 			throw toTelegramError(method, answer, response.status);
 		}

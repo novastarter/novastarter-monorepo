@@ -77,7 +77,7 @@ export class LemonSqueezyApiError extends Error {
 		readonly status: number,
 		readonly errors: LsError[],
 	) {
-		// 1. One line naming every error the API listed, so a log entry says what was refused without the body
+		// One line naming every error the API listed, so a log entry says what was refused without the body.
 		super(
 			`Lemon Squeezy ${status}: ${errors.map((error) => error.detail ?? error.title ?? 'unknown error').join('; ') || 'request failed'}`,
 		);
@@ -93,7 +93,7 @@ export class LemonSqueezyApiError extends Error {
  * @returns The `errors`, or none for a body that is not JSON.
  */
 const parseErrors = (text: string): LsError[] => {
-	// 1. A gateway error page is not JSON; the status alone is reported then
+	// A gateway error page is not JSON; the status alone is reported then.
 	try {
 		return (JSON.parse(text) as { errors?: LsError[] }).errors ?? [];
 	} catch {
@@ -152,13 +152,13 @@ export class LemonSqueezyApi {
 	 * registration, rather than on the first request.
 	 */
 	constructor(config: LemonSqueezyApiConfig) {
-		// 1. Normalise the base URL once, so a configured trailing slash does not double up in every path
+		// Normalised once, so a configured trailing slash does not double up in every path.
 		this.apiUrl = (config.apiUrl ?? API_URL).replace(/\/$/, '');
 
-		// 2. A timeout `AbortSignal.timeout()` cannot hold is refused now: a negative, fractional or `NaN` delay would
-		//    throw on every request, `0` would abandon every request immediately, and one above the timer's bound
-		//    would abandon every request after 1 ms — either way a misconfigured location would fail on first use
-		//    with an error that does not name the cause
+		// A timeout `AbortSignal.timeout()` cannot hold is refused now: a negative, fractional or `NaN` delay would
+		// throw on every request, `0` would abandon every request immediately, and one above the timer's bound would
+		// abandon every request after 1 ms. Either way a misconfigured location would fail on first use with an error
+		// that does not name the cause.
 		this.timeout = config.timeout ?? DEFAULT_TIMEOUT;
 
 		if (!(Number.isInteger(this.timeout) && this.timeout >= 1 && this.timeout <= MAX_TIMEOUT)) {
@@ -167,21 +167,19 @@ export class LemonSqueezyApi {
 			);
 		}
 
-		// 3. JSON:API media types on both sides: the API refuses `application/json` bodies
+		// JSON:API media types on both sides: the API refuses `application/json` bodies.
 		this.headers = {
 			Accept: 'application/vnd.api+json',
 			'Content-Type': 'application/vnd.api+json',
 			Authorization: `Bearer ${config.apiKey}`,
 		};
 
-		// 4. The platform's fetch unless a test hands in its own, bound to the global object: `fetch` is a WebIDL
-		//    operation on some runtimes and throws `TypeError: Illegal invocation` when called with another receiver,
-		//    which is what `this.fetch(...)` would be; the cast narrows it to the signature used
+		// Bound to the global object: `fetch` is a WebIDL operation on some runtimes and throws `TypeError: Illegal
+		// invocation` when called with another receiver, which is what `this.fetch(...)` would be.
 		this.fetch = config.fetch ?? (globalThis.fetch.bind(globalThis) as unknown as ApiFetch);
 
-		// 5. `call()` goes through the shared request: the root without its `/v1`, so the path names its version and a
-		//    stand-in's own path prefix is kept; the client's fetch — a test's fake included — adapted to its
-		//    signature, `redirect: 'manual'` passed on by name so the real fetch never follows a redirect with the key
+		// The root goes without its `/v1`, so the path names its version and a stand-in's own path prefix is kept.
+		// `redirect: 'manual'` is passed on by name so the real fetch never follows a redirect with the key.
 		const fetcher: HttpCallFetch = async (input, { redirect, ...init }) =>
 			(await this.fetch(input, {
 				...(init as Omit<Parameters<ApiFetch>[1], 'redirect'>),
@@ -210,8 +208,8 @@ export class LemonSqueezyApi {
 	 * @throws `TimeoutError` (the `DOMException` of `AbortSignal.timeout()`) when the request outlives the timeout.
 	 */
 	async request<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T> {
-		// 1. The body is only set when given: a GET with a body is refused by some proxies; the signal abandons the
-		//    request at the deadline, which the constructor checked the signal can hold
+		// The body is only set when given, since a GET with a body is refused by some proxies. The constructor checked
+		// the signal can hold the deadline.
 		const response = await this.fetch(`${this.apiUrl}${path}`, {
 			method,
 			headers: this.headers,
@@ -221,12 +219,12 @@ export class LemonSqueezyApi {
 
 		const text = await response.text();
 
-		// 2. A refusal carries JSON:API errors; anything else on a bad status is reported with the status alone
+		// A refusal carries JSON:API errors; anything else on a bad status is reported with the status alone.
 		if (!response.ok) {
 			throw new LemonSqueezyApiError(response.status, parseErrors(text));
 		}
 
-		// 3. A 204 has no body; `undefined` rather than a parse error
+		// A 204 has no body; `undefined` rather than a parse error.
 		return (text ? JSON.parse(text) : undefined) as T;
 	}
 
@@ -259,8 +257,8 @@ export class LemonSqueezyApi {
 		params?: Record<string, unknown>,
 		options?: CallOptions,
 	): Promise<CallResponse<T>> {
-		// 1. The shared request does it all: placeholders, the one host — so the key never travels elsewhere — the
-		//    deadline, and an error status turned into the kit's error with the JSON:API `errors`
+		// The shared request keeps the key on the one host, applies the deadline and turns an error status into the
+		// kit's error with the JSON:API `errors`.
 		return request<T>(this.http, method, params, options);
 	}
 }

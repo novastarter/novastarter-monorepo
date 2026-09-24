@@ -1,4 +1,4 @@
-import { toProviderCallError } from '@novastarter/errors';
+import { InvalidPayloadError, toProviderCallError } from '@novastarter/errors';
 import { type CallOptions, type CallResponse, type CallVerb, parseCallMethod, toHeaderRecord } from './call.js';
 import { httpCall, type HttpCallFetch, type HttpCallResponse } from './http-call.js';
 
@@ -97,7 +97,8 @@ export interface HttpHooks {
  * @throws ProviderCallError for an error status, with the status and the answer in `extensions`.
  * @throws HitRateLimitError for a 429, reset at `Retry-After`.
  * @throws TimeoutError when the request outlives its timeout; the abort reason when the signal aborts.
- * @throws Error when the method is malformed, its target is not a full URL, or a placeholder is left unfilled.
+ * @throws InvalidPayloadError when a placeholder is left unfilled, or its parameter cannot go in a path.
+ * @throws Error when the method is malformed or its target is not a full URL.
  * @example
  * ```ts
  * const { data } = await http('GET https://api.github.com/repos/{owner}/{repo}', { owner: 'acme', repo: 'web' });
@@ -112,17 +113,19 @@ export const http = async <T = unknown>(
 	params: Record<string, unknown> = {},
 	options: HttpOptions = {},
 ): Promise<CallResponse<T>> => {
-	// 1. The verb and a full URL, its placeholders filled; a path has no host to go to, and one left unfilled is refused
+	// The verb and a full URL, its placeholders filled; a path has no host to go to, and one left unfilled is refused
 	const parsed = parseCallMethod(method, params);
 
 	if (!/^https?:\/\//i.test(parsed.target)) {
-		throw new Error(`http() needs a full URL, not "${parsed.target}"`);
+		throw new Error(`@novastarter/http: http() needs a full URL, not "${parsed.target}"`);
 	}
 
 	const unfilled = /\{([A-Za-z_][\w-]*)\}/.exec(parsed.target);
 
 	if (unfilled) {
-		throw new Error(`The request needs a "${unfilled[1]}" parameter for its {${unfilled[1]}} placeholder`);
+		throw new InvalidPayloadError({
+			reason: `The request needs a "${unfilled[1]}" parameter for its {${unfilled[1]}} placeholder`,
+		});
 	}
 
 	const url = new URL(parsed.target);
@@ -135,7 +138,7 @@ export const http = async <T = unknown>(
 		url: `${url.origin}${url.pathname}`,
 	};
 
-	// 2. The request itself, its redirects followed safely and the whole of it under one deadline, the hooks around it
+	// The request itself, its redirects followed safely and the whole of it under one deadline, the hooks around it
 	fire(options.hooks?.onRequest, { ...event });
 
 	const started = performance.now();
@@ -160,7 +163,7 @@ export const http = async <T = unknown>(
 
 	fire(options.hooks?.onResponse, { ...event, status: response.status, duration: performance.now() - started });
 
-	// 3. The provider's own refusals first, then the kit's mapping of any other error status
+	// The provider's own refusals first, then the kit's mapping of any other error status
 	const refused = options.refuse?.(response, label);
 
 	if (refused) {
@@ -188,7 +191,7 @@ export const http = async <T = unknown>(
  * @internal
  */
 const fire = <E>(hook: ((event: E) => void | Promise<void>) | undefined, event: E): void => {
-	// 1. A synchronous throw and a rejected promise alike are the hook's own failure, not the request's
+	// A synchronous throw and a rejected promise alike are the hook's own failure, not the request's
 	try {
 		void Promise.resolve(hook?.(event)).catch(() => undefined);
 	} catch {

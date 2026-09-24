@@ -2,10 +2,10 @@
  * Tests of the SendGrid driver class with the SDK and the global `fetch` mocked; the message mapper has its own tests
  * in `to-sendgrid-mail.test.ts`.
  */
-import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
+import { HitRateLimitError, InvalidConfigError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import * as entry from '../index.js';
 import { MailDriverSendgrid } from './driver.js';
 
 /**
@@ -59,7 +59,6 @@ const fetchMock = vi.fn();
  * @internal
  */
 const sent = (): { url: string; init: RequestInit & { headers: Record<string, string>; signal: AbortSignal } } => {
-	// 1. Read back from the stub, as `fetch(url, init)` was called
 	const [url, init] = fetchMock.mock.lastCall as [
 		string,
 		RequestInit & { headers: Record<string, string>; signal: AbortSignal },
@@ -80,14 +79,13 @@ afterEach(() => {
 
 describe('MailDriverSendgrid', () => {
 	test('Sets the key, sends and reads the message id from the response headers', async () => {
-		// 1. The key goes to a client of the driver's own
 		send.mockResolvedValueOnce([{ statusCode: 202, headers: { 'x-message-id': 'sg-1' } }, {}]);
 
 		const driver = new MailDriverSendgrid({ apiKey: 'SG.test' });
 
 		expect(setApiKey).toHaveBeenCalledWith('SG.test');
 
-		// 2. The message id is the response header; the status code is the response line
+		// The message id is the response header; the status code is the response line
 		expect(
 			await driver.send({ to: 'ada@example.com', from: 'no-reply@acme.test', subject: 'Hi', text: 'x' }),
 		).toStrictEqual({
@@ -97,7 +95,6 @@ describe('MailDriverSendgrid', () => {
 			response: '202',
 		});
 
-		// 3. A refusal names the provider, the SDK's error as the cause; a missing key is refused by name
 		const failure = new Error('Forbidden');
 
 		send.mockRejectedValueOnce(failure);
@@ -108,27 +105,26 @@ describe('MailDriverSendgrid', () => {
 		});
 
 		expect(() => new MailDriverSendgrid({ apiKey: '' })).toThrow(/"apiKey"/);
-		expect(defaultExport).toBe(MailDriverSendgrid);
+		expect(() => new MailDriverSendgrid({ apiKey: '' })).toThrow(InvalidConfigError);
+		expect(entry.MailDriverSendgrid).toBe(MailDriverSendgrid);
 	});
 
 	test('Surfaces a local mapping failure without the provider prefix', async () => {
-		// 1. A message without a sender is refused by the mapper itself, before any request: the kit's own error
-		//    stands alone, without the provider prefix the API refusal would get
+		// The mapper refuses a message without a sender before any request, so the kit's own error stands without the
+		// provider prefix an API refusal would get
 		const driver = new MailDriverSendgrid({ apiKey: 'SG.test' });
 
 		await expect(driver.send({ to: 'a@b.c', subject: 'x', text: 'x' })).rejects.toMatchObject({
-			message: 'SendGrid needs a "from" address',
+			code: 'INVALID_PAYLOAD',
+			message: 'Invalid payload. SendGrid needs a "from" address.',
 		});
 
-		// 2. The refusal happened before the API, so the client never sent anything
 		expect(send).not.toHaveBeenCalled();
 	});
 });
 
 describe('MailDriverSendgrid.call', () => {
 	test('Sends a GET with the key and the query in the URL, and a POST with the params as the body', async () => {
-		// 1. A GET's parameters go into the URL, a list repeating its key; the key is a bearer token; the answer is
-		//    the parsed body
 		fetchMock.mockResolvedValueOnce(new Response('[{"email":"ada@example.com"}]', { status: 200 }));
 
 		const driver = new MailDriverSendgrid({ apiKey: 'SG.SECRET' });
@@ -142,7 +138,6 @@ describe('MailDriverSendgrid.call', () => {
 		expect(sent().init.body).toBeUndefined();
 		expect(sent().init.headers['authorization']).toBe('Bearer SG.SECRET');
 
-		// 2. A POST carries them as the JSON body, with the caller's headers on top; an empty answer is `undefined`
 		fetchMock.mockResolvedValueOnce(new Response(null, { status: 201 }));
 
 		const body = { recipient_emails: ['ada@example.com'] };
@@ -159,7 +154,6 @@ describe('MailDriverSendgrid.call', () => {
 	});
 
 	test('Turns an error status into ProviderCallError without the key, and a 429 into HitRateLimitError', async () => {
-		// 1. The provider's status and answer in the extensions; the key nowhere in the error
 		const body = { errors: [{ field: null, message: 'authorization required' }] };
 
 		fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(body), { status: 401 }));
@@ -178,7 +172,6 @@ describe('MailDriverSendgrid.call', () => {
 		expect(JSON.stringify(error)).not.toContain('SECRET');
 		expect(String((error as Error).cause)).not.toContain('SECRET');
 
-		// 2. Too many requests is the rate-limit error
 		const limited = JSON.stringify({ errors: [{ message: 'too many requests' }] });
 
 		fetchMock.mockResolvedValueOnce(new Response(limited, { status: 429, headers: { 'retry-after': '1' } }));
@@ -187,7 +180,6 @@ describe('MailDriverSendgrid.call', () => {
 	});
 
 	test('Refuses a full URL on another host before any request, and accepts one on a SendGrid host', async () => {
-		// 1. The key must not travel to someone else's host
 		const driver = new MailDriverSendgrid({ apiKey: 'SG.SECRET' });
 
 		await expect(driver.call('GET https://evil.example/v3/user/profile')).rejects.toThrow(
@@ -196,7 +188,6 @@ describe('MailDriverSendgrid.call', () => {
 
 		expect(fetchMock).not.toHaveBeenCalled();
 
-		// 2. SendGrid's own host is fine
 		fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
 
 		await driver.call('DELETE https://api.sendgrid.com/v3/suppression/bounces/ada@example.com');
@@ -204,7 +195,7 @@ describe('MailDriverSendgrid.call', () => {
 		expect(sent().url).toBe('https://api.sendgrid.com/v3/suppression/bounces/ada@example.com');
 		expect(sent().init.method).toBe('DELETE');
 
-		// 3. So is the EU region's, which a full URL is the only way to reach
+		// A full URL is the only way to reach the EU region's host
 		fetchMock.mockClear();
 		fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
 
@@ -214,7 +205,7 @@ describe('MailDriverSendgrid.call', () => {
 	});
 
 	test('Aborts the request itself at the call’s timeout', async () => {
-		// 1. A request that never answers until aborted; the fetch's own signal must fire, not only the wait end
+		// The fetch's own signal must fire, not only the wait end
 		fetchMock.mockImplementationOnce(
 			(_url: string, init: { signal: AbortSignal }) =>
 				new Promise((_resolve, reject) => {
@@ -229,7 +220,6 @@ describe('MailDriverSendgrid.call', () => {
 	});
 
 	test('Sends nothing when the signal is already aborted', async () => {
-		// 1. A DELETE the caller gave up on before calling must never reach SendGrid
 		const driver = new MailDriverSendgrid({ apiKey: 'SG.SECRET' });
 		const controller = new AbortController();
 
@@ -250,11 +240,9 @@ describe('MailDriverSendgrid.call placeholders and answers', () => {
 
 		const driver = new MailDriverSendgrid({ apiKey: 'SG.SECRET' });
 
-		// 1. A GET: the placeholder takes `id`, URL-encoded; the other parameters stay in the query
 		await driver.call('GET /v3/templates/{id}', { id: 'a/b', limit: 5 });
 		expect((fetchMock.mock.calls[0] as [string])[0]).toBe('https://api.sendgrid.com/v3/templates/a%2Fb?limit=5');
 
-		// 2. A POST: the placeholder's parameter is not in the body
 		await driver.call('POST /v3/templates/{id}/versions', { id: 42, name: 'welcome' });
 
 		const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
@@ -278,7 +266,6 @@ describe('MailDriverSendgrid.call placeholders and answers', () => {
 
 		const driver = new MailDriverSendgrid({ apiKey: 'SG.SECRET' });
 
-		// 1. Every call answers the whole response, headers named in lower case
 		const answer = await driver.call('GET /v3/templates/{id}', { id: 'x' });
 
 		expect(answer).toMatchObject({ status: 201, headers: { 'x-ratelimit-remaining': '9' }, data: { ok: true } });

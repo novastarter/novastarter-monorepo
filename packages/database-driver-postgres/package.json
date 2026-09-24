@@ -26,6 +26,7 @@
 	},
 	"dependencies": {
 		"@novastarter/database": "workspace:*",
+		"@novastarter/errors": "workspace:*",
 		"@novastarter/logger": "workspace:*",
 		"@novastarter/utils": "workspace:*",
 		"@types/pg": "catalog:",

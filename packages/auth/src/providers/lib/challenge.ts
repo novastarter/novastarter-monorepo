@@ -1,3 +1,4 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import { AuthInvalidTokenError } from '../../errors/index.js';
 import { requireSecrets } from '../../lib/require-secret.js';
 import { authSettings } from '../../lib/settings-access.js';
@@ -72,19 +73,19 @@ interface ChallengeCookie {
  * @param purpose - What the flow is: {@link CHALLENGE_SIGN_IN_PURPOSE}, or a driver's own name for it.
  * @param state - What to get back at the second step.
  * @returns The cookie and its expiry.
- * @throws Error without a usable `challenge.secret` in the settings.
+ * @throws InvalidConfigError without a usable `challenge.secret` in the settings.
  * @example
  * ```ts
  * const { cookie, expiresAt } = sealChallenge('passkey', 'passkey-registration', { challenge, userId });
  * ```
  */
 export const sealChallenge = (location: string, purpose: string, state: Record<string, unknown>): SealedChallenge => {
-	// 1. The current secret encrypts; a secret being rotated out only still opens what it sealed
+	// The current secret encrypts; a secret being rotated out only still opens what it sealed
 	const settings = authSettings().challenge ?? {};
 	const secret = requireSecrets(settings.secret, 'challenge.secret')[0]!;
 	const expiresAt = Date.now() + (settings.ttl ?? DEFAULT_CHALLENGE_TTL);
 
-	// 2. Sealed with the location, the purpose and the deadline, so a cookie cannot be replayed elsewhere or later
+	// Sealed with the location, the purpose and the deadline, so a cookie cannot be replayed elsewhere or later
 	const sealed: ChallengeCookie = { location, purpose, expiresAt, state };
 
 	return { cookie: encrypt(JSON.stringify(sealed), secret, 'challenge-cookie'), expiresAt };
@@ -98,21 +99,21 @@ export const sealChallenge = (location: string, purpose: string, state: Record<s
  * @param cookie - The cookie's value.
  * @returns The state; `null` when the cookie is missing, tampered with, expired, or sealed for another location or
  * purpose — all the same to the caller, which refuses the step.
- * @throws Error without a usable `challenge.secret` in the settings.
+ * @throws InvalidConfigError without a usable `challenge.secret` in the settings.
  */
 export const openChallenge = (
 	location: string,
 	purpose: string,
 	cookie: string | undefined,
 ): Record<string, unknown> | null => {
-	// 1. The secrets first, so a configuration mistake is reported as itself rather than as a bad cookie
+	// The secrets first, so a configuration mistake is reported as itself rather than as a bad cookie
 	const secrets = requireSecrets(authSettings().challenge?.secret, 'challenge.secret');
 
 	if (typeof cookie !== 'string' || cookie.length === 0) {
 		return null;
 	}
 
-	// 2. GCM refuses a changed byte or another key; either is just an unusable cookie here
+	// GCM refuses a changed byte or another key; either is just an unusable cookie here
 	let sealed: ChallengeCookie;
 
 	try {
@@ -121,7 +122,6 @@ export const openChallenge = (
 		return null;
 	}
 
-	// 3. Current, and for this location and flow
 	if (sealed.expiresAt <= Date.now() || sealed.location !== location || sealed.purpose !== purpose) {
 		return null;
 	}
@@ -141,8 +141,8 @@ export const openChallenge = (
  * @param input - What the browser sent: an email address, the format wanted.
  * @returns The options for the browser, and the cookie to set with its expiry when the driver keeps state.
  * @throws HitRateLimitError when the identifier asked too often.
- * @throws Error when the location does not exist or its driver has no two-step sign-in, or without a usable
- * `challenge.secret` in the settings while the driver keeps state.
+ * @throws InvalidConfigError when the location does not exist or its driver has no two-step sign-in, or without a
+ * usable `challenge.secret` in the settings while the driver keeps state.
  * @example
  * ```ts
  * const { options, cookie, expiresAt } = await startChallenge('passkey');
@@ -154,20 +154,21 @@ export const openChallenge = (
  * ```
  */
 export const startChallenge = async (location: string, input: ChallengeInput = {}): Promise<StartedChallenge> => {
-	// 1. The driver first, so a configuration mistake is reported before anything is charged
+	// The driver first, so a configuration mistake is reported before anything is charged
 	const driver = useAuth().location(location);
 
 	if (!driver.begin || !driver.complete) {
-		throw new Error(`Auth location "${location}" does not sign in with a challenge`);
+		throw new InvalidConfigError({
+			reason: `Auth location "${location}" does not sign in with a challenge, register it with a driver that does`,
+		});
 	}
 
-	// 2. Charged per address rather than per client, like `signIn()`; never cleared here, since asking again is not a
-	//    success that should reset the count
+	// Charged per address rather than per client, like `signIn()`; never cleared here, since asking again is not a
+	// success that should reset the count
 	if (typeof input.identifier === 'string') {
 		await authSettings().limiters?.signIn?.consume(`${location}:${input.identifier.trim().toLowerCase()}`);
 	}
 
-	// 3. The driver's first step, and its state sealed for the second
 	const begun = await driver.begin(input);
 
 	if (!begun.state) {
@@ -193,8 +194,8 @@ export const startChallenge = async (location: string, input: ChallengeInput = {
  * @throws AuthInvalidTokenError when the cookie is tampered with, expired or made for another location, or the driver
  * refuses a token.
  * @throws InvalidCredentialsError when the driver refuses the answer or a filter refused the sign-in.
- * @throws Error when the location does not exist or its driver has no two-step sign-in, or without a usable
- * `challenge.secret` in the settings while a cookie is given.
+ * @throws InvalidConfigError when the location does not exist or its driver has no two-step sign-in, or without a
+ * usable `challenge.secret` in the settings while a cookie is given.
  * @example
  * ```ts
  * const identity = await finishChallenge('magic-link', { input: { token: query.token } });
@@ -202,14 +203,16 @@ export const startChallenge = async (location: string, input: ChallengeInput = {
  * ```
  */
 export const finishChallenge = async (location: string, params: FinishChallengeParams): Promise<AuthIdentity> => {
-	// 1. The driver first, so a configuration mistake is reported as itself
+	// The driver first, so a configuration mistake is reported as itself
 	const driver = useAuth().location(location);
 
 	if (!driver.begin || !driver.complete) {
-		throw new Error(`Auth location "${location}" does not sign in with a challenge`);
+		throw new InvalidConfigError({
+			reason: `Auth location "${location}" does not sign in with a challenge, register it with a driver that does`,
+		});
 	}
 
-	// 2. A cookie that is there must open; its absence is the driver's to judge
+	// A cookie that is there must open; its absence is the driver's to judge
 	let state: Record<string, unknown> | undefined;
 
 	if (params.cookie !== undefined) {
@@ -222,7 +225,7 @@ export const finishChallenge = async (location: string, params: FinishChallengeP
 		state = opened;
 	}
 
-	// 3. The driver's verdict; a refusal is announced and rethrown as the driver made it
+	// The driver's verdict; a refusal is announced and rethrown as the driver made it
 	let identity: AuthIdentity;
 
 	try {

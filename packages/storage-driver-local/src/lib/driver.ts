@@ -4,6 +4,7 @@ import { copyFile, mkdir, open, opendir, rename, stat, unlink, writeFile } from 
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import stream, { PassThrough, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { InvalidConfigError } from '@novastarter/errors';
 import { useLogger } from '@novastarter/logger';
 import {
 	type ChunkedUploadContext,
@@ -84,16 +85,16 @@ export class StorageDriverLocal implements TusDriver {
 	 * Create a driver rooted at the given directory.
 	 *
 	 * @param config - Root directory; the directory itself is created lazily on the first write.
-	 * @throws Error when `root` is missing.
+	 * @throws InvalidConfigError when `root` is missing.
 	 */
 	constructor(config: StorageDriverLocalConfig) {
-		// 1. Refuse a missing root up front: `resolve(undefined)` would silently pick the working directory
+		// Refuse a missing root up front: `resolve(undefined)` would silently pick the working directory
 		if (!config.root) {
-			throw new Error('The local storage driver needs a "root"');
+			throw new InvalidConfigError({ reason: 'The local storage driver needs a "root"' });
 		}
 
-		// 2. Resolve once, so a relative root keeps pointing at the same directory even if the process later changes
-		//    its working directory
+		// Resolve once, so a relative root keeps pointing at the same directory even if the process later changes
+		// its working directory
 		this.root = resolve(config.root);
 	}
 
@@ -105,8 +106,8 @@ export class StorageDriverLocal implements TusDriver {
 	 * @internal
 	 */
 	private fullPath(filepath: string) {
-		// 1. Joining with the separator first makes the caller path absolute, which collapses any leading `..` segments
-		//    at the filesystem root; only then is it appended to the driver root, so it can never escape it
+		// Joining with the separator first makes the caller path absolute, which collapses any leading `..` segments
+		// at the filesystem root; only then is it appended to the driver root, so it can never escape it
 		return join(this.root, join(sep, filepath));
 	}
 
@@ -117,7 +118,7 @@ export class StorageDriverLocal implements TusDriver {
 	 * @internal
 	 */
 	private async ensureDir(dirpath: string) {
-		// 1. `recursive` also makes the call succeed when the directory already exists, so no separate check is needed
+		// `recursive` also makes the call succeed when the directory already exists, so no separate check is needed
 		await mkdir(dirpath, { recursive: true });
 	}
 
@@ -137,9 +138,9 @@ export class StorageDriverLocal implements TusDriver {
 
 		const streamOptions: Parameters<typeof createReadStream>[1] = {};
 
-		// 1. Only forward the bounds that were given, so the stream keeps its own defaults (start of file, end of
-		//    file) for the missing side. Both bounds are inclusive, matching `createReadStream`, and both are checked
-		//    for presence rather than truthiness: `end: 0` asks for the first byte, not for the whole file
+		// Only forward the bounds that were given, so the stream keeps its own defaults (start of file, end of
+		// file) for the missing side. Both bounds are inclusive, matching `createReadStream`, and both are checked
+		// for presence rather than truthiness: `end: 0` asks for the first byte, not for the whole file
 		if (range?.start !== undefined) {
 			streamOptions.start = range.start;
 		}
@@ -148,25 +149,25 @@ export class StorageDriverLocal implements TusDriver {
 			streamOptions.end = range.end;
 		}
 
-		// 2. The file stream reports a missing file as an error event once it tries to open the file; that event is
-		//    translated into the error every backend shares on the stream handed out, so a consumer tells a missing file
-		//    from a failed read the same way it does with the other drivers. The two are tied with `pipeline`, not
-		//    `pipe`: a consumer that destroys the stream it was handed — a client gone mid-download — then destroys the
-		//    file stream too and frees its descriptor, where `pipe` would only pause it and keep the file open
+		// The file stream reports a missing file as an error event once it tries to open the file; that event is
+		// translated into the error every backend shares on the stream handed out, so a consumer tells a missing file
+		// from a failed read the same way it does with the other drivers. The two are tied with `pipeline`, not
+		// `pipe`: a consumer that destroys the stream it was handed — a client gone mid-download — then destroys the
+		// file stream too and frees its descriptor, where `pipe` would only pause it and keep the file open
 		const source = createReadStream(this.fullPath(filepath), streamOptions);
 		const output = new PassThrough();
 
 		source.on('error', (error: NodeJS.ErrnoException) => {
-			// 1. Only the errors that prove the file cannot exist are translated: ENOENT is the plain case, ENOTDIR means
-			//    a parent of the path is a file. Registered before `pipeline` adds its own handler, so the translated
-			//    error is the one the consumer sees
+			// Only the errors that prove the file cannot exist are translated: ENOENT is the plain case, ENOTDIR means
+			// a parent of the path is a file. Registered before `pipeline` adds its own handler, so the translated
+			// error is the one the consumer sees
 			const missing = error.code === 'ENOENT' || error.code === 'ENOTDIR';
 
 			output.destroy(missing ? new StorageFileNotFoundError({ filepath }, { cause: error }) : error);
 		});
 
 		stream.pipeline(source, output, () => {
-			// 1. The outcome already reached the consumer through `output`; nothing is left to report here
+			// The outcome already reached the consumer through `output`; nothing is left to report here
 		});
 
 		return output;
@@ -183,8 +184,8 @@ export class StorageDriverLocal implements TusDriver {
 	async stat(filepath: string): Promise<Stat> {
 		let fileStat: Awaited<ReturnType<typeof stat>>;
 
-		// 1. Only the errors that prove the path cannot exist become the kit's "not found": ENOENT is the plain case,
-		//    ENOTDIR means a parent of the path is a file. Anything else says nothing about the file and is rethrown
+		// Only the errors that prove the path cannot exist become the kit's "not found": ENOENT is the plain case,
+		// ENOTDIR means a parent of the path is a file. Anything else says nothing about the file and is rethrown
 		try {
 			fileStat = await stat(this.fullPath(filepath));
 		} catch (error) {
@@ -197,20 +198,20 @@ export class StorageDriverLocal implements TusDriver {
 			throw error;
 		}
 
-		// 2. `stat` rejects rather than resolving empty, so this guard only covers a misbehaving filesystem; it is kept
-		//    so callers always get either real numbers or an error
+		// `stat` rejects rather than resolving empty, so this guard only covers a misbehaving filesystem; it is kept
+		// so callers always get either real numbers or an error
 		if (!fileStat) {
 			throw new StorageFileNotFoundError({ filepath });
 		}
 
-		// 3. A directory has a size and an `mtime` too, but no `read()` can ever stream it (`EISDIR`); reporting it
-		//    would answer for something that is not an object, so it reads as missing, the way the object stores answer
-		//    for a prefix
+		// A directory has a size and an `mtime` too, but no `read()` can ever stream it (`EISDIR`); reporting it
+		// would answer for something that is not an object, so it reads as missing, the way the object stores answer
+		// for a prefix
 		if (!fileStat.isFile()) {
 			throw new StorageFileNotFoundError({ filepath });
 		}
 
-		// 4. `mtime` is the closest match to "modified": `ctime` also moves on permission changes
+		// `mtime` is the closest match to "modified": `ctime` also moves on permission changes
 		return {
 			size: fileStat.size,
 			modified: fileStat.mtime,
@@ -225,8 +226,8 @@ export class StorageDriverLocal implements TusDriver {
 	 * @throws Any other failure, such as a permission error, since it says nothing about the file.
 	 */
 	async exists(filepath: string): Promise<boolean> {
-		// 1. `stat` proves both presence and file-ness: `access` alone would also resolve for a directory, which no
-		//    `read()` can stream
+		// `stat` proves both presence and file-ness: `access` alone would also resolve for a directory, which no
+		// `read()` can stream
 		try {
 			const fileStat = await stat(this.fullPath(filepath));
 
@@ -234,9 +235,9 @@ export class StorageDriverLocal implements TusDriver {
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException)?.code;
 
-			// 2. Only the errors that prove the path cannot exist mean "missing": ENOENT is the plain case, ENOTDIR
-			//    means a parent of the path is a file, ENAMETOOLONG that no such name can exist. Reporting an unreadable
-			//    path as absent would make callers act on a wrong answer
+			// Only the errors that prove the path cannot exist mean "missing": ENOENT is the plain case, ENOTDIR
+			// means a parent of the path is a file, ENAMETOOLONG that no such name can exist. Reporting an unreadable
+			// path as absent would make callers act on a wrong answer
 			if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'ENAMETOOLONG') return false;
 
 			throw error;
@@ -253,7 +254,7 @@ export class StorageDriverLocal implements TusDriver {
 		const fullSrc = this.fullPath(src);
 		const fullDest = this.fullPath(dest);
 
-		// 1. `rename` does not create parent directories, so the destination folder is made first
+		// `rename` does not create parent directories, so the destination folder is made first
 		await this.ensureDir(dirname(fullDest));
 		await rename(fullSrc, fullDest);
 	}
@@ -268,7 +269,7 @@ export class StorageDriverLocal implements TusDriver {
 		const fullSrc = this.fullPath(src);
 		const fullDest = this.fullPath(dest);
 
-		// 1. `copyFile` does not create parent directories, so the destination folder is made first
+		// `copyFile` does not create parent directories, so the destination folder is made first
 		await this.ensureDir(dirname(fullDest));
 		await copyFile(fullSrc, fullDest);
 	}
@@ -287,30 +288,30 @@ export class StorageDriverLocal implements TusDriver {
 	async write(filepath: string, content: Readable): Promise<void> {
 		const fullPath = this.fullPath(filepath);
 
-		// 1. `createWriteStream` does not create parent directories, so the destination folder is made first
+		// `createWriteStream` does not create parent directories, so the destination folder is made first
 		await this.ensureDir(dirname(fullPath));
 
-		// 2. A temporary sibling in the same directory keeps the final `rename` on one filesystem, which is what makes
-		//    it atomic; the random suffix keeps two concurrent writes of the same path from sharing one temporary file
+		// A temporary sibling in the same directory keeps the final `rename` on one filesystem, which is what makes
+		// it atomic; the random suffix keeps two concurrent writes of the same path from sharing one temporary file
 		const tempPath = `${fullPath}.${randomBytes(6).toString('hex')}.tmp`;
 
-		// 3. `pipeline` handles backpressure and rejects on an error from either side, so a failed write surfaces to
-		//    the caller instead of leaving a dangling stream; the publishing rename sits in the same `try`, so a
-		//    failure there — a cross-device target, a directory in the way, `EPERM` — rethrows with the temporary file
-		//    removed instead of leaving it on disk forever
+		// `pipeline` handles backpressure and rejects on an error from either side, so a failed write surfaces to
+		// the caller instead of leaving a dangling stream; the publishing rename sits in the same `try`, so a
+		// failure there — a cross-device target, a directory in the way, `EPERM` — rethrows with the temporary file
+		// removed instead of leaving it on disk forever
 		try {
 			await pipeline(content, createWriteStream(tempPath));
 
-			// 4. `rename` replaces the target in one step, so a concurrent reader sees either the old content or the
-			//    new one, never a mix, and the object-store rule "a failed write stores nothing" holds here too
+			// `rename` replaces the target in one step, so a concurrent reader sees either the old content or the
+			// new one, never a mix, and the object-store rule "a failed write stores nothing" holds here too
 			await rename(tempPath, fullPath);
 		} catch (error) {
-			// 5. The partial file is removed so nothing of the failed write stays on disk; a failure of the cleanup itself
-			//    is ignored, since the write error is the one the caller needs to see
+			// The partial file is removed so nothing of the failed write stays on disk; a failure of the cleanup itself
+			// is ignored, since the write error is the one the caller needs to see
 			try {
 				await unlink(tempPath);
 			} catch {
-				// 6. Nothing to do: the temporary file either is gone already or cannot be removed right now
+				// Nothing to do: the temporary file either is gone already or cannot be removed right now
 			}
 
 			throw error;
@@ -326,8 +327,8 @@ export class StorageDriverLocal implements TusDriver {
 	async delete(filepath: string): Promise<void> {
 		const fullPath = this.fullPath(filepath);
 
-		// 1. `unlink` rather than `rm`: it only removes files, so a directory passed by mistake fails instead of being
-		//    wiped
+		// `unlink` rather than `rm`: it only removes files, so a directory passed by mistake fails instead of being
+		// wiped
 		await unlink(fullPath);
 	}
 
@@ -342,8 +343,8 @@ export class StorageDriverLocal implements TusDriver {
 	 * permission error.
 	 */
 	list(prefix = ''): AsyncGenerator<string> {
-		// 1. Resolve the prefix once and hand the recursion an absolute path, so every level compares against the same
-		//    string
+		// Resolve the prefix once and hand the recursion an absolute path, so every level compares against the same
+		// string
 		const fullPrefix = this.fullPath(prefix);
 		return this.listGenerator(fullPrefix);
 	}
@@ -356,15 +357,15 @@ export class StorageDriverLocal implements TusDriver {
 	 * @internal
 	 */
 	private async *listGenerator(prefix: string): AsyncGenerator<string> {
-		// 1. A prefix without a trailing separator may end mid-name (`uploads/img` matching `uploads/image.png`), so
-		//    the directory to scan is its parent; a trailing separator names the directory itself
+		// A prefix without a trailing separator may end mid-name (`uploads/img` matching `uploads/image.png`), so
+		// the directory to scan is its parent; a trailing separator names the directory itself
 		const prefixDirectory = prefix.endsWith(sep) ? prefix : dirname(prefix);
 
 		let directory: Dir;
 
-		// 2. A directory that is not there — the root before the first write, a folder nobody wrote to — or a path
-		//    running through a file (ENOTDIR) holds no files, so the listing ends empty as it does on an object store
-		//    with no keys under the prefix. Anything else says nothing about the files and is rethrown
+		// A directory that is not there — the root before the first write, a folder nobody wrote to — or a path
+		// running through a file (ENOTDIR) holds no files, so the listing ends empty as it does on an object store
+		// with no keys under the prefix. Anything else says nothing about the files and is rethrown
 		try {
 			directory = await opendir(prefixDirectory);
 		} catch (error) {
@@ -376,25 +377,25 @@ export class StorageDriverLocal implements TusDriver {
 		}
 
 		for await (const file of directory) {
-			// 3. A `write()` in flight stages its bytes in a `<name>.<random>.tmp` sibling of the target; yielding it
-			//    would hand a concurrent caller a path that vanishes the moment the write publishes its rename, so the
-			//    driver's own staging files are skipped
+			// A `write()` in flight stages its bytes in a `<name>.<random>.tmp` sibling of the target; yielding it
+			// would hand a concurrent caller a path that vanishes the moment the write publishes its rename, so the
+			// driver's own staging files are skipped
 			if (/\.[0-9a-f]{12}\.tmp$/.test(file.name)) continue;
 
 			const fileName = join(prefixDirectory, file.name);
 
-			// 4. Exact, case-sensitive comparison: object stores match prefixes byte-for-byte, and a case-insensitive
-			//    filesystem resolves case only when looking up a concrete path, so a listing must not fold case either
+			// Exact, case-sensitive comparison: object stores match prefixes byte-for-byte, and a case-insensitive
+			// filesystem resolves case only when looking up a concrete path, so a listing must not fold case either
 			if (fileName.startsWith(prefix) === false) continue;
 
-			// 5. Only files are yielded, in the root-relative form callers pass in, with forward slashes whatever the
-			//    platform separator is, since the contract speaks in forward slashes
+			// Only files are yielded, in the root-relative form callers pass in, with forward slashes whatever the
+			// platform separator is, since the contract speaks in forward slashes
 			if (file.isFile()) {
 				yield normalizePath(relative(this.root, fileName));
 			}
 
-			// 6. Recurse with a trailing separator, so the nested call walks the whole directory rather than treating
-			//    its name as a partial prefix
+			// Recurse with a trailing separator, so the nested call walks the whole directory rather than treating
+			// its name as a partial prefix
 			if (file.isDirectory()) {
 				yield* this.listGenerator(join(fileName, sep));
 			}
@@ -407,10 +408,10 @@ export class StorageDriverLocal implements TusDriver {
 	 * @returns The extension names in the order the TUS server advertises them.
 	 */
 	get tusExtensions(): string[] {
-		// 1. Only the extensions the chunked-upload methods back are advertised: `creation` maps to
-		//    `createChunkedUpload`, `termination` to `deleteChunkedUpload`, and `expiration` lets the server announce
-		//    when an unfinished upload may be discarded. Checksum and concatenation are left out because a chunk is
-		//    written at its offset without a verification step, and chunks of several uploads cannot be joined into one
+		// Only the extensions the chunked-upload methods back are advertised: `creation` maps to
+		// `createChunkedUpload`, `termination` to `deleteChunkedUpload`, and `expiration` lets the server announce
+		// when an unfinished upload may be discarded. Checksum and concatenation are left out because a chunk is
+		// written at its offset without a verification step, and chunks of several uploads cannot be joined into one
 		return ['creation', 'termination', 'expiration'];
 	}
 
@@ -430,13 +431,13 @@ export class StorageDriverLocal implements TusDriver {
 	private chunkedUploadPaths(filepath: string, context: ChunkedUploadContext) {
 		const stagingId = context.metadata?.[STAGING_ID_KEY];
 
-		// 1. The id is checked against the exact shape `createChunkedUpload` generates, so a context that lost it, or
-		//    one carrying a crafted value such as `../x`, can never point the write outside the target's directory
+		// The id is checked against the exact shape `createChunkedUpload` generates, so a context that lost it, or
+		// one carrying a crafted value such as `../x`, can never point the write outside the target's directory
 		if (typeof stagingId !== 'string' || !STAGING_ID_PATTERN.test(stagingId)) {
 			throw new StorageFileNotFoundError({ filepath });
 		}
 
-		// 2. The staging file sits next to the target, so publishing it is a same-filesystem `rename`
+		// The staging file sits next to the target, so publishing it is a same-filesystem `rename`
 		const fullPath = this.fullPath(filepath);
 
 		return { stagingPath: `${fullPath}.${stagingId}.tmp`, fullPath };
@@ -455,21 +456,21 @@ export class StorageDriverLocal implements TusDriver {
 	 * map is created when the context has none.
 	 */
 	async createChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<ChunkedUploadContext> {
-		// 1. A POST without `Upload-Metadata` arrives with no map at all; it is created so the staging id has a place
-		//    to go. The context is what the TUS server hands back on every later call, so the driver keeps no state
+		// A POST without `Upload-Metadata` arrives with no map at all; it is created so the staging id has a place
+		// to go. The context is what the TUS server hands back on every later call, so the driver keeps no state
 		const metadata = (context.metadata ??= {});
 
-		// 2. A random id per upload keeps two concurrent uploads of the same path from sharing one staging file; it
-		//    overwrites any client-sent value under the same key
+		// A random id per upload keeps two concurrent uploads of the same path from sharing one staging file; it
+		// overwrites any client-sent value under the same key
 		metadata[STAGING_ID_KEY] = randomBytes(6).toString('hex');
 
 		const { stagingPath } = this.chunkedUploadPaths(filepath, context);
 
-		// 3. `writeFile` does not create parent directories, so the destination folder is made first
+		// `writeFile` does not create parent directories, so the destination folder is made first
 		await this.ensureDir(dirname(stagingPath));
 
-		// 4. The staging file must exist before the first chunk arrives: `writeChunk` opens it in `r+` mode, which
-		//    fails on a missing file
+		// The staging file must exist before the first chunk arrives: `writeChunk` opens it in `r+` mode, which
+		// fails on a missing file
 		await writeFile(stagingPath, '');
 
 		return context;
@@ -484,8 +485,8 @@ export class StorageDriverLocal implements TusDriver {
 	 * @throws The `node:fs` error when the staging file cannot be removed, a missing one included.
 	 */
 	async deleteChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<void> {
-		// 1. Only the staging file is removed: the target was never written by this upload, so whatever it held before
-		//    stays in place
+		// Only the staging file is removed: the target was never written by this upload, so whatever it held before
+		// stays in place
 		const { stagingPath } = this.chunkedUploadPaths(filepath, context);
 
 		await unlink(stagingPath);
@@ -502,9 +503,9 @@ export class StorageDriverLocal implements TusDriver {
 	async finishChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<void> {
 		const { stagingPath, fullPath } = this.chunkedUploadPaths(filepath, context);
 
-		// 1. `rename` replaces the target in one step, so a concurrent reader sees either the old content or the
-		//    finished upload, never a partial file. A missing staging file means the upload is unknown or already
-		//    finished, and is reported the way `writeChunk` reports it
+		// `rename` replaces the target in one step, so a concurrent reader sees either the old content or the
+		// finished upload, never a partial file. A missing staging file means the upload is unknown or already
+		// finished, and is reported the way `writeChunk` reports it
 		try {
 			await rename(stagingPath, fullPath);
 		} catch (error) {
@@ -538,17 +539,17 @@ export class StorageDriverLocal implements TusDriver {
 		offset: number,
 		context: ChunkedUploadContext,
 	): Promise<number> {
-		// 1. Chunks go to the staging file, never to the target: the target keeps its previous content until
-		//    `finishChunkedUpload` renames the staging file over it
+		// Chunks go to the staging file, never to the target: the target keeps its previous content until
+		// `finishChunkedUpload` renames the staging file over it
 		const { stagingPath } = this.chunkedUploadPaths(filepath, context);
 
 		let fileHandle: Awaited<ReturnType<typeof open>>;
 
-		// 2. `r+` opens for writing without truncating, so the bytes before the chunk's offset stay intact. A missing
-		//    file means the upload was never created here or its file is gone; only the errors that prove the path
-		//    cannot exist become the kit's "not found" — ENOENT is the plain case, ENOTDIR means a parent of the path
-		//    is a file — the way `read` and `stat` translate the same errors, so a chunk for an unknown upload fails
-		//    like a stat on it would
+		// `r+` opens for writing without truncating, so the bytes before the chunk's offset stay intact. A missing
+		// file means the upload was never created here or its file is gone; only the errors that prove the path
+		// cannot exist become the kit's "not found" — ENOENT is the plain case, ENOTDIR means a parent of the path
+		// is a file — the way `read` and `stat` translate the same errors, so a chunk for an unknown upload fails
+		// like a stat on it would
 		try {
 			fileHandle = await open(stagingPath, 'r+');
 		} catch (error) {
@@ -561,30 +562,29 @@ export class StorageDriverLocal implements TusDriver {
 			throw error;
 		}
 
-		// 3. `start` positions the stream, so the chunk lands at its offset while the bytes before it stay intact
+		// `start` positions the stream, so the chunk lands at its offset while the bytes before it stay intact
 		const writeable = fileHandle.createWriteStream({
 			start: offset,
 		});
 
 		let bytesReceived = 0;
 
-		// 4. A pass-through transform counts the bytes as they flow, because neither the readable nor the write
-		//    stream reports how much actually went through
+		// A pass-through transform counts the bytes as they flow, because neither the readable nor the write
+		// stream reports how much actually went through
 		const transform = new stream.Transform({
 			transform(chunk, _, callback) {
-				// 1. Count first, then hand the chunk on unchanged; the stream is only tapped, never altered
 				bytesReceived += chunk.length;
 				callback(null, chunk);
 			},
 		});
 
-		// 5. The callback form of `pipeline` is used so the byte count can be read once every stream has finished
+		// The callback form of `pipeline` is used so the byte count can be read once every stream has finished
 		return new Promise<number>((resolve, reject) => {
 			stream.pipeline(content, transform, writeable, (err) => {
-				// 1. The rejection carries a real error naming the file and offset: the TUS server maps any rejection
-				//    to a generic failure and the client resumes from the offset it last had confirmed, while callers
-				//    inspecting `error.message` get a readable reason. The cause is logged, so a failing disk does not
-				//    go unnoticed
+				// The rejection carries a real error naming the file and offset: the TUS server maps any rejection
+				// to a generic failure and the client resumes from the offset it last had confirmed, while callers
+				// inspecting `error.message` get a readable reason. The cause is logged, so a failing disk does not
+				// go unnoticed
 				if (err) {
 					const message = `Local storage failed to write a chunk of "${filepath}" at offset ${offset}`;
 
@@ -593,7 +593,7 @@ export class StorageDriverLocal implements TusDriver {
 					return reject(new Error(message, { cause: err }));
 				}
 
-				// 2. Only bytes that went through the pipeline count; a chunk cut short by an error never reaches here
+				// Only bytes that went through the pipeline count; a chunk cut short by an error never reaches here
 				offset += bytesReceived;
 
 				return resolve(offset);

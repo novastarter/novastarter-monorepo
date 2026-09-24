@@ -39,8 +39,8 @@ export class SmsDriverConsole implements SmsDriver {
 	 * @param config - Logger.
 	 */
 	constructor(config: SmsDriverConsoleConfig = {}) {
-		// 1. The application logger is resolved here, not at send time, so a swapped logger does not split one
-		//    location's output across two destinations
+		// Resolved here, not at send time, so a swapped logger does not split one location's output across two
+		// destinations.
 		this.logger = config.logger ?? useLogger();
 	}
 
@@ -51,7 +51,7 @@ export class SmsDriverConsole implements SmsDriver {
 	 * @returns A `logged` status; there is no provider to answer anything else.
 	 */
 	async send(message: SmsMessage): Promise<SmsResult> {
-		// 1. The text is what a developer reads — the one-time code is in it; the optional fields join only when set
+		// The text is what a developer reads, since the one-time code is in it.
 		this.logger.info(
 			{
 				to: message.to,
@@ -82,11 +82,10 @@ export class SmsDriverConsole implements SmsDriver {
 		params: Record<string, unknown> = {},
 		_options?: CallOptions,
 	): Promise<CallResponse<T>> {
-		// 1. A file stands for itself by its name, so the log line stays readable
+		// A file stands for itself by its name, so the log line stays readable.
 		const logged = Object.fromEntries(Object.entries(params).map(([key, value]) => [key, describeValue(value)]));
 
-		// 2. One line per request, what a developer reads; a plain 200 comes back, as no provider answered, so code
-		//    reading the status runs too
+		// A plain 200 comes back, as no provider answered, so code reading the status runs too.
 		this.logger.info({ method, params: logged }, `Sms call ${method}`);
 
 		return { status: 200, headers: {}, data: undefined as T };
@@ -101,7 +100,6 @@ export class SmsDriverConsole implements SmsDriver {
  * @internal
  */
 const describeValue = (value: unknown): unknown => {
-	// 1. A `File` has a name worth showing; a bare `Blob` only its kind
 	if (value instanceof File) return value.name;
 	if (value instanceof Blob) return 'blob';
 

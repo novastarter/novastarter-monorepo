@@ -9,6 +9,7 @@ import {
 	toMigrationConfig,
 	toUnavailableError,
 } from '@novastarter/database';
+import { InvalidConfigError } from '@novastarter/errors';
 import { sql } from 'drizzle-orm';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
 import { drizzle, type NeonHttpDatabase } from 'drizzle-orm/neon-http';
@@ -102,16 +103,15 @@ export class DatabaseDriverNeonHttp<
 	 * Create a driver over a query function, building one when given a connection string.
 	 *
 	 * @param config - Connection, `neon()` options, schema and logging options.
-	 * @throws Error when `connection` is missing.
+	 * @throws InvalidConfigError when `connection` is missing.
 	 */
 	constructor(config: DatabaseDriverNeonHttpConfig<Schema>) {
-		// 1. Refuse a missing connection up front: `neon('')` would throw a less telling error on the first query
+		// `neon('')` would otherwise throw a less telling error on the first query
 		if (!config.connection) {
-			throw new Error('The neon-http database driver needs a "connection"');
+			throw new InvalidConfigError({ reason: 'The neon-http database driver needs a "connection"' });
 		}
 
-		// 2. A given function is used as is; a string becomes one of the driver's own, with the options only when
-		//    given, so `neon()` sees no key it would take as a value
+		// The options are passed only when given, so `neon()` sees no key it would take as a value
 		let client: NeonHttpClient;
 
 		if (typeof config.connection === 'function') {
@@ -122,7 +122,6 @@ export class DatabaseDriverNeonHttp<
 			client = neon(config.connection, config.options);
 		}
 
-		// 3. Drizzle over the function, with the schema and, when asked for, the query logger bound to the label
 		this.label = config.label;
 		this.db = drizzle(client, toDrizzleOptions(config, resolveLogger(config)));
 	}
@@ -134,11 +133,11 @@ export class DatabaseDriverNeonHttp<
 	 * @throws DatabaseUnavailableError naming the location, with what the request raised as its `cause`.
 	 */
 	async ping(): Promise<void> {
-		// 1. The cheapest statement a server answers; through Drizzle, so the same path the queries take is proven
+		// Through Drizzle, so the same path the queries take is proven
 		try {
 			await this.db.execute(sql`select 1`);
 		} catch (error) {
-			// 2. One error for every backend, 503, naming the location; the request's error stays as `cause`
+			// One error for every backend; the request's error stays as `cause`
 			throw toUnavailableError(error, this.label);
 		}
 	}
@@ -157,10 +156,10 @@ export class DatabaseDriverNeonHttp<
 	 *
 	 * @param options - The folder and, optionally, the journal table and schema.
 	 * @returns Once every pending migration ran.
-	 * @throws Error when `migrationsFolder` is missing; what the migration files or the database raised otherwise.
+	 * @throws InvalidConfigError when `migrationsFolder` is missing; what the migration files or the database raised otherwise.
 	 */
 	async migrate(options: MigrateOptions): Promise<void> {
-		// 1. Validate the options and read the folder before any request, with Drizzle's own defaults for the journal
+		// The options are validated and the folder read before any request is made
 		const config = toMigrationConfig(options);
 		const migrations = readMigrationFiles(config);
 
@@ -170,21 +169,21 @@ export class DatabaseDriverNeonHttp<
 
 		const client = this.db.$client;
 
-		// 2. The journal as Drizzle creates it; both statements are idempotent, so running them every time is safe
+		// Both statements are idempotent, so running them every time is safe
 		await client.query(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(config.migrationsSchema ?? 'drizzle')}`);
 
 		await client.query(
 			`CREATE TABLE IF NOT EXISTS ${journal} (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at bigint)`,
 		);
 
-		// 3. The newest recorded migration marks where the folder is caught up to, the same rule Drizzle applies
+		// The newest recorded migration marks where the folder is caught up to, the same rule Drizzle applies
 		const [last] = (await client.query(`select created_at from ${journal} order by created_at desc limit 1`)) as {
 			created_at: string | number | null;
 		}[];
 
-		// 4. Each pending migration and its journal row commit together or not at all, in folder order, so a failure
-		//    stops the run with everything before it recorded; `readOnly` and `deferrable` are pinned because the query
-		//    function's own defaults, meant for `db.batch()`, would otherwise open a migration as READ ONLY
+		// Each pending migration and its journal row commit together or not at all, in folder order, so a failure
+		// stops the run with everything before it recorded; `readOnly` and `deferrable` are pinned because the query
+		// function's own defaults, meant for `db.batch()`, would otherwise open a migration as READ ONLY
 		for (const migration of migrations) {
 			if (last !== undefined && Number(last.created_at) >= migration.folderMillis) {
 				continue;
@@ -212,6 +211,6 @@ export class DatabaseDriverNeonHttp<
  * @internal
  */
 const quoteIdentifier = (name: string): string => {
-	// 1. Postgres escapes a double quote inside a quoted identifier by doubling it
+	// Postgres escapes a double quote inside a quoted identifier by doubling it
 	return `"${name.replaceAll('"', '""')}"`;
 };

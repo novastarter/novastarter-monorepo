@@ -15,9 +15,9 @@ import yaml from 'js-yaml';
  * ```
  */
 export const requireYaml = (filepath: string): unknown => {
-	// 1. Read the whole document as text; YAML has no streaming parser worth the complexity for config files
+	// YAML has no streaming parser worth the complexity for config files, so the whole document is read as text.
 	const yamlRaw = readFileSync(filepath, 'utf8');
 
-	// 2. `load` (not `loadAll`) parses a single document, which is all a config file holds
+	// `load` (not `loadAll`) parses a single document, which is all a config file holds
 	return yaml.load(yamlRaw);
 };

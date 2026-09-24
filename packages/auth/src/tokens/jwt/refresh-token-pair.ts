@@ -43,7 +43,7 @@ export interface RefreshedTokenPair {
  * have changed.
  * @returns The user and the new pair.
  * @throws AuthInvalidTokenError when the token is unknown, expired, used already, or rotated concurrently.
- * @throws Error when the JWT settings are missing or unusable.
+ * @throws InvalidConfigError when the JWT settings are missing or unusable.
  * @example
  * ```ts
  * const { pair } = await refreshTokenPair({
@@ -62,25 +62,25 @@ export interface RefreshedTokenPair {
  * ```
  */
 export const refreshTokenPair = async (options: RefreshTokenPairOptions): Promise<RefreshedTokenPair> => {
-	// 1. Looked up by the token's hash; no record, or an expired one, refreshes nothing — one error for both
+	// Looked up by the token's hash; no record, or an expired one, refreshes nothing — one error for both
 	const record = await options.find(hashToken(options.token));
 
 	if (!record || record.expiresAt <= Date.now()) {
 		throw new AuthInvalidTokenError();
 	}
 
-	// 2. A used token presented again is a replay: the family goes, whoever holds its latest token included, and the
-	//    caller learns no more than that the token is invalid
+	// A used token presented again is a replay: the family goes, whoever holds its latest token included, and the
+	// caller learns no more than that the token is invalid
 	if (record.usedAt !== null) {
 		await options.revokeFamily(record.familyId);
 
 		throw new AuthInvalidTokenError();
 	}
 
-	// 3. The successor stays in the family, so revoking the family later reaches it too
+	// The successor stays in the family, so revoking the family later reaches it too
 	const { pair, refresh } = await makeTokenPair(record.userId, record.familyId, options.claims);
 
-	// 4. The conditional mark decides which of two concurrent rotations won; the loser is treated as the replay it is
+	// The conditional mark decides which of two concurrent rotations won; the loser is treated as the replay it is
 	if (!(await options.rotate(record, refresh))) {
 		await options.revokeFamily(record.familyId);
 

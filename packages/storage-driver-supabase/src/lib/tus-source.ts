@@ -45,17 +45,16 @@ class StreamSource extends tus.StreamSource {
 	 */
 	// @ts-expect-error the base method is untyped, so the override signature cannot be checked against it
 	override async slice(start: number, end: number): Promise<TusSliceResult> {
-		// 1. Act like the stream ended after it's been called once
+		// Act like the stream ended after it's been called once
 		if (this._streamEnded) {
-			// 1. The library destructures `{ value, done }` from the result; a done slice with no value makes it reject
-			//    with its own size-mismatch error, while a bare `null` crashed its upload loop with a TypeError
+			// The library destructures `{ value, done }` from the result; a done slice with no value makes it reject
+			// with its own size-mismatch error, while a bare `null` crashed its upload loop with a TypeError
 			return { value: null, done: true };
 		}
 
 		this._streamEnded = true;
 
-		// 2. Shift the start and end offsets to always start at 0, since the read stream is only a stream of one
-		//    chunk with length of `chunkSize`
+		// The read stream holds only one chunk of `chunkSize` bytes, so the offsets are shifted to start at 0
 		return super.slice(0, end - start);
 	}
 }
@@ -74,7 +73,7 @@ export class FileReader implements TusFileReader {
 	 * @returns The source the library slices from.
 	 */
 	async openFile(input: Readable, _: number): Promise<TusFileSource> {
-		// 1. Wrap rather than read: the source slices the stream lazily when the library asks for the chunk
+		// Wrap rather than read: the source slices the stream lazily when the library asks for the chunk
 		// @ts-expect-error see `StreamSource`: the constructor is untyped
 		return new StreamSource(input);
 	}

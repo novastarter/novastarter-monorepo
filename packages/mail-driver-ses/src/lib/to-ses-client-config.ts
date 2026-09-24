@@ -1,4 +1,5 @@
 import type { SESv2ClientConfig } from '@aws-sdk/client-sesv2';
+import { InvalidConfigError } from '@novastarter/errors';
 import { DEFAULT_REQUEST_TIMEOUT } from '@novastarter/http';
 import type { MailDriverSesConfig } from './driver.js';
 
@@ -19,27 +20,28 @@ const CONNECTION_TIMEOUT = 10_000;
  *
  * @param config - Location options.
  * @returns What `SESv2Client` takes; credentials only when a key pair is given.
- * @throws Error when only one half of the `accessKeyId` / `secretAccessKey` pair is given, or a `sessionToken`
+ * @throws InvalidConfigError when only one half of the `accessKeyId` / `secretAccessKey` pair is given, or a `sessionToken`
  * without the pair it belongs to.
  */
 export const toSesClientConfig = (config: MailDriverSesConfig): SESv2ClientConfig => {
-	// 1. Half a credential pair is a configuration error, never an intent to fall back to the SDK provider chain
+	// Half a credential pair is a configuration error, never an intent to fall back to the SDK provider chain
 	if (Boolean(config.accessKeyId) !== Boolean(config.secretAccessKey)) {
-		throw new Error('The ses mail driver needs "accessKeyId" and "secretAccessKey" together');
+		throw new InvalidConfigError({ reason: 'The ses mail driver needs "accessKeyId" and "secretAccessKey" together' });
 	}
 
-	// 2. A session token only means something next to the pair it was issued with; alone it would be dropped
-	//    silently and the SDK chain would sign with whatever it finds
+	// A session token only means something next to the pair it was issued with; alone it would be dropped silently
+	// and the SDK chain would sign with whatever it finds
 	if (config.sessionToken && !config.accessKeyId) {
-		throw new Error('The ses mail driver needs "accessKeyId" and "secretAccessKey" along with "sessionToken"');
+		throw new InvalidConfigError({
+			reason: 'The ses mail driver needs "accessKeyId" and "secretAccessKey" along with "sessionToken"',
+		});
 	}
 
 	return {
-		// 3. Region and endpoint are only set when given, so the SDK's default chain covers the rest
+		// Region and endpoint are only set when given, so the SDK's default chain covers the rest
 		...(config.region ? { region: config.region } : {}),
 		...(config.endpoint ? { endpoint: config.endpoint } : {}),
-		// 4. Credentials only from a full pair; without one the SDK resolves them from the environment, shared config
-		//    or instance metadata
+		// Without a full pair the SDK resolves credentials from the environment, shared config or instance metadata
 		...(config.accessKeyId && config.secretAccessKey
 			? {
 					credentials: {
@@ -49,8 +51,8 @@ export const toSesClientConfig = (config: MailDriverSesConfig): SESv2ClientConfi
 					},
 				}
 			: {}),
-		// 5. Real deadlines on every request, so a stalled endpoint fails with a timeout error instead of hanging
-		//    the send (and anyone using `client` directly) forever
+		// Real deadlines on every request, so a stalled endpoint fails with a timeout error instead of hanging the send
+		// (and anyone using `client` directly) forever
 		requestHandler: {
 			connectionTimeout: CONNECTION_TIMEOUT,
 			requestTimeout: DEFAULT_REQUEST_TIMEOUT,

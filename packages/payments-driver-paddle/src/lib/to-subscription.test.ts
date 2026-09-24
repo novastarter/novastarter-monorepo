@@ -8,7 +8,7 @@ import { toSubscription } from './to-subscription.js';
 
 describe('toSubscription', () => {
 	test('Maps a subscription: the first item’s price and quantity, the period, a scheduled cancellation', () => {
-		// 1. The updated fixture carries a scheduled cancellation, so every field of the shape is exercised at once
+		// The updated fixture carries a scheduled cancellation, so every field of the shape is exercised at once
 		expect(toSubscription(parsed('subscription.updated').data as never)).toStrictEqual({
 			id: 'sub_01h7zcgmdc8n1v3ypn6pkqtb3s',
 			customerId: 'ctm_01h7zcgmdc8n1v3ypn6pkqtb3r',
@@ -29,7 +29,7 @@ describe('toSubscription', () => {
 	});
 
 	test('A canceled subscription is over: canceledAt doubles as endedAt', () => {
-		// 1. Paddle records no end date of its own, so the cancellation date is the end and the period is gone
+		// Paddle records no end date of its own, so the cancellation date is the end and the period is gone
 		expect(toSubscription(parsed('subscription.canceled').data as never)).toMatchObject({
 			status: 'canceled',
 			canceledAt: new Date('2026-10-01T10:00:00.000Z'),
@@ -40,10 +40,10 @@ describe('toSubscription', () => {
 	});
 
 	test('Refuses an unknown status and a subscription without items', () => {
-		// 1. A valid subscription with one field broken isolates each refusal to that field
+		// A valid subscription with one field broken isolates each refusal to that field
 		const data = parsed('subscription.created').data as never as Record<string, unknown>;
 
-		// 2. A status the map does not know and an empty item list are named in the error, not guessed at
+		// A status the map does not know and an empty item list are named in the error, not guessed at
 		expect(() => toSubscription({ ...data, status: 'frozen' } as never)).toThrow('unknown status');
 		expect(() => toSubscription({ ...data, items: [] } as never)).toThrow('no items');
 	});

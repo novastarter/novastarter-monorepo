@@ -43,7 +43,7 @@ async function seed(tree: Record<string, string>) {
 	for (const [path, content] of Object.entries(tree)) {
 		const absolute = join(root, path);
 
-		// 1. A trailing slash marks a directory; anything else is a file whose parents are created on the way
+		// A trailing slash marks a directory; anything else is a file whose parents are created on the way
 		if (path.endsWith('/')) {
 			await mkdir(absolute, { recursive: true });
 		} else {
@@ -150,7 +150,7 @@ describe('collectDescendants', () => {
 	test('should not recurse forever on a symlink loop', async () => {
 		await seed({ 'packages/a/package.json': manifest('a') });
 
-		// 1. The link points back at its own parent; a walker that follows symlinks would recurse endlessly
+		// The link points back at its own parent; a walker that follows symlinks would recurse endlessly
 		await symlink('.', join(root, 'packages/a/loop'), 'dir');
 
 		await expect(collectDescendants(root, 'packages')).resolves.toEqual(['packages', 'packages/a']);
@@ -356,7 +356,7 @@ describe('findWorkspacePackages', () => {
 			'packages/a/package.json': manifest('a'),
 		});
 
-		// 1. `a/loop` points back at `packages`, the directory the `**` walk starts from
+		// `a/loop` points back at `packages`, the directory the `**` walk starts from
 		await symlink('..', join(root, 'packages/a/loop'), 'dir');
 
 		const projects = await findWorkspacePackages(root);

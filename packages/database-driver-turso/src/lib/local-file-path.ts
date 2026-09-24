@@ -19,23 +19,23 @@
  * ```
  */
 export const localFilePath = (url: string): string | undefined => {
-	// 1. Only the `file:` scheme names a path; an empty or `localhost` host is local, and the path ends where a query
-	//    or a fragment begins
+	// Only the `file:` scheme names a path; an empty or `localhost` host is local, and the path ends where a query
+	// or a fragment begins
 	const match = /^file:(?:\/\/([^/?#]*))?([^?#]*)/.exec(url);
 
 	if (!match) {
 		return undefined;
 	}
 
-	// 2. A remote host is libsql's own rejection, not a directory: answering a path here would create a bogus
-	//    directory for a URL the client refuses to open
+	// A remote host is libsql's own rejection, not a directory: answering a path here would create a bogus
+	// directory for a URL the client refuses to open
 	const host = match[1] ?? '';
 
 	if (host !== '' && host !== 'localhost') {
 		return undefined;
 	}
 
-	// 3. `:memory:` is a database in memory, spelled with or without the scheme
+	// `:memory:` is a database in memory, spelled with or without the scheme
 	const path = match[2] ?? '';
 
 	if (path === '' || path === ':memory:') {

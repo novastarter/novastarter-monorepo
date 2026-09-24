@@ -5,7 +5,7 @@
  * Only words shorter than four characters are ever lower-cased, so the longer entries only matter if that length
  * rule changes.
  */
-export default [
+export const CONJUNCTIONS: string[] = [
 	'and',
 	'that',
 	'but',
@@ -31,4 +31,4 @@ export default [
 	'unless',
 	'now',
 	'except',
-] as string[];
+];

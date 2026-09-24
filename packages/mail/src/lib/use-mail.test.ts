@@ -15,14 +15,13 @@ afterEach(() => {
 
 describe('useMail', () => {
 	test('Creates a manager on first use and hands the same one out afterwards', () => {
-		// 1. Every later call returns the cached instance, so registrations made at start-up are visible everywhere
+		// Every later call returns the cached instance, so registrations made at start-up are visible everywhere
 		const first = useMail();
 		const second = useMail();
 
 		expect(first).toBeInstanceOf(MailManager);
 		expect(second).toBe(first);
 
-		// 2. A location registered through one handle is visible through the other
 		first.registerLocation('default', {
 			driver: 'console',
 			options: {},
@@ -32,7 +31,6 @@ describe('useMail', () => {
 	});
 
 	test('Starts over once the cache is reset', () => {
-		// 1. Tests reset the cache in place; the next call builds a fresh manager without the old locations
 		const manager = useMail();
 
 		manager.registerLocation('default', {

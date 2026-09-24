@@ -52,8 +52,7 @@ export interface GithubProfile {
  * ```
  */
 export const fetchProfile = async (context: RequestContext, accessToken: string): Promise<GithubProfile> => {
-	// 1. The headers GitHub asks every REST client for: the token, its media type, a pinned version and a user agent,
-	//    without which the request is refused
+	// GitHub refuses a REST request without these headers, the user agent included
 	const init = {
 		method: 'GET' as const,
 		headers: {
@@ -66,8 +65,8 @@ export const fetchProfile = async (context: RequestContext, accessToken: string)
 
 	const [user, emails] = await Promise.all([request(context, USER_URL, init), request(context, EMAILS_URL, init)]);
 
-	// 2. Both requests share the token's rate limit, so a spent limit refuses the profile too: that refusal fails the
-	//    sign-in as the retryable limit it is, with GitHub's wait, before it could read as a permanent provider failure
+	// Both requests share the token's rate limit, so a spent limit refuses the profile too: that refusal fails the
+	// sign-in as the retryable limit it is, with GitHub's wait, before it could read as a permanent provider failure
 	if (!user.ok) {
 		const wait = githubRateLimitWait(user.status, user.headers, user.body);
 
@@ -83,7 +82,7 @@ export const fetchProfile = async (context: RequestContext, accessToken: string)
 		}
 	}
 
-	// 3. No profile, no sign-in; a profile without a numeric id has nothing stable to link by
+	// No profile, no sign-in; a profile without a numeric id has nothing stable to link by
 	if (!user.ok) {
 		throw new AuthProviderFailedError(
 			{ provider: PROVIDER, reason: describeRefusal('the user endpoint', user) },
@@ -100,8 +99,8 @@ export const fetchProfile = async (context: RequestContext, accessToken: string)
 		);
 	}
 
-	// 4. GitHub spends its rate limit with a 403 as well, and that is not "no address": the refusal fails the sign-in
-	//    with the wait GitHub names, so the caller can retry instead of signing in an email-less identity
+	// GitHub spends its rate limit with a 403 as well, and that is not "no address": the refusal fails the sign-in with
+	// the wait GitHub names, so the caller can retry instead of signing in an email-less identity
 	if (!emails.ok) {
 		const wait = githubRateLimitWait(emails.status, emails.headers, emails.body);
 
@@ -117,7 +116,7 @@ export const fetchProfile = async (context: RequestContext, accessToken: string)
 		}
 	}
 
-	// 5. A scope not granted reads as no address; anything else refused is a failure worth reporting
+	// A scope not granted reads as no address; anything else refused is a failure worth reporting
 	if (!emails.ok && emails.status !== 403 && emails.status !== 404) {
 		throw new AuthProviderFailedError(
 			{ provider: PROVIDER, reason: describeRefusal('the emails endpoint', emails) },

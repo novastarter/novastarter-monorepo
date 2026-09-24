@@ -22,11 +22,11 @@ vi.mock('@novastarter/sms', async (importOriginal) => {
 const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
 beforeEach(() => {
-	// 1. The app logger is the mock: the console driver and the handler write their lines onto it
+	// The app logger is the mock: the console driver and the handler write their lines onto it
 	vi.mocked(useLogger).mockReturnValue(logger as never);
 
-	// 2. Every test enqueues on a local default location and sends through one console location, as the bootstrap
-	//    registers them without Redis and without a provider
+	// Every test enqueues on a local default location and sends through one console location, as the bootstrap
+	// registers them without Redis and without a provider
 	useQueue().registerLocation('default', {
 		driver: 'local',
 		options: {},
@@ -51,24 +51,24 @@ afterEach(() => {
 
 describe('sms.send', () => {
 	test('Is registered with the queue when the module loads', () => {
-		// 1. Importing the module is what makes `enqueue('sms.send', …)` known; nothing else registers it
+		// Importing the module is what makes `enqueue('sms.send', …)` known; nothing else registers it
 		expect(getJobContract('sms.send')).toBe(smsSend);
 		expect(smsSend).toMatchObject({ queue: 'sms', action: 'send' });
 	});
 
 	test('Normalises the recipient and needs a number in E.164 and a text', () => {
-		// 1. A number typed with separators or a `00` prefix is accepted and stored as E.164
+		// A number typed with separators or a `00` prefix is accepted and stored as E.164
 		expect(smsSend.parse({ to: '0044 (7700) 900-123', text: 'Hi' })).toStrictEqual({
 			to: '+447700900123',
 			text: 'Hi',
 			route: 'transactional',
 		});
 
-		// 2. A national number would need its country guessed; refused with the form to use
+		// A national number would need its country guessed; refused with the form to use
 		expect(() => smsSend.parse({ to: '4155550123', text: 'Hi' })).toThrow(/E.164/);
 		expect(() => smsSend.parse({ to: '+14155550123', text: '' })).toThrow(/text: /);
 
-		// 3. A location by name overrides the route
+		// A location by name overrides the route
 		expect(smsSend.parse({ to: '+14155550123', text: 'Hi', route: 'marketing', location: 'bulk' })).toMatchObject({
 			route: 'marketing',
 			location: 'bulk',
@@ -76,14 +76,14 @@ describe('sms.send', () => {
 	});
 
 	test('Retries five times with growing waits', () => {
-		// 1. The contract's options are what `enqueue()` starts from; a caller may still override them per job
+		// The contract's options are what `enqueue()` starts from; a caller may still override them per job
 		expect(smsSend.options).toMatchObject({ attempts: 5, backoff: { type: 'exponential', delay: 5_000 } });
 	});
 });
 
 describe('toSmsMessage', () => {
 	test('Drops the job-only fields and turns the route into the category', () => {
-		// 1. The route becomes the category and the location drops out; the rest of the message passes through
+		// The route becomes the category and the location drops out; the rest of the message passes through
 		expect(
 			toSmsMessage({
 				to: '+14155550123',
@@ -107,13 +107,13 @@ describe('toSmsMessage', () => {
 
 describe('createSmsSendHandler', () => {
 	test('Delivers an enqueued sms.send through the local queue into the console driver', async () => {
-		// 1. The handler under test, registered under the job's name so `enqueue()` routes to it
+		// The handler under test, registered under the job's name so `enqueue()` routes to it
 		registerJobHandlers({ 'sms.send': createSmsSendHandler() });
 
-		// 2. A real enqueue through the local queue — the console location registered in `beforeEach` receives it
+		// A real enqueue through the local queue — the console location registered in `beforeEach` receives it
 		await enqueue('sms.send', { to: '+1 415 555 0123', text: 'Your code is 123456' });
 
-		// 3. The console driver logged the message with the sender of the routes and the normalised recipient
+		// The console driver logged the message with the sender of the routes and the normalised recipient
 		expect(logger.info).toHaveBeenCalledWith(
 			{ to: '+14155550123', from: 'Acme', category: 'transactional', text: 'Your code is 123456' },
 			'SMS: +14155550123',
@@ -121,12 +121,12 @@ describe('createSmsSendHandler', () => {
 	});
 
 	test('Honours the location of the payload and lets a failing send reach the queue', async () => {
-		// 1. One failing send and the handler under test: `sendSms` is spied on, so the failure is the test's to raise
+		// One failing send and the handler under test: `sendSms` is spied on, so the failure is the test's to raise
 		vi.mocked(sendSms).mockRejectedValueOnce(new Error('down'));
 
 		const handler = createSmsSendHandler();
 
-		// 2. The handler throws what `sendSms` threw, so the queue retries by the contract's rules
+		// The handler throws what `sendSms` threw, so the queue retries by the contract's rules
 		await expect(
 			handler(
 				{ to: '+14155550123', text: 'Hi', route: 'transactional', location: 'console' },
@@ -134,7 +134,7 @@ describe('createSmsSendHandler', () => {
 			),
 		).rejects.toThrow('down');
 
-		// 3. The payload's location reached `sendSms` — the honouring half of what the test claims
+		// The payload's location reached `sendSms` — the honouring half of what the test claims
 		expect(sendSms).toHaveBeenCalledWith(expect.objectContaining({ text: 'Hi' }), { location: 'console' });
 	});
 });

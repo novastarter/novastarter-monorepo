@@ -64,15 +64,15 @@ export interface ProviderResponse {
  * ```
  */
 export const request = async (context: RequestContext, url: string, init: RequestInit): Promise<ProviderResponse> => {
-	// 1. The deadline covers the body too, so a response that stalls halfway cannot hold the sign-in; the signal
-	//    really aborts the fetch rather than leaving it running after the caller gave up
+	// The deadline covers the body too, so a response that stalls halfway cannot hold the sign-in; the signal really
+	// aborts the fetch rather than leaving it running after the caller gave up
 	try {
 		return await withTimeout(async (signal) => {
-			// 1. A body that is not JSON — a gateway's HTML page — reads as none, and the status says the rest
+			// A body that is not JSON, such as a gateway's HTML page, reads as none, and the status says the rest
 			const response = await context.fetch(url, { ...init, signal });
 			const text = await response.text();
 
-			// 2. The headers are read too: a refusal may name a rate limit in them, which the caller must not miss
+			// A refusal may name a rate limit in the headers, which the caller must not miss
 			const { headers } = response as { headers?: unknown };
 
 			return {
@@ -83,7 +83,7 @@ export const request = async (context: RequestContext, url: string, init: Reques
 			};
 		}, context.timeout);
 	} catch (error) {
-		// 2. No answer at all is still the provider failing, reported the same way as a refusal
+		// No answer at all is still the provider failing, reported the same way as a refusal
 		throw new AuthProviderFailedError(
 			{ provider: PROVIDER, reason: `the request to ${url} failed: ${toErrorMessage(error)}` },
 			{ cause: error },
@@ -110,10 +110,10 @@ export const request = async (context: RequestContext, url: string, init: Reques
 export const toHttpCallFetch =
 	(fetcher: AuthFetch): HttpCallFetch =>
 	async (url, init) => {
-		// 1. The request whole — `redirect: 'manual'` and a `FormData` body included — though the type hides them
+		// The type hides `redirect: 'manual'` and a `FormData` body, but the request passes on whole
 		const response = await fetcher(url, init as unknown as Parameters<AuthFetch>[1]);
 
-		// 2. The platform's answer is a `Response` already; a fake's is completed with what `httpCall()` reads of it
+		// A fake's answer is completed with what `httpCall()` reads of it
 		if (response instanceof Response) return response;
 
 		const { headers } = response as { headers?: unknown };

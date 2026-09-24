@@ -28,7 +28,7 @@ export interface RefreshedTokens {
  * @internal
  */
 const toRecord = (row: RefreshRow): RefreshRecord => {
-	// 1. The package counts in epoch milliseconds; an unused token keeps `null`
+	// The package counts in epoch milliseconds; an unused token keeps `null`
 	return {
 		id: row.id,
 		familyId: row.familyId,
@@ -47,7 +47,6 @@ const toRecord = (row: RefreshRow): RefreshRecord => {
  * @internal
  */
 const toRow = (record: RefreshRecord): RefreshRow => {
-	// 1. Epoch milliseconds back into timestamps for the columns
 	return {
 		id: record.id,
 		familyId: record.familyId,
@@ -66,7 +65,7 @@ const toRow = (record: RefreshRecord): RefreshRow => {
  * @internal
  */
 const deleteFamily = async (familyId: string): Promise<void> => {
-	// 1. By family, so the successor a thief or the client got most recently goes too
+	// By family, so the successor a thief or the client got most recently goes too
 	await useDb().delete(authRefreshTokens).where(eq(authRefreshTokens.familyId, familyId));
 };
 
@@ -84,7 +83,7 @@ const deleteFamily = async (familyId: string): Promise<void> => {
  * ```
  */
 export const issueTokens = async (userId: string, claims?: Record<string, unknown>): Promise<TokenPair> => {
-	// 1. A new family per sign-in; only its first token's hash is stored
+	// A new family per sign-in; only its first token's hash is stored
 	const { pair, refresh } = await issueTokenPair(userId, claims ? { claims } : {});
 
 	await useDb().insert(authRefreshTokens).values(toRow(refresh));
@@ -112,7 +111,7 @@ export const issueTokens = async (userId: string, claims?: Record<string, unknow
 export const refreshTokens = async (token: string, claims?: Record<string, unknown>): Promise<RefreshedTokens> => {
 	const db = useDb();
 
-	// 1. The package looks the token up, judges it and decides on a replay; the app supplies the three statements
+	// The package looks the token up, judges it and decides on a replay; the app supplies the three statements
 	return refreshTokenPair({
 		token,
 		...(claims ? { claims } : {}),
@@ -145,7 +144,7 @@ export const refreshTokens = async (token: string, claims?: Record<string, unkno
 export const revokeRefreshToken = async (token: string): Promise<void> => {
 	const db = useDb();
 
-	// 1. One statement: the family of the token's row, looked up by the token's hash inside the delete
+	// One statement: the family of the token's row, looked up by the token's hash inside the delete
 	await db.delete(authRefreshTokens).where(
 		inArray(
 			authRefreshTokens.familyId,
@@ -164,7 +163,7 @@ export const revokeRefreshToken = async (token: string): Promise<void> => {
  * @returns How many refresh tokens were deleted.
  */
 export const revokeAllRefreshTokens = async (userId: string): Promise<number> => {
-	// 1. Every family of the user, used tokens included: none of them may refresh or prove a theft any more
+	// Every family of the user, used tokens included: none of them may refresh or prove a theft any more
 	const deleted = await useDb()
 		.delete(authRefreshTokens)
 		.where(eq(authRefreshTokens.userId, userId))

@@ -34,21 +34,21 @@ export const PADDLE_STATUSES: Record<string, SubscriptionStatus> = {
  * subscription without items.
  */
 export const toSubscription = (subscription: PaddleSubscriptionLike): Subscription => {
-	// 1. The status is read first: an unknown one is a change on Paddle's side, better loud than silently wrong
+	// An unknown status is a change on Paddle's side, better loud than silently wrong
 	const status = PADDLE_STATUSES[subscription.status];
 
 	if (!status) {
 		throw new Error(`Paddle subscription "${subscription.id}" has an unknown status "${String(subscription.status)}"`);
 	}
 
-	// 2. One price per subscription is what the kit sells; the first item is that price
+	// One price per subscription is what the kit sells; the first item is that price
 	const item = subscription.items[0];
 
 	if (!item) {
 		throw new Error(`Paddle subscription "${subscription.id}" has no items`);
 	}
 
-	// 3. A scheduled cancellation is the kit's `cancelAtPeriodEnd`; a canceled subscription ended when it was canceled
+	// A scheduled cancellation is the kit's `cancelAtPeriodEnd`; a canceled subscription ended when it was canceled
 	const cancel = subscription.scheduledChange?.action === 'cancel' ? subscription.scheduledChange : null;
 	const canceledAt = subscription.canceledAt ? new Date(subscription.canceledAt) : null;
 

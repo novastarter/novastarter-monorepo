@@ -25,6 +25,20 @@ export interface LogsBus {
 }
 
 /**
+ * The fields of a parsed pino line the stream reads; any other field is ignored.
+ *
+ * @internal
+ */
+interface ParsedLogLine {
+	level?: unknown;
+	time?: unknown;
+	msg?: unknown;
+	responseTime?: unknown;
+	req?: { method?: string; url?: string };
+	res?: { statusCode?: number };
+}
+
+/**
  * Writable stream that publishes every log line on the message bus.
  *
  * Pino writes JSON lines into it; each becomes a `logs` message on the bus, which is what lets a dashboard or a CLI
@@ -60,11 +74,11 @@ export class LogsStream extends Writable {
 	 * @param messenger - Bus the lines are published on.
 	 */
 	constructor(pretty: PrettyType, messenger: LogsBus) {
-		// 1. Object mode, so pino hands over whole lines rather than arbitrary byte chunks
+		// Object mode, so pino hands over whole lines rather than arbitrary byte chunks.
 		super({ objectMode: true });
 
-		// 2. The process id is taken on construction, not at import: `processId()` memoises, so every stream of
-		//    this process still shares one id
+		// Taken on construction, not at import; `processId()` memoises, so every stream of this process still shares
+		// one id.
 		this.nodeId = processId();
 
 		this.messenger = messenger;
@@ -80,26 +94,22 @@ export class LogsStream extends Writable {
 	 * @param callback - Signals the stream that the line was handled.
 	 */
 	override _write(chunk: string, _encoding: string, callback: (error?: Error | null) => void): void {
-		// 1. Anything but pino can write into a multistream, and only a string chunk carries the line: a Buffer has
-		//    no `replace` and its string form is still a foreign byte sequence, so a non-string chunk is reported as
-		//    the fallback line rather than thrown — the stream has no `error` listener, so a throw would crash the
-		//    process
+		// Only a string chunk carries the line: a Buffer has no `replace` and its string form is still a foreign byte
+		// sequence. A throw would crash the process, since the stream has no `error` listener.
 		if (typeof chunk !== 'string') {
 			this.publishUnreadableLine();
 
 			return callback();
 		}
 
-		// 2. Pino terminates every line with a newline, which object mode preserves; stripping the terminator keeps it
-		//    from ending up embedded inside the published JSON payload
+		// Stripping the newline pino ends every line with keeps it out of the published JSON payload.
 		const line = chunk.replace(/\r?\n$/, '');
 
-		let log: Record<string, any>;
+		let log: ParsedLogLine;
 
-		// 3. Anything but pino can write into a multistream, and a foreign or corrupted line is not JSON. Raw mode
-		//    interpolates the line into the payload, which would hand every subscriber a syntactically invalid
-		//    message, so the line is validated exactly like the pretty branch does; the parse result is discarded in
-		//    raw mode, where the original line is forwarded so its exact content and field order survive
+		// A foreign or corrupted line is not JSON, and raw mode would hand it to every subscriber as an invalid
+		// message, so the line is validated in both modes. Raw mode then forwards the original line so its exact
+		// content and field order survive.
 		try {
 			log = JSON.parse(line);
 		} catch {
@@ -108,16 +118,23 @@ export class LogsStream extends Writable {
 			return callback();
 		}
 
-		// 4. Raw mode wraps the validated line by string interpolation on purpose: parsing and re-serialising every
-		//    line would cost more than the whole logging call
+		// Parsing and re-serialising every line would cost more than the whole logging call, so raw mode wraps the line
+		// by string interpolation.
 		if (!this.pretty) {
 			this.publish(`{"log":${line},"nodeId":"${this.nodeId}"}`);
 			return callback();
 		}
 
-		// 5. An HTTP line carries request and response objects; they are folded into a single readable message. The
-		//    duration is tested for presence, not truth: pino-http counts whole milliseconds, so a request served in
-		//    under one reports `0`, and it must fold like any other
+		// A line that parses to null, a number, a string or an array is not a pino line: pretty mode would read its
+		// fields off null and crash, or publish a line with every field empty
+		if (log === null || typeof log !== 'object' || Array.isArray(log)) {
+			this.publishUnreadableLine();
+
+			return callback();
+		}
+
+		// The duration is tested for presence, not truth: pino-http counts whole milliseconds, so a request served in
+		// under one reports `0`, and it must fold like any other.
 		if (
 			this.pretty === 'http' &&
 			log['req']?.method &&
@@ -139,7 +156,6 @@ export class LogsStream extends Writable {
 			return callback();
 		}
 
-		// 6. Every other line keeps only the fields a log viewer shows
 		this.publish(
 			JSON.stringify({
 				log: {
@@ -163,7 +179,7 @@ export class LogsStream extends Writable {
 	 * @internal
 	 */
 	private publishUnreadableLine(): void {
-		// 1. A fixed error line keeps the stream and its subscribers alive; its time marks when the bad chunk arrived
+		// A fixed error line keeps the stream and its subscribers alive; its time marks when the bad chunk arrived.
 		this.publish(
 			JSON.stringify({
 				log: { level: 50, time: Date.now(), msg: 'Received an unreadable log line' },
@@ -184,7 +200,7 @@ export class LogsStream extends Writable {
 	 * @internal
 	 */
 	private publish(payload: string): void {
-		// 1. Fire and forget; the failure is observed so it is not reported as unhandled, and dropped for the reasons above
+		// The failure is observed so it is not reported as unhandled, and dropped for the reasons above.
 		this.messenger.publish('logs', payload).catch(() => {});
 	}
 }

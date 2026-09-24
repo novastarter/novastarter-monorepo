@@ -106,7 +106,7 @@ class FakeOAuthDriver implements AuthDriver {
 	 * @returns The URL.
 	 */
 	async authorize(params: AuthorizeParams): Promise<URL> {
-		// 1. Recorded, so the tests can check what `startOAuth()` sent
+		// Recorded, so the tests can check what `startOAuth()` sent
 		provider.authorized.push(params);
 
 		return new URL(`https://provider.example/authorize?state=${params.state}`);
@@ -119,15 +119,15 @@ class FakeOAuthDriver implements AuthDriver {
 	 * @returns The identity, with the tokens when a test set them.
 	 */
 	async callback(params: CallbackParams): Promise<OAuthCallbackResult> {
-		// 1. Recorded, so the tests can check what `finishOAuth()` sent
+		// Recorded, so the tests can check what `finishOAuth()` sent
 		provider.exchanged.push(params);
 
-		// 2. A test that wants the provider to refuse sets the error it refuses with
+		// A test that wants the provider to refuse sets the error it refuses with
 		if (provider.failure !== undefined) {
 			throw provider.failure;
 		}
 
-		// 3. The tokens ride on the identity, the way a driver hands them to `finishOAuth()`
+		// The tokens ride on the identity, the way a driver hands them to `finishOAuth()`
 		return provider.tokens ? { ...IDENTITY, tokens: provider.tokens } : IDENTITY;
 	}
 }
@@ -143,7 +143,7 @@ class FakeFormDriver implements AuthDriver {
 	 * @returns An identity for the identifier.
 	 */
 	async authenticate(credentials: Credentials): Promise<AuthIdentity> {
-		// 1. Only there so the driver is a form one; never called by the OAuth flow
+		// Only there so the driver is a form one; never called by the OAuth flow
 		return { provider: 'credentials', subject: credentials.identifier };
 	}
 }
@@ -152,7 +152,7 @@ class FakeFormDriver implements AuthDriver {
  * Register the fake drivers, the `github` and `google` OAuth locations, the `form` location and the OAuth settings.
  */
 const register = (): void => {
-	// 1. Two OAuth locations on one driver, so a cookie can be taken to the wrong one
+	// Two OAuth locations on one driver, so a cookie can be taken to the wrong one
 	const auth = useAuth();
 
 	auth.registerDriver('fake', FakeOAuthDriver);
@@ -170,7 +170,7 @@ const register = (): void => {
  * @returns The state and the cookie.
  */
 const start = async (data?: Record<string, unknown>): Promise<{ state: string; cookie: string }> => {
-	// 1. The state travels through the provider, the cookie through the browser
+	// The state travels through the provider, the cookie through the browser
 	const { url, cookie } = await startOAuth('github', { redirectUri: REDIRECT_URI, ...(data ? { data } : {}) });
 
 	return { state: url.searchParams.get('state')!, cookie };
@@ -184,10 +184,8 @@ const start = async (data?: Record<string, unknown>): Promise<{ state: string; c
  * @returns Once checked.
  */
 const expectRefused = async (attempt: Promise<unknown>, location = 'github'): Promise<void> => {
-	// 1. One error for every way the cookie can be wrong
 	await expect(attempt).rejects.toMatchObject(INVALID);
 
-	// 2. Announced with the error's code, and the code never exchanged
 	expect(emitter.emitAction).toHaveBeenCalledWith(AUTH_SIGN_IN_FAILED_EVENT, {
 		location,
 		reason: 'AUTH_INVALID_TOKEN',
@@ -199,8 +197,8 @@ const expectRefused = async (attempt: Promise<unknown>, location = 'github'): Pr
 beforeEach(() => {
 	vi.useFakeTimers({ toFake: ['Date'] });
 	vi.setSystemTime(NOW);
-	vi.mocked(useLogger).mockReturnValue(logger as any);
-	vi.mocked(useEmitter).mockReturnValue(emitter as any);
+	vi.mocked(useLogger).mockReturnValue(logger as unknown as ReturnType<typeof useLogger>);
+	vi.mocked(useEmitter).mockReturnValue(emitter as unknown as ReturnType<typeof useEmitter>);
 });
 
 afterEach(() => {
@@ -219,11 +217,9 @@ describe('startOAuth', () => {
 
 		const { url, expiresAt } = await startOAuth('github', { redirectUri: REDIRECT_URI, scopes: ['read:user'] });
 
-		// 1. The driver's URL is passed on, and the cookie lives for the default state lifetime
 		expect(url.origin).toBe('https://provider.example');
 		expect(expiresAt).toBe(NOW + DEFAULT_OAUTH_STATE_TTL);
 
-		// 2. Random state and challenge of 256 bits, a nonce of 128, all base64url
 		const [params] = provider.authorized;
 
 		expect(params).toStrictEqual({
@@ -241,7 +237,6 @@ describe('startOAuth', () => {
 
 		const { expiresAt } = await startOAuth('github', { redirectUri: REDIRECT_URI });
 
-		// 1. No `scopes` key at all, so the driver's defaults apply
 		expect(provider.authorized[0]).not.toHaveProperty('scopes');
 		expect(expiresAt).toBe(NOW + 60_000);
 	});
@@ -252,14 +247,12 @@ describe('startOAuth', () => {
 		const { cookie } = await startOAuth('github', { redirectUri: REDIRECT_URI, data: { next: '/secret-page' } });
 		const [params] = provider.authorized;
 
-		// 1. Encrypted: none of the secrets, the redirect URI or the data appear in it
 		expect(cookie.startsWith('v2.')).toBe(true);
 
 		for (const value of [params!.state, params!.nonce, REDIRECT_URI, '/secret-page', 'github']) {
 			expect(cookie).not.toContain(value);
 		}
 
-		// 2. A new cookie and new secrets on every start
 		expect((await startOAuth('github', { redirectUri: REDIRECT_URI })).cookie).not.toBe(cookie);
 		expect(provider.authorized[1]!.state).not.toBe(params!.state);
 	});
@@ -267,7 +260,6 @@ describe('startOAuth', () => {
 	test('Refuses to run without an oauth secret of 32 characters', async () => {
 		const message = 'The "oauth.secret" auth setting must be at least 32 characters of random data';
 
-		// 1. Missing, then too short; the driver is never asked
 		register();
 		useAuth().registerSettings({});
 		await expect(startOAuth('github', { redirectUri: REDIRECT_URI })).rejects.toThrow(message);
@@ -281,7 +273,6 @@ describe('startOAuth', () => {
 	test('Refuses a location whose driver is not an OAuth one', async () => {
 		register();
 
-		// 1. A configuration mistake, named
 		await expect(startOAuth('form', { redirectUri: REDIRECT_URI })).rejects.toThrow(
 			'Auth location "form" does not sign in with OAuth',
 		);
@@ -295,12 +286,10 @@ describe('finishOAuth', () => {
 		const { state, cookie } = await start();
 		const result = await finishOAuth('github', { state, code: 'the-code', cookie });
 
-		// 1. The identity, through the filter and announced
 		expect(result).toStrictEqual({ identity: IDENTITY });
 		expect(emitter.emitFilter).toHaveBeenCalledWith(AUTH_SIGN_IN_FILTER, IDENTITY, { location: 'github' });
 		expect(emitter.emitAction).toHaveBeenCalledWith(AUTH_SIGNED_IN_EVENT, { location: 'github', payload: IDENTITY });
 
-		// 2. The verifier is the one whose S256 the provider was given, and the nonce is the same
 		const [authorized] = provider.authorized;
 		const [exchanged] = provider.exchanged;
 
@@ -319,7 +308,6 @@ describe('finishOAuth', () => {
 
 		const { state, cookie } = await start({ next: '/billing', count: 2 });
 
-		// 1. Roundtripped through the cookie as it was given
 		await expect(finishOAuth('github', { state, code: 'c', cookie })).resolves.toStrictEqual({
 			identity: IDENTITY,
 			data: { next: '/billing', count: 2 },
@@ -333,11 +321,9 @@ describe('finishOAuth', () => {
 		const { state, cookie } = await start({ next: '/repos' });
 		const result = await finishOAuth('github', { state, code: 'c', cookie });
 
-		// 1. The tokens come back on their own; the identity carries none
 		expect(result).toStrictEqual({ identity: IDENTITY, data: { next: '/repos' }, tokens: TOKENS });
 		expect(result.identity).not.toHaveProperty('tokens');
 
-		// 2. The filter and the event are handed the bare identity, and no token appears anywhere in what they got
 		expect(emitter.emitFilter).toHaveBeenCalledWith(AUTH_SIGN_IN_FILTER, IDENTITY, { location: 'github' });
 		expect(emitter.emitAction).toHaveBeenCalledWith(AUTH_SIGNED_IN_EVENT, { location: 'github', payload: IDENTITY });
 
@@ -353,7 +339,6 @@ describe('finishOAuth', () => {
 
 		const { state } = await start();
 
-		// 1. No cookie and an empty one alike
 		await expectRefused(finishOAuth('github', { state, code: 'c', cookie: undefined }));
 		await expectRefused(finishOAuth('github', { state, code: 'c', cookie: '' }));
 	});
@@ -363,12 +348,10 @@ describe('finishOAuth', () => {
 
 		const { state, cookie } = await start();
 
-		// 1. One character of the ciphertext changed fails the GCM tag
 		const last = cookie.at(-1) === 'A' ? 'B' : 'A';
 
 		await expectRefused(finishOAuth('github', { state, code: 'c', cookie: `${cookie.slice(0, -1)}${last}` }));
 
-		// 2. Not in the format at all
 		await expectRefused(finishOAuth('github', { state, code: 'c', cookie: 'not-a-cookie' }));
 	});
 
@@ -377,7 +360,6 @@ describe('finishOAuth', () => {
 
 		const { state, cookie } = await start();
 
-		// 1. The secret was replaced between the start and the callback, the old one dropped
 		useAuth().registerSettings({ oauth: { secret: 'another-oauth-secret-of-32-characters!' } });
 
 		await expectRefused(finishOAuth('github', { state, code: 'c', cookie }));
@@ -388,7 +370,6 @@ describe('finishOAuth', () => {
 
 		const { state, cookie } = await start();
 
-		// 1. The new secret goes first; the old one behind it still opens a cookie issued before the rotation
 		useAuth().registerSettings({ oauth: { secret: ['another-oauth-secret-of-32-characters!', SECRET] } });
 
 		await expect(finishOAuth('github', { state, code: 'c', cookie })).resolves.toStrictEqual({ identity: IDENTITY });
@@ -399,7 +380,6 @@ describe('finishOAuth', () => {
 
 		const { state, cookie } = await start();
 
-		// 1. At the deadline the browser took too long
 		vi.setSystemTime(NOW + DEFAULT_OAUTH_STATE_TTL);
 
 		await expectRefused(finishOAuth('github', { state, code: 'c', cookie }));
@@ -410,7 +390,6 @@ describe('finishOAuth', () => {
 
 		const { state, cookie } = await start();
 
-		// 1. A `github` cookie brought to the `google` callback
 		await expectRefused(finishOAuth('google', { state, code: 'c', cookie }), 'google');
 	});
 
@@ -419,7 +398,6 @@ describe('finishOAuth', () => {
 
 		const { state, cookie } = await start();
 
-		// 1. Another value, and one that is not a string at all
 		await expectRefused(finishOAuth('github', { state: `${state}x`, code: 'c', cookie }));
 		await expectRefused(finishOAuth('github', { state: undefined as unknown as string, code: 'c', cookie }));
 	});
@@ -432,10 +410,8 @@ describe('finishOAuth', () => {
 
 		provider.failure = failure;
 
-		// 1. The driver's own error reaches the caller
 		await expect(finishOAuth('github', { state, code: 'c', cookie })).rejects.toBe(failure);
 
-		// 2. Announced with its code; no filter ran, no sign-in was announced
 		expect(emitter.emitAction).toHaveBeenCalledWith(AUTH_SIGN_IN_FAILED_EVENT, {
 			location: 'github',
 			reason: 'AUTH_PROVIDER_FAILED',
@@ -450,12 +426,11 @@ describe('finishOAuth', () => {
 
 		const { state, cookie } = await start();
 
-		// 1. A form location is a configuration mistake, named
 		await expect(finishOAuth('form', { state, code: 'c', cookie })).rejects.toThrow(
 			'Auth location "form" does not sign in with OAuth',
 		);
 
-		// 2. So is a secret gone from the settings, reported as itself rather than as an invalid cookie
+		// A secret gone from the settings is reported as itself rather than as an invalid cookie
 		useAuth().registerSettings({});
 
 		await expect(finishOAuth('github', { state, code: 'c', cookie })).rejects.toThrow(

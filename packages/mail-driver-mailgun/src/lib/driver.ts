@@ -1,3 +1,4 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import { type CallOptions, type CallResponse, DEFAULT_REQUEST_TIMEOUT, type HttpApi, request } from '@novastarter/http';
 import {
 	bareMailAddress,
@@ -101,17 +102,16 @@ export class MailDriverMailgun implements MailDriver {
 	 * Create a driver on a client of its own for the given key, region and domain.
 	 *
 	 * @param config - API key, sending domain, region host and test mode.
-	 * @throws Error without an API key or a domain.
+	 * @throws InvalidConfigError without an API key or a domain.
 	 */
 	constructor(config: MailDriverMailgunConfig) {
-		// 1. Both the key and the domain are needed for a request; a missing one is reported by the options' names
 		if (!config.apiKey || !config.domain) {
-			throw new Error('The mailgun mail driver needs "apiKey" and "domain"');
+			throw new InvalidConfigError({ reason: 'The mailgun mail driver needs "apiKey" and "domain"' });
 		}
 
-		// 2. The SDK takes a FormData implementation; Node's global one does, no `form-data` package needed. The timeout
-		//    is always passed: without one the SDK's axios waits forever on a stalled connection, so a send would never
-		//    fail over to the next location
+		// The SDK takes a FormData implementation; Node's global one does, no `form-data` package needed. The timeout
+		// is always passed: without one the SDK's axios waits forever on a stalled connection, so a send would never
+		// fail over to the next location
 		const host = config.host || DEFAULT_MAILGUN_HOST;
 		const apiUrl = /^https?:\/\//.test(host) ? host : `https://${host}`;
 		const timeout = config.timeout ?? DEFAULT_REQUEST_TIMEOUT;
@@ -123,7 +123,7 @@ export class MailDriverMailgun implements MailDriver {
 			timeout,
 		});
 
-		// 3. The rest of the location, and the API of raw calls, which bypass the SDK; Mailgun reads forms, not JSON
+		// Raw calls bypass the SDK, and Mailgun reads forms, not JSON
 		this.domain = config.domain;
 		this.testMode = Boolean(config.testMode);
 
@@ -146,14 +146,14 @@ export class MailDriverMailgun implements MailDriver {
 	 * @throws Error carrying Mailgun's status and details when the API refuses; the SDK's error is the cause.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
-		// 1. The payload is built first, so a message the mapper refuses (no sender, unreadable attachment) never
-		//    reaches the API and the failure names our field rather than Mailgun's
+		// The payload is built first, so a message the mapper refuses (no sender, unreadable attachment) never reaches
+		// the API and the failure names our field rather than Mailgun's
 		const data = await toMailgunMessage(message, this.testMode);
 
-		// 2. The SDK throws its `APIError` on any non-2xx; wrapped so the log names the provider
+		// The SDK throws its `APIError` on any non-2xx; wrapped so the log names the provider
 		const result = await this.client.messages.create(this.domain, data).catch(rethrowMailgunError);
 
-		// 3. Mailgun takes a message whole or refuses it, so every recipient counts as accepted
+		// Mailgun takes a message whole or refuses it, so every recipient counts as accepted
 		return {
 			messageId: result.id?.replace(/^<|>$/g, ''),
 			accepted: toMailAddressList(message.to).map(bareMailAddress),
@@ -165,16 +165,19 @@ export class MailDriverMailgun implements MailDriver {
 	/**
 	 * Check the key and the domain without sending: the domain has to exist on the account and be active.
 	 *
-	 * @throws Error when the API refuses the key, does not know the domain, or the domain is not active.
+	 * @throws Error when the API refuses the key or does not know the domain; InvalidConfigError when the domain is not
+	 * active.
 	 */
 	async verify(): Promise<void> {
-		// 1. Reading the domain exercises the key and the domain in one request without sending anything; a refusal
-		//    is wrapped like a send failure so the log names the provider
+		// Reading the domain exercises the key and the domain in one request without sending anything; a refusal is
+		// wrapped like a send failure so the log names the provider
 		const domain = await this.client.domains.get(this.domain).catch(rethrowMailgunError);
 
-		// 2. An unverified domain sends nothing; Mailgun answers 200 for it all the same
+		// An unverified domain sends nothing; Mailgun answers 200 for it all the same
 		if (domain.state !== 'active') {
-			throw new Error(`Mailgun domain "${this.domain}" is ${domain.state}, not active`);
+			throw new InvalidConfigError({
+				reason: `Mailgun domain "${this.domain}" is ${domain.state}, not active; verify it in Mailgun`,
+			});
 		}
 	}
 
@@ -211,8 +214,8 @@ export class MailDriverMailgun implements MailDriver {
 		params?: Record<string, unknown>,
 		options?: CallOptions,
 	): Promise<CallResponse<T>> {
-		// 1. `request()` does the whole of it — `{domain}` and the other placeholders, the host check before the key is
-		//    sent, a form body, the deadline, the kit's errors without the key — over the API the constructor described
+		// `request()` already handles `{domain}` and the other placeholders, the host check before the key is sent, a
+		// form body, the deadline, and the kit's errors without the key
 		return request<T>(this.api, method, params, options);
 	}
 }

@@ -9,6 +9,6 @@
  * @returns The text with every glob operator escaped.
  */
 export const escapeGlob = (text: string): string => {
-	// 1. `\` goes in the class too, or a namespace ending in a backslash would escape the separator that follows it
+	// `\` goes in the class too, or a namespace ending in a backslash would escape the separator that follows it
 	return text.replace(/[\\*?[\]]/g, '\\$&');
 };

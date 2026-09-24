@@ -2,10 +2,10 @@
  * Tests of the Mailtrap driver class with the SDK mocked and `fetch` stubbed for `call()`; the mapper has its own
  * suite in `to-mailtrap-mail.test.ts`.
  */
-import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
+import { HitRateLimitError, InvalidConfigError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import * as entry from '../index.js';
 import { MailDriverMailtrap } from './driver.js';
 
 /**
@@ -24,7 +24,7 @@ const fetchMock = vi.fn();
  * @internal
  */
 const answer = (body: unknown, status = 200, headers: Record<string, string> = {}): void => {
-	// 1. A real `Response`, so the driver reads it the way it reads Mailtrap's
+	// A real `Response`, so the driver reads it the way it reads Mailtrap's
 	fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(body), { status, headers }));
 };
 
@@ -36,7 +36,6 @@ const answer = (body: unknown, status = 200, headers: Record<string, string> = {
  * @internal
  */
 const fetched = (index = 0): { url: string; init: RequestInit & { headers: Record<string, string> } } => {
-	// 1. Read back from the stub, as `fetch(url, init)` was called
 	const [url, init] = fetchMock.mock.calls[index] as [string, RequestInit & { headers: Record<string, string> }];
 
 	return { url, init };
@@ -75,7 +74,7 @@ vi.mock('mailtrap', () => ({
 		 * @internal
 		 */
 		get general(): never {
-			// 1. The driver never passes an account id, so the SDK's check always refuses
+			// The driver never passes an account id, so the SDK's check always refuses
 			throw new Error('accountId is missing, some features of testing API may not work properly.');
 		}
 
@@ -101,32 +100,30 @@ afterEach(() => {
 
 describe('MailDriverMailtrap', () => {
 	test('Requires the token, an inbox in sandbox mode, and not both sandbox and bulk', () => {
-		// 1. Every configuration error is reported by the option's name, before the SDK gets to refuse a send
+		expect(() => new MailDriverMailtrap({ token: '' })).toThrow(InvalidConfigError);
 		expect(() => new MailDriverMailtrap({ token: '' })).toThrow('"token"');
 		expect(() => new MailDriverMailtrap({ token: 't', sandbox: true })).toThrow('"testInboxId"');
 		expect(() => new MailDriverMailtrap({ token: 't', sandbox: true, testInboxId: 1, bulk: true })).toThrow('at once');
-		expect(defaultExport).toBe(MailDriverMailtrap);
+		expect(entry.MailDriverMailtrap).toBe(MailDriverMailtrap);
 	});
 
 	test('Builds the client for sending, the sandbox and the bulk stream', () => {
-		// 1. Plain sending: both flags off
 		new MailDriverMailtrap({ token: 't' });
 
 		expect(construct).toHaveBeenLastCalledWith({ token: 't', sandbox: false, bulk: false });
 
-		// 2. Sandbox: the inbox goes along
 		new MailDriverMailtrap({ token: 't', sandbox: true, testInboxId: 123 });
 
 		expect(construct).toHaveBeenLastCalledWith({ token: 't', sandbox: true, bulk: false, testInboxId: 123 });
 
-		// 3. Bulk: the marketing stream, so the client gets the bulk host while sandbox stays off
+		// Bulk is the marketing stream, so the client gets the bulk host while sandbox stays off
 		new MailDriverMailtrap({ token: 't', bulk: true });
 
 		expect(construct).toHaveBeenLastCalledWith({ token: 't', sandbox: false, bulk: true });
 	});
 
 	test('Sends and maps the result', async () => {
-		// 1. Mailtrap answers a list of message ids; the first one is the message's
+		// Mailtrap answers a list of message ids; the first one is the message's
 		send.mockResolvedValueOnce({ success: true, message_ids: ['0c7fd939-02cf-11ed-88c2-0a58a9feac02'] });
 
 		const driver = new MailDriverMailtrap({ token: 't' });
@@ -138,7 +135,7 @@ describe('MailDriverMailtrap', () => {
 			text: 'T',
 		});
 
-		// 2. Recipients went out as address objects, the display name of a string form parsed, not dropped
+		// The display name of a string recipient is parsed, not dropped
 		expect(send).toHaveBeenCalledWith(
 			expect.objectContaining({
 				to: [{ email: 'ada@example.com', name: 'Ada' }, { email: 'bob@example.com' }],
@@ -146,7 +143,6 @@ describe('MailDriverMailtrap', () => {
 			}),
 		);
 
-		// 3. Every recipient counts as accepted
 		expect(result).toStrictEqual({
 			messageId: '0c7fd939-02cf-11ed-88c2-0a58a9feac02',
 			accepted: ['ada@example.com', 'bob@example.com'],
@@ -155,7 +151,7 @@ describe('MailDriverMailtrap', () => {
 	});
 
 	test('Names the provider in a refusal, keeping the SDK error as the cause', async () => {
-		// 1. The SDK's `MailtrapError` is wrapped, not replaced: the cause keeps its list of Mailtrap's errors
+		// The SDK's `MailtrapError` is wrapped, not replaced, so the cause keeps its list of Mailtrap's errors
 		const refusal = new Error("'to' address is required");
 
 		send.mockRejectedValueOnce(refusal);
@@ -169,33 +165,34 @@ describe('MailDriverMailtrap', () => {
 	});
 
 	test('Surfaces a local mapping failure without the provider prefix', async () => {
-		// 1. A message without a sender is refused by the mapper itself, before any request: the kit's own error
-		//    stands alone, without the provider prefix the API refusal would get
+		// The mapper refuses a message without a sender before any request, so the kit's own error stands without the
+		// provider prefix an API refusal would get
 		const driver = new MailDriverMailtrap({ token: 't' });
 
 		await expect(driver.send({ to: 'a@example.com', subject: 'S' })).rejects.toMatchObject({
-			message: 'Mailtrap needs a "from" address',
+			code: 'INVALID_PAYLOAD',
+			message: 'Invalid payload. Mailtrap needs a "from" address.',
 		});
 
-		// 2. The refusal happened before the API, so the client never sent anything
 		expect(send).not.toHaveBeenCalled();
 	});
 
 	test('Verifies by listing the accounts of the token through the API, not the SDK', async () => {
 		const driver = new MailDriverMailtrap({ token: 'TOKEN' });
 
-		// 1. At least one account means the token can send; the list is asked of the general API with the token
+		// At least one account means the token can send
 		answer([{ id: 1, name: 'Acme' }]);
 		await expect(driver.verify()).resolves.toBeUndefined();
 		expect(fetched().url).toBe('https://mailtrap.io/api/accounts');
 		expect(fetched().init.method).toBe('GET');
 		expect(fetched().init.headers['authorization']).toBe('Bearer TOKEN');
 
-		// 2. None means it cannot, even though Mailtrap answered
+		// No account means the token cannot send, even though Mailtrap answered
 		answer([]);
-		await expect(driver.verify()).rejects.toThrow('no account');
+		const refused = driver.verify();
+		await expect(refused).rejects.toThrow(InvalidConfigError);
+		await expect(refused).rejects.toThrow('with access to an account');
 
-		// 3. A refusal of the token surfaces as the kit's provider error, naming Mailtrap
 		answer({ error: 'Incorrect API token' }, 401);
 		await expect(driver.verify()).rejects.toBeInstanceOf(ProviderCallError);
 	});
@@ -205,7 +202,6 @@ describe('call', () => {
 	test('Sends a GET to the general API with the query and the Bearer token, and answers the parsed body', async () => {
 		answer([{ id: 1, name: 'Acme', access_levels: [1000] }]);
 
-		// 1. The path goes under `https://mailtrap.io`, the parameters into the query
 		const { data } = await new MailDriverMailtrap({ token: 'TOKEN' }).call('GET /api/accounts', { page: 2 });
 
 		expect(data).toStrictEqual([{ id: 1, name: 'Acme', access_levels: [1000] }]);
@@ -218,7 +214,6 @@ describe('call', () => {
 	test('Sends a POST to a sending host as a JSON body, with the caller headers on top and its own timeout', async () => {
 		answer({ success: true, message_ids: ['m-1'] });
 
-		// 1. A full URL on one of Mailtrap's sending hosts is allowed
 		const driver = new MailDriverMailtrap({ token: 'TOKEN' });
 		const mail = { from: { email: 'me@acme.test' }, to: [{ email: 'ada@example.com' }], subject: 'S', text: 'T' };
 
@@ -230,7 +225,6 @@ describe('call', () => {
 		expect(JSON.parse(fetched().init.body as string)).toStrictEqual(mail);
 		expect(fetched().init.headers).toMatchObject({ authorization: 'Bearer TOKEN', 'x-trace': '1' });
 
-		// 2. The caller's timeout replaces the default one
 		fetchMock.mockImplementationOnce(
 			(_url: string, init: RequestInit) =>
 				new Promise((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(init.signal?.reason))),
@@ -242,7 +236,6 @@ describe('call', () => {
 	test('Turns an error status into ProviderCallError without the token in the message', async () => {
 		answer({ error: 'Incorrect API token' }, 401);
 
-		// 1. The status and Mailtrap's answer are kept; the message names Mailtrap's reason
 		const error = (await new MailDriverMailtrap({ token: 'SECRET-TOKEN' })
 			.call('GET /api/accounts')
 			.catch((caught: unknown) => caught)) as InstanceType<typeof ProviderCallError>;
@@ -258,21 +251,20 @@ describe('call', () => {
 
 		expect(error.message).toBe('mailtrap refused GET /api/accounts: 401 Incorrect API token');
 
-		// 2. The token never reaches the message
 		expect(error.message).not.toContain('SECRET-TOKEN');
 	});
 
 	test('Turns a 429 into HitRateLimitError', async () => {
 		answer({ errors: ['Rate limit exceeded'] }, 429, { 'retry-after': '5' });
 
-		// 1. The caller may try again later rather than treat it as a refusal
+		// The caller may try again later rather than treat it as a refusal
 		await expect(new MailDriverMailtrap({ token: 't' }).call('GET /api/accounts')).rejects.toBeInstanceOf(
 			HitRateLimitError,
 		);
 	});
 
 	test('Refuses a URL on a foreign host before any request', async () => {
-		// 1. The token never leaves for another host, a look-alike included; nothing is fetched
+		// The token never leaves for another host, a look-alike included
 		const driver = new MailDriverMailtrap({ token: 't' });
 
 		await expect(driver.call('GET https://evil.example/api/accounts')).rejects.toThrow(
@@ -292,11 +284,9 @@ describe('MailDriverMailtrap.call placeholders and answers', () => {
 
 		const driver = new MailDriverMailtrap({ token: 't' });
 
-		// 1. A GET: the placeholder takes `id`, URL-encoded; the other parameters stay in the query
 		await driver.call('GET /api/accounts/{id}', { id: 'a/b', limit: 5 });
 		expect((fetchMock.mock.calls[0] as [string])[0]).toBe('https://mailtrap.io/api/accounts/a%2Fb?limit=5');
 
-		// 2. A POST: the placeholder's parameter is not in the body
 		await driver.call('POST /api/accounts/{id}/contacts', { id: 42, name: 'welcome' });
 
 		const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
@@ -320,7 +310,6 @@ describe('MailDriverMailtrap.call placeholders and answers', () => {
 
 		const driver = new MailDriverMailtrap({ token: 't' });
 
-		// 1. Every call answers the whole response, headers named in lower case
 		const answer = await driver.call('GET /api/accounts/{id}', { id: 'x' });
 
 		expect(answer).toMatchObject({ status: 201, headers: { 'x-ratelimit-remaining': '9' }, data: { ok: true } });

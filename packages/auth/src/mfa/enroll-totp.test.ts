@@ -21,18 +21,15 @@ describe('enrollTotp', () => {
 
 		const { secret, uri, encryptedSecret } = enrollTotp({ accountName: 'user@example.com' });
 
-		// 1. Twenty bytes, upper-case base32 without padding
 		expect(secret).toMatch(/^[A-Z2-7]{32}$/);
 		expect(decodeBase32(secret)).toHaveLength(TOTP_SECRET_BYTES);
 
-		// 2. The URI names the issuer and the account and carries the secret
 		const parsed = new URL(uri);
 
 		expect(uri.startsWith(`otpauth://totp/${encodeURIComponent('Acme:user@example.com')}?`)).toBe(true);
 		expect(parsed.searchParams.get('secret')).toBe(secret);
 		expect(parsed.searchParams.get('issuer')).toBe('Acme');
 
-		// 3. The stored form is not the secret, and opens back to it with the key
 		expect(encryptedSecret).not.toContain(secret);
 		expect(decrypt(encryptedSecret, [KEY], 'totp-secret').plaintext).toBe(secret);
 	});
@@ -40,19 +37,18 @@ describe('enrollTotp', () => {
 	test('Names the issuer Novastarter when the settings do not', () => {
 		useAuth().registerSettings({ mfa: { encryptionKey: KEY } });
 
-		// 1. Authenticator apps need some name above the code
+		// Authenticator apps need some name above the code
 		expect(new URL(enrollTotp({ accountName: 'a' }).uri).searchParams.get('issuer')).toBe('Novastarter');
 	});
 
 	test('Makes a new secret on every call', () => {
 		useAuth().registerSettings({ mfa: { encryptionKey: KEY } });
 
-		// 1. Two enrolments never share a secret
 		expect(enrollTotp({ accountName: 'a' }).secret).not.toBe(enrollTotp({ accountName: 'a' }).secret);
 	});
 
 	test('Refuses to run without a usable encryption key', () => {
-		// 1. A short key would leave the stored secrets open to a database dump
+		// A short key would leave the stored secrets open to a database dump
 		useAuth().registerSettings({ mfa: { encryptionKey: 'short' } });
 
 		expect(() => enrollTotp({ accountName: 'a' })).toThrow(

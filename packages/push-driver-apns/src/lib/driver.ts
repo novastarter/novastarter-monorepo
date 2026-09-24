@@ -1,3 +1,4 @@
+import { InvalidConfigError, InvalidPayloadError } from '@novastarter/errors';
 import type { PushDriver, PushMessage, PushPlatform, PushResult } from '@novastarter/push';
 import { withTimeout } from '@novastarter/utils';
 import { ApnsClient, Host } from 'apns2';
@@ -102,29 +103,28 @@ export class PushDriverApns implements PushDriver {
 	 * Create a driver on an APNs auth key, with an HTTP/2 client of its own.
 	 *
 	 * @param config - Credentials, topic, environment and defaults.
-	 * @throws Error without the team id, the key id, the signing key or the topic, or with a key that is not an
-	 * APNs auth key.
+	 * @throws InvalidConfigError without the team id, the key id, the signing key or the topic, or with a key that is
+	 * not an APNs auth key.
 	 */
 	constructor(config: PushDriverApnsConfig) {
-		// 1. Missing credentials are a configuration error; reported by the options' names
 		if (!config.teamId || !config.keyId || !config.signingKey) {
-			throw new Error('The apns push driver needs "teamId", "keyId" and "signingKey"');
+			throw new InvalidConfigError({ reason: 'The apns push driver needs "teamId", "keyId" and "signingKey"' });
 		}
 
 		if (!config.topic) {
-			throw new Error('The apns push driver needs the app\'s bundle id as "topic"');
+			throw new InvalidConfigError({ reason: 'The apns push driver needs the app\'s bundle id as "topic"' });
 		}
 
-		// 2. A PEM in a `.env` line has its newlines as the two characters `\n`; the signer needs real ones. The key is
-		//    checked now, so a broken secret fails at startup rather than on the first push
+		// A PEM in a `.env` line has its newlines as the two characters `\n`; the signer needs real ones. The key is
+		// checked now, so a broken secret fails at startup rather than on the first push
 		const signingKey = config.signingKey.replace(/\\n/g, '\n');
 
 		assertSigningKey(signingKey);
 		this.config = { ...config, signingKey };
 
-		// 3. Production unless told otherwise: a token from a development build only works with the sandbox, and
-		//    APNs answers `BadDeviceToken` across environments. The SDK takes a `requestTimeout` option of its own but
-		//    never reads it, so the driver's `timeout` is not handed over: `send()` races it instead
+		// Production unless told otherwise: a token from a development build only works with the sandbox, and APNs answers
+		// `BadDeviceToken` across environments. The SDK takes a `requestTimeout` option of its own but never reads it, so
+		// the driver's `timeout` is not handed over: `send()` races it instead
 		const host = config.host ?? (config.production === false ? Host.development : Host.production);
 
 		this.client = new ApnsClient({
@@ -141,20 +141,23 @@ export class PushDriverApns implements PushDriver {
 	 *
 	 * @param message - The message, with a token.
 	 * @returns `accepted`; APNs hands out no id the client exposes.
+	 * @throws InvalidPayloadError when the message carries a subscription instead of a token.
 	 * @throws PushTargetGoneError when APNs says the token is unregistered, bad, or of another app.
 	 * @throws Error naming the deadline when `timeout` passes before APNs answers, the `TimeoutError` of
 	 * `@novastarter/utils` as the cause; the request itself runs on, since the HTTP client cannot be told to stop.
 	 * @throws Error naming APNs's status and reason otherwise, the SDK's error as the cause.
 	 */
 	async send(message: PushMessage): Promise<PushResult> {
-		// 1. A subscription cannot be delivered here; `sendPush()` routes by platform, but a direct caller may not
+		// `sendPush()` routes by platform, but a direct caller may not
 		if (!message.token) {
-			throw new Error('The apns push driver needs a token; a subscription belongs to the webpush driver');
+			throw new InvalidPayloadError({
+				reason: 'The apns push driver needs a token; a subscription belongs to the webpush driver',
+			});
 		}
 
-		// 2. The client resolves on a 200 and throws an `ApnsError` with Apple's reason otherwise. It ignores the
-		//    timeout it is given, so the deadline is raced here: a stalled connection would otherwise sit out the
-		//    HTTP client's minutes-long limits, and a queue job around the send with it
+		// The client resolves on a 200 and throws an `ApnsError` with Apple's reason otherwise. It ignores the timeout it
+		// is given, so the deadline is raced here: a stalled connection would otherwise sit out the HTTP client's
+		// minutes-long limits, and a queue job around the send with it
 		try {
 			const request = this.client.send(toApnsNotification(message, this.config));
 
@@ -170,7 +173,6 @@ export class PushDriverApns implements PushDriver {
 	 * Close the HTTP/2 connections, whose keep-alive pings would otherwise keep the process alive.
 	 */
 	async close(): Promise<void> {
-		// 1. The client owns the sessions: closing it releases them
 		await this.client.close();
 	}
 }

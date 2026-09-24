@@ -20,16 +20,15 @@ import type { QueryLogger, QueryLoggingOptions } from '../types.js';
  */
 export const createQueryLogger = (logger: Logger, options: QueryLoggingOptions = {}): QueryLogger => ({
 	logQuery(query: string, params: unknown[]): void {
-		// 1. One structured line per query; the SQL text always, and the values only on request — the redaction of
-		//    the kit logger cannot reach inside an array, so a debug-level production log would otherwise write
-		//    passwords and PII verbatim. The count keeps the line useful without the values
+		// The values are logged only on request: the kit logger's redaction cannot reach inside an array, so a
+		// debug-level production log would otherwise write passwords and PII verbatim
 		if (options.params) {
 			logger.debug({ query, params }, 'Database query');
 
 			return;
 		}
 
-		// 2. The default line: the SQL with its parameter count, so a slow query is still told from a fast one
+		// The parameter count keeps the line useful without the values
 		logger.debug({ query, paramCount: params.length }, 'Database query');
 	},
 });

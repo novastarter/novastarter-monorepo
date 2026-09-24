@@ -8,7 +8,7 @@ import { toSubscription } from './to-subscription.js';
 
 describe('toSubscription', () => {
 	test('Maps the product as the price, seats, the period and the cancellation dates', () => {
-		// 1. The updated fixture carries a scheduled cancellation and a trial, so every field of the shape is exercised
+		// The updated fixture carries a scheduled cancellation and a trial, so every field of the shape is exercised
 		const event = parsed('subscription.updated');
 		const subscription = toSubscription(event.type === 'subscription.updated' ? event.data : (undefined as never));
 
@@ -32,7 +32,7 @@ describe('toSubscription', () => {
 	});
 
 	test('Refuses a status it does not know', () => {
-		// 1. A status outside Polar's documented set is a change on Polar's side, better loud than silently wrong
+		// A status outside Polar's documented set is a change on Polar's side, better loud than silently wrong
 		const event = parsed('subscription.created');
 		const subscription = event.type === 'subscription.created' ? event.data : (undefined as never);
 

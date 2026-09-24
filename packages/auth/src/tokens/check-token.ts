@@ -46,19 +46,19 @@ export const checkToken = async (options: CheckTokenOptions): Promise<TokenRecor
 	const limiter = userId !== undefined ? authSettings().limiters?.code : undefined;
 	const limiterKey = `${purpose}:${userId}`;
 
-	// 1. Every code attempt is charged before the lookup, a miss included — without that the limit would only count
-	//    right guesses
+	// Every code attempt is charged before the lookup, a miss included — without that the limit would only count right
+	// guesses
 	await limiter?.consume(limiterKey);
 
-	// 2. The id is the package's to compute, so the lookup always matches how `createToken()` keyed the record
+	// The id is the package's to compute, so the lookup always matches how `createToken()` keyed the record
 	const record = await options.spend(oneTimeTokenId(options.token, userId), purpose);
 
-	// 3. One error for every failed check, so a caller probing tokens learns nothing about which one failed
+	// One error for every failed check, so a caller probing tokens learns nothing about which one failed
 	if (!record || record.purpose !== purpose || record.expiresAt <= Date.now()) {
 		throw new AuthInvalidTokenError();
 	}
 
-	// 4. A right code clears the count, so a user who mistyped a few times is not locked out afterwards
+	// A right code clears the count, so a user who mistyped a few times is not locked out afterwards
 	await limiter?.delete(limiterKey);
 
 	return record;

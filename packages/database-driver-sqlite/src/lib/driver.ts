@@ -10,6 +10,7 @@ import {
 	toMigrationConfig,
 	toUnavailableError,
 } from '@novastarter/database';
+import { InvalidConfigError } from '@novastarter/errors';
 import Database from 'better-sqlite3';
 import { sql } from 'drizzle-orm';
 import { type BetterSQLite3Database, drizzle } from 'drizzle-orm/better-sqlite3';
@@ -116,20 +117,20 @@ export class DatabaseDriverSqlite<
 	 * Open the database, creating the file and its directory when missing.
 	 *
 	 * @param config - File, open options, pragmas, schema and logging options.
-	 * @throws Error when `file` is missing.
+	 * @throws InvalidConfigError when `file` is missing.
 	 * @throws What better-sqlite3 raised when the file could not be opened — a missing file under `fileMustExist`,
 	 * a directory without write access.
 	 * @throws What better-sqlite3 raised when a pragma could not be applied, after closing the file — `journal_mode =
 	 * WAL` on a read-only file asked for WAL explicitly.
 	 */
 	constructor(config: DatabaseDriverSqliteConfig<Schema>) {
-		// 1. Refuse a missing file up front: better-sqlite3 would open an anonymous database in memory and every
-		//    write would silently vanish at exit
+		// better-sqlite3 would otherwise open an anonymous database in memory and every write would silently vanish at
+		// exit
 		if (!config.file) {
-			throw new Error('The sqlite database driver needs a "file"');
+			throw new InvalidConfigError({ reason: 'The sqlite database driver needs a "file"' });
 		}
 
-		// 2. A file wants its directory: better-sqlite3 cannot create it, and a fresh checkout has no `data/` yet
+		// better-sqlite3 cannot create the file's directory, and a fresh checkout has no `data/` yet
 		const inMemory = config.file === MEMORY_FILE;
 
 		if (!inMemory) {
@@ -139,29 +140,28 @@ export class DatabaseDriverSqlite<
 		this.database =
 			config.options === undefined ? new Database(config.file) : new Database(config.file, config.options);
 
-		// 3. The pragmas can refuse on the handle that was just opened — a read-only file answers WAL with
-		//    SQLITE_READONLY — and a constructor that throws must not leak the handle, so a failure closes it first
+		// The pragmas can refuse on the handle that was just opened — a read-only file answers WAL with
+		// SQLITE_READONLY — and a constructor that throws must not leak the handle, so a failure closes it first
 		try {
-			// 4. Foreign keys are off in SQLite unless every connection turns them on; a schema declaring references
-			//    expects them enforced, so on by default
+			// Foreign keys are off in SQLite unless every connection turns them on; a schema declaring references
+			// expects them enforced, so on by default
 			if (config.foreignKeys ?? true) {
 				this.database.pragma('foreign_keys = ON');
 			}
 
-			// 5. WAL lets readers and the writer proceed together, what a server wants from a file; a database in memory
-			//    has no journal to speak of, and a file opened read-only cannot take it — the attempt would fail with
-			//    SQLITE_READONLY — so it stays off there unless asked for explicitly
+			// WAL lets readers and the writer proceed together, what a server wants from a file; a database in memory
+			// has no journal to speak of, and a file opened read-only cannot take it — the attempt would fail with
+			// SQLITE_READONLY — so it stays off there unless asked for explicitly
 			if (config.wal ?? (!inMemory && !config.options?.readonly)) {
 				this.database.pragma('journal_mode = WAL');
 			}
 		} catch (error) {
-			// 6. The handle opened above belongs to a driver that will never exist; close it before the error travels on
+			// The handle belongs to a driver that will never exist, so it is closed before the error travels on
 			this.database.close();
 
 			throw error;
 		}
 
-		// 7. Drizzle over the handle, with the schema and, when asked for, the query logger bound to the label
 		this.label = config.label;
 		this.db = drizzle(this.database, toDrizzleOptions(config, resolveLogger(config)));
 	}
@@ -173,11 +173,11 @@ export class DatabaseDriverSqlite<
 	 * @throws DatabaseUnavailableError naming the location, with what better-sqlite3 raised as its `cause`.
 	 */
 	async ping(): Promise<void> {
-		// 1. The cheapest statement; through Drizzle, so the same path the queries take is proven
+		// Through Drizzle, so the same path the queries take is proven
 		try {
 			this.db.run(sql`select 1`);
 		} catch (error) {
-			// 2. One error for every backend, 503, naming the location; better-sqlite3's error stays as `cause`
+			// One error for every backend; better-sqlite3's error stays as `cause`
 			throw toUnavailableError(error, this.label);
 		}
 	}
@@ -187,10 +187,10 @@ export class DatabaseDriverSqlite<
 	 *
 	 * @param options - The folder and, optionally, the journal table; `migrationsSchema` means nothing to SQLite.
 	 * @returns Once every pending migration ran; before the promise resolves, since the migrator is synchronous.
-	 * @throws Error when `migrationsFolder` is missing; what the migrator raised otherwise.
+	 * @throws InvalidConfigError when `migrationsFolder` is missing; what the migrator raised otherwise.
 	 */
 	async migrate(options: MigrateOptions): Promise<void> {
-		// 1. The migrator runs the pending files in one transaction on the open handle
+		// The migrator runs the pending files in one transaction on the open handle
 		migrate(this.db, toMigrationConfig(options));
 	}
 
@@ -200,7 +200,7 @@ export class DatabaseDriverSqlite<
 	 * @returns Once the file is closed; a database in memory is gone with it.
 	 */
 	async close(): Promise<void> {
-		// 1. The handle is the driver's own — better-sqlite3 has no pool to share — so closing it is always right
+		// The handle is the driver's own — better-sqlite3 has no pool to share — so closing it is always right
 		this.database.close();
 	}
 }

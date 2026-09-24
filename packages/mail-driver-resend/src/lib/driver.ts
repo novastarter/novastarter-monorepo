@@ -1,3 +1,4 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import { type CallOptions, type CallResponse, type HttpApi, request } from '@novastarter/http';
 import {
 	bareMailAddress,
@@ -75,15 +76,14 @@ export class MailDriverResend implements MailDriver {
 	 * Create a driver on a client of its own for the given key.
 	 *
 	 * @param config - API key.
-	 * @throws Error without an API key.
+	 * @throws InvalidConfigError without an API key.
 	 */
 	constructor(config: MailDriverResendConfig) {
-		// 1. A missing key is a configuration error; report it by the option's name
 		if (!config.apiKey) {
-			throw new Error('The resend mail driver needs an "apiKey"');
+			throw new InvalidConfigError({ reason: 'The resend mail driver needs an "apiKey"' });
 		}
 
-		// 2. The key goes to the SDK for sending and to the API of raw calls, which bypass the SDK
+		// Raw calls bypass the SDK, so the key goes to both
 		this.client = new Resend(config.apiKey);
 
 		this.api = {
@@ -103,17 +103,16 @@ export class MailDriverResend implements MailDriver {
 	 * the API refuses.
 	 */
 	async send(message: MailMessage): Promise<MailResult> {
-		// 1. The SDK answers `{ data, error }` instead of throwing, so a refusal has to be read off the value;
-		//    attachments are read into the payload before the request goes out
+		// The SDK answers `{ data, error }` instead of throwing, so a refusal has to be read off the value
 		const { data, error } = await this.client.emails.send(await toResendEmail(message));
 
-		// 2. A failure becomes the throw the fallback of `sendMail()` expects, the SDK's value kept as the cause so
-		//    the caller can still read its status code; a missing value is named for what it is
+		// A failure becomes the throw the fallback of `sendMail()` expects, the SDK's value kept as the cause so the
+		// caller can still read its status code
 		if (error || !data) {
 			throw describeError(error ?? 'no data or error returned');
 		}
 
-		// 3. Resend takes a message whole or refuses it, so every recipient counts as accepted
+		// Resend takes a message whole or refuses it, so every recipient counts as accepted
 		return {
 			messageId: data.id,
 			accepted: toMailAddressList(message.to).map(bareMailAddress),
@@ -153,8 +152,6 @@ export class MailDriverResend implements MailDriver {
 		params?: Record<string, unknown>,
 		options?: CallOptions,
 	): Promise<CallResponse<T>> {
-		// 1. `request()` does the whole of it — placeholders, the host check before the key is sent, the deadline, the
-		//    kit's errors without the key — over the API the constructor described
 		return request<T>(this.api, method, params, options);
 	}
 }

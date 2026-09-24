@@ -46,8 +46,8 @@ const DEFAULT_MODELS: Record<string, Record<string, AiModelId>> = {
  * @returns The configuration to register.
  */
 export const aiConfig = (env: AppEnv): AiConfig => {
-	// 1. A provider per key that is set; the keys are passed explicitly, since the provider packages would otherwise
-	//    read their own variables behind the app's schema
+	// A provider per key that is set; the keys are passed explicitly, since the provider packages would otherwise read
+	// their own variables behind the app's schema
 	const providers: Record<string, AiProvider> = {};
 
 	if (env.AI_GATEWAY_API_KEY) {
@@ -66,7 +66,7 @@ export const aiConfig = (env: AppEnv): AiConfig => {
 		providers['google'] = createGoogleGenerativeAI({ apiKey: env.AI_GOOGLE_API_KEY });
 	}
 
-	// 2. Each alias takes the model of the first registered provider that serves it
+	// Each alias takes the model of the first registered provider that serves it
 	const models: Record<string, AiModelId> = {};
 
 	for (const [alias, candidates] of Object.entries(DEFAULT_MODELS)) {

@@ -9,7 +9,7 @@ const logger = { debug: vi.fn() } as unknown as Logger;
 
 describe('toDrizzleOptions', () => {
 	test('Answers an empty object for a config without options', () => {
-		// 1. `toStrictEqual` sees an undefined key as a key: none may be present
+		// `toStrictEqual` sees an undefined key as a key: none may be present
 		expect(toDrizzleOptions({}, logger)).toStrictEqual({});
 	});
 
@@ -27,10 +27,9 @@ describe('toDrizzleOptions', () => {
 	});
 
 	test('Wires a query logger over the given logger only when queryLogging is set', () => {
-		// 1. Off: no logger key at all, so Drizzle makes no logger call per query
+		// Off means no logger key at all, so Drizzle makes no logger call per query
 		expect(toDrizzleOptions({ queryLogging: false }, logger)).not.toHaveProperty('logger');
 
-		// 2. On: the logger reports the SQL text and the parameter count to the kit logger handed in
 		const options = toDrizzleOptions({ queryLogging: true }, logger);
 
 		options.logger?.logQuery('select 1', [42]);
@@ -39,7 +38,6 @@ describe('toDrizzleOptions', () => {
 	});
 
 	test('Forwards the queryLogging options to the query logger', () => {
-		// 1. The object form asks for the values: they join the SQL text, verbatim as the query bound them
 		const options = toDrizzleOptions({ queryLogging: { params: true } }, logger);
 
 		options.logger?.logQuery('select 1', [42]);

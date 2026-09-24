@@ -24,12 +24,12 @@ const D1_CONFIG = process.env['D1_CONFIG'];
  * @returns Whether the value is a D1 binding.
  */
 const isD1Database = (value: unknown): value is D1Database => {
-	// 1. A binding is an object; anything else in the env — strings, functions — cannot be a database
+	// A binding is an object; anything else in the env — strings, functions — cannot be a database
 	if (typeof value !== 'object' || value === null) {
 		return false;
 	}
 
-	// 2. The D1 API is the five methods; a binding answering all of them is the database
+	// The D1 API is the five methods; a binding answering all of them is the database
 	return ['prepare', 'batch', 'exec', 'withSession', 'dump'].every((method) => method in value);
 };
 
@@ -46,10 +46,9 @@ describe.skipIf(!D1_CONFIG)('DatabaseDriverD1 on D1', () => {
 	// The proxy and the driver are opened inside the hook: the describe body runs at collection even when the suite
 	// is skipped
 	beforeAll(async () => {
-		// 1. The platform proxy serves the app's wrangler config locally; the D1 binding is the one in its env that
-		//    answers D1's API. The env var is read at module scope, so the suite's guard narrows nothing in here.
-		//    The dispose handle is taken over before anything can throw: a misconfigured config must not leave the
-		//    proxy's process running and the run hanging
+		// The env var is read at module scope, so the suite's guard narrows nothing in here. The dispose handle is
+		// taken over before anything can throw: a misconfigured config must not leave the proxy's process running and
+		// the run hanging
 		const proxy = await getPlatformProxy({ configPath: D1_CONFIG! });
 		dispose = proxy.dispose;
 
@@ -61,17 +60,17 @@ describe.skipIf(!D1_CONFIG)('DatabaseDriverD1 on D1', () => {
 
 		driver = new DatabaseDriverD1({ binding, logger: logger as never });
 
-		// 2. The fixture table the statements below write is made here, not by the migration: every test must pass
-		//    run alone, under `vitest -t` as well as whole-file
+		// The fixture table the statements below write is made here, not by the migration: every test must pass
+		// run alone, under `vitest -t` as well as whole-file
 		await driver.db.run(
 			sql.raw(`CREATE TABLE \`${table}\` (\`id\` integer PRIMARY KEY AUTOINCREMENT NOT NULL, \`text\` text NOT NULL)`),
 		);
 
-		// 3. A drizzle-kit folder of one migration, written per run, since the table name carries the pid
+		// The drizzle-kit folder is written per run, since the table name carries the pid
 		migrationsFolder = await mkdtemp(join(tmpdir(), 'novastarter-migrations-'));
 		await mkdir(join(migrationsFolder, 'meta'));
 
-		// 4. The journal is what the migrator reads to find what to apply: one entry tagging the migration below
+		// The migrator reads the journal to find what to apply
 		await writeFile(
 			join(migrationsFolder, 'meta', '_journal.json'),
 			JSON.stringify({
@@ -81,7 +80,7 @@ describe.skipIf(!D1_CONFIG)('DatabaseDriverD1 on D1', () => {
 			}),
 		);
 
-		// 5. The migration itself: a probe table nothing reads — the migrator running it and journaling it is the point
+		// A probe table nothing reads: the migrator running it and journaling it is the point
 		await writeFile(
 			join(migrationsFolder, '0000_init.sql'),
 			`CREATE TABLE \`${probeTable}\` (\`id\` integer PRIMARY KEY AUTOINCREMENT NOT NULL);`,
@@ -89,16 +88,15 @@ describe.skipIf(!D1_CONFIG)('DatabaseDriverD1 on D1', () => {
 	});
 
 	afterAll(async () => {
-		// 1. A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
-		//    real failure stays the one reported
+		// A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
+		// real failure stays the one reported
 		if (driver) {
-			// 2. The pid-scoped tables go, so two runs on the same database never meet each other's fixtures
+			// The pid-scoped tables go, so two runs on the same database never meet each other's fixtures
 			await driver.db.run(sql.raw(`DROP TABLE IF EXISTS \`${table}\``));
 			await driver.db.run(sql.raw(`DROP TABLE IF EXISTS \`${probeTable}\``));
 			await driver.db.run(sql.raw(`DROP TABLE IF EXISTS \`${migrationsTable}\``));
 		}
 
-		// 3. The folder is a temp one of this run; then the proxy's process follows
 		if (migrationsFolder) {
 			await rm(migrationsFolder, { recursive: true, force: true });
 		}
@@ -117,7 +115,7 @@ describe.skipIf(!D1_CONFIG)('DatabaseDriverD1 on D1', () => {
 			{ count: 1 },
 		]);
 
-		// 1. A second run finds nothing pending: the same migration is not applied again
+		// A second run finds nothing pending: the same migration is not applied again
 		await driver.migrate({ migrationsFolder, migrationsTable });
 
 		expect(await driver.db.all(sql.raw(`SELECT count(*) AS count FROM \`${migrationsTable}\``))).toStrictEqual([

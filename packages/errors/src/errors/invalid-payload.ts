@@ -16,7 +16,7 @@ export interface InvalidPayloadErrorExtensions {
  * @returns Message naming the reason, so the caller knows what to fix.
  */
 export const invalidPayloadMessage = (extensions: InvalidPayloadErrorExtensions): string => {
-	// 1. The reason is a fragment without a full stop, so the message closes it — one sentence, one period
+	// The reason is a fragment without a full stop, so the message closes it — one sentence, one period
 	return `Invalid payload. ${extensions.reason}.`;
 };
 

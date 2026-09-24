@@ -40,18 +40,18 @@ let mockHandler: MessageHandler;
 let bus: BusDriverRedis;
 
 beforeEach(() => {
-	// 1. Two automocked clients: the driver duplicates the one it is given for subscribing, so the duplicate has to be
-	//    a client of its own for the assertions to tell the two connections apart
+	// Two automocked clients: the driver duplicates the one it is given for subscribing, so the duplicate has to be a
+	// client of its own for the assertions to tell the two connections apart
 	mockRedis = new Redis();
 	mockSubRedis = new Redis();
 
 	vi.mocked(mockRedis.duplicate).mockReturnValue(mockSubRedis);
 
-	// 2. ioredis answers `SUBSCRIBE` with a promise of the subscription count; the automock has to as well, since the
-	//    driver chains on it
+	// ioredis answers `SUBSCRIBE` with a promise of the subscription count; the automock has to as well, since the
+	// driver chains on it
 	vi.mocked(mockSubRedis.subscribe).mockResolvedValue(1);
 
-	// 3. Fixed names and bytes, so every assertion below can name what the driver must have passed on
+	// Fixed names and bytes, so every assertion below can name what the driver must have passed on
 	mockNamespace = 'test-namespace';
 	mockChannel = 'test-channel';
 	mockNamespacedChannel = 'test-namespace:test-channel';
@@ -69,8 +69,8 @@ beforeEach(() => {
 		namespace: 'test-namespace',
 	});
 
-	// 4. The utilities are automocked, so each one answers with the fixed bytes; the tests then assert on which
-	//    utility received what, not on the encoding itself
+	// The utilities are automocked, so each one answers with the fixed bytes; the tests then assert on which utility
+	// received what, not on the encoding itself
 	vi.mocked(withNamespace).mockReturnValue(mockNamespacedChannel);
 	vi.mocked(uint8ArrayToString).mockReturnValue(mockNamespacedChannel);
 	vi.mocked(bufferToUint8Array).mockReturnValue(mockUint8Array);
@@ -88,7 +88,7 @@ afterEach(() => {
 
 describe('constructor', () => {
 	test('Sets internal flags based on config', () => {
-		// 1. The given client publishes, its duplicate subscribes
+		// The given client publishes, its duplicate subscribes
 		expect(bus['pub']).toBe(mockRedis);
 		expect(bus['sub']).toBe(mockSubRedis);
 		expect(bus['namespace']).toBe(mockNamespace);
@@ -96,13 +96,13 @@ describe('constructor', () => {
 	});
 
 	test('Defaults compression settings', () => {
-		// 1. The documented defaults: compress, from 1 kB up
+		// The documented defaults: compress, from 1 kB up
 		expect(bus['compression']).toBe(true);
 		expect(bus['compressionMinSize']).toBe(1000);
 	});
 
 	test('Allows setting compression settings', () => {
-		// 1. Explicit options win over the defaults
+		// Explicit options win over the defaults
 		const bus = new BusDriverRedis({
 			redis: mockRedis,
 			namespace: mockNamespace,
@@ -115,19 +115,19 @@ describe('constructor', () => {
 	});
 
 	test('Subscribes to messageBuffers in sub redis', () => {
-		// 1. The binary event, not `message`: a gzipped payload must not go through a string
+		// The binary event, not `message`: a gzipped payload must not go through a string
 		expect(bus['sub'].on).toHaveBeenCalledWith('messageBuffer', expect.any(Function));
 	});
 
 	test('Listens for errors on the subscribing connection', () => {
-		// 1. The duplicate is the driver's own connection, and an `error` event with no listener is fatal to the host
-		//    process — a flapping Redis emits errors as a matter of course, so the listener must be there
+		// The duplicate is the driver's own connection, and an `error` event with no listener is fatal to the host
+		// process — a flapping Redis emits errors as a matter of course, so the listener must be there
 		expect(bus['sub'].on).toHaveBeenCalledWith('error', expect.any(Function));
 	});
 
 	test('Logs an error of the subscribing connection through the logger', () => {
-		// 1. The listener the constructor registered reports the failure the way every other failure of the bus is
-		//    reported: through `useLogger`, so the application's registered logger sees it
+		// The listener the constructor registered reports the failure the way every other failure of the bus is
+		// reported: through `useLogger`, so the application's registered logger sees it
 		const listener = vi.mocked(mockSubRedis.on).mock.calls.find(([event]) => event === 'error')![1] as (
 			error: Error,
 		) => void;
@@ -138,7 +138,7 @@ describe('constructor', () => {
 	});
 
 	test('Runs the reconnect callbacks on every ready after the first one, logging a failing one', async () => {
-		// 1. Pub/sub keeps no messages, so a reconnect is what a subscriber must learn about to reset derived state
+		// Pub/sub keeps no messages, so a reconnect is what a subscriber must learn about to reset derived state
 		const listener = vi.mocked(mockSubRedis.on).mock.calls.find(([event]) => event === 'ready')![1] as () => void;
 		const callback = vi.fn();
 		const failing = vi.fn().mockRejectedValue(new Error('reset failed'));
@@ -146,13 +146,13 @@ describe('constructor', () => {
 		bus.onReconnect(failing);
 		bus.onReconnect(callback);
 
-		// 2. The first `ready` is the initial connect: nothing was missed yet
+		// The first `ready` is the initial connect: nothing was missed yet
 		listener();
 		await Promise.resolve();
 
 		expect(callback).not.toHaveBeenCalled();
 
-		// 3. A later `ready` is a reconnect; a failing callback is logged and does not keep the others from running
+		// A later `ready` is a reconnect; a failing callback is logged and does not keep the others from running
 		listener();
 
 		await vi.waitFor(() =>
@@ -164,8 +164,8 @@ describe('constructor', () => {
 	});
 
 	test('Runs the reconnect callbacks only after a PING sent behind the resubscribe was answered', async () => {
-		// 1. ioredis emits `ready` before it sends the resubscribe; a reset done before the subscription is active
-		//    would leave a window in which an invalidation is lost
+		// ioredis emits `ready` before it sends the resubscribe; a reset done before the subscription is active would
+		// leave a window in which an invalidation is lost
 		const listener = vi.mocked(mockSubRedis.on).mock.calls.find(([event]) => event === 'ready')![1] as () => void;
 		const callback = vi.fn();
 		const order: string[] = [];
@@ -182,7 +182,7 @@ describe('constructor', () => {
 		bus.onReconnect(callback);
 		listener();
 
-		// 2. The reconnect: the `SUBSCRIBE` ioredis sends right after emitting `ready` must go out before the PING
+		// The reconnect: the `SUBSCRIBE` ioredis sends right after emitting `ready` must go out before the PING
 		listener();
 		order.push('subscribe');
 
@@ -191,14 +191,14 @@ describe('constructor', () => {
 		expect(order).toStrictEqual(['subscribe', 'ping']);
 		expect(callback).not.toHaveBeenCalled();
 
-		// 3. The PING reply comes after the `SUBSCRIBE` reply, so the subscription is active and the reset can run
+		// The PING reply comes after the `SUBSCRIBE` reply, so the subscription is active and the reset can run
 		pong();
 
 		await vi.waitFor(() => expect(callback).toHaveBeenCalledOnce());
 	});
 
 	test('Still runs the reconnect callbacks when the PING behind the resubscribe fails', async () => {
-		// 1. A failed PING means the connection dropped again; a reset is harmless, so it is not skipped
+		// A failed PING means the connection dropped again; a reset is harmless, so it is not skipped
 		const listener = vi.mocked(mockSubRedis.on).mock.calls.find(([event]) => event === 'ready')![1] as () => void;
 		const callback = vi.fn();
 
@@ -214,7 +214,7 @@ describe('constructor', () => {
 
 describe('publish', () => {
 	test('Publishes binary array for given payload', async () => {
-		// 1. The serialised bytes reach the publishing client as a buffer under the namespaced name
+		// The serialised bytes reach the publishing client as a buffer under the namespaced name
 		await bus.publish(mockChannel, mockMessage);
 
 		expect(uint8ArrayToBuffer).toHaveBeenCalledWith(mockUint8Array);
@@ -222,7 +222,7 @@ describe('publish', () => {
 	});
 
 	test('Skips compression if compression is set to false', async () => {
-		// 1. With compression off the serialised bytes go out as they are, whatever their size
+		// With compression off the serialised bytes go out as they are, whatever their size
 		bus = new BusDriverRedis({
 			redis: mockRedis,
 			namespace: 'test-namespace',
@@ -236,7 +236,7 @@ describe('publish', () => {
 	});
 
 	test('Compresses if compression is enabled, and value is larger than min size', async () => {
-		// 1. A threshold below the payload size, so the compressed bytes are what gets published
+		// A threshold below the payload size, so the compressed bytes are what gets published
 		bus = new BusDriverRedis({
 			redis: mockRedis,
 			namespace: 'test-namespace',
@@ -252,8 +252,8 @@ describe('publish', () => {
 	});
 
 	test('Hands messages to Redis in the order they were published, even when one needs compressing', async () => {
-		// 1. A large payload compresses asynchronously; a small one published right behind it, without awaiting the
-		//    first, must not overtake it on the connection
+		// A large payload compresses asynchronously; a small one published right behind it, without awaiting the first,
+		// must not overtake it on the connection
 		bus = new BusDriverRedis({
 			redis: mockRedis,
 			namespace: 'test-namespace',
@@ -270,7 +270,7 @@ describe('publish', () => {
 
 		vi.mocked(uint8ArrayToBuffer).mockImplementation((input) => Buffer.from(input));
 
-		// 2. Neither publish is awaited before the next one starts, the way a fire-and-forget log stream publishes
+		// Neither publish is awaited before the next one starts, the way a fire-and-forget log stream publishes
 		const big = bus.publish(mockChannel, 'big');
 		const small = bus.publish(mockChannel, 'small');
 
@@ -283,14 +283,14 @@ describe('publish', () => {
 	});
 
 	test('Rejects a payload that cannot be serialised and still publishes the next one', async () => {
-		// 1. A `BigInt` or a cycle fails in `serialize`; the failure is the caller's, the chain must not be stuck on it
+		// A `BigInt` or a cycle fails in `serialize`; the failure is the caller's, the chain must not be stuck on it
 		vi.mocked(serialize).mockImplementationOnce(() => {
 			throw new TypeError('Do not know how to serialize a BigInt');
 		});
 
 		await expect(bus.publish(mockChannel, { n: 1n })).rejects.toThrow(TypeError);
 
-		// 2. The following publish goes through as if nothing happened
+		// The following publish goes through as if nothing happened
 		await bus.publish(mockChannel, mockMessage);
 
 		expect(bus['pub'].publish).toHaveBeenCalledTimes(1);
@@ -300,14 +300,14 @@ describe('publish', () => {
 
 describe('subscribe', () => {
 	test('Subscribes the redis sub to given channel if handlers do not exist yet', async () => {
-		// 1. The first callback of a channel is what asks Redis
+		// The first callback of a channel is what asks Redis
 		await bus.subscribe(mockChannel, mockHandler);
 
 		expect(bus['sub'].subscribe).toHaveBeenCalledWith(mockNamespacedChannel);
 	});
 
 	test('Does not call redis subscribe if set already exists', async () => {
-		// 1. A channel Redis already delivers needs no second `SUBSCRIBE`
+		// A channel Redis already delivers needs no second `SUBSCRIBE`
 		bus['handlers'].set(mockNamespacedChannel, new Set([vi.fn()]));
 
 		await bus.subscribe(mockChannel, mockHandler);
@@ -316,7 +316,7 @@ describe('subscribe', () => {
 	});
 
 	test('Saves callback to new handlers set for namespaced channel', async () => {
-		// 1. The set is keyed by the namespaced name, the one Redis reports messages under
+		// The set is keyed by the namespaced name, the one Redis reports messages under
 		await bus.subscribe(mockChannel, mockHandler);
 
 		expect(bus['handlers'].get(mockNamespacedChannel)).toBeInstanceOf(Set);
@@ -325,7 +325,7 @@ describe('subscribe', () => {
 	});
 
 	test('Adds callback to existing handler set', async () => {
-		// 1. A later callback joins the set the first one created
+		// A later callback joins the set the first one created
 		bus['handlers'].set(mockNamespacedChannel, new Set([vi.fn()]));
 
 		await bus.subscribe(mockChannel, mockHandler);
@@ -336,8 +336,8 @@ describe('subscribe', () => {
 	});
 
 	test('Tells a caller that joined during a failing SUBSCRIBE about the failure too', async () => {
-		// 1. The set exists before Redis answered; a second caller joins it and must share the outcome, not be told its
-		//    handler is in place while the failing first call is about to drop the set
+		// The set exists before Redis answered; a second caller joins it and must share the outcome, not be told its
+		// handler is in place while the failing first call is about to drop the set
 		let reject!: (error: Error) => void;
 
 		vi.mocked(bus['sub'].subscribe).mockReturnValueOnce(
@@ -351,7 +351,7 @@ describe('subscribe', () => {
 
 		reject(new Error('connection lost'));
 
-		// 2. Both callers see the failure and nothing of the attempt is left behind
+		// Both callers see the failure and nothing of the attempt is left behind
 		await expect(first).rejects.toThrow('connection lost');
 		await expect(second).rejects.toThrow('connection lost');
 		expect(bus['handlers'].get(mockNamespacedChannel)).toBeUndefined();
@@ -359,8 +359,9 @@ describe('subscribe', () => {
 	});
 
 	test('A stale SUBSCRIBE failure does not remove a newer subscription of the same channel', async () => {
-		// 1. Subscribe, unsubscribe while Redis has not answered, subscribe again: the first call's failure must leave the
-		//    second call's set and pending promise alone, or the second caller is told it succeeded while no handler is left
+		// Subscribe, unsubscribe while Redis has not answered, subscribe again: the first call's failure must leave the
+		// second call's set and pending promise alone, or the second caller is told it succeeded while no handler is
+		// left
 		let rejectFirst!: (error: Error) => void;
 
 		vi.mocked(bus['sub'].subscribe)
@@ -379,7 +380,7 @@ describe('subscribe', () => {
 
 		rejectFirst(new Error('connection lost'));
 
-		// 2. Only the first caller fails; the second one's subscription stands
+		// Only the first caller fails; the second one's subscription stands
 		await expect(first).rejects.toThrow('connection lost');
 		await expect(second).resolves.toBeUndefined();
 		expect(bus['handlers'].get(mockNamespacedChannel)).toEqual(new Set([later]));
@@ -387,13 +388,13 @@ describe('subscribe', () => {
 	});
 
 	test('Leaves no handler set behind when the Redis SUBSCRIBE fails, so a retry subscribes again', async () => {
-		// 1. A set left in place would send the retry down the "already subscribed" branch and never ask Redis again
+		// A set left in place would send the retry down the "already subscribed" branch and never ask Redis again
 		vi.mocked(bus['sub'].subscribe).mockRejectedValueOnce(new Error('connection lost'));
 
 		await expect(bus.subscribe(mockChannel, mockHandler)).rejects.toThrow('connection lost');
 		expect(bus['handlers'].get(mockNamespacedChannel)).toBeUndefined();
 
-		// 2. The retry asks Redis afresh and registers the handler
+		// The retry asks Redis afresh and registers the handler
 		vi.mocked(bus['sub'].subscribe).mockResolvedValueOnce(1);
 		await bus.subscribe(mockChannel, mockHandler);
 
@@ -402,16 +403,16 @@ describe('subscribe', () => {
 	});
 
 	test('Rejects once the bus is closed, without asking Redis', async () => {
-		// 1. The subscribing connection is gone; a handler registered now would never fire
+		// The subscribing connection is gone; a handler registered now would never fire
 		await bus.close();
 
-		await expect(bus.subscribe(mockChannel, mockHandler)).rejects.toThrow('The bus is closed');
+		await expect(bus.subscribe(mockChannel, mockHandler)).rejects.toThrow('the bus is closed');
 		expect(bus['sub'].subscribe).not.toHaveBeenCalled();
 		expect(bus['handlers']).toEqual(new Map());
 	});
 
 	test('Rejects a subscribe whose SUBSCRIBE was on the wire when close() landed, for every caller waiting on it', async () => {
-		// 1. Redis answers the `SUBSCRIBE` only after `close()` ran; ioredis serves the reply before the queued `QUIT`
+		// Redis answers the `SUBSCRIBE` only after `close()` ran; ioredis serves the reply before the queued `QUIT`
 		let resolve!: (count: number) => void;
 
 		vi.mocked(bus['sub'].subscribe).mockReturnValueOnce(
@@ -426,9 +427,9 @@ describe('subscribe', () => {
 		await bus.close();
 		resolve(1);
 
-		// 2. Neither caller is told its handler is in place: the set went with the connection
-		await expect(first).rejects.toThrow('The bus is closed');
-		await expect(second).rejects.toThrow('The bus is closed');
+		// Neither caller is told its handler is in place: the set went with the connection
+		await expect(first).rejects.toThrow('the bus is closed');
+		await expect(second).rejects.toThrow('the bus is closed');
 		expect(bus['handlers']).toEqual(new Map());
 		expect(bus['pending']).toEqual(new Map());
 	});
@@ -436,14 +437,14 @@ describe('subscribe', () => {
 
 describe('unsubscribe', () => {
 	test('Returns early when no handlers exist for channel', async () => {
-		// 1. An unknown channel is not an error, and Redis is not bothered about it
+		// An unknown channel is not an error, and Redis is not bothered about it
 		await bus.unsubscribe(mockNamespacedChannel, mockHandler);
 
 		expect(bus['sub'].unsubscribe).not.toHaveBeenCalled();
 	});
 
 	test('Deletes given callback from local handler set', async () => {
-		// 1. With another subscriber left, Redis keeps delivering the channel
+		// With another subscriber left, Redis keeps delivering the channel
 		const mockHandlerB = vi.fn();
 		const existingSet = new Set([mockHandler, mockHandlerB]);
 		bus['handlers'].set(mockNamespacedChannel, existingSet);
@@ -455,7 +456,7 @@ describe('unsubscribe', () => {
 	});
 
 	test('Deletes set and unsubscribes redis when all handlers are removed', async () => {
-		// 1. The last subscriber takes the channel with it, so the connection stops receiving its messages
+		// The last subscriber takes the channel with it, so the connection stops receiving its messages
 		const existingSet = new Set([mockHandler]);
 		bus['handlers'].set(mockNamespacedChannel, existingSet);
 
@@ -466,12 +467,12 @@ describe('unsubscribe', () => {
 	});
 
 	test('Returns without asking Redis once the bus is closed', async () => {
-		// 1. Cleanup code running after — or racing — the close must not queue an UNSUBSCRIBE on a connection that is
-		//    gone or going: on a never-ready one the command waits in ioredis' offline queue forever and the caller
-		//    hangs on a promise that never settles
+		// Cleanup code running after — or racing — the close must not queue an UNSUBSCRIBE on a connection that is gone
+		// or going: on a never-ready one the command waits in ioredis' offline queue forever and the caller hangs on a
+		// promise that never settles
 		await bus.close();
 
-		// 2. A handler set still present after the close — the state a caller racing the quit can meet
+		// A handler set still present after the close — the state a caller racing the quit can meet
 		bus['handlers'].set(mockNamespacedChannel, new Set([mockHandler]));
 
 		await bus.unsubscribe(mockChannel, mockHandler);
@@ -482,7 +483,7 @@ describe('unsubscribe', () => {
 
 describe('close', () => {
 	test('Quits the subscribing connection only and drops the handlers', async () => {
-		// 1. The publishing client belongs to the caller and stays open; the duplicate and its subscriptions go
+		// The publishing client belongs to the caller and stays open; the duplicate and its subscriptions go
 		mockSubRedis.status = 'ready';
 		bus['handlers'].set(mockNamespacedChannel, new Set([mockHandler]));
 
@@ -495,8 +496,8 @@ describe('close', () => {
 	});
 
 	test('Disconnects the subscribing connection without a QUIT when it never reached ready', async () => {
-		// 1. The duplicate connects lazily on its first SUBSCRIBE; one that never got one — an unreachable Redis —
-		//    must be dropped with `disconnect`, since `quit` would reconnect forever to deliver QUIT and hang the close
+		// The duplicate connects lazily on its first SUBSCRIBE; one that never got one — an unreachable Redis — must be
+		// dropped with `disconnect`, since `quit` would reconnect forever to deliver QUIT and hang the close
 		mockSubRedis.status = 'connecting';
 
 		await bus.close();
@@ -508,7 +509,7 @@ describe('close', () => {
 
 describe('message order', () => {
 	test('Hands messages to the subscribers in the order Redis sent them, even when one needs decompressing', async () => {
-		// 1. A gzipped message decompresses asynchronously; a plain one right behind it must not overtake it
+		// A gzipped message decompresses asynchronously; a plain one right behind it must not overtake it
 		const seen: unknown[] = [];
 		bus['handlers'] = new Map([[mockNamespacedChannel, new Set([(payload: unknown) => void seen.push(payload)])]]);
 
@@ -520,7 +521,7 @@ describe('message order', () => {
 
 		vi.mocked(deserialize).mockReturnValueOnce('first').mockReturnValueOnce('second');
 
-		// 2. Both messages arrive through the listener the constructor registered, back to back
+		// Both messages arrive through the listener the constructor registered, back to back
 		const listener = vi.mocked(mockSubRedis.on).mock.calls.find(([event]) => event === 'messageBuffer')![1] as (
 			channel: Buffer,
 			message: Buffer,
@@ -534,9 +535,9 @@ describe('message order', () => {
 	});
 
 	test('Survives a throwing logger, so a message it cannot report skips no later message', async () => {
-		// 1. An undecodable message is reported through the logger; a logger that throws on that report must neither
-		//    be left as an unhandled rejection nor turn the inbox chain rejected, which would silently skip every
-		//    message after it
+		// An undecodable message is reported through the logger; a logger that throws on that report must neither be
+		// left as an unhandled rejection nor turn the inbox chain rejected, which would silently skip every message
+		// after it
 		const seen: unknown[] = [];
 		bus['handlers'] = new Map([[mockNamespacedChannel, new Set([(payload: unknown) => void seen.push(payload)])]]);
 
@@ -550,7 +551,7 @@ describe('message order', () => {
 			})
 			.mockReturnValueOnce('second');
 
-		// 2. Both messages arrive through the listener the constructor registered, back to back
+		// Both messages arrive through the listener the constructor registered, back to back
 		const listener = vi.mocked(mockSubRedis.on).mock.calls.find(([event]) => event === 'messageBuffer')![1] as (
 			channel: Buffer,
 			message: Buffer,
@@ -559,7 +560,7 @@ describe('message order', () => {
 		listener(mockNamespacedChannelBuffer, mockBuffer);
 		listener(mockNamespacedChannelBuffer, mockBuffer);
 
-		// 3. The inbox settles and the second message still reached its subscriber
+		// The inbox settles and the second message still reached its subscriber
 		await expect(bus['inbox']).resolves.toBeUndefined();
 		expect(seen).toStrictEqual(['second']);
 	});
@@ -567,7 +568,7 @@ describe('message order', () => {
 
 describe('#messageBufferHandler', () => {
 	test('Returns early if no handlers are registered for channel', async () => {
-		// 1. A message for a channel nobody subscribed to is not even decoded
+		// A message for a channel nobody subscribed to is not even decoded
 		bus['handlers'] = new Map();
 
 		await bus['messageBufferHandler'](mockNamespacedChannelBuffer, mockBuffer);
@@ -576,7 +577,7 @@ describe('#messageBufferHandler', () => {
 	});
 
 	test('Calls all registered handlers for channel with deserialized message', async () => {
-		// 1. The handler receives the decoded value, not the bytes
+		// The handler receives the decoded value, not the bytes
 		bus['handlers'] = new Map([[mockNamespacedChannel, new Set([mockHandler])]]);
 
 		await bus['messageBufferHandler'](mockNamespacedChannelBuffer, mockBuffer);
@@ -585,9 +586,9 @@ describe('#messageBufferHandler', () => {
 	});
 
 	test('Decompresses a compressed payload even when compression is disabled here', async () => {
-		// 1. Compression is decided per payload on publish, so the header alone decides: a payload gzipped by a
-		//    publisher with compression on must reach the subscribers of a bus with compression off, not be dropped as
-		//    unreadable. The mocked header says gzipped
+		// Compression is decided per payload on publish, so the header alone decides: a payload gzipped by a publisher
+		// with compression on must reach the subscribers of a bus with compression off, not be dropped as unreadable.
+		// The mocked header says gzipped
 		bus = new BusDriverRedis({
 			redis: mockRedis,
 			namespace: 'test-namespace',
@@ -604,7 +605,7 @@ describe('#messageBufferHandler', () => {
 	});
 
 	test('Decompresses binary if value is compressed and compression is enabled', async () => {
-		// 1. Compression is decided per message on publish, so it is detected from the bytes, not from the config alone
+		// Compression is decided per message on publish, so it is detected from the bytes, not from the config alone
 		bus = new BusDriverRedis({
 			redis: mockRedis,
 			namespace: 'test-namespace',
@@ -620,8 +621,8 @@ describe('#messageBufferHandler', () => {
 	});
 
 	test('Logs a message it cannot decode instead of rejecting, and calls no handler', async () => {
-		// 1. A foreign client publishing plain text on the channel, or a truncated gzip: the listener is fire-and-forget,
-		//    so a rejection here would be unhandled and end the process
+		// A foreign client publishing plain text on the channel, or a truncated gzip: the listener is fire-and-forget,
+		// so a rejection here would be unhandled and end the process
 		bus['handlers'] = new Map([[mockNamespacedChannel, new Set([mockHandler])]]);
 
 		vi.mocked(deserialize).mockImplementationOnce(() => {
@@ -630,7 +631,7 @@ describe('#messageBufferHandler', () => {
 
 		await expect(bus['messageBufferHandler'](mockNamespacedChannelBuffer, mockBuffer)).resolves.toBeUndefined();
 
-		// 2. The failure is reported as unreadable, not as a subscriber's fault
+		// The failure is reported as unreadable, not as a subscriber's fault
 		expect(mockHandler).not.toHaveBeenCalled();
 		expect(reportUnreadable).toHaveBeenCalledWith(mockNamespacedChannel, expect.any(SyntaxError));
 	});

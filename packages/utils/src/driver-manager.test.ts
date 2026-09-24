@@ -6,12 +6,12 @@ import { DriverManager, mergeCallOptions } from './driver-manager.js';
 
 describe('#registerDriver', () => {
 	test('Saves registered drivers locally', () => {
-		// 1. A bare mock stands in for a driver class: registration only stores it and never instantiates it
+		// A bare mock stands in for a driver class: registration only stores it and never instantiates it
 		const manager = new DriverManager();
 		const mockDriver = vi.fn();
 		manager.registerDriver('test-driver', mockDriver);
 
-		// 2. Inspect the private map directly, since the public API offers no way to list drivers
+		// Inspect the private map directly, since the public API offers no way to list drivers
 		expect(manager['drivers'].size).toBe(1);
 		expect(manager['drivers'].get('test-driver')).toBe(mockDriver);
 		expect(mockDriver).not.toHaveBeenCalled();
@@ -20,7 +20,7 @@ describe('#registerDriver', () => {
 
 describe('#registerLocation', () => {
 	test('Throws error when registering location with missing driver', () => {
-		// 1. The driver name is checked at registration, so a typo in a location config fails at startup, not on first use
+		// The driver name is checked at registration, so a typo in a location config fails at startup, not on first use
 		const manager = new DriverManager();
 
 		expect(() =>
@@ -28,11 +28,13 @@ describe('#registerLocation', () => {
 				driver: 's3',
 				options: {},
 			}),
-		).toThrowErrorMatchingInlineSnapshot(`[Error: Driver "s3" isn't registered.]`);
+		).toThrowErrorMatchingInlineSnapshot(
+			`[NovastarterError: Invalid config. The "s3" driver isn't registered; call registerDriver() with it before a location uses it.]`,
+		);
 	});
 
 	test('Keeps the configuration without instantiating the driver', () => {
-		// 1. Registration is lazy: the registry knows the name, but the driver is built on first use, not here
+		// Registration is lazy: the registry knows the name, but the driver is built on first use, not here
 		const mockDriver = vi.fn();
 		const manager = new DriverManager();
 
@@ -45,7 +47,7 @@ describe('#registerLocation', () => {
 			},
 		});
 
-		// 2. The public accessors see the location while the instance map stays empty
+		// The public accessors see the location while the instance map stays empty
 		expect(mockDriver).not.toHaveBeenCalled();
 		expect(manager.hasLocation('test-location')).toBe(true);
 		expect(manager.locationNames()).toEqual(['test-location']);
@@ -53,7 +55,7 @@ describe('#registerLocation', () => {
 	});
 
 	test('Drops the instance of a location registered again', () => {
-		// 1. Build an instance from the first registration, so there is something the second one has to replace
+		// Build an instance from the first registration, so there is something the second one has to replace
 		const mockDriver = vi.fn();
 		const manager = new DriverManager();
 
@@ -68,7 +70,7 @@ describe('#registerLocation', () => {
 
 		const first = manager.location('test-location');
 
-		// 2. Re-registering replaces the configuration, so the next use builds afresh from the new options
+		// Re-registering replaces the configuration, so the next use builds afresh from the new options
 		manager.registerLocation('test-location', {
 			driver: 'test-driver',
 			options: {
@@ -83,16 +85,16 @@ describe('#registerLocation', () => {
 
 describe('#location', () => {
 	test('Throws error when the location does not exist', () => {
-		// 1. A missing name is a configuration bug and is reported as such rather than answered with `undefined`
+		// A missing name is a configuration bug and is reported as such rather than answered with `undefined`
 		const manager = new DriverManager();
 
 		expect(() => manager.location('test-location')).toThrowErrorMatchingInlineSnapshot(
-			`[Error: Location "test-location" doesn't exist.]`,
+			`[NovastarterError: Invalid config. Location "test-location" doesn't exist; register it with registerLocation() before using it.]`,
 		);
 	});
 
 	test('Instantiates the driver with the options alone on first use, then reuses it', () => {
-		// 1. The first `location()` call is what builds: the constructor receives the options object and nothing else
+		// The first `location()` call is what builds: the constructor receives the options object and nothing else
 		const mockDriver = vi.fn();
 		const manager = new DriverManager();
 
@@ -107,7 +109,7 @@ describe('#location', () => {
 
 		const first = manager.location('test-location');
 
-		// 2. Every later call answers with the same instance without building again
+		// Every later call answers with the same instance without building again
 		expect(mockDriver).toHaveBeenCalledOnce();
 		expect(mockDriver).toHaveBeenCalledWith({ foo: 'bar' });
 		expect(first).toBe(mockDriver.mock.instances[0]);
@@ -131,7 +133,7 @@ describe('location call defaults', () => {
 		 * @returns What the driver got.
 		 */
 		async call(method: string, params?: Record<string, unknown>, options?: unknown): Promise<unknown> {
-			// 1. Echoed, so the assertions read the merge
+			// Echoed, so the assertions read the merge
 			return { method, params, options };
 		}
 	}
@@ -147,7 +149,7 @@ describe('location call defaults', () => {
 			call: { headers: { 'X-Api-Version': '2024-01-01' }, timeout: 5_000 },
 		});
 
-		// 1. The call's header joins the location's; its timeout wins; the method and params go through untouched
+		// The call's header joins the location's; its timeout wins; the method and params go through untouched
 		await expect(
 			manager.location('api').call('GET /x', { a: 1 }, { headers: { 'x-trace': 't' }, timeout: 100 }),
 		).resolves.toStrictEqual({
@@ -156,7 +158,6 @@ describe('location call defaults', () => {
 			options: { headers: { 'x-api-version': '2024-01-01', 'x-trace': 't' }, timeout: 100 },
 		});
 
-		// 2. The instance is still the driver's own class
 		expect(manager.location('api')).toBeInstanceOf(CallingDriver);
 	});
 
@@ -168,20 +169,20 @@ describe('location call defaults', () => {
 		manager.registerLocation('bare', { driver: 'calling', options: {} });
 		manager.registerLocation('plain', { driver: 'plain', options: {}, call: { timeout: 1 } });
 
-		// 1. No defaults: the prototype's own `call`, options passed as they are
+		// No defaults: the prototype's own `call`, options passed as they are
 		const bare = manager.location('bare') as CallingDriver;
 
 		expect(Object.hasOwn(bare, 'call')).toBe(false);
 		await expect(bare.call('GET /x')).resolves.toMatchObject({ options: undefined });
 
-		// 2. No `call()` to wrap: nothing added
+		// No `call()` to wrap: nothing added
 		expect('call' in manager.location('plain')).toBe(false);
 	});
 });
 
 describe('#close', () => {
 	test('Closes the drivers built so far that have a close(), and leaves the rest alone', async () => {
-		// 1. Two driver classes: one holding connections, with a `close()`, one without — both are valid drivers
+		// Two driver classes: one holding connections, with a `close()`, one without — both are valid drivers
 		const built = vi.fn();
 		const closed = vi.fn();
 
@@ -193,7 +194,7 @@ describe('#close', () => {
 			 * Record the construction, so the test can tell a rebuilt location from a reused one.
 			 */
 			constructor() {
-				// 1. A shared spy rather than a field: the manager owns the instances, the test only sees the counts
+				// A shared spy rather than a field: the manager owns the instances, the test only sees the counts
 				built();
 			}
 
@@ -203,7 +204,7 @@ describe('#close', () => {
 			 * @returns Once the shutdown is recorded.
 			 */
 			async close(): Promise<void> {
-				// 1. The same spy pattern as the constructor, so a close on a never-built location would show up as a call
+				// The same spy pattern as the constructor, so a close on a never-built location would show up as a call
 				closed();
 			}
 		}
@@ -217,7 +218,7 @@ describe('#close', () => {
 		manager.registerLocation('b', { driver: 'plain', options: {} });
 		manager.registerLocation('never-used', { driver: 'closable', options: {} });
 
-		// 2. Only `a` and `b` are built; `never-used` has no instance and must not be built just to be closed
+		// Only `a` and `b` are built; `never-used` has no instance and must not be built just to be closed
 		manager.location('a');
 		manager.location('b');
 
@@ -226,7 +227,7 @@ describe('#close', () => {
 		expect(closed).toHaveBeenCalledOnce();
 		expect(built).toHaveBeenCalledOnce();
 
-		// 3. The registrations survive, the instances do not: the next use builds afresh
+		// The registrations survive, the instances do not: the next use builds afresh
 		expect(manager.locationNames()).toEqual(['a', 'b', 'never-used']);
 		expect(manager.instantiated().size).toBe(0);
 		manager.location('a');
@@ -236,7 +237,7 @@ describe('#close', () => {
 
 describe('mergeCallOptions', () => {
 	test('Puts the call’s headers over the location’s, case-insensitively, and prefers the call’s timeout', () => {
-		// 1. Both set: the call wins where they overlap, other options pass through
+		// Both set: the call wins where they overlap, other options pass through
 		expect(
 			mergeCallOptions(
 				{ headers: { 'X-Version': '1', 'Content-Type': 'application/json' }, timeout: 5_000 },
@@ -248,10 +249,8 @@ describe('mergeCallOptions', () => {
 			accessToken: 't',
 		});
 
-		// 2. Only the location's
 		expect(mergeCallOptions({ timeout: 5_000 }, undefined)).toStrictEqual({ timeout: 5_000 });
 
-		// 3. No defaults: the call's options as they are
 		const options = { timeout: 1 };
 
 		expect(mergeCallOptions(undefined, options)).toBe(options);

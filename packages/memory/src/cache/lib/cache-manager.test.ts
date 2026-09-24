@@ -16,10 +16,10 @@ describe('CacheManager', () => {
 	test('Registers the built-in drivers on construction and builds a location on first use', () => {
 		const manager = new CacheManager();
 
-		// 1. The built-ins are known without any registration by the application
+		// The built-ins are known without any registration by the application
 		expect([...manager['drivers'].keys()]).toStrictEqual(['local', 'redis', 'multi']);
 
-		// 2. Registering a location keeps the configuration only; the first `location()` builds the driver
+		// Registering a location keeps the configuration only; the first `location()` builds the driver
 		manager.registerLocation('default', {
 			driver: 'local',
 			options: {},
@@ -34,7 +34,8 @@ describe('CacheManager', () => {
 		const manager = new CacheManager();
 		const mockDriver = vi.fn();
 
-		// 1. A bare mock stands in for a driver class of the application, recording how the manager calls `new Driver(...)`
+		// A bare mock stands in for a driver class of the application, recording how the manager calls `new
+		// Driver(...)`
 		manager.registerDriver('test-driver', mockDriver);
 
 		manager.registerLocation('main', {
@@ -52,12 +53,14 @@ describe('CacheManager', () => {
 	test('Refuses a location whose driver is not registered', () => {
 		const manager = new CacheManager();
 
-		// 1. The lookup by name fails at registration, before any instantiation happens
+		// The lookup by name fails at registration, before any instantiation happens
 		expect(() =>
 			manager.registerLocation('main', {
 				driver: 'missing' as 'local',
 				options: {},
 			}),
-		).toThrowErrorMatchingInlineSnapshot(`[Error: Driver "missing" isn't registered.]`);
+		).toThrowErrorMatchingInlineSnapshot(
+			`[NovastarterError: Invalid config. The "missing" driver isn't registered; call registerDriver() with it before a location uses it.]`,
+		);
 	});
 });

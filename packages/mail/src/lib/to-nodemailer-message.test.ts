@@ -6,7 +6,7 @@ import { toNodemailerAddress, toNodemailerMessage } from './to-nodemailer-messag
 
 describe('toNodemailerAddress', () => {
 	test('Hands both address shapes on untouched', () => {
-		// 1. nodemailer formats and encodes both itself; quoting a name here would be quoted twice
+		// nodemailer formats and encodes both itself; quoting a name here would be quoted twice
 		const named = { name: 'Ada', address: 'ada@example.com' };
 
 		expect(toNodemailerAddress('ada@example.com')).toBe('ada@example.com');
@@ -16,13 +16,11 @@ describe('toNodemailerAddress', () => {
 
 describe('toNodemailerMessage', () => {
 	test('Sets only the fields the message carries', () => {
-		// 1. The minimum: recipients and subject, `to` keeping its shape; nothing else is set, not even as `undefined`
 		expect(toNodemailerMessage({ to: 'ada@example.com', subject: 'Hi' })).toStrictEqual({
 			to: 'ada@example.com',
 			subject: 'Hi',
 		});
 
-		// 2. Every field given: each one lands under nodemailer's name; `category` and `tags` have no place there
 		expect(
 			toNodemailerMessage({
 				to: ['ada@example.com', { name: 'Bob', address: 'bob@example.com' }],
@@ -49,12 +47,11 @@ describe('toNodemailerMessage', () => {
 			headers: { 'X-Campaign': 'welcome' },
 		});
 
-		// 3. An empty string body is a body, not an absence
 		expect(toNodemailerMessage({ to: 'ada@example.com', subject: 'Hi', text: '' })).toMatchObject({ text: '' });
 	});
 
 	test('Keeps attachments by content or by path, without undefined keys', () => {
-		// 1. `path` stays a path: nodemailer reads the file itself when it builds the message
+		// `path` stays a path: nodemailer reads the file itself when it builds the message
 		expect(
 			toNodemailerMessage({
 				to: 'ada@example.com',

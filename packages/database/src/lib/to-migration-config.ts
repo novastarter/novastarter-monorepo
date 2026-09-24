@@ -1,3 +1,4 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import type { MigrateOptions } from '../types.js';
 
 /**
@@ -23,21 +24,21 @@ export type MigrationConfig = {
  *
  * @param options - The caller's options.
  * @returns The migrator's config, without undefined keys.
- * @throws Error when `migrationsFolder` is missing.
+ * @throws InvalidConfigError when `migrationsFolder` is missing.
  * @example
  * ```ts
  * await migrate(this.db, toMigrationConfig(options));
  * ```
  */
 export const toMigrationConfig = (options: MigrateOptions): MigrationConfig => {
-	// 1. Refuse a missing folder up front: Drizzle would fail on reading `undefined/meta/_journal.json`
+	// Drizzle would otherwise fail on reading `undefined/meta/_journal.json`
 	if (!options.migrationsFolder) {
-		throw new Error('DatabaseDriver.migrate needs a "migrationsFolder"');
+		throw new InvalidConfigError({ reason: 'DatabaseDriver.migrate needs a "migrationsFolder"' });
 	}
 
 	const config: MigrationConfig = { migrationsFolder: options.migrationsFolder };
 
-	// 2. The journal location is copied only when given, so Drizzle falls back to its own defaults otherwise
+	// Copied only when given, so Drizzle falls back to its own defaults otherwise
 	if (options.migrationsTable !== undefined) {
 		config.migrationsTable = options.migrationsTable;
 	}

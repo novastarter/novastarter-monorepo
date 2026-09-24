@@ -6,7 +6,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { dispatch, reportUnreadable } from './dispatch.js';
 
 vi.mock('@novastarter/logger', () => {
-	// 1. One logger object for the whole file, so the assertions can read the calls `dispatch` made on it
+	// One logger object for the whole file, so the assertions can read the calls `dispatch` made on it
 	const logger = { warn: vi.fn() };
 
 	return { useLogger: () => logger };
@@ -17,13 +17,13 @@ afterEach(() => {
 });
 
 test('Does nothing without handlers', () => {
-	// 1. A channel nobody subscribed to: no call, no log line
+	// A channel nobody subscribed to: no call, no log line
 	expect(() => dispatch('channel', undefined, 'payload')).not.toThrow();
 	expect(useLogger().warn).not.toHaveBeenCalled();
 });
 
 test('Calls every handler with the payload, even after one throws', () => {
-	// 1. The first handler throws synchronously; the second one must still run
+	// The first handler throws synchronously; the second one must still run
 	const failing = vi.fn(() => {
 		throw new Error('boom');
 	});
@@ -32,7 +32,7 @@ test('Calls every handler with the payload, even after one throws', () => {
 
 	dispatch('channel', new Set([failing, fine]), { a: 1 });
 
-	// 2. The failure is a log line, not an exception of the caller
+	// The failure is a log line, not an exception of the caller
 	expect(fine).toHaveBeenCalledWith({ a: 1 });
 
 	expect(useLogger().warn).toHaveBeenCalledWith(
@@ -42,10 +42,10 @@ test('Calls every handler with the payload, even after one throws', () => {
 });
 
 test('Logs an async rejection instead of leaving it unhandled, wrapping a thrown string', async () => {
-	// 1. A rejection with a bare string: nobody awaits a subscriber, so it is caught here or nowhere
+	// A rejection with a bare string: nobody awaits a subscriber, so it is caught here or nowhere
 	dispatch('channel', [async () => Promise.reject('nope')], 'payload');
 
-	// 2. `toError` wraps the string so the log line still carries an `Error`
+	// `toError` wraps the string so the log line still carries an `Error`
 	await vi.waitFor(() =>
 		expect(useLogger().warn).toHaveBeenCalledWith(
 			expect.objectContaining({ message: 'nope', cause: 'nope' }),
@@ -55,8 +55,8 @@ test('Logs an async rejection instead of leaving it unhandled, wrapping a thrown
 });
 
 test('Logs a subscriber that keeps failing once, and again only after it recovered', async () => {
-	// 1. Two failures in a row: one line. The log may itself travel over the bus, so a `logs` subscriber that throws
-	//    on every message must not be able to feed itself a message per failure
+	// Two failures in a row: one line. The log may itself travel over the bus, so a `logs` subscriber that throws on
+	// every message must not be able to feed itself a message per failure
 	let fail = true;
 
 	const flaky = vi.fn(() => {
@@ -68,7 +68,7 @@ test('Logs a subscriber that keeps failing once, and again only after it recover
 	await vi.waitFor(() => expect(flaky).toHaveBeenCalledTimes(2));
 	expect(useLogger().warn).toHaveBeenCalledTimes(1);
 
-	// 2. A success clears the record, so the next failure is news again
+	// A success clears the record, so the next failure is news again
 	fail = false;
 	dispatch('logs', [flaky], 'c');
 	await vi.waitFor(() => expect(flaky).toHaveBeenCalledTimes(3));
@@ -79,7 +79,7 @@ test('Logs a subscriber that keeps failing once, and again only after it recover
 });
 
 test('Tracks failures per subscriber and per channel', async () => {
-	// 1. Two subscribers failing on one channel: a line each
+	// Two subscribers failing on one channel: a line each
 	const a = vi.fn(() => {
 		throw new Error('a');
 	});
@@ -91,7 +91,7 @@ test('Tracks failures per subscriber and per channel', async () => {
 	dispatch('channel', [a, b], 'payload');
 	await vi.waitFor(() => expect(useLogger().warn).toHaveBeenCalledTimes(2));
 
-	// 2. The same subscriber failing on another channel is news for that channel, but not again on the first
+	// The same subscriber failing on another channel is news for that channel, but not again on the first
 	dispatch('other', [a], 'payload');
 	dispatch('channel', [a], 'payload');
 	await vi.waitFor(() => expect(a).toHaveBeenCalledTimes(3));
@@ -100,8 +100,8 @@ test('Tracks failures per subscriber and per channel', async () => {
 });
 
 test('Fans out over a snapshot, so a handler added during delivery does not receive the current message', () => {
-	// 1. The drivers hand in their live `Set`; a handler that subscribes another one from inside adds to it while it
-	//    is being walked, and a `Set` visits entries added during iteration
+	// The drivers hand in their live `Set`; a handler that subscribes another one from inside adds to it while it is
+	// being walked, and a `Set` visits entries added during iteration
 	const handlers = new Set<() => void>();
 	const late = vi.fn();
 
@@ -112,15 +112,15 @@ test('Fans out over a snapshot, so a handler added during delivery does not rece
 	handlers.add(early);
 	dispatch('channel', handlers, 'payload');
 
-	// 2. The newcomer is in the set for the next message, but was not called for this one
+	// The newcomer is in the set for the next message, but was not called for this one
 	expect(early).toHaveBeenCalledOnce();
 	expect(late).not.toHaveBeenCalled();
 	expect(handlers.has(late)).toBe(true);
 });
 
 test('Calls a handler that removes and re-adds itself once, not without end', () => {
-	// 1. Deleting and re-adding an entry during iteration makes a `Set` visit it again, so a handler re-arming itself
-	//    would be called for the same message for ever; the guard turns that into a failed assertion instead of a hang
+	// Deleting and re-adding an entry during iteration makes a `Set` visit it again, so a handler re-arming itself
+	// would be called for the same message for ever; the guard turns that into a failed assertion instead of a hang
 	const handlers = new Set<() => void>();
 
 	const rearming = vi.fn(() => {
@@ -140,7 +140,7 @@ test('Calls a handler that removes and re-adds itself once, not without end', ()
 });
 
 test('reportUnreadable logs every unreadable message', () => {
-	// 1. Not a subscriber's fault, so the once-per-failure rule does not apply: two messages, two lines
+	// Not a subscriber's fault, so the once-per-failure rule does not apply: two messages, two lines
 	reportUnreadable('channel', new Error('not gzip'));
 	reportUnreadable('channel', new Error('not gzip'));
 

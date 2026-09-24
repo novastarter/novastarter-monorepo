@@ -11,7 +11,10 @@
 		],
 		"Stop": [
 			{
-				"hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/changeset.mjs" }]
+				"hooks": [
+					{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/changeset.mjs" },
+					{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/typecheck.mjs", "timeout": 600 }
+				]
 			}
 		]
 	}

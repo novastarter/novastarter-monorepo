@@ -23,11 +23,11 @@ const TURSO_AUTH_TOKEN = process.env['TURSO_AUTH_TOKEN'];
  * @returns The folder; the caller removes it.
  */
 const writeMigrations = async (table: string): Promise<string> => {
-	// 1. A fresh folder per suite, so two suites of this file cannot share a journal
+	// A fresh folder per suite, so two suites of this file cannot share a journal
 	const folder = await mkdtemp(join(tmpdir(), 'novastarter-migrations-'));
 	await mkdir(join(folder, 'meta'));
 
-	// 2. The journal is what the migrator reads to find what to apply: one entry tagging the migration below
+	// The migrator reads the journal to find what to apply
 	await writeFile(
 		join(folder, 'meta', '_journal.json'),
 		JSON.stringify({
@@ -37,7 +37,7 @@ const writeMigrations = async (table: string): Promise<string> => {
 		}),
 	);
 
-	// 3. The migration itself: a probe table nothing reads — the migrator running it and journaling it is the point
+	// A probe table nothing reads: the migrator running it and journaling it is the point
 	await writeFile(
 		join(folder, '0000_init.sql'),
 		`CREATE TABLE \`${table}\` (\`id\` integer PRIMARY KEY AUTOINCREMENT NOT NULL);`,
@@ -58,8 +58,8 @@ describe('DatabaseDriverTurso on a local file', () => {
 		root = await mkdtemp(join(tmpdir(), 'novastarter-turso-'));
 		driver = new DatabaseDriverTurso({ connection: `file:${join(root, 'nested', 'app.db')}`, logger: logger as never });
 
-		// 1. The fixture table the transaction and batch below write is made here, not by the migration: every test
-		//    must pass run alone, under `vitest -t` as well as whole-file
+		// The fixture table the transaction and batch below write is made here, not by the migration: every test
+		// must pass run alone, under `vitest -t` as well as whole-file
 		await driver.db.run(
 			sql`CREATE TABLE IF NOT EXISTS notes ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "text" text NOT NULL)`,
 		);
@@ -68,8 +68,8 @@ describe('DatabaseDriverTurso on a local file', () => {
 	});
 
 	afterAll(async () => {
-		// 1. A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
-		//    real failure stays the one reported
+		// A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
+		// real failure stays the one reported
 		if (driver) {
 			await driver.close();
 		}
@@ -95,7 +95,7 @@ describe('DatabaseDriverTurso on a local file', () => {
 	});
 
 	test('A transaction rolls back on failure', async () => {
-		// 1. The insert inside a failing transaction must not survive it
+		// The insert inside a failing transaction must not survive it
 		await expect(
 			driver.db.transaction(async (tx) => {
 				await tx.run(sql`INSERT INTO notes (text) VALUES ('rolled back')`);
@@ -130,8 +130,8 @@ describe('DatabaseDriverTurso in memory', () => {
 	beforeAll(async () => {
 		driver = new DatabaseDriverTurso({ connection: MEMORY_URL, logger: logger as never });
 
-		// 1. The fixture table the test below writes is made here, not by the migration: the test must pass run alone,
-		//    under `vitest -t` as well as whole-file
+		// The fixture table the test below writes is made here, not by the migration: the test must pass run alone,
+		// under `vitest -t` as well as whole-file
 		await driver.db.run(
 			sql`CREATE TABLE IF NOT EXISTS notes ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "text" text NOT NULL)`,
 		);
@@ -140,8 +140,8 @@ describe('DatabaseDriverTurso in memory', () => {
 	});
 
 	afterAll(async () => {
-		// 1. A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
-		//    real failure stays the one reported
+		// A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
+		// real failure stays the one reported
 		if (driver) {
 			await driver.close();
 		}
@@ -175,8 +175,8 @@ describe.skipIf(!TURSO_DATABASE_URL || !TURSO_AUTH_TOKEN)('DatabaseDriverTurso o
 			logger: logger as never,
 		});
 
-		// 1. The fixture table the transaction and batch below write is made here, not by the migration: every test
-		//    must pass run alone, under `vitest -t` as well as whole-file
+		// The fixture table the transaction and batch below write is made here, not by the migration: every test
+		// must pass run alone, under `vitest -t` as well as whole-file
 		await driver.db.run(
 			sql.raw(
 				`CREATE TABLE IF NOT EXISTS \`${table}\` (\`id\` integer PRIMARY KEY AUTOINCREMENT NOT NULL, \`text\` text NOT NULL)`,
@@ -187,10 +187,10 @@ describe.skipIf(!TURSO_DATABASE_URL || !TURSO_AUTH_TOKEN)('DatabaseDriverTurso o
 	});
 
 	afterAll(async () => {
-		// 1. A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
-		//    real failure stays the one reported
+		// A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
+		// real failure stays the one reported
 		if (driver) {
-			// 2. The pid-scoped tables go, so two runs on the same database never meet each other's fixtures
+			// The pid-scoped tables go, so two runs on the same database never meet each other's fixtures
 			await driver.db.run(sql.raw(`DROP TABLE IF EXISTS \`${table}\``));
 			await driver.db.run(sql.raw(`DROP TABLE IF EXISTS \`${probeTable}\``));
 			await driver.db.run(sql.raw(`DROP TABLE IF EXISTS \`${migrationsTable}\``));

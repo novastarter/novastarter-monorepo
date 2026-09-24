@@ -16,7 +16,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
  * ```
  */
 export const hashToken = (token: string): string => {
-	// 1. base64url, like the tokens themselves, so the hash is a plain key on every backend
+	// base64url, like the tokens themselves, so the hash is a plain key on every backend
 	return createHash('sha256').update(token, 'utf8').digest('base64url');
 };
 
@@ -29,8 +29,8 @@ export const hashToken = (token: string): string => {
  * @internal
  */
 export const safeEqual = (left: string, right: string): boolean => {
-	// 1. `timingSafeEqual` refuses buffers of different lengths; comparing their hashes keeps the lengths equal and the
-	//    time constant, where an early length check would tell an attacker the length
+	// `timingSafeEqual` refuses buffers of different lengths; comparing their hashes keeps the lengths equal and the
+	// time constant, where an early length check would tell an attacker the length
 	const a = createHash('sha256').update(left, 'utf8').digest();
 	const b = createHash('sha256').update(right, 'utf8').digest();
 

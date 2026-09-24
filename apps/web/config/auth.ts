@@ -1,4 +1,5 @@
 import type { AuthDrivers, AuthSettings } from '@novastarter/auth';
+import { InvalidConfigError } from '@novastarter/errors';
 import type { LimiterDrivers } from '@novastarter/memory';
 import type { LocationConfig } from '@novastarter/utils';
 import type { Redis } from 'ioredis';
@@ -64,21 +65,22 @@ export interface AuthConfigDeps {
  * @param env - The app's variables.
  * @param deps - The Redis client.
  * @returns The configuration to register.
- * @throws Error in production without `AUTH_JWT_SECRET`, `AUTH_MFA_ENCRYPTION_KEY` or `AUTH_OAUTH_SECRET`: the
+ * @throws InvalidConfigError in production without `AUTH_JWT_SECRET`, `AUTH_MFA_ENCRYPTION_KEY` or `AUTH_OAUTH_SECRET`: the
  * development values are public.
  */
 export const authConfig = (env: AppEnv, deps: AuthConfigDeps): AuthConfig => {
-	// 1. Production must bring its own secrets; elsewhere the public development ones keep a fresh clone running
+	// Production must bring its own secrets; elsewhere the public development ones keep a fresh clone running
 	if (
 		env.NODE_ENV === 'production' &&
 		(!env.AUTH_JWT_SECRET || !env.AUTH_MFA_ENCRYPTION_KEY || !env.AUTH_OAUTH_SECRET)
 	) {
-		throw new Error(
-			'AUTH_JWT_SECRET, AUTH_MFA_ENCRYPTION_KEY and AUTH_OAUTH_SECRET are required in production: the development values are public',
-		);
+		throw new InvalidConfigError({
+			reason:
+				'AUTH_JWT_SECRET, AUTH_MFA_ENCRYPTION_KEY and AUTH_OAUTH_SECRET are required in production: the development values are public, set your own',
+		});
 	}
 
-	// 2. Every secret falls back to its public development value, which step 1 keeps out of production
+	// The public development values never reach production: the check above refuses to boot without real secrets.
 	return {
 		providers: providers(env),
 		limiters: limiters(deps.redis),
@@ -98,12 +100,12 @@ export const authConfig = (env: AppEnv, deps: AuthConfigDeps): AuthConfig => {
  * @internal
  */
 const providers = (env: AppEnv): Record<string, LocationConfig<AuthDrivers>> => {
-	// 1. Credentials always: the app's own accounts, by email and password
+	// Credentials always: the app's own accounts, by email and password
 	const locations: Record<string, LocationConfig<AuthDrivers>> = {
 		credentials: { driver: 'credentials', options: { findUser, onRehash: saveRehash } },
 	};
 
-	// 2. Each provider only with its complete set of keys; half a set would fail on the first sign-in instead of here
+	// Each provider only with its complete set of keys; half a set would fail on the first sign-in instead of here
 	if (env.AUTH_GOOGLE_CLIENT_ID && env.AUTH_GOOGLE_CLIENT_SECRET) {
 		locations['google'] = {
 			driver: 'google',
@@ -129,14 +131,14 @@ const providers = (env: AppEnv): Record<string, LocationConfig<AuthDrivers>> => 
  * @internal
  */
 const limiters = (redis: Redis | undefined): Record<AuthLimiterName, LocationConfig<LimiterDrivers>> => {
-	// 1. Points per duration in seconds, per key: an account, a user, a user and purpose
+	// Points per duration in seconds, per key: an account, a user, a user and purpose
 	const budgets: Record<AuthLimiterName, { points: number; duration: number }> = {
 		'auth-sign-in': { points: 10, duration: 15 * 60 },
 		'auth-mfa': { points: 5, duration: 5 * 60 },
 		'auth-code': { points: 5, duration: 10 * 60 },
 	};
 
-	// 2. On the shared server when there is one, so a guesser gains nothing by hitting another process
+	// On the shared server when there is one, so a guesser gains nothing by hitting another process
 	return Object.fromEntries(
 		Object.entries(budgets).map(([name, budget]) => [
 			name,

@@ -1,4 +1,4 @@
 /**
  * The built-in SMS driver: `console`, for development.
  */
-export * from './console.js';
+export { SmsDriverConsole, type SmsDriverConsoleConfig } from './console.js';

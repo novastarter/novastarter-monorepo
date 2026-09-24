@@ -1,3 +1,5 @@
+import { InvalidPayloadError } from '@novastarter/errors';
+
 /**
  * The HTTP verbs a `call()` accepts in its `method`.
  *
@@ -51,8 +53,8 @@ export interface ParsedCallMethod {
  * @param method - The verb and the path or URL, separated by whitespace.
  * @param params - The parameters of the call; the ones a placeholder takes are removed from the result's.
  * @returns The verb, the target and the parameters left.
- * @throws Error when the verb is not one of {@link CALL_VERBS}, the target is neither a path nor a URL, or a
- * placeholder's parameter is not a scalar, or is empty, `.` or `..`.
+ * @throws Error when the verb is not one of {@link CALL_VERBS} or the target is neither a path nor a URL.
+ * @throws InvalidPayloadError when a placeholder's parameter is not a scalar, or is empty, `.` or `..`.
  * @example
  * ```ts
  * parseCallMethod('get /repos/{owner}/{repo}/issues', { owner: 'acme', repo: 'web', state: 'open' });
@@ -60,24 +62,26 @@ export interface ParsedCallMethod {
  * ```
  */
 export const parseCallMethod = (method: string, params: Record<string, unknown> = {}): ParsedCallMethod => {
-	// 1. Two parts: a verb and a target, whatever whitespace between them
+	// Two parts: a verb and a target, whatever whitespace between them
 	const match = /^\s*([A-Za-z]+)\s+(\S+)\s*$/.exec(method);
 	const verb = match?.[1]?.toUpperCase();
 	const raw = match?.[2];
 
 	if (!verb || !raw || !(CALL_VERBS as readonly string[]).includes(verb)) {
-		throw new Error(`The call method "${method}" is not "<${CALL_VERBS.join('|')}> /path"`);
+		throw new Error(`@novastarter/http: the call method "${method}" is not "<${CALL_VERBS.join('|')}> /path"`);
 	}
 
-	// 2. A path from the root or a full URL; anything else — `customers`, `//host` — is ambiguous
+	// A path from the root or a full URL; anything else — `customers`, `//host` — is ambiguous
 	if (!/^\/(?!\/)/.test(raw) && !/^https?:\/\//i.test(raw)) {
-		throw new Error(`The call target "${raw}" is neither a path starting with "/" nor an http(s) URL`);
+		throw new Error(
+			`@novastarter/http: the call target "${raw}" is neither a path starting with "/" nor an http(s) URL`,
+		);
 	}
 
-	// 3. Each placeholder with a parameter of its own name takes it — looked up on the parameters themselves, so a
-	//    `{constructor}` is not filled from the prototype — encoded, so a `/` or a `?` in a value cannot reshape the
-	//    path; the parameter is then not sent again in the query or the body. The same placeholder twice takes the same
-	//    value twice
+	// Each placeholder with a parameter of its own name takes it — looked up on the parameters themselves, so a
+	// `{constructor}` is not filled from the prototype — encoded, so a `/` or a `?` in a value cannot reshape the
+	// path; the parameter is then not sent again in the query or the body. The same placeholder twice takes the same
+	// value twice
 	const rest: Record<string, unknown> = { ...params };
 
 	const target = raw.replace(/\{([A-Za-z_][\w-]*)\}/g, (placeholder, name: string) => {
@@ -99,22 +103,26 @@ export const parseCallMethod = (method: string, params: Record<string, unknown> 
  * @param name - The placeholder's name, for the message.
  * @param value - The parameter.
  * @returns The value, URL-encoded.
- * @throws Error for a value that is not a string, a number, a bigint or a boolean, and for an empty, `.` or `..` one —
- * `encodeURIComponent` keeps dots, and a URL collapses a dot segment, so `DELETE /files/{id}` with `..` would reach the
- * parent path, and an empty one the collection.
+ * @throws InvalidPayloadError for a value that is not a string, a number, a bigint or a boolean, and for an empty,
+ * `.` or `..` one — `encodeURIComponent` keeps dots, and a URL collapses a dot segment, so `DELETE /files/{id}` with
+ * `..` would reach the parent path, and an empty one the collection.
  * @internal
  */
 const encodeSegment = (name: string, value: unknown): string => {
-	// 1. Only scalars have one place in a path; a list or an object is a mistake of the caller
+	// Only scalars have one place in a path; a list or an object is a mistake of the caller
 	if (!['string', 'number', 'bigint', 'boolean'].includes(typeof value)) {
-		throw new Error(`The call parameter "${name}" fills a path placeholder and must be a string or a number`);
+		throw new InvalidPayloadError({
+			reason: `The call parameter "${name}" fills a path placeholder and must be a string or a number`,
+		});
 	}
 
-	// 2. A value that would move the request to another path is refused rather than sent somewhere unintended
+	// A value that would move the request to another path is refused rather than sent somewhere unintended
 	const text = String(value);
 
 	if (text === '' || text === '.' || text === '..') {
-		throw new Error(`The call parameter "${name}" fills a path placeholder and cannot be empty, "." or ".."`);
+		throw new InvalidPayloadError({
+			reason: `The call parameter "${name}" fills a path placeholder and cannot be empty, "." or ".."`,
+		});
 	}
 
 	return encodeURIComponent(text);
@@ -155,8 +163,8 @@ export type HeadersLike =
 export const toHeaderRecord = (headers: HeadersLike | undefined): Record<string, string> => {
 	const record: Record<string, string> = {};
 
-	// 1. A `Headers` walks itself — a header it yields twice, `set-cookie`, is joined as a record's list is; a record is
-	//    read key by key, `undefined` values left out
+	// A `Headers` walks itself — a header it yields twice, `set-cookie`, is joined as a record's list is; a record is
+	// read key by key, `undefined` values left out
 	if (!headers) return record;
 
 	if (typeof headers.forEach === 'function') {

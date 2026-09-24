@@ -1,3 +1,4 @@
+import { InvalidPayloadError } from '@novastarter/errors';
 import {
 	formatMailAddress,
 	type MailAttachment,
@@ -31,13 +32,13 @@ export const POSTMARK_METADATA_FIELDS = 10;
  *
  * @param attachment - Ours.
  * @returns Postmark's.
- * @throws Error when the attachment has neither content nor a path to read.
+ * @throws InvalidPayloadError when the attachment has neither content nor a path to read.
  */
 export const toPostmarkAttachment = async (attachment: MailAttachment): Promise<Models.Attachment> => {
-	// 1. Postmark wants base64 in the JSON body and a content type on every attachment
+	// Postmark wants base64 in the JSON body and a content type on every attachment
 	const content = await readAttachment(attachment);
 
-	// 2. An inline image is matched to the html by `cid:<id>` — Postmark keeps the prefix in the field
+	// An inline image is matched to the html by `cid:<id>`; Postmark keeps the prefix in the field
 	return {
 		Name: attachment.filename,
 		Content: content.toString('base64'),
@@ -60,8 +61,7 @@ export const toPostmarkAttachment = async (attachment: MailAttachment): Promise<
  * @returns The `tags`, `tags2`, … fields, none for no tags.
  */
 export const toPostmarkTagsMetadata = (tags: string[]): Record<string, string> => {
-	// 1. Fill each value greedily: a tag joins the current value while the comma and the tag still fit; a tag left
-	//    empty by the cut is skipped, so it leaves no stray comma in the value
+	// A tag left empty by the cut is skipped, so it leaves no stray comma in the value
 	const values: string[] = [];
 
 	for (const tag of tags) {
@@ -80,7 +80,7 @@ export const toPostmarkTagsMetadata = (tags: string[]): Record<string, string> =
 		}
 	}
 
-	// 2. One field is the category; the first value keeps the plain `tags` name so short lists look as before
+	// One field is the category; the first value keeps the plain `tags` name so short lists look as before
 	return Object.fromEntries(
 		values.slice(0, POSTMARK_METADATA_FIELDS - 1).map((value, index) => [index ? `tags${index + 1}` : 'tags', value]),
 	);
@@ -97,24 +97,23 @@ export const toPostmarkTagsMetadata = (tags: string[]): Record<string, string> =
  * @param message - Ours, with `from` set (`sendMail()` fills it in).
  * @param streams - The stream per category, from the location options.
  * @returns Postmark's.
- * @throws Error when `from` is missing — Postmark requires it.
+ * @throws InvalidPayloadError when `from` is missing — Postmark requires it.
  */
 export const toPostmarkMessage = async (message: MailMessage, streams: PostmarkStreams = {}): Promise<Message> => {
-	// 1. The API refuses a message without a sender; say so before the request goes out
+	// The API refuses a message without a sender; say so before the request goes out
 	if (!message.from) {
-		throw new Error('Postmark needs a "from" address');
+		throw new InvalidPayloadError({ reason: 'Postmark needs a "from" address' });
 	}
 
-	// 2. Marketing mail goes to the broadcast stream when there is one; everything else to the message stream. Empty
-	//    tags record nothing in Postmark, so they are dropped before the first of the rest becomes `Tag`
+	// Empty tags record nothing in Postmark, so they are dropped before the first of the rest becomes `Tag`
 	const category = message.category ?? 'transactional';
 	const [tag, ...moreTags] = (message.tags ?? []).filter((tag) => tag !== '');
 	const stream = category === 'marketing' ? (streams.broadcastStream ?? streams.messageStream) : streams.messageStream;
 
-	// 3. Metadata keeps what the single `Tag` cannot: the category and the tags past the first, within Postmark's limits
+	// Metadata keeps what the single `Tag` cannot: the category and the tags past the first, within Postmark's limits
 	const metadata: Record<string, string> = { category, ...toPostmarkTagsMetadata(moreTags) };
 
-	// 4. Optional fields are only set when present, so the request carries no `undefined` keys
+	// Optional fields are only set when present, so the request carries no `undefined` keys
 	const email = {
 		From: formatMailAddress(message.from),
 		To: toMailAddressList(message.to).map(formatMailAddress).join(','),
@@ -130,7 +129,6 @@ export const toPostmarkMessage = async (message: MailMessage, streams: PostmarkS
 		...(message.headers ? { Headers: Object.entries(message.headers).map(([Name, Value]) => ({ Name, Value })) } : {}),
 	} as Message;
 
-	// 5. Attachments are read in parallel: every one is encoded in full before the request is built
 	if (message.attachments?.length) {
 		email.Attachments = await Promise.all(message.attachments.map(toPostmarkAttachment));
 	}

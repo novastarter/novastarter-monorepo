@@ -30,7 +30,7 @@ export class BusDriverLocal implements BusDriver {
 	 *
 	 * @internal
 	 */
-	private readonly handlers: Map<string, Set<MessageHandler<any>>>;
+	private readonly handlers: Map<string, Set<MessageHandler<unknown>>>;
 
 	/**
 	 * Create an empty bus.
@@ -38,7 +38,7 @@ export class BusDriverLocal implements BusDriver {
 	 * @param _config - Driver-specific options, as given in the location's `options`; the local bus has none yet.
 	 */
 	constructor(_config: BusDriverLocalConfig = {}) {
-		// 1. A `Map`, not an object: a channel named like an `Object.prototype` member must stay a channel
+		// A `Map`, not an object: a channel named like an `Object.prototype` member must stay a channel
 		this.handlers = new Map();
 	}
 
@@ -52,24 +52,23 @@ export class BusDriverLocal implements BusDriver {
 	 * not anybody subscribed.
 	 */
 	async publish<T = unknown>(channel: string, payload: T): Promise<void> {
-		// 1. Serialise before looking for subscribers, as the Redis bus does: a payload the wire cannot carry fails the
-		//    publisher on both backends at once, not only from the moment the first subscriber appears
+		// Serialise before looking for subscribers, as the Redis bus does: a payload the wire cannot carry fails the
+		// publisher on both backends at once, not only from the moment the first subscriber appears
 		const binaryArray = serialize(payload);
 
-		// 2. Nobody listening, nothing to deliver
 		const handlers = this.handlers.get(channel);
 
 		if (handlers === undefined) {
 			return;
 		}
 
-		// 3. Subscribers get what they would get from the Redis bus: a copy that went through the same serialisation,
-		//    so a handler mutating its payload never reaches into the publisher's object, and a value the wire would
-		//    not carry — a `Date`, an `undefined` field — arrives the same way on both backends
+		// Subscribers get what they would get from the Redis bus: a copy that went through the same serialisation, so a
+		// handler mutating its payload never reaches into the publisher's object, and a value the wire would not carry
+		// — a `Date`, an `undefined` field — arrives the same way on both backends
 		const copy = deserialize<T>(binaryArray);
 
-		// 4. Every subscriber runs on its own and a failing one is logged, the same way the Redis bus fans out: a
-		//    broken handler neither stops delivery to the others nor fails the publisher
+		// Every subscriber runs on its own and a failing one is logged, the same way the Redis bus fans out: a broken
+		// handler neither stops delivery to the others nor fails the publisher
 		dispatch(channel, handlers, copy);
 	}
 
@@ -81,10 +80,11 @@ export class BusDriverLocal implements BusDriver {
 	 * @param callback - Invoked with every payload published on the channel.
 	 */
 	async subscribe<T = unknown>(channel: string, callback: MessageHandler<T>): Promise<void> {
-		// 1. Create the channel's set on first use
-		const set = this.handlers.get(channel) ?? new Set();
+		// The set keeps handlers of `unknown` payloads, so a callback typed for one payload is cast on its way in: a
+		// subscriber receives whatever is published, as on the Redis bus
+		const set = this.handlers.get(channel) ?? new Set<MessageHandler<unknown>>();
 
-		set.add(callback);
+		set.add(callback as MessageHandler<unknown>);
 
 		this.handlers.set(channel, set);
 	}
@@ -97,17 +97,18 @@ export class BusDriverLocal implements BusDriver {
 	 * @param callback - The callback that was passed to `subscribe`.
 	 */
 	async unsubscribe<T = unknown>(channel: string, callback: MessageHandler<T>): Promise<void> {
-		// 1. Unknown channels and callbacks are ignored rather than treated as errors
+		// Unknown channels and callbacks are ignored rather than treated as errors
 		const set = this.handlers.get(channel);
 
 		if (set === undefined) {
 			return;
 		}
 
-		set.delete(callback);
+		// The typed callback is cast to be found in the set of `unknown` handlers, the same widening as in `subscribe`
+		set.delete(callback as MessageHandler<unknown>);
 
-		// 2. The channel goes with its last subscriber, as it does on the Redis bus: a channel per request — `reply:<id>`
-		//    — would otherwise leave an empty set behind for every request for the life of the process
+		// The channel goes with its last subscriber, as it does on the Redis bus: a channel per request — `reply:<id>`
+		// — would otherwise leave an empty set behind for every request for the life of the process
 		if (set.size === 0) {
 			this.handlers.delete(channel);
 		}

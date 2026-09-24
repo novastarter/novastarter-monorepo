@@ -64,10 +64,9 @@ export const inAppChannel = (options: InAppChannelOptions): NotificationChannel<
 	 * @throws What `save` or the bus throws.
 	 */
 	async send({ notification, content }: NotificationDelivery<InAppContent>): Promise<void> {
-		// 1. The record: the rendered text plus what a client needs to render its own way. The id is the notification's
-		//    own, scoped to the user, when it carries one — the same id on a retried job makes the application's save an
-		//    upsert, not a duplicate row, and the user prefix keeps one event sent to several users from sharing one
-		//    inbox key — and fresh otherwise
+		// When the notification carries an id, the record's id is that id scoped to the user: the same id on a retried
+		// job makes the application's save an upsert, not a duplicate row, and the user prefix keeps one event sent to
+		// several users from sharing one inbox key
 		const record: InAppRecord = {
 			...content,
 			id: notification.id ? `${notification.userId}:${notification.id}` : randomUUID(),
@@ -77,7 +76,7 @@ export const inAppChannel = (options: InAppChannelOptions): NotificationChannel<
 			createdAt: Date.now(),
 		};
 
-		// 2. Saved first: the inbox is the truth, the announcement only spares an open page a reload
+		// Saved first: the inbox is the truth, the announcement only spares an open page a reload
 		await options.save(record);
 
 		if (options.bus !== false) {

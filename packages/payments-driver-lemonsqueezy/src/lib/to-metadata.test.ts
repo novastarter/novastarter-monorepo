@@ -7,7 +7,7 @@ import { toMetadata } from './to-metadata.js';
 
 describe('toMetadata', () => {
 	test('Strings stay, scalars are written out, nested values become JSON', () => {
-		// 1. The kit writes strings; anything else Lemon Squeezy hands back is written out so no value is lost
+		// The kit writes strings; anything else Lemon Squeezy hands back is written out so no value is lost.
 		expect(toMetadata({ a: 'x', b: 2, c: false, d: { e: 1 } })).toStrictEqual({
 			a: 'x',
 			b: '2',
@@ -15,7 +15,7 @@ describe('toMetadata', () => {
 			d: '{"e":1}',
 		});
 
-		// 2. A delivery without custom data — one not started by the kit's checkout — reads as empty metadata
+		// A delivery not started by the kit's checkout has no custom data.
 		expect(toMetadata(undefined)).toStrictEqual({});
 	});
 });

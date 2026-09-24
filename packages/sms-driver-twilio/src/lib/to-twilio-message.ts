@@ -1,3 +1,4 @@
+import { InvalidPayloadError } from '@novastarter/errors';
 import type { SmsMessage } from '@novastarter/sms';
 import type { MessageListInstanceCreateOptions } from 'twilio/lib/rest/api/v2010/account/message.js';
 
@@ -21,7 +22,7 @@ export interface TwilioMessageDefaults {
  * @param message - Ours, with the recipient already in E.164 (`sendSms()` normalises it).
  * @param defaults - The location's messaging service and status callback.
  * @returns Twilio's.
- * @throws Error when neither the message nor the location names a sender — Twilio would refuse the request.
+ * @throws InvalidPayloadError when neither the message nor the location names a sender — Twilio would refuse the request.
  * @example
  * ```ts
  * await client.messages.create(toTwilioMessage(message, { messagingServiceSid: 'MG…' }));
@@ -31,26 +32,28 @@ export const toTwilioMessage = (
 	message: SmsMessage,
 	defaults: TwilioMessageDefaults = {},
 ): MessageListInstanceCreateOptions => {
-	// 1. The sender of the message wins over the location's pool, so one location serves both: a campaign sending
-	//    from its pool and a message that names its own number
+	// The sender of the message wins over the location's pool, so one location serves both: a campaign sending from its
+	// pool and a message that names its own number.
 	let sender: { from: string } | { messagingServiceSid: string };
 
 	if (message.from) {
 		sender = { from: message.from };
 	} else {
-		// 2. Without a sender of either kind the API answers 21603; say so by the option's name instead. Checked for
-		//    truthiness on its own, the value narrows instead of needing a cast
+		// Without a sender of either kind the API answers 21603, so the error names the options instead. Checked on its
+		// own, the value narrows without a cast.
 		const messagingServiceSid = defaults.messagingServiceSid;
 
 		if (!messagingServiceSid) {
-			throw new Error('The twilio sms driver needs a "from" or a "messagingServiceSid"');
+			throw new InvalidPayloadError({
+				reason: 'The twilio sms driver needs a "from" on the message, in the sms routes, or a "messagingServiceSid"',
+			});
 		}
 
 		sender = { messagingServiceSid };
 	}
 
-	// 3. Optional fields are only set when present, so the request carries no `undefined` keys; `validityPeriod` is
-	//    Twilio's name for how long it keeps trying, in seconds, which is what `ttl` means here
+	// Optional fields are only set when present, so the request carries no `undefined` keys; `validityPeriod` is
+	// Twilio's name for how long it keeps trying, in seconds, which is what `ttl` means here.
 	return {
 		to: message.to,
 		body: message.text,

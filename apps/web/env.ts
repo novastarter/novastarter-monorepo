@@ -11,7 +11,7 @@ import { z } from 'zod';
  * @returns The schema accepting `undefined` and `''` as absent.
  */
 const optional = <T extends z.ZodType>(schema: T) => {
-	// 1. Normalise first, so the inner schema only ever sees a real value or nothing
+	// Normalise first, so the inner schema only ever sees a real value or nothing
 	return z.preprocess((value) => (value === '' ? undefined : value), schema.optional());
 };
 
@@ -22,8 +22,8 @@ const optional = <T extends z.ZodType>(schema: T) => {
  * @returns The schema of a boolean variable.
  */
 const flag = () => {
-	// 1. A cast boolean passes through, every spelling `z.stringbool()` knows is read from the raw string, and an
-	//    absent value falls back to `false` rather than failing the variable
+	// A cast boolean passes through, every spelling `z.stringbool()` knows is read from the raw string, and an absent
+	// value falls back to `false` rather than failing the variable
 	return optional(z.union([z.boolean(), z.stringbool()])).default(false);
 };
 
@@ -136,10 +136,10 @@ export type AppEnv = z.infer<typeof envSchema>;
  * @throws Error when a `<NAME>_FILE` points to a file that cannot be read.
  */
 export const readEnv: Singleton<AppEnv> = singleton(() => {
-	// 1. The raw variables are rebuilt along with the parsed ones: `useEnv` refuses options once built, and a stale
-	//    raw configuration under a fresh parse would defeat a reset anyway. At boot nothing is built yet
+	// The raw variables are rebuilt along with the parsed ones: `useEnv` refuses options once built, and a stale raw
+	// configuration under a fresh parse would defeat a reset anyway. At boot nothing is built yet
 	useEnv.reset();
 
-	// 2. Every variable of the schema may come from a `<NAME>_FILE` — that is how the platform mounts secrets
+	// Every variable of the schema may come from a `<NAME>_FILE` — that is how the platform mounts secrets
 	return envSchema.parse(useEnv({ fileVariables: Object.keys(envSchema.shape) }));
 });

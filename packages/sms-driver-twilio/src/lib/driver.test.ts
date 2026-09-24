@@ -2,10 +2,10 @@
  * Tests of the Twilio driver class with the SDK mocked; the message mapper and the error description have their own
  * tests in `to-twilio-message.test.ts` and `describe-error.test.ts`.
  */
-import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
+import { HitRateLimitError, InvalidConfigError, InvalidPayloadError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import * as entry from '../index.js';
 import { SmsDriverTwilio } from './driver.js';
 
 const create = vi.fn();
@@ -54,7 +54,6 @@ afterEach(() => {
 
 describe('SmsDriverTwilio', () => {
 	test('Sends and answers the SID, the status and the segment count', async () => {
-		// 1. A successful send answers what Twilio queued the message as
 		create.mockResolvedValueOnce({ sid: 'SM1', status: 'queued', numSegments: '2', errorCode: null });
 
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
@@ -66,14 +65,14 @@ describe('SmsDriverTwilio', () => {
 		});
 
 		expect(create).toHaveBeenCalledWith({ to: '+14155550123', body: 'Hi', from: '+14155550100' });
-		expect(defaultExport).toBe(SmsDriverTwilio);
+		expect(entry.SmsDriverTwilio).toBe(SmsDriverTwilio);
+		expect(entry).not.toHaveProperty('default');
 	});
 
 	test('Reports no segment count when Twilio does not say one', async () => {
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
 
-		// 1. `null` and an empty string are not counts — reporting 0 would claim the text was split into zero parts,
-		//    so the result carries no `segments` key at all
+		// Reporting 0 would claim the text was split into zero parts, so the result carries no `segments` key at all.
 		create.mockResolvedValueOnce({ sid: 'SM4', status: 'queued', numSegments: null, errorCode: null });
 
 		expect(await driver.send({ to: '+14155550123', from: '+14155550100', text: 'Hi' })).toStrictEqual({
@@ -101,7 +100,6 @@ describe('SmsDriverTwilio', () => {
 
 		await driver.send({ to: '+14155550123', text: 'Hi', ttl: 600 });
 
-		// 1. The pool of the messaging service supplies the sender, and the validity period is the message's `ttl`
 		expect(create).toHaveBeenCalledWith({
 			to: '+14155550123',
 			body: 'Hi',
@@ -115,7 +113,6 @@ describe('SmsDriverTwilio', () => {
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
 		const message = { to: '+14155550123', from: '+14155550100', text: 'Hi' };
 
-		// 1. A rejected request is described by its status and Twilio's own code, the SDK error kept as the cause
 		const refusal = new Error('The "To" number is not a valid phone number.');
 
 		create.mockRejectedValueOnce(refusal);
@@ -125,8 +122,8 @@ describe('SmsDriverTwilio', () => {
 			cause: refusal,
 		});
 
-		// 2. An answer carrying an error code is a failure too, however accepted it looks: the caller must not record
-		//    it as sent
+		// An answer carrying an error code is a failure however accepted it looks: the caller must not record it as
+		// sent.
 		create.mockResolvedValueOnce({
 			sid: 'SM3',
 			status: 'failed',
@@ -141,17 +138,16 @@ describe('SmsDriverTwilio', () => {
 	test('Authenticates with an API key pair when one is given, and refuses half a configuration', async () => {
 		const twilio = (await import('twilio')).default;
 
-		// 1. A key pair signs for the account named in the options
 		new SmsDriverTwilio({ accountSid: 'AC1', apiKey: 'SK1', apiSecret: 'secret', timeout: 5_000 });
 
 		expect(twilio).toHaveBeenCalledWith('SK1', 'secret', { timeout: 5_000, accountSid: 'AC1' });
 
-		// 2. Without a key pair the account's auth token is the credential
 		new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
 
 		expect(twilio).toHaveBeenLastCalledWith('AC1', 'token', {});
 
-		// 3. Missing or incomplete credentials are refused by the option's name
+		expect(() => new SmsDriverTwilio({ accountSid: '', authToken: 'token' })).toThrow(InvalidConfigError);
+		expect(() => new SmsDriverTwilio({ accountSid: 'AC1' })).toThrow(InvalidConfigError);
 		expect(() => new SmsDriverTwilio({ accountSid: '', authToken: 'token' })).toThrow(/"accountSid"/);
 		expect(() => new SmsDriverTwilio({ accountSid: 'AC1' })).toThrow(/"authToken"/);
 		expect(() => new SmsDriverTwilio({ accountSid: 'AC1', apiKey: 'SK1' })).toThrow(/"apiSecret"/);
@@ -160,7 +156,7 @@ describe('SmsDriverTwilio', () => {
 	test('Verifies the credentials by reading the account balance', async () => {
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
 
-		// 1. Nothing is sent and nothing is billed; the read either authenticates or throws
+		// Nothing is sent and nothing is billed.
 		fetch.mockResolvedValueOnce({ balance: '10.00', currency: 'USD' });
 		await expect(driver.verify()).resolves.toBeUndefined();
 
@@ -171,16 +167,16 @@ describe('SmsDriverTwilio', () => {
 	test('Releases the keep-alive agent on close', async () => {
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
 
-		// 1. The SDK pools connections in a keep-alive https.Agent and has no close of its own, so `close()` destroys
-		//    the agent behind its axios instance
+		// The SDK pools connections in a keep-alive https.Agent and has no close of its own, so `close()` destroys the
+		// agent behind its axios instance.
 		await driver.close();
 
 		expect(destroy).toHaveBeenCalledTimes(1);
 	});
 
 	test('Closes cleanly when the client has no axios agent', async () => {
-		// 1. A custom or mocked request client may carry no axios defaults at all: there is nothing to release, and
-		//    `close()` must not throw — the manager awaits it while releasing every location
+		// A custom or mocked request client may carry no axios defaults at all; `close()` must not throw, since the
+		// manager awaits it while releasing every location.
 		httpClient.axios = undefined;
 
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
@@ -192,14 +188,12 @@ describe('SmsDriverTwilio', () => {
 
 describe('SmsDriverTwilio.call', () => {
 	test('Exposes the SDK client it signs with', () => {
-		// 1. The SDK's own API, for what `call()` does not cover
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
 
 		expect(driver.client.request).toBe(request);
 	});
 
 	test('Sends a GET through the SDK with the query, the account filled in and the location timeout', async () => {
-		// 1. The SDK answers the body already parsed, whatever the status
 		request.mockResolvedValueOnce({ statusCode: 200, body: { sid: 'SM1', status: 'delivered' }, headers: {} });
 
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token', timeout: 5_000 });
@@ -221,7 +215,6 @@ describe('SmsDriverTwilio.call', () => {
 	});
 
 	test('Sends a POST body to a Twilio subdomain with the caller headers and timeout, JSON text parsed', async () => {
-		// 1. A body arriving as JSON text is parsed; the caller's `Content-Type` asks the SDK for JSON
 		request.mockResolvedValueOnce({ statusCode: 201, body: '{"sid":"VE1"}', headers: {} });
 
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
@@ -245,7 +238,6 @@ describe('SmsDriverTwilio.call', () => {
 			timeout: 2_000,
 		});
 
-		// 2. An empty answer — a 204 of a DELETE — is nothing
 		request.mockResolvedValueOnce({ statusCode: 204, body: '', headers: {} });
 
 		expect((await driver.call('DELETE /2010-04-01/Accounts/{AccountSid}/Messages/SM1.json')).data).toBeUndefined();
@@ -254,7 +246,6 @@ describe('SmsDriverTwilio.call', () => {
 	test('Throws ProviderCallError with Twilio error body and HitRateLimitError for 429, no secret in them', async () => {
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'super-secret-token' });
 
-		// 1. Twilio's error JSON is kept as the body, its message quoted, the auth token nowhere
 		const refusal = {
 			code: 20404,
 			message: 'The requested resource was not found',
@@ -271,7 +262,6 @@ describe('SmsDriverTwilio.call', () => {
 		expect((error as Error).message).toContain('The requested resource was not found');
 		expect((error as Error).message).not.toContain('super-secret-token');
 
-		// 2. Too many requests is a rate limit the caller may wait out
 		request.mockResolvedValueOnce({ statusCode: 429, body: { code: 20429 }, headers: { 'retry-after': '3' } });
 
 		await expect(driver.call('GET /2010-04-01/Accounts.json')).rejects.toBeInstanceOf(HitRateLimitError);
@@ -280,7 +270,7 @@ describe('SmsDriverTwilio.call', () => {
 	test('Refuses a foreign host before any request', async () => {
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
 
-		// 1. The credentials would go wherever the URL points, so only Twilio hosts are accepted
+		// The credentials would go wherever the URL points, so only Twilio hosts are accepted.
 		await expect(driver.call('GET https://twilio.com.evil.example/x')).rejects.toThrow(/not on a host/);
 		await expect(driver.call('FETCH /x')).rejects.toThrow(/is not/);
 
@@ -290,7 +280,7 @@ describe('SmsDriverTwilio.call', () => {
 	test('Sends the body of any verb but GET, HEAD and DELETE as a form', async () => {
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
 
-		// 1. The SDK sets a form type for a POST only and fills the body only for an exact type, so a PUT gets one too
+		// The SDK sets a form type for a POST only and fills the body only for an exact type, so a PUT gets one too.
 		request.mockResolvedValueOnce({ statusCode: 200, body: {}, headers: {} });
 
 		await driver.call('PUT https://conversations.twilio.com/v1/Conversations/CH1', { FriendlyName: 'x' });
@@ -306,7 +296,6 @@ describe('SmsDriverTwilio.call', () => {
 	test('Reads a content type in any case, so a lower-case JSON one sends JSON', async () => {
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
 
-		// 1. The caller's `content-type` replaces the form type rather than sitting next to it, its charset dropped
 		request.mockResolvedValueOnce({ statusCode: 201, body: {}, headers: {} });
 
 		await driver.call(
@@ -322,12 +311,12 @@ describe('SmsDriverTwilio.call', () => {
 			}),
 		);
 
-		// 2. A type the SDK cannot encode is refused before anything is sent
 		request.mockClear();
 
-		await expect(driver.call('POST /x', { a: 1 }, { headers: { 'content-type': 'text/plain' } })).rejects.toThrow(
-			'form or JSON only',
-		);
+		const refused = driver.call('POST /x', { a: 1 }, { headers: { 'content-type': 'text/plain' } });
+
+		await expect(refused).rejects.toThrow(InvalidPayloadError);
+		await expect(refused).rejects.toThrow('form or JSON only');
 
 		expect(request).not.toHaveBeenCalled();
 	});
@@ -335,7 +324,8 @@ describe('SmsDriverTwilio.call', () => {
 	test('Refuses a file before any request', async () => {
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
 
-		// 1. The SDK's client makes no multipart body; an upload goes through the SDK client itself
+		// The SDK's client makes no multipart body; an upload goes through the SDK client itself.
+		await expect(driver.call('POST /x', { Content: new Blob(['x']) })).rejects.toThrow(InvalidPayloadError);
 		await expect(driver.call('POST /x', { Content: new Blob(['x']) })).rejects.toThrow('sends no file');
 		await expect(driver.call('POST /x', { Files: [new Blob(['x'])] })).rejects.toThrow('sends no file');
 
@@ -346,7 +336,7 @@ describe('SmsDriverTwilio.call', () => {
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'super-secret-token' });
 		const authorization = `Basic ${Buffer.from('AC1:super-secret-token').toString('base64')}`;
 
-		// 1. An axios error of the SDK holds the request config with the `Authorization` header
+		// An axios error of the SDK holds the request config with the `Authorization` header.
 		const refused = Object.assign(new Error('connect ECONNREFUSED'), {
 			isAxiosError: true,
 			code: 'ECONNREFUSED',
@@ -357,14 +347,12 @@ describe('SmsDriverTwilio.call', () => {
 
 		const error = (await driver.call('GET /2010-04-01/Accounts.json').catch((e: unknown) => e)) as Error;
 
-		// 2. A plain error names the code; neither it, its cause nor its serialization carries the credentials
 		expect(error.message).toBe('Twilio: ECONNREFUSED: connect ECONNREFUSED');
 		expect(error.cause).toBeUndefined();
 		expect(JSON.stringify(error)).not.toContain(authorization);
 		expect(error.message).not.toContain('super-secret-token');
 
-		// 3. The SDK's own timeout is the kit's TimeoutError with the deadline the request carried — it gets the same
-		//    deadline `call()` races it against, so it usually wins the race — still without the credentials
+		// The SDK's timeout gets the same deadline `call()` races it against, so it usually wins the race.
 		const timedOut = Object.assign(new Error('timeout of 5000ms exceeded'), {
 			isAxiosError: true,
 			code: 'ECONNABORTED',
@@ -380,7 +368,6 @@ describe('SmsDriverTwilio.call', () => {
 		expect(timeout.cause).toBeUndefined();
 		expect(JSON.stringify(timeout)).not.toContain(authorization);
 
-		// 4. The same failure of `send()` is described without the credentials too
 		create.mockRejectedValueOnce(timedOut);
 
 		const sendError = (await driver
@@ -395,7 +382,6 @@ describe('SmsDriverTwilio.call', () => {
 	test('Sends nothing when the signal is already aborted', async () => {
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
 
-		// 1. An aborted signal fails the call with its reason before the SDK is reached
 		await expect(
 			driver.call('GET /2010-04-01/Accounts.json', {}, { signal: AbortSignal.abort(new Error('stop')) }),
 		).rejects.toThrow('stop');
@@ -404,7 +390,6 @@ describe('SmsDriverTwilio.call', () => {
 	});
 
 	test('Fails with TimeoutError when the SDK does not answer in time', async () => {
-		// 1. A request that never settles is cut at the call timeout
 		request.mockReturnValueOnce(new Promise(() => {}));
 
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
@@ -415,7 +400,6 @@ describe('SmsDriverTwilio.call', () => {
 	});
 
 	test('Answers the status, the lower-cased headers and the body', async () => {
-		// 1. The SDK hands the headers as a record; their names come back lower-cased
 		const headers = { 'Twilio-Request-Id': 'RQ1', 'X-Home': 'us1' };
 
 		request.mockResolvedValueOnce({ statusCode: 200, body: { sid: 'SM1' }, headers });
@@ -436,7 +420,7 @@ describe('SmsDriverTwilio.call', () => {
 
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
 
-		// 1. In a GET, the sid leaves the query; `{AccountSid}` is still the location's
+		// `{AccountSid}` is still filled from the location.
 		await driver.call('GET /2010-04-01/Accounts/{AccountSid}/Messages/{sid}.json', { sid: 'SM 1/x', PageSize: 5 });
 
 		expect(request).toHaveBeenLastCalledWith(
@@ -446,7 +430,6 @@ describe('SmsDriverTwilio.call', () => {
 			}),
 		);
 
-		// 2. In a POST, it leaves the body
 		await driver.call('POST /2010-04-01/Accounts/{AccountSid}/Messages/{sid}.json', { sid: 'SM1', Body: '' });
 
 		expect(request).toHaveBeenLastCalledWith(
@@ -460,7 +443,7 @@ describe('SmsDriverTwilio.call', () => {
 	test('Refuses a {name} no parameter fills before any request', async () => {
 		const driver = new SmsDriverTwilio({ accountSid: 'AC1', authToken: 'token' });
 
-		// 1. Sent, it would reach Twilio as `%7Bsid%7D`
+		// Sent, it would reach Twilio as `%7Bsid%7D`.
 		await expect(driver.call('GET /2010-04-01/Accounts/{AccountSid}/Messages/{sid}.json')).rejects.toThrow('{sid}');
 		expect(request).not.toHaveBeenCalled();
 	});

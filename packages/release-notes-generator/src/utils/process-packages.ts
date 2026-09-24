@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { Project } from '@pnpm/types';
 import { createPkgGraph, type PackageNode } from '@pnpm/workspace.pkgs-graph';
 import semver from 'semver';
-import config from '../config.js';
+import { config } from '../config.js';
 import type { PackageVersion } from '../types.js';
 import { findWorkspacePackages } from './find-workspace-packages.js';
 import { sortByExternalOrder } from './sort.js';
@@ -45,13 +45,13 @@ export async function processPackages(options: ProcessPackagesOptions): Promise<
 	prereleaseId: string | undefined;
 	packageVersions: PackageVersion[];
 }> {
-	// 1. The workspace is read once up front; the version map and the dependents graph are filled in on the way
+	// The workspace is read once up front; the version map and the dependents graph are filled in on the way
 	const workspacePackages = await findWorkspacePackages(options.workspaceRoot);
 	const packageVersions = new Map<string, string>();
 	let dependentsMap: Record<string, string[]> | undefined;
 
-	// 2. A package counts as bumped when `changesets` generated a changelog for it, which also catches packages
-	//    bumped solely because an internal dependency changed
+	// A package counts as bumped when `changesets` generated a changelog for it, which also catches packages
+	// bumped solely because an internal dependency changed
 	for (const localPackage of workspacePackages) {
 		const { name, version } = localPackage.manifest;
 
@@ -66,27 +66,27 @@ export async function processPackages(options: ProcessPackagesOptions): Promise<
 				packageVersions.set(name, version);
 			}
 
-			// 3. The release notes replace the changelog, so the file `changesets` generated is removed again
+			// The release notes replace the changelog, so the file `changesets` generated is removed again
 			unlinkSync(changelogPath);
 		}
 	}
 
-	// 4. Work out the headline version before bumping anything, as the bumps depend on its prerelease state
+	// The bumps depend on the headline version's prerelease state, so it is worked out first
 	const { mainVersion, manualMainVersion, isPrerelease, prereleaseId } = getVersionInfo(options.forcedVersion);
 
-	// 5. A forced version overrides whatever `changesets` gave the main package, dependents included
+	// A forced version overrides whatever `changesets` gave the main package, dependents included
 	if (manualMainVersion && config.mainPackage) {
 		await bumpPackage(config.mainPackage, mainVersion, true);
 	}
 
-	// 6. Linked packages follow their trigger with a patch bump unless `changesets` bumped them already
+	// Linked packages follow their trigger with a patch bump unless `changesets` bumped them already
 	for (const [trigger, target] of config.linkedPackages) {
 		if (packageVersions.has(trigger) && !packageVersions.has(target)) {
 			await bumpPackage(target, null, true);
 		}
 	}
 
-	// 7. The main package and the untyped packages are not listed under the published versions
+	// The main package and the untyped packages are not listed under the published versions
 	return {
 		mainVersion,
 		isPrerelease,
@@ -107,12 +107,12 @@ export async function processPackages(options: ProcessPackagesOptions): Promise<
 	 * @throws When the main package is configured but has no valid version, or the prerelease state is inconsistent.
 	 */
 	function getVersionInfo(manualMainVersion: string | undefined) {
-		// 1. The forced version wins over the version `changesets` gave the main package
+		// The forced version wins over the version `changesets` gave the main package
 		const mainPackageVersion = config.mainPackage ? packageVersions.get(config.mainPackage) : undefined;
 		const rawMainVersion = manualMainVersion ?? mainPackageVersion;
 
-		// 2. Without a main package there is nothing to demand a version from; the prerelease state then comes from
-		//    the `changesets` prerelease mode alone
+		// Without a main package there is nothing to demand a version from; the prerelease state then comes from
+		// the `changesets` prerelease mode alone
 		if (!rawMainVersion && !config.mainPackage) {
 			const tag = readPrereleaseTag();
 
@@ -127,8 +127,8 @@ export async function processPackages(options: ProcessPackagesOptions): Promise<
 		const mainVersion = semver.parse(rawMainVersion);
 
 		if (!mainVersion) {
-			// 3. Name the source the bad value came from: the forced variable, or the main package `changesets` was
-			//    expected to version — either way the message must never print an undefined package
+			// The message names the source of the bad value, the forced variable or the main package `changesets` was
+			// expected to version, so it never prints an undefined package
 			const versionSource = manualMainVersion
 				? `the NOVASTARTER_VERSION environment variable ("${manualMainVersion}")`
 				: `the '${config.mainPackage}' package`;
@@ -136,7 +136,7 @@ export async function processPackages(options: ProcessPackagesOptions): Promise<
 			throw new Error(`Main version of ${versionSource} is missing or invalid`);
 		}
 
-		// 4. A prerelease version is only valid while `changesets` is in prerelease mode with the same tag
+		// A prerelease version is only valid while `changesets` is in prerelease mode with the same tag
 		const isPrerelease = mainVersion.prerelease.length > 0;
 		let prereleaseId;
 
@@ -170,8 +170,8 @@ export async function processPackages(options: ProcessPackagesOptions): Promise<
 	 * @returns The tag from `.changeset/pre.json`, or `undefined` when `changesets` is not in prerelease mode.
 	 */
 	function readPrereleaseTag(): string | undefined {
-		// 1. The file outlives `changesets pre exit` with `mode: "exit"` on disk, so the mode is read before the tag
-		//    is trusted; any read or parse failure means "not in prerelease mode" as well
+		// The file outlives `changesets pre exit` with `mode: "exit"` on disk, so the mode is read before the tag
+		// is trusted; any read or parse failure means "not in prerelease mode" as well
 		try {
 			const changesetPreFile = join(options.workspaceRoot, '.changeset', 'pre.json');
 			const { mode, tag } = JSON.parse(readFileSync(changesetPreFile, 'utf8'));
@@ -192,19 +192,18 @@ export async function processPackages(options: ProcessPackagesOptions): Promise<
 	async function bumpPackage(packageName: string, version?: string | null, bumpDependents?: boolean) {
 		const workspacePackage = workspacePackages.find((p) => p.manifest.name === packageName);
 
-		// 1. Unknown and private packages are never published, so there is no version to bump
+		// Unknown and private packages are never published, so there is no version to bump
 		if (!workspacePackage) return;
 
 		if (workspacePackage.manifest.private) return;
 
-		// 2. Either take the given version or step the current one, keeping the prerelease tag in prerelease mode
 		let newVersion: string | null = null;
 
 		if (version) {
 			newVersion = version;
 		} else if (workspacePackage.manifest.version) {
-			// 3. A prerelease step needs the tag; `getVersionInfo` has already thrown when prerelease mode has no
-			//    string tag, so a missing tag here means that validation broke — fail loudly instead of asserting
+			// A prerelease step needs the tag; `getVersionInfo` has already thrown when prerelease mode has no
+			// string tag, so a missing tag here means that validation broke — fail loudly instead of asserting
 			if (isPrerelease) {
 				if (typeof prereleaseId !== 'string') {
 					throw new Error('Expected a string for prerelease identifier');
@@ -218,12 +217,12 @@ export async function processPackages(options: ProcessPackagesOptions): Promise<
 
 		if (!newVersion) return;
 
-		// 4. Persist the bump and record it, so the package ends up in the published versions list
+		// Recorded so the package ends up in the published versions list
 		workspacePackage.manifest.version = newVersion;
 		await workspacePackage.writeProjectManifest(workspacePackage.manifest);
 		packageVersions.set(packageName, newVersion);
 
-		// 5. Dependents that `changesets` did not touch get a bump too, so they pick up the new version
+		// Dependents that `changesets` did not touch get a bump too, so they pick up the new version
 		if (bumpDependents) {
 			const dependents = findDependents(packageName);
 
@@ -239,7 +238,7 @@ export async function processPackages(options: ProcessPackagesOptions): Promise<
 	 * @returns Package name to the names of packages depending on it.
 	 */
 	function getDependentsMap() {
-		// 1. Lazy, because most runs never bump dependents and never need the graph
+		// Lazy, because most runs never bump dependents and never need the graph
 		if (!dependentsMap) {
 			const { graph } = createPkgGraph(workspacePackages);
 			dependentsMap = transformGraph(graph);
@@ -263,7 +262,7 @@ export async function processPackages(options: ProcessPackagesOptions): Promise<
 		dependents: string[] = [],
 		visited = new Set<string>(),
 	) {
-		// 1. Workspace graphs can contain cycles, so every package is expanded at most once
+		// Workspace graphs can contain cycles, so every package is expanded at most once
 		if (visited.has(packageName)) return dependents;
 		visited.add(packageName);
 
@@ -271,7 +270,7 @@ export async function processPackages(options: ProcessPackagesOptions): Promise<
 
 		if (!packageDependents || packageDependents.length === 0) return dependents;
 
-		// 2. Depth first, so a dependent is listed before its own dependents
+		// Depth first, so a dependent is listed before its own dependents
 		for (const dependent of packageDependents) {
 			if (visited.has(dependent)) continue;
 
@@ -292,21 +291,20 @@ export async function processPackages(options: ProcessPackagesOptions): Promise<
 	function transformGraph(graph: Record<string, PackageNode<Project>>) {
 		const dependentsMap: Record<string, string[]> = {};
 
-		// 1. Every node is a dependent; nodes without a name cannot be bumped, so they add nothing to the map
+		// Every node is a dependent; nodes without a name cannot be bumped, so they add nothing to the map
 		for (const dependentNodeId of Object.keys(graph)) {
 			const dependentPackage = graph[dependentNodeId];
 			const dependentPackageName = dependentPackage?.package.manifest.name;
 
 			if (!dependentPackageName) continue;
 
-			// 2. Graph nodes are keyed by directory, so every dependency is mapped back to its package name
+			// Graph nodes are keyed by directory, so every dependency is mapped back to its package name
 			for (const dependencyNodeId of dependentPackage.dependencies) {
 				const dependencyPackage = workspacePackages.find((p) => p.rootDir === dependencyNodeId);
 				const dependencyPackageName = dependencyPackage?.manifest.name;
 
 				if (!dependencyPackageName) continue;
 
-				// 3. Register the current package as a dependent of each of its dependencies
 				if (!dependentsMap[dependencyPackageName]) {
 					dependentsMap[dependencyPackageName] = [dependentPackageName];
 				} else {

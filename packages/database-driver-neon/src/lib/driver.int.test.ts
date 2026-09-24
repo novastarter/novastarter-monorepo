@@ -24,8 +24,8 @@ describe.skipIf(!NEON_DATABASE_URL)('DatabaseDriverNeon on Neon', () => {
 	beforeAll(async () => {
 		driver = new DatabaseDriverNeon({ connection: NEON_DATABASE_URL!, logger: logger as never });
 
-		// 1. The fixture table the transaction below writes is made here, not by the migration: every test must pass
-		//    run alone, under `vitest -t` as well as whole-file
+		// The fixture table the transaction below writes is made here, not by the migration: every test must pass
+		// run alone, under `vitest -t` as well as whole-file
 		await driver.db.execute(sql.raw(`CREATE SCHEMA IF NOT EXISTS "${schema}"`));
 
 		await driver.db.execute(
@@ -34,12 +34,12 @@ describe.skipIf(!NEON_DATABASE_URL)('DatabaseDriverNeon on Neon', () => {
 			),
 		);
 
-		// 2. A drizzle-kit folder of one migration, written per run: the schema name carries the pid, so two runs on
-		//    the same project never touch each other's tables
+		// The drizzle-kit folder is written per run: the schema name carries the pid, so two runs on the same project
+		// never touch each other's tables
 		migrationsFolder = await mkdtemp(join(tmpdir(), 'novastarter-migrations-'));
 		await mkdir(join(migrationsFolder, 'meta'));
 
-		// 3. The journal is what the migrator reads to find what to apply: one entry tagging the migration below
+		// The migrator reads the journal to find what to apply
 		await writeFile(
 			join(migrationsFolder, 'meta', '_journal.json'),
 			JSON.stringify({
@@ -49,7 +49,7 @@ describe.skipIf(!NEON_DATABASE_URL)('DatabaseDriverNeon on Neon', () => {
 			}),
 		);
 
-		// 4. The migration itself: a probe table nothing reads — the migrator running it and journaling it is the point
+		// A probe table nothing reads: the migrator running it and journaling it is the point
 		await writeFile(
 			join(migrationsFolder, '0000_init.sql'),
 			`CREATE TABLE "${schema}"."probe" ("id" serial PRIMARY KEY NOT NULL);`,
@@ -57,8 +57,8 @@ describe.skipIf(!NEON_DATABASE_URL)('DatabaseDriverNeon on Neon', () => {
 	});
 
 	afterAll(async () => {
-		// 1. A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
-		//    real failure stays the one reported
+		// A hook that failed partway leaves the rest undefined; the teardown runs only what was created, so the
+		// real failure stays the one reported
 		if (driver) {
 			await driver.db.execute(sql.raw(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`));
 			await driver.close();
@@ -85,7 +85,7 @@ describe.skipIf(!NEON_DATABASE_URL)('DatabaseDriverNeon on Neon', () => {
 	});
 
 	test('A transaction runs on one session and rolls back on failure', async () => {
-		// 1. The insert inside a failing transaction must not survive it
+		// The insert inside a failing transaction must not survive it
 		await expect(
 			driver.db.transaction(async (tx) => {
 				await tx.execute(sql.raw(`INSERT INTO "${schema}"."notes" ("text") VALUES ('rolled back')`));

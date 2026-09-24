@@ -19,7 +19,7 @@ export interface MemoryConfig {
  * @returns The locations to register.
  */
 export const memoryConfig = (redis: Redis | undefined): MemoryConfig => {
-	// 1. With a server every location shares its client, so all processes of the deployment see the same data
+	// With a server every location shares its client, so all processes of the deployment see the same data
 	if (redis) {
 		return {
 			kv: {
@@ -56,7 +56,7 @@ export const memoryConfig = (redis: Redis | undefined): MemoryConfig => {
 		};
 	}
 
-	// 2. Without one, everything stays in the process: development, tests, a single instance
+	// Without one, everything stays in the process: development, tests, a single instance
 	return {
 		kv: {
 			driver: 'local',

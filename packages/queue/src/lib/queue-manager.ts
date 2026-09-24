@@ -1,3 +1,4 @@
+import { InvalidConfigError } from '@novastarter/errors';
 import { DEFAULT_LOCATION, DriverManager } from '@novastarter/utils';
 import type { QueueDriver } from '../driver.js';
 import { QueueDriverBullmq, type QueueDriverBullmqConfig } from './drivers/bullmq.js';
@@ -52,8 +53,8 @@ export class QueueManager extends DriverManager<QueueDriver, QueueDrivers> {
 	constructor() {
 		super();
 
-		// 1. The drivers of the package are known up front; registering them here spares every application the same
-		//    lines, and a replacement under the same name still wins
+		// The drivers of the package are known up front; registering them here spares every application the same
+		// lines, and a replacement under the same name still wins
 		this.registerDriver('local', QueueDriverLocal);
 		this.registerDriver('bullmq', QueueDriverBullmq);
 	}
@@ -63,18 +64,20 @@ export class QueueManager extends DriverManager<QueueDriver, QueueDrivers> {
 	 *
 	 * @param name - Queue name, the part of a job name before the dot; {@link DEFAULT_LOCATION} when omitted.
 	 * @returns The driver bound to that queue, or to {@link DEFAULT_LOCATION} when it has none of its own.
-	 * @throws Error when neither the queue's location nor the default one is registered.
+	 * @throws InvalidConfigError when neither the queue's location nor the default one is registered.
 	 */
 	override location(name: string = DEFAULT_LOCATION): QueueDriver {
-		// 1. The queue's own location wins; the default one covers every queue nobody registered, which is how a
-		//    single-server deployment needs one registration for all of its jobs
+		// The queue's own location wins; the default one covers every queue nobody registered, which is how a
+		// single-server deployment needs one registration for all of its jobs
 		if (this.hasLocation(name)) {
 			return super.location(name);
 		}
 
-		// 2. Name the queue in the error, not the default location: the reader has to learn which job has nowhere to go
+		// Name the queue in the error, not the default location: the reader has to learn which job has nowhere to go
 		if (!this.hasLocation(DEFAULT_LOCATION)) {
-			throw new Error(`Queue "${name}" has no location of its own and no "${DEFAULT_LOCATION}" one.`);
+			throw new InvalidConfigError({
+				reason: `Queue "${name}" has no location of its own and no "${DEFAULT_LOCATION}" one; register either`,
+			});
 		}
 
 		return super.location(DEFAULT_LOCATION);

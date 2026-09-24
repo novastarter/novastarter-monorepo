@@ -32,21 +32,21 @@ const failing: WeakMap<MessageHandler<never>, Set<string>> = new WeakMap();
  * @param payload - What every handler receives.
  */
 export const dispatch = <T>(channel: string, handlers: Iterable<MessageHandler<T>> | undefined, payload: T): void => {
-	// 1. No subscribers, nothing to do; a channel is looked up by the caller, which may find none
+	// The caller looks the channel up and may find none
 	if (handlers === undefined) {
 		return;
 	}
 
-	// 2. The fan-out goes over a snapshot, as `EventEmitter` copies its listeners before emitting: the drivers hand in
-	//    their live `Set`, which a handler may change from inside by subscribing or unsubscribing. A `Set` visits an
-	//    entry added during iteration, so a handler subscribed from within would receive the message published before
-	//    it existed, and one that unsubscribes and re-subscribes itself would be called again for the same message,
-	//    without end
+	// The fan-out goes over a snapshot, as `EventEmitter` copies its listeners before emitting: the drivers hand in
+	// their live `Set`, which a handler may change from inside by subscribing or unsubscribing. A `Set` visits an entry
+	// added during iteration, so a handler subscribed from within would receive the message published before it
+	// existed, and one that unsubscribes and re-subscribes itself would be called again for the same message, without
+	// end
 	const snapshot = Array.from(handlers);
 
-	// 3. Every handler runs inside its own `try`, and its answer — a promise, a thenable or nothing — goes through
-	//    `Promise.resolve` so a rejection is caught the same way, and one failing subscriber neither stops the
-	//    fan-out nor surfaces as an unhandled rejection
+	// Every handler runs inside its own `try`, and its answer — a promise, a thenable or nothing — goes through
+	// `Promise.resolve` so a rejection is caught the same way, and one failing subscriber neither stops the fan-out nor
+	// surfaces as an unhandled rejection
 	for (const handler of snapshot) {
 		try {
 			Promise.resolve(handler(payload)).then(
@@ -68,8 +68,8 @@ export const dispatch = <T>(channel: string, handlers: Iterable<MessageHandler<T
  * @internal
  */
 const failed = (channel: string, handler: MessageHandler<never>, error: unknown): void => {
-	// 1. A subscriber already known to fail on this channel is not logged again: no flood, and no loop through a
-	//    bus-borne log
+	// A subscriber already known to fail on this channel is not logged again: no flood, and no loop through a bus-borne
+	// log
 	const channels = failing.get(handler) ?? new Set<string>();
 
 	if (channels.has(channel)) {
@@ -79,7 +79,7 @@ const failed = (channel: string, handler: MessageHandler<never>, error: unknown)
 	channels.add(channel);
 	failing.set(handler, channels);
 
-	// 2. The logger is read per failure, so a `registerLogger` after start-up is honoured
+	// The logger is read per failure, so a `registerLogger` after start-up is honoured
 	useLogger().warn(toError(error), `A subscriber of bus channel "${channel}" failed`);
 };
 
@@ -91,15 +91,15 @@ const failed = (channel: string, handler: MessageHandler<never>, error: unknown)
  * @internal
  */
 const recovered = (channel: string, handler: MessageHandler<never>): void => {
-	// 1. Cheap for the common case: a subscriber with no failures on record is not in the map at all
+	// Cheap for the common case: a subscriber with no failures on record is not in the map at all
 	const channels = failing.get(handler);
 
 	if (channels === undefined) {
 		return;
 	}
 
-	// 2. Forget the channel, and the handler altogether once no channel is left, so a long-lived subscriber does not
-	//    keep an empty set alive in the map
+	// The handler goes too once no channel is left, so a long-lived subscriber does not keep an empty set alive in the
+	// map
 	channels.delete(channel);
 
 	if (channels.size === 0) {
@@ -114,6 +114,6 @@ const recovered = (channel: string, handler: MessageHandler<never>): void => {
  * @param error - What decoding threw.
  */
 export const reportUnreadable = (channel: string, error: unknown): void => {
-	// 1. Not a subscriber's fault, so not subject to the once-per-failure rule: every foreign message is worth a line
+	// Not a subscriber's fault, so not subject to the once-per-failure rule: every foreign message is worth a line
 	useLogger().warn(toError(error), `A message on bus channel "${channel}" could not be read`);
 };

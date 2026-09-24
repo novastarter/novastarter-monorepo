@@ -11,10 +11,10 @@ import { GONE_CODES } from './constants.js';
  * the cause.
  */
 export const describeError = (error: unknown): Error => {
-	// 1. A refusal by FCM: the code says whether the token is gone. Firebase's codes carry a `messaging/` prefix —
-	//    Node's system errors (ECONNRESET, ENOTFOUND, ETIMEDOUT) have a string `code` of their own, which must not be
-	//    read as a refusal. `invalid-argument` covers a malformed token too, which the message names. The SDK's error
-	//    stays as the cause either way, so the handler can read the status
+	// The code says whether the token is gone. Firebase's codes carry a `messaging/` prefix, while Node's system errors
+	// (ECONNRESET, ENOTFOUND, ETIMEDOUT) have a string `code` of their own, which must not be read as a refusal.
+	// `invalid-argument` covers a malformed token too, which the message names. The SDK's error stays as the cause either
+	// way, so the handler can read the status
 	if (error instanceof Error && 'code' in error && typeof error.code === 'string' && error.code.includes('/')) {
 		const gone =
 			GONE_CODES.has(error.code) ||
@@ -27,6 +27,6 @@ export const describeError = (error: unknown): Error => {
 		return new Error(`FCM ${error.code}: ${error.message}`, { cause: error });
 	}
 
-	// 2. Anything else — the network, a bug — as is, prefixed
+	// Anything else is the network or a bug
 	return new Error(`FCM: ${toErrorMessage(error)}`, { cause: error });
 };
