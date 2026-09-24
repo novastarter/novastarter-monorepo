@@ -286,7 +286,7 @@ export class BusDriverRedis implements BusDriver {
 		//    failure too instead of being told its handler is in place when the set is about to go. A `close()` that
 		//    landed meanwhile dropped the set as well, and is reported the same way. The set keeps handlers of
 		//    `unknown` payloads, so a callback typed for one payload is cast on its way in: a subscriber receives
-		//    whatever is published, the same widening the local driver's untyped set relies on
+		//    whatever is published, the same widening the local driver's set relies on
 		if (existingSet !== undefined) {
 			existingSet.add(callback as MessageHandler<unknown>);
 			await this.pending.get(namespaced);

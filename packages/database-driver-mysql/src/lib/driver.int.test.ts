@@ -73,6 +73,9 @@ describe.skipIf(!MYSQL)('DatabaseDriverMysql on MySQL', () => {
 
 	/**
 	 * Read the rows of a statement; mysql2 answers `[rows, fields]` and Drizzle passes that pair through.
+	 *
+	 * @param statement - Raw SQL to run.
+	 * @returns The rows the statement returned.
 	 */
 	const rows = async <T>(statement: string): Promise<T[]> => {
 		const [result] = await driver.db.execute(sql.raw(statement));

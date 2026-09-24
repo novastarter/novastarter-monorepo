@@ -39,7 +39,7 @@ vi.mock('./utils/process-packages.js', () => ({
 const listenersBefore = process.listeners('beforeExit');
 
 // Imported after the listeners are captured, since the module registers its hook at import
-const { run, default: changelogFunctions } = await import('./index.js');
+const { run, getReleaseLine } = await import('./index.js');
 
 /**
  * The hook the module registered at import.
@@ -280,7 +280,7 @@ describe('beforeExit hook', () => {
 		expect(beforeExitHook).toBeTypeOf('function');
 	});
 
-	test('should print the changesets collected through the default export and exit', async () => {
+	test('should print the changesets collected through the release line hook and exit', async () => {
 		const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 
 		const changeset: NewChangesetWithCommit = {
@@ -291,7 +291,7 @@ describe('beforeExit hook', () => {
 		};
 
 		// 1. `changesets` feeds the changelog functions; the hook must see the very same map afterwards
-		await changelogFunctions.getReleaseLine(changeset, 'patch', null);
+		await getReleaseLine(changeset, 'patch', null);
 
 		await (beforeExitHook as () => Promise<void>)();
 

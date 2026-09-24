@@ -8,7 +8,7 @@ import { PushTargetGoneError } from '@novastarter/push';
 import { TimeoutError } from '@novastarter/utils';
 import { ApnsError, Host, Notification } from 'apns2';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import { PushDriverApns as EntryExport } from '../index.js';
 import { PushDriverApns } from './driver.js';
 
 /**
@@ -213,8 +213,8 @@ describe('PushDriverApns', () => {
 		expect(close).toHaveBeenCalledTimes(1);
 	});
 
-	test('Is the default export too', () => {
-		// 1. Both import forms hand out the same class
-		expect(defaultExport).toBe(PushDriverApns);
+	test('Is exported by name from the entry point', () => {
+		// 1. The package entry hands out the same class under the same name
+		expect(EntryExport).toBe(PushDriverApns);
 	});
 });

@@ -5,7 +5,7 @@
 import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import * as entry from '../index.js';
 import { MailDriverMailtrap } from './driver.js';
 
 /**
@@ -105,7 +105,7 @@ describe('MailDriverMailtrap', () => {
 		expect(() => new MailDriverMailtrap({ token: '' })).toThrow('"token"');
 		expect(() => new MailDriverMailtrap({ token: 't', sandbox: true })).toThrow('"testInboxId"');
 		expect(() => new MailDriverMailtrap({ token: 't', sandbox: true, testInboxId: 1, bulk: true })).toThrow('at once');
-		expect(defaultExport).toBe(MailDriverMailtrap);
+		expect(entry.MailDriverMailtrap).toBe(MailDriverMailtrap);
 	});
 
 	test('Builds the client for sending, the sandbox and the bulk stream', () => {

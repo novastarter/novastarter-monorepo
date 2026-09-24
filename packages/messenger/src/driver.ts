@@ -54,7 +54,6 @@ export declare class MessengerDriver {
 	 * const { status, headers, data } = await driver.call!('sendPhoto', { chat_id: chatId, photo: file });
 	 * ```
 	 */
-
 	call?<T = unknown>(method: string, params?: Record<string, unknown>, options?: CallOptions): Promise<CallResponse<T>>;
 
 	/**

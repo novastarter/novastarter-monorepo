@@ -1,6 +1,7 @@
 /**
  * Tests of the `console` push driver.
  */
+import type { Logger } from '@novastarter/logger';
 import { describe, expect, test, vi } from 'vitest';
 import { PushDriverConsole } from './console.js';
 
@@ -13,7 +14,7 @@ describe('PushDriverConsole', () => {
 	test('Logs a web push with its endpoint and hands out sequential ids', async () => {
 		// 1. A recording logger stands in for the application's
 		const logger = { info: vi.fn() };
-		const driver = new PushDriverConsole({ logger: logger as any });
+		const driver = new PushDriverConsole({ logger: logger as unknown as Logger });
 
 		const first = await driver.send({ subscription, title: 'Paid', body: 'Invoice #1', url: '/billing' });
 		const second = await driver.send({ subscription, title: 'Again' });
@@ -38,7 +39,7 @@ describe('PushDriverConsole', () => {
 
 	test('Logs a token of either platform', async () => {
 		const logger = { info: vi.fn() };
-		const driver = new PushDriverConsole({ logger: logger as any });
+		const driver = new PushDriverConsole({ logger: logger as unknown as Logger });
 
 		// 1. Every platform is accepted: an FCM token and an APNs token both land in the log with their platform
 		await driver.send({ token: 'fcm-token', title: 'Hi' });
@@ -64,7 +65,7 @@ describe('PushDriverConsole', () => {
 
 		// 1. The same call a provider's driver takes, written to the log; the options are not logged
 		await expect(
-			new PushDriverConsole({ logger: logger as any }).call(
+			new PushDriverConsole({ logger: logger as unknown as Logger }).call(
 				'POST /v1/files',
 				{ purpose: 'import', file: new File(['x'], 'data.csv'), raw: new Blob(['y']) },
 				{ headers: { authorization: 'secret' } },
@@ -79,7 +80,9 @@ describe('PushDriverConsole', () => {
 
 	test('Answers a plain 200 with no headers and no body', async () => {
 		// 1. Code that reads the status of a real provider's answer runs against the console too
-		await expect(new PushDriverConsole({ logger: { info: vi.fn() } as any }).call('GET /v1/x')).resolves.toStrictEqual({
+		await expect(
+			new PushDriverConsole({ logger: { info: vi.fn() } as unknown as Logger }).call('GET /v1/x'),
+		).resolves.toStrictEqual({
 			status: 200,
 			headers: {},
 			data: undefined,

@@ -24,7 +24,7 @@ vi.mock('pino', async (importOriginal) => {
 const prettyStream = { pretty: true };
 
 beforeEach(() => {
-	vi.mocked(pinoPretty).mockReturnValue(prettyStream as any);
+	vi.mocked(pinoPretty).mockReturnValue(prettyStream as unknown as ReturnType<typeof pinoPretty>);
 });
 
 afterEach(() => {

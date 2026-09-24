@@ -3,8 +3,8 @@
  *
  * `@novastarter/logger`, `@novastarter/emitter` and the Redis client of `@novastarter/redis` are mocked.
  */
-import { useEmitter } from '@novastarter/emitter';
-import { useLogger } from '@novastarter/logger';
+import { type Emitter, useEmitter } from '@novastarter/emitter';
+import { type Logger, useLogger } from '@novastarter/logger';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { z } from 'zod';
 import { _contracts, registerJob } from '../contracts/index.js';
@@ -33,8 +33,8 @@ const testPing = defineJob({
 });
 
 beforeEach(() => {
-	vi.mocked(useLogger).mockReturnValue({ error: vi.fn() } as any);
-	vi.mocked(useEmitter).mockReturnValue(emitter as any);
+	vi.mocked(useLogger).mockReturnValue({ error: vi.fn() } as unknown as Logger);
+	vi.mocked(useEmitter).mockReturnValue(emitter as unknown as Emitter);
 	registerJob(testPing);
 
 	// Every test enqueues on a local default location, as an application without Redis would register it

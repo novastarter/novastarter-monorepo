@@ -1,8 +1,8 @@
-import acronyms from '../constants/acronyms.js';
-import articles from '../constants/articles.js';
-import conjunctions from '../constants/conjunctions.js';
-import prepositions from '../constants/prepositions.js';
-import specialCase from '../constants/special-case.js';
+import { ACRONYMS } from '../constants/acronyms.js';
+import { ARTICLES } from '../constants/articles.js';
+import { CONJUNCTIONS } from '../constants/conjunctions.js';
+import { PREPOSITIONS } from '../constants/prepositions.js';
+import { SPECIAL_CASE } from '../constants/special-case.js';
 
 /**
  * Apply title-case rules to a single word based on its position in the sentence.
@@ -27,12 +27,12 @@ export function handleSpecialWords(str: string, index: number, words: string[]):
 	const uppercaseStr = str.toUpperCase();
 
 	// 2. A word with a fixed brand spelling (`iPhone`, `MySQL`) always uses that spelling, whatever its position
-	for (const special of specialCase) {
+	for (const special of SPECIAL_CASE) {
 		if (special.toLowerCase() === lowercaseStr) return special;
 	}
 
 	// 3. A known acronym is always fully upper-cased
-	if (acronyms.includes(uppercaseStr)) return uppercaseStr;
+	if (ACRONYMS.includes(uppercaseStr)) return uppercaseStr;
 
 	// 4. The first word stays capitalized even if it is a minor word (`The Cat`)
 	if (index === 0) return str;
@@ -44,9 +44,9 @@ export function handleSpecialWords(str: string, index: number, words: string[]):
 	if (str.length >= 4) return str;
 
 	// 7. Short prepositions, conjunctions and articles in the middle of the sentence are lower-cased
-	if (prepositions.includes(lowercaseStr)) return lowercaseStr;
-	if (conjunctions.includes(lowercaseStr)) return lowercaseStr;
-	if (articles.includes(lowercaseStr)) return lowercaseStr;
+	if (PREPOSITIONS.includes(lowercaseStr)) return lowercaseStr;
+	if (CONJUNCTIONS.includes(lowercaseStr)) return lowercaseStr;
+	if (ARTICLES.includes(lowercaseStr)) return lowercaseStr;
 
 	// 8. Anything else keeps the capital it arrived with
 	return str;

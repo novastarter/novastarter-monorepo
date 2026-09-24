@@ -3,6 +3,7 @@
  */
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { z } from 'zod';
+import type { JobHandlers } from '../types.js';
 import { defineJob } from './define-job.js';
 import { _handlers, getJobHandler, registerJobHandlers } from './handlers.js';
 
@@ -19,7 +20,7 @@ describe('registerJobHandlers', () => {
 		const echo = vi.fn(async () => {});
 		const other = vi.fn(async () => {});
 
-		registerJobHandlers({ 'test.echo': echo, 'test.other': other } as any);
+		registerJobHandlers({ 'test.echo': echo, 'test.other': other } as JobHandlers);
 
 		expect(_handlers.get('test.echo')).toBe(echo);
 		expect(_handlers.get('test.other')).toBe(other);
@@ -28,9 +29,9 @@ describe('registerJobHandlers', () => {
 	test('Refuses a second handler for the same job', () => {
 		// 1. The first registration wins and says so: a second handler for the same job would leave the winner
 		//    ambiguous
-		registerJobHandlers({ 'test.echo': async () => {} } as any);
+		registerJobHandlers({ 'test.echo': async () => {} } as JobHandlers);
 
-		expect(() => registerJobHandlers({ 'test.echo': async () => {} } as any)).toThrow(
+		expect(() => registerJobHandlers({ 'test.echo': async () => {} } as JobHandlers)).toThrow(
 			'Job "test.echo" already has a handler',
 		);
 	});
@@ -43,7 +44,7 @@ describe('getJobHandler', () => {
 
 		// 2. After registration the very function that was registered is answered
 		const handler = vi.fn(async () => {});
-		registerJobHandlers({ 'test.echo': handler } as any);
+		registerJobHandlers({ 'test.echo': handler } as JobHandlers);
 
 		expect(getJobHandler(contract)).toBe(handler);
 	});

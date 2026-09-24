@@ -5,7 +5,7 @@
 import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import * as entry from '../index.js';
 import { SmsDriverTwilio } from './driver.js';
 
 const create = vi.fn();
@@ -66,7 +66,8 @@ describe('SmsDriverTwilio', () => {
 		});
 
 		expect(create).toHaveBeenCalledWith({ to: '+14155550123', body: 'Hi', from: '+14155550100' });
-		expect(defaultExport).toBe(SmsDriverTwilio);
+		expect(entry.SmsDriverTwilio).toBe(SmsDriverTwilio);
+		expect(entry).not.toHaveProperty('default');
 	});
 
 	test('Reports no segment count when Twilio does not say one', async () => {

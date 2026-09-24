@@ -6,7 +6,8 @@ import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import { MessageSendAllFailure, MessageSendPartialFailure } from '@vonage/sms';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import defaultExport, { SmsPartialDeliveryError } from '../index.js';
+import * as entry from '../index.js';
+import { SmsPartialDeliveryError } from '../index.js';
 import { BALANCE_URL } from './constants.js';
 import { SmsDriverVonage } from './driver.js';
 
@@ -68,7 +69,8 @@ describe('SmsDriverVonage', () => {
 
 		expect(send).toHaveBeenCalledWith({ to: '14155550123', from: 'Acme', text: 'Hi', type: 'text' });
 		expect(client).toHaveBeenCalledWith({ apiKey: 'key', apiSecret: 'secret' }, { timeout: 5_000 });
-		expect(defaultExport).toBe(SmsDriverVonage);
+		expect(entry.SmsDriverVonage).toBe(SmsDriverVonage);
+		expect(entry).not.toHaveProperty('default');
 	});
 
 	test('Describes a refused message by Vonage status and wording', async () => {

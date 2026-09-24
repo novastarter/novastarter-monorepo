@@ -5,7 +5,7 @@
  * A word that needs mixed casing (`iPhone`, `MySQL`) belongs in the special-case list instead, and the two lists must
  * not overlap.
  */
-export default [
+export const ACRONYMS: string[] = [
 	'2D',
 	'3D',
 	'4WD',
@@ -89,4 +89,4 @@ export default [
 	'WWF',
 	'WWW',
 	'WYSIWYG',
-] as string[];
+];

@@ -1,6 +1,7 @@
 /**
  * Tests of the `console` SMS driver.
  */
+import type { Logger } from '@novastarter/logger';
 import { describe, expect, test, vi } from 'vitest';
 import { SmsDriverConsole } from './console.js';
 
@@ -8,7 +9,7 @@ describe('SmsDriverConsole', () => {
 	test('Logs the message and answers a logged status', async () => {
 		// 1. A recording logger stands in for the application's
 		const logger = { info: vi.fn() };
-		const driver = new SmsDriverConsole({ logger: logger as any });
+		const driver = new SmsDriverConsole({ logger: logger as unknown as Logger });
 
 		const result = await driver.send({
 			to: '+14155550123',
@@ -29,7 +30,7 @@ describe('SmsDriverConsole', () => {
 	test('Leaves the optional fields out of the line when unset', async () => {
 		// 1. A message without sender or category logs only what it has, so the line carries no `undefined` keys
 		const logger = { info: vi.fn() };
-		const driver = new SmsDriverConsole({ logger: logger as any });
+		const driver = new SmsDriverConsole({ logger: logger as unknown as Logger });
 
 		await driver.send({ to: '+14155550123', text: 'Hi' });
 
@@ -41,7 +42,7 @@ describe('SmsDriverConsole', () => {
 
 		// 1. The same call a provider's driver takes, written to the log; the options are not logged
 		await expect(
-			new SmsDriverConsole({ logger: logger as any }).call(
+			new SmsDriverConsole({ logger: logger as unknown as Logger }).call(
 				'POST /v1/files',
 				{ purpose: 'import', file: new File(['x'], 'data.csv'), raw: new Blob(['y']) },
 				{ headers: { authorization: 'secret' } },
@@ -56,7 +57,9 @@ describe('SmsDriverConsole', () => {
 
 	test('Answers a plain 200 with no headers and no body', async () => {
 		// 1. Code that reads the status of a real provider's answer runs against the console too
-		await expect(new SmsDriverConsole({ logger: { info: vi.fn() } as any }).call('GET /v1/x')).resolves.toStrictEqual({
+		await expect(
+			new SmsDriverConsole({ logger: { info: vi.fn() } as unknown as Logger }).call('GET /v1/x'),
+		).resolves.toStrictEqual({
 			status: 200,
 			headers: {},
 			data: undefined,

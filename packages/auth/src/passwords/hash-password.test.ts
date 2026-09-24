@@ -44,7 +44,8 @@ describe('hashPassword', () => {
 
 		expect(hash.startsWith('$scrypt$ln=17,r=8,p=1$')).toBe(true);
 		expect(await verifyPassword('default cost', hash)).toBe(true);
-	});
+		// 2. The default cost takes about half a second alone, but far longer when `pnpm test` runs every package at once
+	}, 30_000);
 
 	test('Refuses an empty password and one longer than the maximum', async () => {
 		// 1. Both are rejected before any hashing, as a payload error the caller can show

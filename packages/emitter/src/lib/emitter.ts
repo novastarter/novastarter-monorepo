@@ -116,7 +116,7 @@ export class Emitter {
 	public async emitFilter<T>(
 		event: string | string[],
 		payload: T,
-		meta: Record<string, any>,
+		meta: Record<string, unknown>,
 		context: EventContext | null = null,
 	): Promise<T> {
 		// 1. One name or several are normalised into a list up front, so the rest of the run treats both alike
@@ -153,7 +153,11 @@ export class Emitter {
 	 * @param meta - Details of the operation, merged under the event name, which wins over a meta `event` key.
 	 * @param context - Who acted; defaults to an anonymous context.
 	 */
-	public emitAction(event: string | string[], meta: Record<string, any>, context: EventContext | null = null): void {
+	public emitAction(
+		event: string | string[],
+		meta: Record<string, unknown>,
+		context: EventContext | null = null,
+	): void {
 		// 1. One name or several are handled alike; the logger is read per call, so a `registerLogger` after start-up
 		//    is honoured
 		const logger = useLogger();
@@ -177,7 +181,7 @@ export class Emitter {
 	 * @param event - Stage name, such as `app.before` or `routes.after`.
 	 * @param meta - What the stage exposes to the hooks, merged under the event name, which wins over a meta `event` key.
 	 */
-	public async emitInit(event: string, meta: Record<string, any>): Promise<void> {
+	public async emitInit(event: string, meta: Record<string, unknown>): Promise<void> {
 		// 1. The logger is read per call, so a `registerLogger` after start-up is honoured
 		const logger = useLogger();
 

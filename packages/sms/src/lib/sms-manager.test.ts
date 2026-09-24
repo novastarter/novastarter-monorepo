@@ -18,7 +18,7 @@ declare module './sms-manager.js' {
 }
 
 beforeEach(() => {
-	vi.mocked(useLogger).mockReturnValue({ info: vi.fn() } as any);
+	vi.mocked(useLogger).mockReturnValue({ info: vi.fn() } as unknown as ReturnType<typeof useLogger>);
 });
 
 afterEach(() => {

@@ -5,7 +5,7 @@
 import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import * as entry from '../index.js';
 import { DEFAULT_MAILGUN_HOST } from './constants.js';
 import { MailDriverMailgun } from './driver.js';
 
@@ -84,11 +84,11 @@ afterEach(() => {
 });
 
 describe('MailDriverMailgun', () => {
-	test('Requires the key and the domain, and is the default export', () => {
+	test('Requires the key and the domain, and is exported by name', () => {
 		// 1. Either missing option is refused by name
 		expect(() => new MailDriverMailgun({ apiKey: '', domain: 'mg.acme.test' })).toThrow('"apiKey"');
 		expect(() => new MailDriverMailgun({ apiKey: 'key', domain: '' })).toThrow('"domain"');
-		expect(defaultExport).toBe(MailDriverMailgun);
+		expect(entry.MailDriverMailgun).toBe(MailDriverMailgun);
 	});
 
 	test('Builds the client for the US region by default and for the host given', () => {

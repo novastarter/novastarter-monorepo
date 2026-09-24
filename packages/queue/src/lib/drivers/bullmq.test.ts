@@ -3,6 +3,7 @@
  * has its own tests in `create-worker.test.ts`.
  */
 import { EventEmitter } from 'node:events';
+import type { Logger } from '@novastarter/logger';
 import { createRedis } from '@novastarter/redis';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { z } from 'zod';
@@ -126,16 +127,16 @@ describe('toJobsOptions', () => {
 
 describe('QueueDriverBullmq', () => {
 	test('Refuses a missing connection instead of letting ioredis pick localhost', () => {
-		expect(() => new QueueDriverBullmq({ connection: undefined as never, logger: logger as any })).toThrow(
-			'The bullmq queue driver needs a "connection"',
-		);
+		expect(
+			() => new QueueDriverBullmq({ connection: undefined as never, logger: logger as unknown as Logger }),
+		).toThrow('The bullmq queue driver needs a "connection"');
 
 		expect(createRedis).not.toHaveBeenCalled();
 	});
 
 	test('close() waits for a queue still opening, so it is closed rather than left behind', async () => {
 		// The first use awaits the `bullmq` import; a close racing it must not resolve before that queue exists
-		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as any });
+		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as unknown as Logger });
 
 		const enqueued = driver.enqueue(contract, { value: 'a' }, contract.options, 'id-1');
 		await driver.close();
@@ -153,7 +154,7 @@ describe('QueueDriverBullmq', () => {
 			connection: { host: 'redis' },
 			prefix: 'acme',
 			telemetry: telemetry as never,
-			logger: logger as any,
+			logger: logger as unknown as Logger,
 		});
 
 		// 1. A URL or options open a client of the driver's own, pinned to what BullMQ requires
@@ -202,7 +203,7 @@ describe('QueueDriverBullmq', () => {
 	});
 
 	test('Drops a finished record under an explicit id before adding, so the id runs again after a failure', async () => {
-		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as any });
+		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as unknown as Logger });
 
 		// 1. A record still queued is left alone: BullMQ collapses the add into it
 		FakeQueue.states['nightly'] = 'waiting';
@@ -233,7 +234,7 @@ describe('QueueDriverBullmq', () => {
 	});
 
 	test('Refuses a negative or NaN delay, exactly as the local driver refuses it', async () => {
-		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as any });
+		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as unknown as Logger });
 
 		// 1. The same RangeError the `local` driver throws, so both locations answer a bad delay identically
 		await expect(driver.enqueue(contract, { value: 'x' }, { ...contract.options, delay: -1 })).rejects.toThrow(
@@ -252,7 +253,7 @@ describe('QueueDriverBullmq', () => {
 
 	test('Uses a given client as is and leaves it open', async () => {
 		const client = { quit: vi.fn(async () => 'OK') };
-		const driver = new QueueDriverBullmq({ connection: client as never, logger: logger as any });
+		const driver = new QueueDriverBullmq({ connection: client as never, logger: logger as unknown as Logger });
 
 		expect(createRedis).not.toHaveBeenCalled();
 		expect(driver.connection).toBe(client);
@@ -269,7 +270,7 @@ describe('QueueDriverBullmq', () => {
 
 		vi.mocked(createRedis).mockReturnValueOnce({ status: 'connecting', quit, disconnect } as never);
 
-		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as any });
+		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as unknown as Logger });
 
 		await driver.close();
 
@@ -278,7 +279,7 @@ describe('QueueDriverBullmq', () => {
 	});
 
 	test('Reports the counts of the given queues, folding prioritised work into waiting, zero for states BullMQ leaves out', async () => {
-		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as any });
+		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as unknown as Logger });
 
 		// 1. Three `waiting` plus two `prioritized`: a job with a priority never sits in BullMQ's `waiting` list
 		await expect(driver.stats(['test', 'mail'])).resolves.toStrictEqual([
@@ -301,7 +302,7 @@ describe('QueueDriverBullmq', () => {
 	});
 
 	test('Refuses to enqueue or count after close(), rather than reopening a queue nothing will close', async () => {
-		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as any });
+		const driver = new QueueDriverBullmq({ connection: { host: 'redis' }, logger: logger as unknown as Logger });
 
 		await driver.enqueue(contract, { value: 'a' }, contract.options, 'id-1');
 		await driver.close();

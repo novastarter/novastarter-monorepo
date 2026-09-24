@@ -32,7 +32,7 @@ const lastOptions = () => {
 
 	return {
 		ignore: (options.autoLogging as { ignore?: (req: { url?: string }) => boolean } | undefined)?.ignore,
-		serializers: options.serializers as Record<string, (value: any) => any>,
+		serializers: options.serializers as Record<string, (value: unknown) => Partial<SerializedRequest>>,
 	};
 };
 

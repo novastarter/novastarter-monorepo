@@ -18,6 +18,7 @@ let bullmq: Promise<typeof import('bullmq')> | undefined;
  */
 export const loadBullmq = (): Promise<typeof import('bullmq')> => {
 	// 1. Memoised, so a process that opens several queues and workers pays for the import once
+	// eslint-disable-next-line no-restricted-syntax -- optional peer: a static import would crash without it
 	bullmq ??= import('bullmq').catch((error: unknown) => {
 		throw new Error('Queue driver "bullmq" needs the "bullmq" package: pnpm add bullmq', { cause: error });
 	});

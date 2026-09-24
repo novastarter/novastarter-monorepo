@@ -7,8 +7,38 @@
  * {@link useNotifications}, and the {@link Notification} the application queues, with its {@link notificationSchema}.
  * Templates, preferences, addresses and the queue job are the application's.
  */
-export * from './channel.js';
-export * from './lib/channels/index.js';
-export * from './lib/notifications.js';
-export * from './lib/use-notifications.js';
-export * from './types.js';
+export type { NotificationChannel, NotificationDelivery } from './channel.js';
+export {
+	IN_APP_BUS_PREFIX,
+	inAppChannel,
+	mailChannel,
+	messengerChannel,
+	pushChannel,
+	smsChannel,
+	type InAppChannelOptions,
+	type MailChannelOptions,
+	type MessengerChannelOptions,
+	type PushChannelOptions,
+	type SmsChannelOptions,
+} from './lib/channels/index.js';
+export {
+	NOTIFICATION_FAILED_EVENT,
+	NOTIFICATION_SEND_FILTER,
+	NOTIFICATION_SENT_EVENT,
+	Notifications,
+	type NotificationsOptions,
+} from './lib/notifications.js';
+export { registerNotifications, useNotifications } from './lib/use-notifications.js';
+export {
+	notificationSchema,
+	type InAppContent,
+	type InAppRecord,
+	type MailContent,
+	type MessengerContent,
+	type Notification,
+	type NotificationRecipient,
+	type NotificationSendResult,
+	type PushContent,
+	type PushTarget,
+	type SmsContent,
+} from './types.js';

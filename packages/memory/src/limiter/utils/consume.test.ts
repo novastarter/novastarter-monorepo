@@ -52,7 +52,7 @@ test('Rejects HitRateLimitError', async () => {
 	const mockRes = { msBeforeNext: mockMsBeforeNext } as IRateLimiterRes;
 	vi.mocked(limiter.consume).mockRejectedValue(mockRes);
 
-	let res: any;
+	let res: unknown;
 
 	try {
 		await consume(limiter, key, points);
@@ -62,8 +62,9 @@ test('Rejects HitRateLimitError', async () => {
 
 	// 3. The wrapper turns it into the error the transport layer knows, carrying the limit and the reset moment
 	expect(res).toBeInstanceOf(HitRateLimitError);
+	const error = res as InstanceType<typeof HitRateLimitError>;
 
-	expect(res.extensions).toEqual({
+	expect(error.extensions).toEqual({
 		limit: points,
 		reset: new Date(systemTime.getTime() + mockMsBeforeNext),
 	});
@@ -77,7 +78,7 @@ test('Answers a key without expiry with a reset of now, not in the past', async 
 
 	vi.mocked(limiter.consume).mockRejectedValue({ msBeforeNext: -1 } as IRateLimiterRes);
 
-	let res: any;
+	let res: unknown;
 
 	try {
 		await consume(limiter, key, points);
@@ -87,6 +88,7 @@ test('Answers a key without expiry with a reset of now, not in the past', async 
 
 	// 2. The earliest the caller may try again is now
 	expect(res).toBeInstanceOf(HitRateLimitError);
-	expect(res.extensions.reset).toEqual(systemTime);
-	expect(res.message).not.toContain('-1');
+	const error = res as InstanceType<typeof HitRateLimitError>;
+	expect(error.extensions.reset).toEqual(systemTime);
+	expect(error.message).not.toContain('-1');
 });

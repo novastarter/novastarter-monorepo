@@ -26,7 +26,7 @@ export type EventContext = {
  */
 export type FilterHandler<T = unknown> = (
 	payload: T,
-	meta: Record<string, any>,
+	meta: Record<string, unknown>,
 	context: EventContext,
 ) => T | undefined | Promise<T | undefined>;
 
@@ -38,7 +38,7 @@ export type FilterHandler<T = unknown> = (
  * @param meta - Details of the operation; always holds the `event` name.
  * @param context - Who acted and what the emitting code attached.
  */
-export type ActionHandler = (meta: Record<string, any>, context: EventContext) => void | Promise<void>;
+export type ActionHandler = (meta: Record<string, unknown>, context: EventContext) => void | Promise<void>;
 
 /**
  * Handler of an init event, run at a stage of the application start-up.
@@ -48,4 +48,4 @@ export type ActionHandler = (meta: Record<string, any>, context: EventContext) =
  *
  * @param meta - What the stage exposes to the hooks; always holds the `event` name.
  */
-export type InitHandler = (meta: Record<string, any>) => void | Promise<void>;
+export type InitHandler = (meta: Record<string, unknown>) => void | Promise<void>;

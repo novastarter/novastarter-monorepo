@@ -1,6 +1,7 @@
 /**
  * Tests of the `console` messenger driver.
  */
+import type { Logger } from '@novastarter/logger';
 import { describe, expect, test, vi } from 'vitest';
 import { MessengerDriverConsole } from './console.js';
 
@@ -8,7 +9,7 @@ describe('MessengerDriverConsole', () => {
 	test('Logs the text and hands out sequential ids', async () => {
 		// 1. A recording logger stands in for the application's
 		const logger = { info: vi.fn() };
-		const driver = new MessengerDriverConsole({ logger: logger as any });
+		const driver = new MessengerDriverConsole({ logger: logger as unknown as Logger });
 
 		await expect(driver.send({ to: '42', text: 'Paid' })).resolves.toStrictEqual({ messageId: 'console-1' });
 		await expect(driver.send({ to: '42', text: 'Again' })).resolves.toStrictEqual({ messageId: 'console-2' });
@@ -21,7 +22,7 @@ describe('MessengerDriverConsole', () => {
 		const logger = { info: vi.fn() };
 
 		// 1. A URL is named as is, a file by its name, a nameless blob as `blob`
-		await new MessengerDriverConsole({ logger: logger as any }).send({
+		await new MessengerDriverConsole({ logger: logger as unknown as Logger }).send({
 			to: '42',
 			attachments: [
 				{ kind: 'photo', source: 'https://example.com/a.png' },
@@ -49,7 +50,7 @@ describe('MessengerDriverConsole', () => {
 
 		// 1. The same call a messenger's driver takes, written to the log
 		await expect(
-			new MessengerDriverConsole({ logger: logger as any }).call('sendPhoto', {
+			new MessengerDriverConsole({ logger: logger as unknown as Logger }).call('sendPhoto', {
 				chat_id: '42',
 				photo: new File(['png'], 'chart.png'),
 				thumbnail: new Blob(['x']),
@@ -65,7 +66,7 @@ describe('MessengerDriverConsole', () => {
 	test('Answers a plain 200 with no headers and no body', async () => {
 		// 1. Code that reads the status of a real provider's answer runs against the console too
 		await expect(
-			new MessengerDriverConsole({ logger: { info: vi.fn() } as any }).call('GET /v1/x'),
+			new MessengerDriverConsole({ logger: { info: vi.fn() } as unknown as Logger }).call('GET /v1/x'),
 		).resolves.toStrictEqual({ status: 200, headers: {}, data: undefined });
 	});
 });

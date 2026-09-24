@@ -44,6 +44,11 @@ describe('contracts', () => {
 		const testEcho = defineJob({ name: 'test.echo', schema: z.object({ message: z.string().default('ping') }) });
 
 		// 2. The handler receives the parsed payload: the field is a plain string, no cast needed
+		/**
+		 * Handler of the contract, typed from it; reads the parsed field as a plain string.
+		 *
+		 * @param payload - The parsed payload of `test.echo`.
+		 */
 		const handler: JobHandler<typeof testEcho> = async (payload) => {
 			const message: string = payload.message;
 			expect(message).toBeDefined();

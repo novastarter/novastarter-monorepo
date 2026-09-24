@@ -3,8 +3,94 @@
 import eslintJs from '@eslint/js';
 import eslintConfigPrettier from 'eslint-config-prettier';
 import eslintImportPlugin from 'eslint-plugin-import-x';
+import eslintJsdocPlugin from 'eslint-plugin-jsdoc';
 import globals from 'globals';
 import typescriptEslint from 'typescript-eslint';
+
+/**
+ * Every source extension ESLint lints in the repository, JavaScript and TypeScript alike.
+ */
+const SOURCE_FILES = '**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}';
+
+/**
+ * Files that must keep a default export or dynamic import because a framework demands it.
+ *
+ * Tools such as Next, Vitest, Drizzle and tsdown read `export default` from their `*.config.*` files, and Next reads
+ * it from the route files under `apps/<app>/app/`.
+ */
+const FRAMEWORK_FILES = ['**/*.config.*', 'apps/*/app/**'];
+
+/**
+ * Test files, where a dynamic `import()` is how a module is loaded fresh after `vi.resetModules()` or a mock.
+ */
+const TEST_FILES = ['**/*.test.{ts,tsx,mts,cts}'];
+
+/**
+ * `no-restricted-syntax` entries that keep every exported symbol findable by grep under the one name it is declared
+ * with: no barrels, no default exports. Export renaming is caught by the local `no-export-rename` rule instead,
+ * because an esquery selector cannot compare two attributes of one node.
+ */
+const NAMED_EXPORT_SYNTAX = [
+	{
+		selector: 'ExportAllDeclaration',
+		message: 'List the re-exported names explicitly instead of `export *`, so each symbol can be found by grep.',
+	},
+	{
+		selector: 'ExportDefaultDeclaration',
+		message: 'Use a named export instead of `export default`, so the symbol has one name everywhere.',
+	},
+];
+
+/**
+ * `no-restricted-syntax` entry that bans a dynamic `import()`, whose target a reader cannot follow statically.
+ */
+const DYNAMIC_IMPORT_SYNTAX = {
+	selector: 'ImportExpression',
+	message:
+		'Use a static import. A dynamic `import()` needs an `eslint-disable-next-line` comment with the reason it cannot be static.',
+};
+
+/**
+ * Local rule that forbids renaming a symbol on export (`export { a as b }`), which gives one symbol two names.
+ *
+ * The rule compares the local and exported name of every export specifier; `export { default as X } from` counts as a
+ * rename too, since it re-labels a default export.
+ */
+const noExportRename = {
+	meta: {
+		type: 'problem',
+		docs: { description: 'Disallow renaming a symbol on export' },
+		schema: [],
+		messages: {
+			rename: 'Export `{{local}}` under its own name instead of renaming it to `{{exported}}`.',
+		},
+	},
+	/**
+	 * Build the visitor that reports every renamed export specifier.
+	 *
+	 * @param {import('eslint').Rule.RuleContext} context - Rule context used to report problems.
+	 * @returns {import('eslint').Rule.RuleListener} The AST visitor.
+	 */
+	create(context) {
+		return {
+			/**
+			 * Report the specifier when its local name differs from the name it is exported under.
+			 *
+			 * @param {import('estree').ExportSpecifier} node - The export specifier being visited.
+			 */
+			ExportSpecifier(node) {
+				// 1. Either side may be a string literal (`export { a as 'b' }`), so read `name` or `value`
+				const local = node.local.type === 'Identifier' ? node.local.name : String(node.local.value);
+				const exported = node.exported.type === 'Identifier' ? node.exported.name : String(node.exported.value);
+
+				// 2. Only a differing pair is a rename; `export { a }` and `export { a as a }` are fine
+				if (local !== exported) {
+					context.report({ node, messageId: 'rename', data: { local, exported } });
+				}
+			},
+		};
+	},
+};
 
 /**
  * Single ESLint flat config shared by every package and app in the monorepo.
@@ -119,14 +205,135 @@ export default typescriptEslint.config(
 
 	// Custom TypeScript rules; `.tsx` is included so React components get the same relaxations as plain modules
 	{
-		files: ['**/*.{ts,tsx}'],
+		files: ['**/*.{ts,mts,cts,tsx}'],
 		rules: {
 			// Allow unused arguments and variables when they begin with an underscore
 			'@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
-			// Allow ts-directive comments (used to suppress TypeScript compiler errors)
-			'@typescript-eslint/ban-ts-comment': 'off',
-			// Allow usage of the any type (consider enabling this rule later on)
-			'@typescript-eslint/no-explicit-any': 'off',
+			// A suppressed compiler error must say why; `@ts-ignore` and `@ts-nocheck` hide errors silently
+			'@typescript-eslint/ban-ts-comment': [
+				'error',
+				{
+					'ts-check': false,
+					'ts-expect-error': 'allow-with-description',
+					'ts-ignore': true,
+					'ts-nocheck': true,
+				},
+			],
+			// `any` switches the type checker off, so it is banned in tests too: mocks get real types
+			'@typescript-eslint/no-explicit-any': 'error',
+		},
+	},
+
+	// AGENTS.md "comment all code": JSDoc above every module-level function and function-valued `const`, every class
+	// and method, and every exported type or `const`, in every file of the repository. Helpers declared inside a
+	// function body and callbacks passed as arguments (`it(() => …)`, `.map(…)`) are covered by the numbered comments
+	// of the enclosing function instead
+	{
+		files: [SOURCE_FILES],
+		plugins: { jsdoc: eslintJsdocPlugin },
+		rules: {
+			'jsdoc/require-jsdoc': [
+				'error',
+				{
+					// The fixer would insert empty `/** */` stubs on `--fix`, which satisfy the rule and document nothing
+					enableFixer: false,
+					publicOnly: false,
+					exemptEmptyConstructors: false,
+					exemptEmptyFunctions: false,
+					require: {
+						ArrowFunctionExpression: false,
+						ClassDeclaration: true,
+						ClassExpression: false,
+						FunctionDeclaration: false,
+						FunctionExpression: false,
+						MethodDefinition: true,
+					},
+					contexts: [
+						// A function stored in a module-level `const`; an exported one is covered by the
+						// `ExportNamedDeclaration` context below. A helper `const` inside a function body is a step of
+						// that function and is explained by its numbered comment, not by a JSDoc of its own
+						'Program > VariableDeclaration > VariableDeclarator > ArrowFunctionExpression',
+						'Program > VariableDeclaration > VariableDeclarator > FunctionExpression',
+						// A declared function at module level, exported or not; a function declared inside another one
+						// is a step of it, like a helper `const`
+						'Program > FunctionDeclaration',
+						'ExportNamedDeclaration > FunctionDeclaration',
+						'ExportDefaultDeclaration > FunctionDeclaration',
+						// A class field holding a function is a method written as an arrow
+						'PropertyDefinition > ArrowFunctionExpression',
+						'TSAbstractMethodDefinition',
+						// Exported declarations are matched on the `export` node, where their JSDoc sits
+						'ExportNamedDeclaration[declaration.type="VariableDeclaration"]',
+						'ExportNamedDeclaration[declaration.type="TSTypeAliasDeclaration"]',
+						'ExportNamedDeclaration[declaration.type="TSInterfaceDeclaration"]',
+					],
+				},
+			],
+			// Every argument gets a `@param`; destructured properties are left to the prose, a root `@param` suffices
+			'jsdoc/require-param': ['error', { checkDestructured: false }],
+			'jsdoc/check-param-names': ['error', { checkDestructured: false }],
+		},
+	},
+
+	// AGENTS.md "grep-friendly code": named exports only and static imports only, in packages and apps. Framework
+	// files are exempt because Next and the tool configs read their default export
+	{
+		files: [`packages/${SOURCE_FILES}`, `apps/${SOURCE_FILES}`],
+		ignores: [...FRAMEWORK_FILES, ...TEST_FILES],
+		plugins: { local: { rules: { 'no-export-rename': noExportRename } } },
+		rules: {
+			'no-restricted-syntax': ['error', ...NAMED_EXPORT_SYNTAX, DYNAMIC_IMPORT_SYNTAX],
+			'local/no-export-rename': 'error',
+		},
+	},
+
+	// Tests follow the same export rules but may load a module with `import()`, e.g. after `vi.resetModules()`
+	{
+		files: TEST_FILES.flatMap((pattern) => [`packages/${pattern}`, `apps/${pattern}`]),
+		ignores: FRAMEWORK_FILES,
+		plugins: { local: { rules: { 'no-export-rename': noExportRename } } },
+		rules: {
+			'no-restricted-syntax': ['error', ...NAMED_EXPORT_SYNTAX],
+			'local/no-export-rename': 'error',
+		},
+	},
+
+	// Packages take configuration as arguments; `@novastarter/env` is the one reader of the environment. The release
+	// notes CLI reads its own env by design, and integration tests read connection strings of real services
+	{
+		files: [`packages/${SOURCE_FILES}`],
+		ignores: ['packages/env/**', 'packages/release-notes-generator/**', '**/*.int.test.ts'],
+		rules: {
+			'no-restricted-properties': [
+				'error',
+				{
+					object: 'process',
+					property: 'env',
+					message: 'Packages take configuration as arguments; read the environment through `@novastarter/env`.',
+				},
+			],
+		},
+	},
+
+	// Packages are shared by every app, so they never depend on one: no paths into `apps/`, no app package names
+	{
+		files: [`packages/${SOURCE_FILES}`],
+		rules: {
+			'no-restricted-imports': [
+				'error',
+				{
+					patterns: [
+						{
+							regex: '(^|/)apps/',
+							message: 'Packages must not import from `apps/`; move the shared code into a package.',
+						},
+						{
+							regex: '^(@novastarter/)?(web|docs)(/|$)',
+							message: 'Packages must not import an app; move the shared code into a package.',
+						},
+					],
+				},
+			],
 		},
 	},
 

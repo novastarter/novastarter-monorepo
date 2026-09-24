@@ -19,7 +19,7 @@ vi.mock('../config.js', () => {
 		packageOrder: [],
 	};
 
-	return { default: config };
+	return { config };
 });
 
 /**

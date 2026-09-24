@@ -1,4 +1,5 @@
 /**
  * The built-in feature flags drivers: `static`.
  */
-export * from './static.js';
+export { FeatureFlagsDriverStatic } from './static.js';
+export type { FeatureFlagsDriverStaticConfig } from './static.js';

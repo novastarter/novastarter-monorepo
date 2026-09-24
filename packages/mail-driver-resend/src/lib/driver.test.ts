@@ -5,7 +5,7 @@
 import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import * as entry from '../index.js';
 import { MailDriverResend } from './driver.js';
 
 /**
@@ -97,7 +97,7 @@ describe('MailDriverResend', () => {
 
 		// 3. A missing key is refused by name
 		expect(() => new MailDriverResend({ apiKey: '' })).toThrow(/"apiKey"/);
-		expect(defaultExport).toBe(MailDriverResend);
+		expect(entry.MailDriverResend).toBe(MailDriverResend);
 	});
 
 	test('Sends attachments base64-encoded, a text body read into bytes first', async () => {

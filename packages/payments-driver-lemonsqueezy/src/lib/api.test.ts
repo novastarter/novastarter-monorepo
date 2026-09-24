@@ -28,6 +28,13 @@ const fakeFetch = (responses: { status?: number; body?: unknown }[]) => {
 	// 1. The calls are kept outside the fetch, so a test reads them after the client has sent
 	const calls: Call[] = [];
 
+	/**
+	 * Record the request and answer the next queued response.
+	 *
+	 * @param url - The requested URL.
+	 * @param init - The method, headers, body and signal of the request.
+	 * @returns The queued response, or an empty success once the queue is empty.
+	 */
 	const fetch: ApiFetch = async (url, init) => {
 		// 1. The body is recorded parsed, so a test matches objects rather than JSON text
 		calls.push({
@@ -130,6 +137,13 @@ describe('LemonSqueezyApi', () => {
 
 	test('Abandons a request that outlives the timeout', async () => {
 		// 1. A fetch that never answers on its own and only fails when its signal aborts, like the platform's does
+		/**
+		 * Wait for the abort signal and reject with its reason.
+		 *
+		 * @param _url - The requested URL, unused.
+		 * @param init - The request; only its signal is read.
+		 * @returns A promise that settles only when the signal aborts.
+		 */
 		const fetch: ApiFetch = (_url, init) =>
 			new Promise((_resolve, reject) => {
 				init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true });

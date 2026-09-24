@@ -6,7 +6,7 @@
 import { PushTargetGoneError } from '@novastarter/push';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import webpush, { WebPushError } from 'web-push';
-import defaultExport from '../index.js';
+import { PushDriverWebPush as EntryExport } from '../index.js';
 import { PushDriverWebPush } from './driver.js';
 
 /**
@@ -175,8 +175,8 @@ describe('PushDriverWebPush', () => {
 		await expect(build({ privateKey: other.privateKey }).driver.verify()).rejects.toThrow(/VAPID keys are invalid/);
 	});
 
-	test('Is the default export too', () => {
-		// 1. Both import forms hand out the same class
-		expect(defaultExport).toBe(PushDriverWebPush);
+	test('Is exported by name from the entry point', () => {
+		// 1. The package entry hands out the same class under the same name
+		expect(EntryExport).toBe(PushDriverWebPush);
 	});
 });

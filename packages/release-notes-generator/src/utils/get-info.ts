@@ -1,4 +1,4 @@
-import config from '../config.js';
+import { config } from '../config.js';
 import type { Change, Changesets, Notice, Type, UntypedPackage } from '../types.js';
 import { sortByExternalOrder, sortByObjectValues } from './sort.js';
 

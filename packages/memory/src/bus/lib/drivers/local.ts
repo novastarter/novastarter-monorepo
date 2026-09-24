@@ -30,7 +30,7 @@ export class BusDriverLocal implements BusDriver {
 	 *
 	 * @internal
 	 */
-	private readonly handlers: Map<string, Set<MessageHandler<any>>>;
+	private readonly handlers: Map<string, Set<MessageHandler<unknown>>>;
 
 	/**
 	 * Create an empty bus.
@@ -81,10 +81,11 @@ export class BusDriverLocal implements BusDriver {
 	 * @param callback - Invoked with every payload published on the channel.
 	 */
 	async subscribe<T = unknown>(channel: string, callback: MessageHandler<T>): Promise<void> {
-		// 1. Create the channel's set on first use
-		const set = this.handlers.get(channel) ?? new Set();
+		// 1. Create the channel's set on first use. The set keeps handlers of `unknown` payloads, so a callback typed for
+		//    one payload is cast on its way in: a subscriber receives whatever is published, as on the Redis bus
+		const set = this.handlers.get(channel) ?? new Set<MessageHandler<unknown>>();
 
-		set.add(callback);
+		set.add(callback as MessageHandler<unknown>);
 
 		this.handlers.set(channel, set);
 	}
@@ -104,9 +105,10 @@ export class BusDriverLocal implements BusDriver {
 			return;
 		}
 
-		set.delete(callback);
+		// 2. The typed callback is cast to be found in the set of `unknown` handlers, the same widening as in `subscribe`
+		set.delete(callback as MessageHandler<unknown>);
 
-		// 2. The channel goes with its last subscriber, as it does on the Redis bus: a channel per request — `reply:<id>`
+		// 3. The channel goes with its last subscriber, as it does on the Redis bus: a channel per request — `reply:<id>`
 		//    — would otherwise leave an empty set behind for every request for the life of the process
 		if (set.size === 0) {
 			this.handlers.delete(channel);

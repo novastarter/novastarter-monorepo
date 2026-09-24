@@ -1,4 +1,4 @@
 /**
  * The built-in messenger driver: `console`.
  */
-export * from './console.js';
+export { MessengerDriverConsole, type MessengerDriverConsoleConfig } from './console.js';

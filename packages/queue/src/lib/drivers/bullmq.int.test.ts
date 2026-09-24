@@ -2,6 +2,7 @@
  * The BullMQ driver and worker against a real Redis; skipped unless `REDIS` names one
  * (`pnpm dev:services` → `REDIS=redis://127.0.0.1:6379`).
  */
+import type { Logger } from '@novastarter/logger';
 import { createRedis } from '@novastarter/redis';
 import type { Redis } from 'ioredis';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
@@ -39,7 +40,7 @@ describe.skipIf(!REDIS)('QueueDriverBullmq on Redis', () => {
 		// 1. The producer is the driver under test; the worker resolves once a job arrives and closes itself when the
 		//    assertion is done with the payload. A failing `createWorker` rejects the promise instead of leaving it
 		//    pending, so the real error surfaces instead of the test burning its timeout
-		const driver = new QueueDriverBullmq({ connection: producer, prefix, logger: logger as any });
+		const driver = new QueueDriverBullmq({ connection: producer, prefix, logger: logger as unknown as Logger });
 
 		const received = new Promise<[unknown, unknown]>((resolve, reject) => {
 			void createWorker(
@@ -47,7 +48,7 @@ describe.skipIf(!REDIS)('QueueDriverBullmq on Redis', () => {
 				async (payload, context) => {
 					resolve([payload, context]);
 				},
-				{ connection: consumer, prefix, logger: logger as any },
+				{ connection: consumer, prefix, logger: logger as unknown as Logger },
 			).then((worker) => {
 				received.finally(() => worker.close());
 			}, reject);

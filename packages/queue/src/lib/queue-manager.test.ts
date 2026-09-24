@@ -3,7 +3,7 @@
  *
  * `@novastarter/logger` and the Redis client of `@novastarter/redis` are mocked.
  */
-import { useLogger } from '@novastarter/logger';
+import { type Logger, useLogger } from '@novastarter/logger';
 import { createRedis } from '@novastarter/redis';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { QueueDriverBullmq } from './drivers/bullmq.js';
@@ -18,7 +18,7 @@ vi.mock('@novastarter/redis', () => ({
 }));
 
 beforeEach(() => {
-	vi.mocked(useLogger).mockReturnValue({ error: vi.fn() } as any);
+	vi.mocked(useLogger).mockReturnValue({ error: vi.fn() } as unknown as Logger);
 
 	// Every test starts from a local default location, as an application without Redis would register it
 	useQueue().registerLocation('default', {

@@ -32,5 +32,5 @@ test('ActionHandler and InitHandler may be synchronous or asynchronous', () => {
 	//    shapes compile against the same type
 	expectTypeOf<ActionHandler>().returns.toEqualTypeOf<void | Promise<void>>();
 	expectTypeOf<InitHandler>().returns.toEqualTypeOf<void | Promise<void>>();
-	expectTypeOf<InitHandler>().parameters.toEqualTypeOf<[Record<string, any>]>();
+	expectTypeOf<InitHandler>().parameters.toEqualTypeOf<[Record<string, unknown>]>();
 });

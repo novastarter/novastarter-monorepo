@@ -7,7 +7,7 @@ import { AuthProviderFailedError } from '@novastarter/auth';
 import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import { describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import * as entry from '../index.js';
 import { EMAILS_URL, TOKEN_URL, USER_URL } from './constants.js';
 import { AuthDriverGithub } from './driver.js';
 import type { AuthFetch } from './request.js';
@@ -77,7 +77,7 @@ describe('AuthDriverGithub', () => {
 
 		expect(url.searchParams.get('scope')).toBe('read:user');
 		expect(url.searchParams.get('client_id')).toBe('client-1');
-		expect(defaultExport).toBe(AuthDriverGithub);
+		expect(entry.AuthDriverGithub).toBe(AuthDriverGithub);
 	});
 
 	test('Exchanges the code and answers the identity read from the REST API, with the tokens', async () => {

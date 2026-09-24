@@ -3,7 +3,7 @@
  *
  * `@novastarter/logger` is mocked, since the console driver resolves the application logger when it is built.
  */
-import { useLogger } from '@novastarter/logger';
+import { type Logger, useLogger } from '@novastarter/logger';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { MailDriverConsole } from './drivers/console.js';
 import { MailManager } from './mail-manager.js';
@@ -18,7 +18,7 @@ declare module './mail-manager.js' {
 }
 
 beforeEach(() => {
-	vi.mocked(useLogger).mockReturnValue({ info: vi.fn() } as any);
+	vi.mocked(useLogger).mockReturnValue({ info: vi.fn() } as unknown as Logger);
 });
 
 afterEach(() => {

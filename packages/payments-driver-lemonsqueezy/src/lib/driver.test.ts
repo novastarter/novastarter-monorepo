@@ -47,6 +47,13 @@ const fakeFetch = (responses: { status?: number; body?: unknown }[]) => {
 	// 1. The calls are kept outside the fetch, so a test reads them after the driver has sent
 	const calls: Call[] = [];
 
+	/**
+	 * Record the request and answer the next queued response.
+	 *
+	 * @param url - The requested URL.
+	 * @param init - The method, headers and body of the request.
+	 * @returns The queued response, or an empty success once the queue is empty.
+	 */
 	const fetch: ApiFetch = async (url, init) => {
 		// 1. The body is recorded parsed, so a test matches objects rather than JSON text
 		calls.push({

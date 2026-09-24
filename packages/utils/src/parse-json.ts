@@ -6,7 +6,7 @@
  * character by character (`"\u005f_proto__"`).
  *
  * @param input - JSON text.
- * @returns The parsed value.
+ * @returns The parsed value, typed `unknown` so the caller narrows or casts it to the shape it expects.
  * @throws `SyntaxError` when `input` is not valid JSON.
  * @example
  * ```ts
@@ -14,7 +14,7 @@
  * // => { name: 'x' } — the prototype key is gone
  * ```
  */
-export function parseJSON(input: string): any {
+export function parseJSON(input: string): unknown {
 	// 1. Only pay for the reviver when the text can carry a prototype key at all: spelled out, or hidden behind
 	//    unicode escapes that `JSON.parse` resolves before the key is compared
 	const text = String(input);

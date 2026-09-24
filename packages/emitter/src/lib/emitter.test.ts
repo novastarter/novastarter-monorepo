@@ -14,7 +14,7 @@ let emitter: Emitter;
 const logger = { warn: vi.fn() };
 
 beforeEach(() => {
-	vi.mocked(useLogger).mockReturnValue(logger as any);
+	vi.mocked(useLogger).mockReturnValue(logger as unknown as ReturnType<typeof useLogger>);
 	emitter = new Emitter();
 });
 
@@ -74,7 +74,7 @@ describe('emitFilter', () => {
 
 	test('Passes the given context through', async () => {
 		const handler = vi.fn();
-		const context = { accountability: { user: 'u1' } as any, database: 'db' };
+		const context = { accountability: { user: 'u1' }, database: 'db' };
 		emitter.onFilter('items.create', handler);
 
 		await emitter.emitFilter('items.create', 'payload', {}, context);

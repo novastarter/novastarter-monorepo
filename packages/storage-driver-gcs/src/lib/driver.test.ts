@@ -223,7 +223,7 @@ describe('#fullPath', () => {
 });
 
 describe('#file', () => {
-	let mockFile: any;
+	let mockFile: Record<string, unknown>;
 
 	beforeEach(() => {
 		// 1. A bucket that hands out one known handle, so the test can check the driver returns it untouched
@@ -570,7 +570,7 @@ describe('#move', () => {
 		move: Mock;
 	};
 
-	let mockFileDest: Record<string, any>;
+	let mockFileDest: Record<string, unknown>;
 
 	beforeEach(() => {
 		mockFileSrc = {
@@ -607,7 +607,7 @@ describe('#copy', () => {
 		copy: Mock;
 	};
 
-	let mockFileDest: Record<string, any>;
+	let mockFileDest: Record<string, unknown>;
 
 	beforeEach(() => {
 		mockFileSrc = {
@@ -1200,6 +1200,9 @@ describe('#call', () => {
 
 	test('Counts the token fetch against the timeout, and sends nothing after it', async () => {
 		// 1. A metadata server that never answers ends at the deadline; the late token is never used
+		/**
+		 * Resolve the pending token fetch with a token; a no-op until the promise's own resolver replaces it.
+		 */
 		let release: (token: string) => void = () => {};
 
 		getAccessToken.mockReturnValue(new Promise<string>((resolve) => (release = resolve)));

@@ -16,7 +16,7 @@
  * // => [1]
  * ```
  */
-export function toArray<T = any>(val: T | T[]): T[] {
+export function toArray<T = unknown>(val: T | T[]): T[] {
 	// 1. A string is treated as a comma-separated list, so `LIST=a,b` in an env file becomes `['a', 'b']`
 	if (typeof val === 'string') {
 		return val.split(',') as unknown as T[];

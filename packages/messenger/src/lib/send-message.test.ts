@@ -95,8 +95,8 @@ class GoneDriver implements MessengerDriver {
 }
 
 beforeEach(() => {
-	vi.mocked(useLogger).mockReturnValue(logger as any);
-	vi.mocked(useEmitter).mockReturnValue(emitter as any);
+	vi.mocked(useLogger).mockReturnValue(logger as unknown as ReturnType<typeof useLogger>);
+	vi.mocked(useEmitter).mockReturnValue(emitter as unknown as ReturnType<typeof useEmitter>);
 
 	// 1. One location per behaviour; `default` is the one a message without a location goes through
 	const manager = useMessenger();

@@ -17,8 +17,11 @@ describe('hasMethods', () => {
 		expect(
 			hasMethods<Pool>(
 				new (class {
-					connect() {}
-					end() {}
+					/** Stand-in for the pool's `connect`; only its presence is checked. */
+					connect(): void {}
+
+					/** Stand-in for the pool's `end`; only its presence is checked. */
+					end(): void {}
 				})(),
 				['connect', 'end'],
 			),

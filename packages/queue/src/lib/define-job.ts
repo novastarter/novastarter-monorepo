@@ -31,8 +31,8 @@ export const DEFAULT_JOB_OPTIONS: JobOptions = {
 export interface DefineJobOptions<Name extends string, Schema extends z.ZodType> {
 	name: Name;
 	schema: Schema;
-	/** Merged over {@link DEFAULT_JOB_OPTIONS}. */
-	options?: JobOptions;
+	/** Merged over {@link DEFAULT_JOB_OPTIONS}; a `unique` function receives the parsed payload of `Schema`. */
+	options?: JobOptions<z.output<Schema>>;
 }
 
 /**
@@ -73,8 +73,10 @@ export const defineJob = <Name extends string, Schema extends z.ZodType>(
 	}
 
 	// 3. The caller's options win over the defaults; a timeout no timer can hold is refused now, since the worker
-	//    would otherwise fail every run of the job with a `RangeError` and retry it for nothing
-	const options = { ...DEFAULT_JOB_OPTIONS, ...definition.options };
+	//    would otherwise fail every run of the job with a `RangeError` and retry it for nothing. The contract keeps
+	//    them as `JobOptions` of an unknown payload: `enqueue()` hands `unique` the payload this schema parsed, so the
+	//    typed function never sees anything else
+	const options = { ...DEFAULT_JOB_OPTIONS, ...definition.options } as JobOptions;
 
 	if (options.timeout !== undefined && !(options.timeout >= 0 && options.timeout <= MAX_TIMER_DELAY)) {
 		throw new RangeError(

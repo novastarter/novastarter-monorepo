@@ -1,7 +1,7 @@
 /**
  * The built-in mail drivers: `console` and `file` for development, `sendmail` and `smtp` for delivery.
  */
-export * from './console.js';
-export * from './file.js';
-export * from './sendmail.js';
-export * from './smtp.js';
+export { MailDriverConsole, type MailDriverConsoleConfig } from './console.js';
+export { MailDriverFile, type MailDriverFileConfig } from './file.js';
+export { MailDriverSendmail, type MailDriverSendmailConfig } from './sendmail.js';
+export { MailDriverSmtp, type MailDriverSmtpConfig } from './smtp.js';

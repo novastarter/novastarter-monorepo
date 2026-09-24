@@ -5,7 +5,7 @@
 import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import * as entry from '../index.js';
 import { MailDriverSendgrid } from './driver.js';
 
 /**
@@ -108,7 +108,7 @@ describe('MailDriverSendgrid', () => {
 		});
 
 		expect(() => new MailDriverSendgrid({ apiKey: '' })).toThrow(/"apiKey"/);
-		expect(defaultExport).toBe(MailDriverSendgrid);
+		expect(entry.MailDriverSendgrid).toBe(MailDriverSendgrid);
 	});
 
 	test('Surfaces a local mapping failure without the provider prefix', async () => {

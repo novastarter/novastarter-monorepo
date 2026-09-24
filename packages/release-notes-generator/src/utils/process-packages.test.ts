@@ -1,7 +1,7 @@
 /**
  * Tests of `release-notes-generator/utils/process-packages`.
  */
-import type { Project } from '@pnpm/types';
+import type { Project, ProjectManifest } from '@pnpm/types';
 import { beforeEach, expect, test, vi } from 'vitest';
 import type { Config } from '../types.js';
 
@@ -17,7 +17,7 @@ const mockConfig = vi.hoisted((): Partial<Config> => ({
 	linkedPackages: [['trigger', 'target']],
 }));
 
-vi.mock('../config.js', () => ({ default: mockConfig }));
+vi.mock('../config.js', () => ({ config: mockConfig }));
 
 /**
  * Content served for `.changeset/pre.json`; `undefined` means `changesets` is not in prerelease mode.
@@ -64,7 +64,11 @@ beforeEach(() => {
  * manifest.
  * @returns A partial pnpm project with a spied manifest writer.
  */
-const generatePackage = (name: string, version: string, opts?: Record<string, any>): Partial<Project> => ({
+const generatePackage = (
+	name: string,
+	version: string,
+	opts?: { bumped?: boolean; additional?: Partial<ProjectManifest> },
+): Partial<Project> => ({
 	rootDir: (opts?.['bumped'] !== false ? 'mock' : 'nomock') as Project['rootDir'],
 	manifest: {
 		name,

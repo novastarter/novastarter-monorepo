@@ -2,13 +2,13 @@
  * Tests of the Telegram driver class with `fetch` stubbed: what reaches the Bot API — URL, body, headers — and what
  * the driver makes of its answer.
  *
- * Covered: the constructor check and the default export, a text message, an upload as multipart, an album, `call()`
+ * Covered: the constructor check and the named export, a text message, an upload as multipart, an album, `call()`
  * for a method without a wrapper, `verify()`, a refusal, an answer that is not JSON, and the timeout.
  */
 import { MessengerTargetGoneError } from '@novastarter/messenger';
 import { TimeoutError } from '@novastarter/utils';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import * as entry from '../index.js';
 import { MessengerDriverTelegram, TELEGRAM_API_URL } from './driver.js';
 
 /**
@@ -50,10 +50,11 @@ afterEach(() => {
 });
 
 describe('constructor', () => {
-	test('Refuses a missing token, and is the default export', () => {
+	test('Refuses a missing token, and is exported by name only', () => {
 		// 1. Fails at the location's first use rather than on the first message
 		expect(() => new MessengerDriverTelegram({ token: '' })).toThrow('The Telegram driver needs a bot "token"');
-		expect(defaultExport).toBe(MessengerDriverTelegram);
+		expect(entry.MessengerDriverTelegram).toBe(MessengerDriverTelegram);
+		expect(entry).not.toHaveProperty('default');
 	});
 
 	test('Refuses an apiUrl that is not a URL, naming neither it nor the token', () => {

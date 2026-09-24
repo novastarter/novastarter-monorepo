@@ -16,6 +16,97 @@ Mandatory, no exceptions.
 - Not after a commit, not "to finish the task", not because a PR needs the branch. Pushing is done by the user, by hand.
 - Committing and pushing are separate steps. A request to commit is never a request to push.
 
+## Commands
+
+Run from the repository root. Apps are named `web` and `docs`, packages `@novastarter/<dir>`.
+
+- `pnpm install` — install everything; also installs the lefthook git hooks.
+- `pnpm turbo run test --filter=@novastarter/<name>` — test one package; `check-types` and `build` work the same way.
+  Turbo builds the workspace dependencies first (`^build`).
+- `pnpm --filter @novastarter/<name> test | check-types | build` runs the script alone, without building dependencies:
+  it fails with "Cannot find module '@novastarter/…'" or "Failed to resolve entry" until they are built. Build them
+  once with `pnpm turbo run build --filter='@novastarter/<name>^...'`.
+- `pnpm --filter @novastarter/<name> exec vitest run src/x.test.ts` — one test file (dependencies built, see above).
+- `pnpm build`, `pnpm check-types`, `pnpm test` — the whole repo through turbo.
+- `pnpm lint` — ESLint over the whole repo, check only. `pnpm exec eslint <file>` — one file.
+- `pnpm format` — Prettier check only. `pnpm exec prettier --write <file>` — format one file.
+- `pnpm check:catalog` — every dependency version comes from the catalog (see "dependency versions only via catalog:").
+
+Never run a fixer over the whole repo (`pnpm lint --fix`, `prettier --write .`): other work may be in the same tree.
+
+## Repo map
+
+- `apps/web` — the Next.js app: env schema, location configs, `bootstrap.ts` that wires every subsystem, jobs, the
+  database schema and migrations. See `apps/web/AGENTS.md`.
+- `apps/docs` — the Next.js documentation site. See `apps/docs/AGENTS.md`.
+- Base: `types`, `constants`, `errors`, `utils` (`DriverManager`, `LocationManager`, `singleton`), `tsconfig`.
+- Process: `env` (the only reader of `process.env`), `logger`, `emitter` (hooks), `pressure`, `validation`, `http`
+  (outgoing requests for drivers).
+- Subsystems, each a manager plus `<name>-driver-*` packages: `storage`, `database`, `mail`, `sms`, `push`, `payments`,
+  `auth`, `messenger`, `queue`.
+- Other subsystems: `redis` (named ioredis clients), `memory` (key-value, cache, bus, limiter), `ai`, `feature-flags`,
+  `notifications` (one message over mail, SMS, push, messengers, inbox).
+- Tooling: `release-notes-generator` (builds release notes from changesets).
+
+The driver / manager / factory pattern. A subsystem package exports a manager class that extends `DriverManager` from
+`@novastarter/utils` (or `LocationManager` when there is no driver to pick, as in `redis`), a driver contract, and
+`useX()`, a process-wide singleton of the manager. A driver package exports one driver class and adds its options to
+the subsystem's `XDrivers` interface with `declare module`. The app wires it at start-up:
+
+```ts
+useStorage().registerDriver('s3', StorageDriverS3);
+useStorage().registerLocation('uploads', { driver: 's3', options: { bucket: 'uploads' } });
+
+await useStorage().location('uploads').write('avatar.png', stream, 'image/png');
+```
+
+A location is built on its first `location()` call, so unused locations open nothing. Why: `docs/decisions/0001`.
+
+## Reference package
+
+Copy `packages/storage` (a subsystem) and `packages/storage-driver-s3` (a driver): layout, `package.json`, `exports`,
+scripts, `src/index.ts`, tests, JSDoc. Do not copy a random neighbour; older packages may lag behind.
+
+## Decisions
+
+Why things are the way they are: `docs/decisions/` (ADRs, one short note per decision). Read the list before proposing
+a change to structure, configuration or exports.
+
+## Rule: keep the map, commands and decisions up to date
+
+Mandatory, no exceptions.
+
+- A change to the repo structure, the root scripts, a new package or subsystem, or a new decision updates the matching
+  section of this file ("Commands", "Repo map", "Reference package") or adds a note to `docs/decisions/`, in the same
+  change.
+
+## Rule: grep-friendly code
+
+Mandatory, no exceptions. Applies to `packages/` and `apps/`; ESLint checks all of it except names built from strings.
+
+- Named exports only: `export { StorageDriverS3 } from './lib/driver.js'`, types with `export type { … }`.
+- No `export * from`: list the names, so a grep for a name finds where it is exported.
+- No `export default`. Exceptions: Next files under `apps/*/app/**` and `*.config.*`, where the tool demands it.
+- No renaming on export (`export { a as b }`): one symbol, one name.
+- No dynamic `import()` outside tests, and no names built from strings. When `import()` is required (an optional peer,
+  a Next runtime split), add `// eslint-disable-next-line no-restricted-syntax -- <reason>`.
+- No `process.env` in `packages/`, except `@novastarter/env`, `release-notes-generator` and `*.int.test.ts`. See
+  "no application business logic in `packages/`".
+- No imports from `apps/` or of an app package (`web`, `docs`) in `packages/`.
+- Why: `docs/decisions/0004-named-exports-only.md`.
+
+## Rule: strict types
+
+Mandatory, no exceptions. ESLint checks all of it.
+
+- `any` is forbidden everywhere, tests included. Use a real type, `unknown` with narrowing, `Partial<T>` or
+  `vi.mocked()`.
+- `@ts-ignore` and `@ts-nocheck` are forbidden. `@ts-expect-error` only with a description:
+  `// @ts-expect-error -- the option is checked at runtime`.
+- The presence of JSDoc (see "comment all code") is checked by `eslint-plugin-jsdoc`, in tests too. Callbacks passed as
+  arguments (`it(…, () => …)`, `map((x) => …)`) and helpers declared inside a function body need none: the enclosing
+  function's numbered comment explains them.
+
 ## Rule: comment all code
 
 This rule applies always and everywhere:
@@ -274,6 +365,8 @@ Mandatory, no exceptions.
   catalog under `catalogs:` and is declared as `"dependency": "catalog:<name>"`. Still no versions inline.
 - Internal monorepo packages are linked as `"@novastarter/name": "workspace:*"`.
 - Native dependencies (with a postinstall build) are allowed via `allowBuilds` in `pnpm-workspace.yaml`.
+- A `peerDependencies` entry that uses a version range today may keep it.
+- `pnpm check:catalog` checks all of this; lefthook runs it when a `package.json` is staged.
 
 ## Rule: never create a new package on your own
 
@@ -293,8 +386,8 @@ Mandatory, no exceptions.
 
 Mandatory, no exceptions.
 
-- Do not invent your own structure. Copy the convention of the neighbouring packages in `packages/`: `package.json`,
-  `exports`, the `build`, `dev`, `test`, `test:coverage` scripts, `src/index.ts` and so on.
+- Do not invent your own structure. Copy the reference package (see "Reference package"): `package.json`, `exports`,
+  the `build`, `dev`, `test`, `test:coverage` scripts, `src/index.ts` and so on.
 - A new storage driver is always a separate package.
 - Subsystems follow the single driver / manager / factory convention. A new subsystem repeats it rather than introducing
   its own.

@@ -2,9 +2,9 @@
  * Tests of the passkey driver class with `@simplewebauthn/server` mocked: the WebAuthn checks are the library's, the
  * driver's part is what it hands the library and what it makes of the verdict.
  *
- * Covered: the constructor checks and the default export, the sign-in options and state, a verified answer with its
- * counter, the refusals (no challenge, unknown key, failed or throwing verification), and the registration options and
- * record.
+ * Covered: the constructor checks and the named export of the entry point, the sign-in options and state, a verified
+ * answer with its counter, the refusals (no challenge, unknown key, failed or throwing verification), and the
+ * registration options and record.
  */
 import { AuthInvalidTokenError } from '@novastarter/auth';
 import { InvalidCredentialsError } from '@novastarter/errors';
@@ -15,7 +15,7 @@ import {
 	verifyRegistrationResponse,
 } from '@simplewebauthn/server';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import * as entry from '../index.js';
 import { AuthDriverPasskey, type AuthDriverPasskeyConfig, type PasskeyCredential } from './driver.js';
 
 vi.mock('@simplewebauthn/server');
@@ -65,7 +65,7 @@ afterEach(() => {
 });
 
 describe('constructor', () => {
-	test('Refuses a missing relying party or callback, and is the default export', () => {
+	test('Refuses a missing relying party or callback, and is exported by name from the entry point', () => {
 		// 1. Each is needed; a missing one fails at the location's first use
 		expect(() => makeDriver({ rpId: '' })).toThrow('The passkey driver needs "rpId", "rpName" and "origin"');
 		expect(() => makeDriver({ origin: [] })).toThrow('The passkey driver needs "rpId", "rpName" and "origin"');
@@ -74,7 +74,7 @@ describe('constructor', () => {
 			'The passkey driver needs a "updateCounter" function',
 		);
 
-		expect(defaultExport).toBe(AuthDriverPasskey);
+		expect(entry.AuthDriverPasskey).toBe(AuthDriverPasskey);
 	});
 });
 

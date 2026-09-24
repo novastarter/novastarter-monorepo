@@ -25,6 +25,20 @@ export interface LogsBus {
 }
 
 /**
+ * The fields of a parsed pino line the stream reads; any other field is ignored.
+ *
+ * @internal
+ */
+interface ParsedLogLine {
+	level?: unknown;
+	time?: unknown;
+	msg?: unknown;
+	responseTime?: unknown;
+	req?: { method?: string; url?: string };
+	res?: { statusCode?: number };
+}
+
+/**
  * Writable stream that publishes every log line on the message bus.
  *
  * Pino writes JSON lines into it; each becomes a `logs` message on the bus, which is what lets a dashboard or a CLI
@@ -94,7 +108,7 @@ export class LogsStream extends Writable {
 		//    from ending up embedded inside the published JSON payload
 		const line = chunk.replace(/\r?\n$/, '');
 
-		let log: Record<string, any>;
+		let log: ParsedLogLine;
 
 		// 3. Anything but pino can write into a multistream, and a foreign or corrupted line is not JSON. Raw mode
 		//    interpolates the line into the payload, which would hand every subscriber a syntactically invalid

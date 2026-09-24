@@ -3,6 +3,7 @@
  */
 import { Redis } from 'ioredis';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import type { Lock } from '../../../kv/index.js';
 import { KvDriverRedis } from '../../../kv/index.js';
 import { CacheDriverRedis } from './redis.js';
 
@@ -106,8 +107,8 @@ describe('clear', () => {
 describe('acquireLock', () => {
 	test('Delegates to kv store', async () => {
 		// 1. The handle is the store's Redlock one, handed through untouched
-		const mockLock = { release: vi.fn(), extend: vi.fn() };
-		vi.mocked(cache['store'].acquireLock).mockResolvedValue(mockLock as any);
+		const mockLock: Lock = { release: vi.fn(), extend: vi.fn() };
+		vi.mocked(cache['store'].acquireLock).mockResolvedValue(mockLock);
 
 		const result = await cache.acquireLock(mockKey);
 		expect(cache['store'].acquireLock).toHaveBeenCalledWith(mockKey);

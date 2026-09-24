@@ -8,9 +8,17 @@
  * `Logger` type is re-exported so a package typing a logger option needs no dependency on pino itself.
  */
 export type { Logger } from 'pino';
-export * from './lib/create-logger.js';
-export * from './lib/create-http-logger.js';
-export * from './lib/logs-stream.js';
-export * from './lib/use-logger.js';
-export * from './utils/redact-query.js';
-export * from './utils/resolve-log-style.js';
+export {
+	buildLevelFormatters,
+	buildRedactOptions,
+	createLogger,
+	type CreateLoggerOptions,
+	getLoggerLevelValue,
+	type LogStreamTarget,
+	REDACTED_PATHS,
+} from './lib/create-logger.js';
+export { createHttpLogger, type CreateHttpLoggerOptions } from './lib/create-http-logger.js';
+export { type LogsBus, LogsStream, type PrettyType } from './lib/logs-stream.js';
+export { registerLogger, useHttpLogsStream, useLogger, useLogsStream } from './lib/use-logger.js';
+export { redactQuery } from './utils/redact-query.js';
+export { type LogStyle, resolveLogStyle } from './utils/resolve-log-style.js';

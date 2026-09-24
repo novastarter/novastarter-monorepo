@@ -70,6 +70,7 @@ catalog:
   drizzle-kit: 0.31.11
   eslint: 10.9.1
   eslint-config-prettier: 10.1.8
+  eslint-plugin-jsdoc: 64.5.4
   eslint-plugin-import-x: 4.17.1
   eventemitter2: 6.4.9
   express: 4.22.3

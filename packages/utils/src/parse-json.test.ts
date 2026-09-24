@@ -55,7 +55,7 @@ describe('parseJSON', () => {
 	it('strips __proto__ property from parsed JSON', () => {
 		// 1. The text carries the key, so the reviver path runs and drops it while keeping every other key
 		const malicious = '{"__proto__": {"polluted": true}, "safe": "value"}';
-		const result = parseJSON(malicious);
+		const result = parseJSON(malicious) as { safe: string };
 		expect(result.safe).toBe('value');
 
 		// 2. An own-property check rather than `in` or `result.__proto__`: those would see `Object.prototype` and
@@ -63,13 +63,13 @@ describe('parseJSON', () => {
 		expect(Object.prototype.hasOwnProperty.call(result, '__proto__')).toBe(false);
 
 		// 3. Had the key gone through, `Object.prototype` itself would now carry `polluted` for every object
-		expect(({} as any).polluted).toBeUndefined();
+		expect(({} as { polluted?: unknown }).polluted).toBeUndefined();
 	});
 
 	it('strips nested __proto__ properties', () => {
 		// 1. The reviver sees every key at every depth, so a key hidden one level down is dropped as well
 		const malicious = '{"outer": {"__proto__": {"polluted": true}}}';
-		const result = parseJSON(malicious);
+		const result = parseJSON(malicious) as { outer: object };
 		expect(Object.prototype.hasOwnProperty.call(result.outer, '__proto__')).toBe(false);
 	});
 
@@ -82,7 +82,7 @@ describe('parseJSON', () => {
 	it('handles __proto__ as part of another key name', () => {
 		// 1. The substring switches the reviver on, but only the exact key `__proto__` is dropped, not one containing it
 		const input = '{"my__proto__key": "value"}';
-		const result = parseJSON(input);
+		const result = parseJSON(input) as { my__proto__key: string };
 		expect(result.my__proto__key).toBe('value');
 	});
 });
@@ -91,7 +91,7 @@ describe('parseJSON with escaped keys', () => {
 	it('drops a __proto__ key spelled with unicode escapes as well', () => {
 		// 1. `JSON.parse` resolves `_` to `_` before the reviver sees the key; a substring check on the raw text
 		//    alone would take the fast path and leave an own `__proto__` property behind
-		const parsed = parseJSON('{"\\u005f_proto__": {"admin": true}, "name": "x"}');
+		const parsed = parseJSON('{"\\u005f_proto__": {"admin": true}, "name": "x"}') as object;
 
 		expect(Object.hasOwn(parsed, '__proto__')).toBe(false);
 		expect(parsed).toStrictEqual({ name: 'x' });

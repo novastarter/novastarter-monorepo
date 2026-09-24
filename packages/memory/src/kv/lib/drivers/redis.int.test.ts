@@ -215,7 +215,7 @@ describe.skipIf(!REDIS)('KvDriverRedis on Redis', () => {
 		expect(error).toMatchObject({ message: 'Lock "busy" was not acquired within 300 ms' });
 		expect((error as Error).cause).toBeInstanceOf(Error);
 
-		const callback = async () => 'never';
+		const callback = async (): Promise<string> => 'never';
 		await expect(impatient.usingLock('busy', callback)).rejects.toThrow('Lock "busy" was not acquired within 300 ms');
 
 		await holder.release();

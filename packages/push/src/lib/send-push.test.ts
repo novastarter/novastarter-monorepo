@@ -155,8 +155,8 @@ const subscription = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys
 const message: PushMessage = { subscription, title: 'Paid', body: 'Invoice #1', url: '/billing' };
 
 beforeEach(() => {
-	vi.mocked(useLogger).mockReturnValue(logger as any);
-	vi.mocked(useEmitter).mockReturnValue(emitter as any);
+	vi.mocked(useLogger).mockReturnValue(logger as unknown as ReturnType<typeof useLogger>);
+	vi.mocked(useEmitter).mockReturnValue(emitter as unknown as ReturnType<typeof useEmitter>);
 });
 
 afterEach(() => {

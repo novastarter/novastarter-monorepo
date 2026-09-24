@@ -54,7 +54,6 @@ export declare class MailDriver {
 	 * const { status, headers, data } = await driver.call!('GET /domains/{id}', { id: 'd_123' });
 	 * ```
 	 */
-
 	call?<T = unknown>(method: string, params?: Record<string, unknown>, options?: CallOptions): Promise<CallResponse<T>>;
 
 	/**

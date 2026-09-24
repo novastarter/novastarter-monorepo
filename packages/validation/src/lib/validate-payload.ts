@@ -48,7 +48,7 @@ export function validatePayload(
 		const subValidation = Object.values(filter)[0] as FieldFilter[];
 
 		const nestedErrors = flatten<InstanceType<typeof FailedValidationError>>(
-			subValidation.map((subObj: Record<string, any>) => {
+			subValidation.map((subObj) => {
 				return validatePayload(subObj, payload, options);
 			}),
 		).filter((err?: InstanceType<typeof FailedValidationError>) => err);
@@ -61,7 +61,7 @@ export function validatePayload(
 
 		const swallowErrors: InstanceType<typeof FailedValidationError>[] = [];
 
-		const pass = subValidation.some((subObj: Record<string, any>) => {
+		const pass = subValidation.some((subObj) => {
 			const nestedErrors = validatePayload(subObj, payload, options);
 
 			if (nestedErrors.length > 0) {

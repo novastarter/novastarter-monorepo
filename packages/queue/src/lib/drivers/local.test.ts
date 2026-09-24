@@ -2,9 +2,11 @@
  * Tests of `queue/lib/drivers/local` with handlers registered in the process registry; the registry itself is tested
  * in `handlers.test.ts`.
  */
+import type { Logger } from '@novastarter/logger';
 import { MAX_TIMER_DELAY } from '@novastarter/utils';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { z } from 'zod';
+import type { JobHandlers } from '../../types.js';
 import { defineJob } from '../define-job.js';
 import { _handlers, registerJobHandlers } from '../handlers.js';
 import { QueueDriverLocal } from './local.js';
@@ -14,7 +16,7 @@ const contract = defineJob({ name: 'test.echo', schema: z.object({ value: z.stri
 let queue: QueueDriverLocal;
 
 beforeEach(() => {
-	queue = new QueueDriverLocal({ logger: logger as any });
+	queue = new QueueDriverLocal({ logger: logger as unknown as Logger });
 });
 
 afterEach(async () => {
@@ -27,7 +29,7 @@ afterEach(async () => {
 describe('QueueDriverLocal', () => {
 	test('Runs the handler before enqueue resolves and answers the job identity', async () => {
 		const handler = vi.fn(async () => {});
-		registerJobHandlers({ 'test.echo': handler } as any);
+		registerJobHandlers({ 'test.echo': handler } as JobHandlers);
 
 		const job = await queue.enqueue(contract, { value: 'x' }, contract.options, 'job-1');
 
@@ -42,7 +44,7 @@ describe('QueueDriverLocal', () => {
 	test('Parses the payload once, at the run, so a schema transform is applied a single time', async () => {
 		const doubling = defineJob({ name: 'test.double', schema: z.object({ n: z.number().transform((n) => n * 2) }) });
 		const handler = vi.fn(async () => {});
-		registerJobHandlers({ 'test.double': handler } as any);
+		registerJobHandlers({ 'test.double': handler } as JobHandlers);
 
 		await queue.enqueue(doubling, { n: 1 }, doubling.options, 'job-1');
 
@@ -51,7 +53,7 @@ describe('QueueDriverLocal', () => {
 
 	test('Logs a failing handler instead of throwing, and does not retry', async () => {
 		const handler = vi.fn().mockRejectedValue(new Error('boom'));
-		registerJobHandlers({ 'test.echo': handler } as any);
+		registerJobHandlers({ 'test.echo': handler } as JobHandlers);
 
 		await expect(queue.enqueue(contract, { value: 'x' }, { ...contract.options, attempts: 5 })).resolves.toMatchObject({
 			name: 'test.echo',
@@ -75,7 +77,7 @@ describe('QueueDriverLocal', () => {
 		vi.useFakeTimers();
 
 		const handler = vi.fn(async () => {});
-		registerJobHandlers({ 'test.echo': handler } as any);
+		registerJobHandlers({ 'test.echo': handler } as JobHandlers);
 
 		await queue.enqueue(contract, { value: 'later' }, { ...contract.options, delay: 1_000 });
 		await queue.enqueue(contract, { value: 'never' }, { ...contract.options, delay: 5_000 });
@@ -104,7 +106,7 @@ describe('QueueDriverLocal', () => {
 			await gate;
 		});
 
-		registerJobHandlers({ 'test.echo': handler } as any);
+		registerJobHandlers({ 'test.echo': handler } as JobHandlers);
 
 		const firstRun = queue.enqueue(contract, { value: 'x' }, contract.options, 'job-1');
 		expect(handler).toHaveBeenCalledTimes(1);
@@ -129,7 +131,7 @@ describe('QueueDriverLocal', () => {
 		vi.useFakeTimers();
 
 		const handler = vi.fn(async () => {});
-		registerJobHandlers({ 'test.echo': handler } as any);
+		registerJobHandlers({ 'test.echo': handler } as JobHandlers);
 
 		// 1. The delayed job holds its id until its timer fires; the duplicate collapses into it instead of arming a
 		//    timer of its own
@@ -158,7 +160,7 @@ describe('QueueDriverLocal', () => {
 		vi.useFakeTimers();
 
 		const handler = vi.fn(async () => {});
-		registerJobHandlers({ 'test.echo': handler } as any);
+		registerJobHandlers({ 'test.echo': handler } as JobHandlers);
 
 		// 1. A day past the 32-bit limit: Node would fire a single timer after 1 ms, with a warning nobody reads
 		const delay = MAX_TIMER_DELAY + 24 * 3_600_000;
@@ -174,7 +176,7 @@ describe('QueueDriverLocal', () => {
 	});
 
 	test('Refuses a negative or NaN delay, which a timer would turn into no delay', async () => {
-		registerJobHandlers({ 'test.echo': vi.fn(async () => {}) } as any);
+		registerJobHandlers({ 'test.echo': vi.fn(async () => {}) } as JobHandlers);
 
 		await expect(queue.enqueue(contract, { value: 'x' }, { ...contract.options, delay: -1 })).rejects.toThrow(
 			RangeError,
@@ -189,7 +191,7 @@ describe('QueueDriverLocal', () => {
 		vi.useFakeTimers();
 
 		const handler = vi.fn(async () => {});
-		registerJobHandlers({ 'test.echo': handler } as any);
+		registerJobHandlers({ 'test.echo': handler } as JobHandlers);
 
 		await queue.close();
 

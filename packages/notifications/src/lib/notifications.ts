@@ -36,7 +36,7 @@ export const NOTIFICATION_FAILED_EVENT = 'notification.failed';
  */
 export interface NotificationsOptions {
 	/** The channels, as ready instances: `mailChannel()`, `pushChannel({ onGone })`, one of the application's own. */
-	channels: NotificationChannel<any>[];
+	channels: NotificationChannel[];
 	/** Where a user can be reached, from the application's tables; `null` for a user that no longer exists. */
 	findRecipient: (userId: string) => Promise<NotificationRecipient | null>;
 	/**
@@ -75,7 +75,7 @@ export class Notifications {
 	 *
 	 * @internal
 	 */
-	private readonly channels: Map<string, NotificationChannel<any>>;
+	private readonly channels: Map<string, NotificationChannel>;
 
 	/**
 	 * Create the notifications from the application's options.
@@ -213,7 +213,7 @@ export class Notifications {
 	 * @throws Error when nobody registered it.
 	 * @internal
 	 */
-	private channel(name: string): NotificationChannel<any> {
+	private channel(name: string): NotificationChannel {
 		// 1. A name nobody registered is a mistake in the code that made the notification, not something to skip
 		const channel = this.channels.get(name);
 

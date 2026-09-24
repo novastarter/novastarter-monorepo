@@ -3,15 +3,16 @@
  * millisecond; `verifyPassword` and `hashPassword` are wrapped in spies to see which hash an unknown account is checked
  * against. `@novastarter/logger` is mocked to read the warning of a failed rehash.
  *
- * Covered: the constructor check and the default export, a match, a wrong password, an unknown account and one without
- * a password (both against the lazily made dummy hash), the identifier trimming, and the rehash with its failure path.
+ * Covered: the constructor check and the named export of the entry point, a match, a wrong password, an unknown
+ * account and one without a password (both against the lazily made dummy hash), the identifier trimming, and the rehash
+ * with its failure path.
  */
 import { hashPassword, type ScryptParams, verifyPassword } from '@novastarter/auth';
 import { isNovastarterError } from '@novastarter/errors';
 import { useLogger } from '@novastarter/logger';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
-import { AuthDriverCredentials, type CredentialsUser } from './driver.js';
+import * as entry from '../index.js';
+import { AuthDriverCredentials, type AuthDriverCredentialsConfig, type CredentialsUser } from './driver.js';
 
 vi.mock('@novastarter/logger');
 
@@ -56,7 +57,7 @@ beforeEach(async () => {
 	// 1. A real hash at the test cost; made before the spies are cleared, so their counts start at zero in each test
 	alice = { id: 'user-1', passwordHash: await hashPassword('correct horse', PARAMS) };
 
-	vi.mocked(useLogger).mockReturnValue(logger as any);
+	vi.mocked(useLogger).mockReturnValue(logger as unknown as ReturnType<typeof useLogger>);
 	vi.mocked(hashPassword).mockClear();
 	vi.mocked(verifyPassword).mockClear();
 });
@@ -69,14 +70,14 @@ afterEach(() => {
 describe('constructor', () => {
 	test('Refuses a configuration without a findUser function', () => {
 		// 1. Checked at construction, naming the option, rather than on the first sign-in
-		expect(() => new AuthDriverCredentials({} as any)).toThrow(
+		expect(() => new AuthDriverCredentials({} as AuthDriverCredentialsConfig)).toThrow(
 			'The credentials auth driver needs a "findUser" function',
 		);
 	});
 
-	test('Is the default export of the package', () => {
-		// 1. Consumers that import without a named binding get the same class
-		expect(defaultExport).toBe(AuthDriverCredentials);
+	test('Is exported by name from the package entry point', () => {
+		// 1. Consumers import the class by name from the entry point and get the same class
+		expect(entry.AuthDriverCredentials).toBe(AuthDriverCredentials);
 	});
 });
 

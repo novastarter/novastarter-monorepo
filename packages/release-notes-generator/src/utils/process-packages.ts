@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { Project } from '@pnpm/types';
 import { createPkgGraph, type PackageNode } from '@pnpm/workspace.pkgs-graph';
 import semver from 'semver';
-import config from '../config.js';
+import { config } from '../config.js';
 import type { PackageVersion } from '../types.js';
 import { findWorkspacePackages } from './find-workspace-packages.js';
 import { sortByExternalOrder } from './sort.js';

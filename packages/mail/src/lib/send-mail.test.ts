@@ -4,8 +4,8 @@
  * `@novastarter/logger` and `@novastarter/emitter` are mocked; the limiter is the real local one of
  * `@novastarter/memory`.
  */
-import { useEmitter } from '@novastarter/emitter';
-import { useLogger } from '@novastarter/logger';
+import { type Emitter, useEmitter } from '@novastarter/emitter';
+import { type Logger, useLogger } from '@novastarter/logger';
 import { LimiterDriverLocal } from '@novastarter/memory';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { MailDriver } from '../driver.js';
@@ -116,8 +116,8 @@ const message: MailMessage = { to: 'ada@example.com', subject: 'Hi', text: 'Hell
 
 beforeEach(() => {
 	// 1. The doubles replace the process-wide logger and emitter, so the manager the test builds works without them
-	vi.mocked(useLogger).mockReturnValue(logger as any);
-	vi.mocked(useEmitter).mockReturnValue(emitter as any);
+	vi.mocked(useLogger).mockReturnValue(logger as unknown as Logger);
+	vi.mocked(useEmitter).mockReturnValue(emitter as unknown as Emitter);
 });
 
 afterEach(() => {

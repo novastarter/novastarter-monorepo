@@ -2,14 +2,14 @@
  * Tests of the magic-link driver class on the real `createToken()` / `checkToken()` of `@novastarter/auth`, with an
  * in-memory map standing in for the application's token table.
  *
- * Covered: the constructor check and the default export, the input checks, a link and a code for an account, the
- * silent refusals for an unknown address, a sign-up link, a send that is not awaited and a failing reporter, a spent,
- * expired and wrong token, and the lifetimes.
+ * Covered: the constructor check and the named export of the entry point, the input checks, a link and a code for an
+ * account, the silent refusals for an unknown address, a sign-up link, a send that is not awaited and a failing
+ * reporter, a spent, expired and wrong token, and the lifetimes.
  */
 import { AuthInvalidTokenError, DEFAULT_CODE_TTL, type TokenRecord, useAuth } from '@novastarter/auth';
 import { InvalidPayloadError } from '@novastarter/errors';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import * as entry from '../index.js';
 import {
 	AuthDriverMagicLink,
 	type AuthDriverMagicLinkConfig,
@@ -72,10 +72,10 @@ afterEach(() => {
 });
 
 describe('constructor', () => {
-	test('Refuses options without one of the callbacks, and is the default export', () => {
+	test('Refuses options without one of the callbacks, and is exported by name from the entry point', () => {
 		// 1. Every callback is needed; a missing one fails at the location's first use
 		expect(() => makeDriver({ send: undefined as never })).toThrow('The magic-link driver needs a "send" function');
-		expect(defaultExport).toBe(AuthDriverMagicLink);
+		expect(entry.AuthDriverMagicLink).toBe(AuthDriverMagicLink);
 	});
 });
 
@@ -178,7 +178,7 @@ describe('begin', () => {
 	test('Drops a reporter that throws or rejects instead of leaving an unhandled rejection', async () => {
 		// 1. Catch unhandled rejections for the duration of the test, since vitest would only report them after it
 		const unhandled: unknown[] = [];
-		const listener = (reason: unknown) => unhandled.push(reason);
+		const listener = (reason: unknown): number => unhandled.push(reason);
 
 		process.on('unhandledRejection', listener);
 

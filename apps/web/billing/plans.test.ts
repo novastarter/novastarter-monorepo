@@ -5,6 +5,12 @@ import { describe, expect, test } from 'vitest';
 import { PlanCatalog } from './plan-catalog';
 import { definePlans, type PlanDefinition } from './plans';
 
+/**
+ * Builds a price in US cents.
+ *
+ * @param amount - The price in cents.
+ * @returns The price object with `usd` currency.
+ */
 const usd = (amount: number) => ({ amount, currency: 'usd' });
 
 const definitions: PlanDefinition[] = [

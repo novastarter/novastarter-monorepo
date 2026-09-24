@@ -199,8 +199,8 @@ const expectRefused = async (attempt: Promise<unknown>, location = 'github'): Pr
 beforeEach(() => {
 	vi.useFakeTimers({ toFake: ['Date'] });
 	vi.setSystemTime(NOW);
-	vi.mocked(useLogger).mockReturnValue(logger as any);
-	vi.mocked(useEmitter).mockReturnValue(emitter as any);
+	vi.mocked(useLogger).mockReturnValue(logger as unknown as ReturnType<typeof useLogger>);
+	vi.mocked(useEmitter).mockReturnValue(emitter as unknown as ReturnType<typeof useEmitter>);
 });
 
 afterEach(() => {

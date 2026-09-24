@@ -46,7 +46,7 @@ export function sortByExternalOrder<T, O extends T[K][], K extends keyof T>(orde
  * @param key - Which property of the item to look up.
  * @returns A comparator for `Array.prototype.sort`.
  */
-export function sortByObjectValues<T, O extends Record<any, T[K]>, K extends keyof T>(
+export function sortByObjectValues<T, O extends Record<PropertyKey, T[K]>, K extends keyof T>(
 	object: O,
 	key: K,
 ): (a: T, b: T) => number {

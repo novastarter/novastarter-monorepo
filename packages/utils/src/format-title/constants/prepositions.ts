@@ -5,7 +5,7 @@
  * Multi-word entries (`in front of`) can never match a single split word; they are kept for completeness of the
  * list.
  */
-export default [
+export const PREPOSITIONS: string[] = [
 	'about',
 	'above',
 	'across',
@@ -67,4 +67,4 @@ export default [
 	'without',
 	'with regard to',
 	'with respect to',
-] as string[];
+];

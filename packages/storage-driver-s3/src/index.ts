@@ -1,9 +1,5 @@
 /**
- * Public entry point of `@novastarter/storage-driver-s3`: the {@link StorageDriverS3} class, its options and the
- * default export for consumers that import the driver without a named binding.
+ * Public entry point of `@novastarter/storage-driver-s3`: the {@link StorageDriverS3} class and its options.
  */
-import { StorageDriverS3 } from './lib/driver.js';
-
 export { StorageDriverS3, type StorageDriverS3Config } from './lib/driver.js';
 export type { ChecksumMode } from './types.js';
-export default StorageDriverS3;

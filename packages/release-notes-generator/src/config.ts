@@ -9,7 +9,7 @@ import type { Config } from './types.js';
  * @defaultValue Titles with emoji per version type, `docs` listed under its own "Documentation" section, notices
  * shown under the major section.
  */
-const config: Config = {
+export const config: Config = {
 	repo: 'novastarter/novastarter-monorepo',
 	typedTitles: {
 		major: '⚠️ Potential Breaking Changes',
@@ -25,5 +25,3 @@ const config: Config = {
 	packageOrder: [],
 	linkedPackages: [],
 };
-
-export default config;

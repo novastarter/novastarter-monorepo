@@ -9,7 +9,7 @@ import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import { createLocalJWKSet, type CryptoKey, exportJWK, generateKeyPair, type JWK, SignJWT } from 'jose';
 import { beforeAll, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import * as entry from '../index.js';
 import { JWKS_URL, TOKEN_URL } from './constants.js';
 import { AuthDriverGoogle } from './driver.js';
 import type { AuthFetch } from './request.js';
@@ -102,7 +102,7 @@ describe('AuthDriverGoogle', () => {
 		// 1. The location's scope, with `openid` added so an ID token comes back
 		expect(url.searchParams.get('scope')).toBe('openid email');
 		expect(url.searchParams.get('client_id')).toBe('client-1');
-		expect(defaultExport).toBe(AuthDriverGoogle);
+		expect(entry.AuthDriverGoogle).toBe(AuthDriverGoogle);
 	});
 
 	test('Exchanges the code and answers the identity of the verified ID token, with the tokens', async () => {

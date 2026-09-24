@@ -144,8 +144,8 @@ const register = (locations: Record<string, 'ok' | 'broken' | 'rude' | 'partial'
 const message: SmsMessage = { to: '+14155550123', text: 'Your code is 123456' };
 
 beforeEach(() => {
-	vi.mocked(useLogger).mockReturnValue(logger as any);
-	vi.mocked(useEmitter).mockReturnValue(emitter as any);
+	vi.mocked(useLogger).mockReturnValue(logger as unknown as ReturnType<typeof useLogger>);
+	vi.mocked(useEmitter).mockReturnValue(emitter as unknown as ReturnType<typeof useEmitter>);
 });
 
 afterEach(() => {

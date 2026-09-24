@@ -7,7 +7,7 @@ import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { PushTargetGoneError } from '@novastarter/push';
 import { TimeoutError } from '@novastarter/utils';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import { PushDriverFcm as EntryExport } from '../index.js';
 import { PushDriverFcm } from './driver.js';
 
 /**
@@ -214,9 +214,9 @@ describe('PushDriverFcm', () => {
 		);
 	});
 
-	test('Is the default export too', () => {
-		// 1. Both import forms hand out the same class
-		expect(defaultExport).toBe(PushDriverFcm);
+	test('Is exported by name from the entry point', () => {
+		// 1. The package entry hands out the same class under the same name
+		expect(EntryExport).toBe(PushDriverFcm);
 	});
 });
 

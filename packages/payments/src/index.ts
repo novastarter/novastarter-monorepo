@@ -6,8 +6,35 @@
  * {@link handleWebhook}, which verifies a delivery through a location and runs the event through the
  * `payments.webhook` filter. What the application sells — its plans and what they grant — is the application's own.
  */
-export * from './driver.js';
-export * from './lib/handle-webhook.js';
-export * from './lib/payments-manager.js';
-export * from './lib/use-payments.js';
-export * from './types.js';
+export type { PaymentsDriver } from './driver.js';
+export {
+	handleWebhook,
+	PAYMENTS_FAILED_EVENT,
+	PAYMENTS_RECEIVED_EVENT,
+	PAYMENTS_WEBHOOK_FILTER,
+	type PaymentsWebhookOptions,
+} from './lib/handle-webhook.js';
+export { type PaymentsDrivers, PaymentsManager } from './lib/payments-manager.js';
+export { usePayments } from './lib/use-payments.js';
+export type {
+	BillingInterval,
+	CancelSubscriptionInput,
+	CheckoutSession,
+	CompletedCheckout,
+	CreateCheckoutSessionInput,
+	CreateCustomerInput,
+	CreatePortalSessionInput,
+	Invoice,
+	InvoiceStatus,
+	ListInvoicesInput,
+	Money,
+	PaymentsCustomer,
+	PaymentsEvent,
+	PaymentsEventBase,
+	PaymentsEventType,
+	PortalSession,
+	Subscription,
+	SubscriptionStatus,
+	UpdateSubscriptionInput,
+	WebhookHeaders,
+} from './types.js';

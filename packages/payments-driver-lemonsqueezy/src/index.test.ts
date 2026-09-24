@@ -4,12 +4,17 @@
  */
 import { describe, expect, test } from 'vitest';
 import { LemonSqueezyApiError as ApiErrorFromLib } from './lib/api.js';
-import PaymentsDriverLemonSqueezyDefault, { LemonSqueezyApiError, PaymentsDriverLemonSqueezy } from './index.js';
+import { PaymentsDriverLemonSqueezy as DriverFromLib } from './lib/driver.js';
+import * as entry from './index.js';
+import { LemonSqueezyApiError, PaymentsDriverLemonSqueezy } from './index.js';
 
 describe('package entry point', () => {
-	test('Re-exports the driver as the named and the default binding', () => {
-		// 1. Both spellings reach the same class, so a consumer can pick either without getting a different driver
-		expect(PaymentsDriverLemonSqueezy).toBe(PaymentsDriverLemonSqueezyDefault);
+	test('Re-exports the driver by name only', () => {
+		// 1. The named binding is the driver's own class, so the symbol has one name everywhere
+		expect(PaymentsDriverLemonSqueezy).toBe(DriverFromLib);
+
+		// 2. No default export: a consumer imports the driver by its name
+		expect('default' in entry).toBe(false);
 	});
 
 	test('Re-exports the refusal error the public methods document', () => {

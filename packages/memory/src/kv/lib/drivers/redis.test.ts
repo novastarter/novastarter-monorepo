@@ -25,7 +25,7 @@ let mockKey: string;
 let mockNamespacedKey: string;
 let mockRedis: Redis;
 let mockUint8Array: Uint8Array;
-let mockBuffer: Buffer;
+let mockBuffer: Buffer<ArrayBuffer>;
 let mockCompressedUint8Array: Uint8Array;
 let mockDecompressedUint8Array: Uint8Array;
 let mockValue: string;
@@ -57,7 +57,7 @@ beforeEach(() => {
 	vi.mocked(withNamespace).mockReturnValue(mockNamespacedKey);
 	vi.mocked(escapeGlob).mockImplementation((text) => text);
 	vi.mocked(bufferToUint8Array).mockReturnValue(mockUint8Array);
-	vi.mocked(uint8ArrayToBuffer).mockReturnValue(mockBuffer as any);
+	vi.mocked(uint8ArrayToBuffer).mockReturnValue(mockBuffer);
 	vi.mocked(compress).mockResolvedValue(mockCompressedUint8Array);
 	vi.mocked(decompress).mockResolvedValue(mockDecompressedUint8Array);
 	vi.mocked(serialize).mockReturnValue(mockUint8Array);
@@ -338,7 +338,7 @@ describe('increment', () => {
 	test('Runs the increment script with the given amount and answers with its reply', async () => {
 		// 1. ioredis attaches a defined command as a method, which the automock does not know; it is added by hand
 		const increment = vi.fn().mockResolvedValue(42);
-		(kv['redis'] as any).increment = increment;
+		kv['redis'].increment = increment;
 
 		const res = await kv.increment(mockKey, 15);
 
@@ -350,7 +350,7 @@ describe('increment', () => {
 	test('Defaults the amount to 1', async () => {
 		// 1. A bare `increment` is the common counter bump
 		const increment = vi.fn().mockResolvedValue(1);
-		(kv['redis'] as any).increment = increment;
+		kv['redis'].increment = increment;
 
 		await kv.increment(mockKey);
 
@@ -361,7 +361,7 @@ describe('increment', () => {
 		// 1. The script sets the expiry after `INCRBY`; a key created by `INCRBY` alone would live for good
 		const withTtl = new KvDriverRedis({ namespace: mockNamespace, redis: mockRedis, ttl: 5000 });
 		const increment = vi.fn().mockResolvedValue(42);
-		(withTtl['redis'] as any).increment = increment;
+		withTtl['redis'].increment = increment;
 
 		const res = await withTtl.increment(mockKey, 2);
 
@@ -375,7 +375,7 @@ describe('increment', () => {
 			// 1. `INCRBY` takes integers only; the refusal is the local store's, so both backends fail alike and no
 			//    request goes out
 			const increment = vi.fn();
-			(kv['redis'] as any).increment = increment;
+			kv['redis'].increment = increment;
 
 			await expect(kv.increment(mockKey, amount)).rejects.toThrow(RangeError);
 
@@ -397,7 +397,7 @@ describe('increment', () => {
 		// 1. The reply error of Redis is the backend's own wording; the caller gets the shared message and can still
 		//    reach the reply through `cause`
 		const reply = new Error(message);
-		(kv['redis'] as any).increment = vi.fn().mockRejectedValue(reply);
+		kv['redis'].increment = vi.fn().mockRejectedValue(reply);
 
 		const error = await kv.increment(mockKey).catch((caught: unknown) => caught);
 
@@ -409,7 +409,7 @@ describe('increment', () => {
 		// 1. Only the exact INCRBY reply is translated; an error that happens to carry the words must reach the
 		//    caller as it is, not be renamed into a value error
 		const reply = new Error('ERR value is not an integer');
-		(kv['redis'] as any).increment = vi.fn().mockRejectedValue(reply);
+		kv['redis'].increment = vi.fn().mockRejectedValue(reply);
 
 		await expect(kv.increment(mockKey)).rejects.toBe(reply);
 	});
@@ -417,7 +417,7 @@ describe('increment', () => {
 	test('Passes any other failure through unchanged', async () => {
 		// 1. A connection error is not a bad value and must not be reported as one
 		const reply = new Error('Connection is closed.');
-		(kv['redis'] as any).increment = vi.fn().mockRejectedValue(reply);
+		kv['redis'].increment = vi.fn().mockRejectedValue(reply);
 
 		await expect(kv.increment(mockKey)).rejects.toBe(reply);
 	});
@@ -426,21 +426,21 @@ describe('increment', () => {
 describe('setMax', () => {
 	test('Calls custom setMax on Redis instance', async () => {
 		// 1. ioredis makes custom functions available as methods, but those aren't typeable; the value goes as text
-		(kv['redis'] as any).setMax = vi.fn();
+		kv['redis'].setMax = vi.fn();
 
 		const mockAmount = 15;
 
 		await kv.setMax(mockKey, mockAmount);
 
 		expect(withNamespace).toHaveBeenCalledWith(mockKey, mockNamespace);
-		expect((kv['redis'] as any).setMax).toHaveBeenCalledWith(mockNamespacedKey, '15');
+		expect(kv['redis'].setMax).toHaveBeenCalledWith(mockNamespacedKey, '15');
 	});
 
 	test('Passes a float as text, so the script stores it verbatim', async () => {
 		// 1. As a Lua number the value would go back to text with 17 significant digits (`0.10000000000000001`);
 		//    handed over as text, the script stores exactly what `set` stores
 		const setMax = vi.fn().mockResolvedValue(1);
-		(kv['redis'] as any).setMax = setMax;
+		kv['redis'].setMax = setMax;
 
 		const wasSet = await kv.setMax(mockKey, 0.1);
 
@@ -450,7 +450,7 @@ describe('setMax', () => {
 
 	test('Returns true if setMax returns 1', async () => {
 		// 1. `1` is the script's "stored"
-		(kv['redis'] as any).setMax = vi.fn().mockResolvedValue(1);
+		kv['redis'].setMax = vi.fn().mockResolvedValue(1);
 
 		const mockAmount = 15;
 
@@ -461,7 +461,7 @@ describe('setMax', () => {
 
 	test('Returns false if setMax returns 0', async () => {
 		// 1. `0` is the script's "not larger"
-		(kv['redis'] as any).setMax = vi.fn().mockResolvedValue(0);
+		kv['redis'].setMax = vi.fn().mockResolvedValue(0);
 
 		const mockAmount = 15;
 
@@ -473,16 +473,16 @@ describe('setMax', () => {
 	test('Hands the ttl to the script when one is configured', async () => {
 		// 1. The expiry travels into the script, so a key `setMax` creates expires like one `set` wrote
 		const withTtl = new KvDriverRedis({ namespace: mockNamespace, redis: mockRedis, ttl: 5000 });
-		(withTtl['redis'] as any).setMax = vi.fn().mockResolvedValue(1);
+		withTtl['redis'].setMax = vi.fn().mockResolvedValue(1);
 
 		await withTtl.setMax(mockKey, 15);
 
-		expect((withTtl['redis'] as any).setMax).toHaveBeenCalledWith(mockNamespacedKey, '15', 5000);
+		expect(withTtl['redis'].setMax).toHaveBeenCalledWith(mockNamespacedKey, '15', 5000);
 	});
 
 	test('Returns false if setMax returns null', async () => {
 		// 1. Redis answers a Lua `false` with nil, which ioredis reads as `null`: not stored either way
-		(kv['redis'] as any).setMax = vi.fn().mockResolvedValue(null);
+		kv['redis'].setMax = vi.fn().mockResolvedValue(null);
 
 		const res = await kv.setMax(mockKey, 15);
 
@@ -492,7 +492,7 @@ describe('setMax', () => {
 	test('Throws the error of the local store when the script reports a non-number under the key', async () => {
 		// 1. `-1` is the script's "no number to compare with"; a `false` would read as "not larger" and hide the
 		//    bad value, so it is the same error the local store throws
-		(kv['redis'] as any).setMax = vi.fn().mockResolvedValue(-1);
+		kv['redis'].setMax = vi.fn().mockResolvedValue(-1);
 
 		await expect(kv.setMax(mockKey, 15)).rejects.toThrow(`The value for key "${mockKey}" is not a number.`);
 	});
@@ -503,7 +503,7 @@ describe('setMax', () => {
 			// 1. Lua's `tonumber` cannot read the text these become, and the script would die comparing nil; the
 			//    refusal is the local store's, so both backends fail alike
 			const setMax = vi.fn();
-			(kv['redis'] as any).setMax = setMax;
+			kv['redis'].setMax = setMax;
 
 			await expect(kv.setMax(mockKey, value)).rejects.toThrow(RangeError);
 			expect(setMax).not.toHaveBeenCalled();

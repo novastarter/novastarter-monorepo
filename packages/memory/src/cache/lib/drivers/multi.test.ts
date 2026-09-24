@@ -4,6 +4,7 @@
 import { Redis } from 'ioredis';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { BusDriverRedis } from '../../../bus/index.js';
+import type { Lock } from '../../../kv/index.js';
 import { CacheDriverLocal } from './local.js';
 import { CACHE_CHANNEL_KEY, CacheDriverMulti } from './multi.js';
 import { CacheDriverRedis } from './redis.js';
@@ -336,8 +337,8 @@ describe('has', () => {
 describe('acquireLock', () => {
 	test('Delegates to redis cache', async () => {
 		// 1. Only the Redis lock is visible to other processes; the handle is handed through untouched
-		const mockLock = { release: vi.fn(), extend: vi.fn() };
-		vi.mocked(cache['redis'].acquireLock).mockResolvedValue(mockLock as any);
+		const mockLock: Lock = { release: vi.fn(), extend: vi.fn() };
+		vi.mocked(cache['redis'].acquireLock).mockResolvedValue(mockLock);
 
 		const result = await cache.acquireLock(mockKey);
 		expect(cache['redis'].acquireLock).toHaveBeenCalledWith(mockKey);

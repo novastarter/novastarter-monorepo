@@ -5,7 +5,7 @@
 import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import * as entry from '../index.js';
 import { MailDriverPostmark } from './driver.js';
 
 /**
@@ -94,10 +94,10 @@ afterEach(() => {
 });
 
 describe('MailDriverPostmark', () => {
-	test('Requires the server token and is the default export', () => {
+	test('Requires the server token and is exported by name', () => {
 		// 1. A missing token is refused by name
 		expect(() => new MailDriverPostmark({ serverToken: '' })).toThrow('"serverToken"');
-		expect(defaultExport).toBe(MailDriverPostmark);
+		expect(entry.MailDriverPostmark).toBe(MailDriverPostmark);
 	});
 
 	test('Builds the client with the token and the timeout', () => {

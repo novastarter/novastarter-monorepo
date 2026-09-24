@@ -5,7 +5,7 @@
 import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import * as entry from '../index.js';
 import { MailDriverMailjet } from './driver.js';
 
 /**
@@ -140,7 +140,7 @@ describe('MailDriverMailjet', () => {
 
 		// 5. A missing secret is refused by name
 		expect(() => new MailDriverMailjet({ apiKey: 'k', apiSecret: '' })).toThrow(/"apiSecret"/);
-		expect(defaultExport).toBe(MailDriverMailjet);
+		expect(entry.MailDriverMailjet).toBe(MailDriverMailjet);
 	});
 
 	test('Builds the client with a timeout, 30 s unless the location sets one', () => {

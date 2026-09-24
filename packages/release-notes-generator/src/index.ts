@@ -19,10 +19,17 @@ const releaseLines = processReleaseLines();
 const changesets = releaseLines.changesets;
 
 /**
- * Changelog functions handed to `changesets`; they collect changesets into {@link changesets} instead of writing
- * changelog lines.
+ * Release line hook of the changelog functions `changesets` loads from this entry; it collects the changeset into
+ * {@link changesets} instead of writing a changelog line.
  */
-const changelogFunctions: ChangelogFunctions = releaseLines.defaultChangelogFunctions;
+export const getReleaseLine: ChangelogFunctions['getReleaseLine'] =
+	releaseLines.defaultChangelogFunctions.getReleaseLine;
+
+/**
+ * Dependency release line hook of the changelog functions `changesets` loads from this entry; it writes no line.
+ */
+export const getDependencyReleaseLine: ChangelogFunctions['getDependencyReleaseLine'] =
+	releaseLines.defaultChangelogFunctions.getDependencyReleaseLine;
 
 // Take over control after `changesets` has finished. The hook is the composition root of this entry: the
 // deployment inputs are read here, once, and passed into `run` as plain arguments
@@ -130,5 +137,3 @@ export async function run(changesets: Changesets, options: RunOptions): Promise<
 		await appendFile(options.githubOutput, `${outputs.join('\n')}\n`);
 	}
 }
-
-export default changelogFunctions;

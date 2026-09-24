@@ -1894,8 +1894,14 @@ describe('#uploadParts', () => {
 
 		// 2. Both uploads hang until the test releases them, so a permit wrongly freed mid-failure would visibly admit
 		//    the second upload before the first one settles
+		/**
+		 * Finish the first upload's part with an ETag; a no-op until the part's own resolver replaces it.
+		 */
 		let finishFirst: (etag: string) => void = () => {};
 
+		/**
+		 * Finish the second upload's part with an ETag; a no-op until the part's own resolver replaces it.
+		 */
 		let finishSecond: (etag: string) => void = () => {};
 
 		vi.mocked(driver['uploadPart'])

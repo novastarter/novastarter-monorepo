@@ -6,10 +6,10 @@
  * {@link StorageManager} of {@link useStorage} mapping named locations to drivers, and the types every driver
  * speaks — {@link Stat}, {@link ReadOptions}, {@link ChunkedUploadContext}.
  */
-export * from './driver.js';
-export * from './errors/index.js';
-export * from './lib/keys.js';
-export * from './lib/storage-manager.js';
-export * from './lib/supports-tus.js';
-export * from './lib/use-storage.js';
-export * from './types.js';
+export type { StorageDriver, TusDriver } from './driver.js';
+export { StorageFileNotFoundError, type StorageFileNotFoundErrorExtensions } from './errors/index.js';
+export { toListPrefix, toRelativePath } from './lib/keys.js';
+export { StorageManager, type StorageDrivers } from './lib/storage-manager.js';
+export { supportsTus } from './lib/supports-tus.js';
+export { useStorage } from './lib/use-storage.js';
+export type { ChunkedUploadContext, Range, ReadOptions, Stat } from './types.js';

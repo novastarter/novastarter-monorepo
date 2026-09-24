@@ -30,6 +30,11 @@ describe('request', () => {
 
 	test('Reads a body that is not JSON as none and leaves the status to the caller', async () => {
 		// 1. A gateway's HTML page on a 502 is neither an error here nor a body worth passing on
+		/**
+		 * A fetch that answers a gateway's HTML page with a 502.
+		 *
+		 * @returns The 502 answer.
+		 */
 		const fetch: AuthFetch = async () => ({ status: 502, ok: false, text: async () => '<html>Bad gateway</html>' });
 
 		expect(await request({ fetch, timeout: 1_000 }, 'https://x.test', { method: 'GET', headers: {} })).toStrictEqual({
@@ -43,6 +48,11 @@ describe('request', () => {
 		// 1. The network error travels as the cause, and the reason names the URL
 		const socket = new Error('ECONNRESET');
 
+		/**
+		 * A fetch that fails on the network.
+		 *
+		 * @throws The socket error, always.
+		 */
 		const failing: AuthFetch = async () => {
 			throw socket;
 		};
@@ -62,6 +72,13 @@ describe('request', () => {
 		// 2. A fetch that never answers is abandoned at the deadline, and the abort reaches its signal
 		let seen: AbortSignal | undefined;
 
+		/**
+		 * A fetch that never answers and keeps the abort signal it is given.
+		 *
+		 * @param _url - The URL, unused.
+		 * @param init - The request, whose signal is kept.
+		 * @returns A promise that never settles.
+		 */
 		const hanging: AuthFetch = (_url, init) => {
 			seen = init.signal;
 

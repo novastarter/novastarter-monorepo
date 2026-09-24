@@ -60,6 +60,30 @@ let sample: {
 let driver: StorageDriverSupabase;
 
 /**
+ * Bucket handle the driver keeps in its private `bucket` field; tests swap it for a stand-in with the methods they need.
+ */
+type BucketApi = ReturnType<StorageClient['from']>;
+
+/**
+ * Request options the driver hands the mocked `undici` fetch, as the copy assertions read them.
+ */
+type SentInit = { method: string; headers: Record<string, string>; body: string };
+
+/**
+ * Answer a stand-in `list` gives: a page of entries, or nothing when the call failed.
+ */
+type ListAnswer = { data: { name: string; id: string | null }[] | null; error: Error | null };
+
+/**
+ * Options the driver hands `tus.Upload`, with the callbacks the tests fire marked as always present.
+ */
+type CapturedOptions = ConstructorParameters<typeof tus.Upload>[1] & {
+	[Key in 'onUploadUrlAvailable' | 'onChunkComplete' | 'onError' | 'onAfterResponse']-?: NonNullable<
+		ConstructorParameters<typeof tus.Upload>[1][Key]
+	>;
+};
+
+/**
  * Build the listing entry Supabase returns for a file, with the metadata `stat` reads.
  *
  * @param name - Entry name relative to the listed folder.
@@ -407,7 +431,7 @@ describe('#read', () => {
 
 	test('Optionally allows setting start range offset', async () => {
 		// 1. An open end must produce `bytes=N-`, which the server reads as "from N to the end"
-		await driver.read(sample.path.input, { range: { start: sample.range.start } } as any);
+		await driver.read(sample.path.input, { range: { start: sample.range.start } });
 
 		expect(fetch).toHaveBeenCalledWith(endpoint, {
 			headers: {
@@ -421,7 +445,7 @@ describe('#read', () => {
 
 	test('Optionally allows setting end range offset', async () => {
 		// 1. An open start means the first bytes up to `end`, `bytes=0-N`; `bytes=-N` would ask for the last N bytes
-		await driver.read(sample.path.input, { range: { end: sample.range.end } } as any);
+		await driver.read(sample.path.input, { range: { end: sample.range.end } });
 
 		expect(fetch).toHaveBeenCalledWith(endpoint, {
 			headers: {
@@ -541,7 +565,7 @@ describe('#stat', () => {
 				data: [fileEntry(basename(sample.path.input), sample.file.size, sample.file.modified)],
 				error: null,
 			}),
-		} as any;
+		} as unknown as BucketApi;
 
 		const stat = await driver.stat(sample.path.input);
 
@@ -569,7 +593,7 @@ describe('#stat', () => {
 				data: [fileEntry(basename(sample.path.input), sample.file.size, sample.file.modified)],
 				error: null,
 			}),
-		} as any;
+		} as unknown as BucketApi;
 
 		const stat = await driver.stat(sample.path.input);
 
@@ -594,7 +618,7 @@ describe('#stat', () => {
 				data: [fileEntry(filename, sample.file.size, sample.file.modified)],
 				error: null,
 			}),
-		} as any;
+		} as unknown as BucketApi;
 
 		await driver.stat(filename);
 
@@ -621,7 +645,7 @@ describe('#stat', () => {
 				],
 				error: null,
 			}),
-		} as any;
+		} as unknown as BucketApi;
 
 		const stat = await driver.stat('report.pdf');
 
@@ -636,7 +660,7 @@ describe('#stat', () => {
 				data: [folderEntry('report.pdf'), fileEntry('report.pdf.bak', sample.file.size, sample.file.modified)],
 				error: null,
 			}),
-		} as any;
+		} as unknown as BucketApi;
 
 		const error: unknown = await driver.stat('report.pdf').catch((error: unknown) => error);
 
@@ -651,7 +675,7 @@ describe('#stat', () => {
 				data: [fileEntry('A.PNG', sample.file.size, sample.file.modified)],
 				error: null,
 			}),
-		} as any;
+		} as unknown as BucketApi;
 
 		await expect(driver.stat('a.png')).rejects.toBeInstanceOf(StorageFileNotFoundError);
 	});
@@ -669,7 +693,7 @@ describe('#stat', () => {
 					data: [fileEntry('a.png', sample.file.size, sample.file.modified)],
 					error: null,
 				}),
-		} as any;
+		} as unknown as BucketApi;
 
 		const stat = await driver.stat('a.png');
 
@@ -687,7 +711,7 @@ describe('#stat', () => {
 				data: [],
 				error: null,
 			}),
-		} as any;
+		} as unknown as BucketApi;
 
 		const error: unknown = await driver.stat(sample.path.input).catch((error: unknown) => error);
 
@@ -704,7 +728,7 @@ describe('#stat', () => {
 				data: [{ name: basename(sample.path.input), id: randUnique(), metadata: null }],
 				error: null,
 			}),
-		} as any;
+		} as unknown as BucketApi;
 
 		await expect(driver.stat(sample.path.input)).rejects.toThrowError(
 			`No stat returned for file "${sample.path.input}": the listing entry has no size or modification time`,
@@ -719,7 +743,7 @@ describe('#stat', () => {
 				data: [{ name: basename(sample.path.input), id: randUnique(), metadata: {} }],
 				error: null,
 			}),
-		} as any;
+		} as unknown as BucketApi;
 
 		await expect(driver.stat(sample.path.input)).rejects.toThrowError(
 			`No stat returned for file "${sample.path.input}": the listing entry has no size or modification time`,
@@ -736,7 +760,7 @@ describe('#stat', () => {
 				data: null,
 				error: cause,
 			}),
-		} as any;
+		} as unknown as BucketApi;
 
 		await expect(driver.stat(sample.path.input)).rejects.toMatchObject({
 			message: `Error looking up file "${sample.path.input}"`,
@@ -753,7 +777,7 @@ describe('#exists', () => {
 				data: [fileEntry(basename(sample.path.input), sample.file.size, sample.file.modified)],
 				error: null,
 			}),
-		} as any;
+		} as unknown as BucketApi;
 
 		const exists = await driver.exists(sample.path.input);
 
@@ -767,7 +791,7 @@ describe('#exists', () => {
 				data: [],
 				error: null,
 			}),
-		} as any;
+		} as unknown as BucketApi;
 
 		const exists = await driver.exists(sample.path.input);
 
@@ -786,7 +810,7 @@ describe('#exists', () => {
 				],
 				error: null,
 			}),
-		} as any;
+		} as unknown as BucketApi;
 
 		await expect(driver.exists('report.pdf')).resolves.toBe(false);
 	});
@@ -800,7 +824,7 @@ describe('#exists', () => {
 				data: null,
 				error: cause,
 			}),
-		} as any;
+		} as unknown as BucketApi;
 
 		await expect(driver.exists(sample.path.input)).rejects.toMatchObject({
 			message: `Error looking up file "${sample.path.input}"`,
@@ -814,14 +838,14 @@ describe('#move', () => {
 		// 1. The copy goes through the mocked `undici` fetch; the source removal through the bucket handle
 		vi.mocked(fetch).mockResolvedValue(new globalThis.Response('{"Key":"x"}', { status: 200 }) as never);
 
-		driver['bucket'] = { remove: vi.fn(async () => ({ data: [], error: null })) } as any;
+		driver['bucket'] = { remove: vi.fn(async () => ({ data: [], error: null })) } as unknown as BucketApi;
 	});
 
 	test('Copies with upsert onto the destination and then removes the source', async () => {
 		await driver.move(sample.path.input, 'new/path');
 
 		// 1. The native move refuses an existing destination, so the move is an upserting copy and a removal
-		const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, any];
+		const [url, init] = vi.mocked(fetch).mock.calls[0] as unknown as [string, SentInit];
 
 		expect(url).toBe(`https://${sample.config.projectId}.supabase.co/storage/v1/object/copy`);
 		expect(init.headers).toMatchObject({ 'x-upsert': 'true' });
@@ -864,7 +888,7 @@ describe('#move', () => {
 	test('Throws when the source removal fails instead of resolving', async () => {
 		// 1. storage-js answers a failure as `{ error }`; a move whose source is still there must not read as done
 		const cause = new Error('Access denied');
-		driver['bucket'] = { remove: vi.fn(async () => ({ data: null, error: cause })) } as any;
+		driver['bucket'] = { remove: vi.fn(async () => ({ data: null, error: cause })) } as unknown as BucketApi;
 
 		await expect(driver.move('a.png', 'b.png')).rejects.toMatchObject({
 			message: 'Error moving file "a.png" to "b.png"',
@@ -881,7 +905,7 @@ describe('#copy', () => {
 
 		// 1. Both names go through `fullPath`, which is the identity without a root; `x-upsert` is what storage-js
 		//    leaves out and what makes Supabase overwrite instead of answering 409
-		const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, any];
+		const [url, init] = vi.mocked(fetch).mock.calls[0] as unknown as [string, SentInit];
 
 		expect(url).toBe(`https://${sample.config.projectId}.supabase.co/storage/v1/object/copy`);
 		expect(init.method).toBe('POST');
@@ -919,7 +943,7 @@ describe('#write', () => {
 		// 1. A successful upload is the default; the failure test overrides the handle
 		driver['bucket'] = {
 			upload: vi.fn().mockResolvedValue({ data: null, error: null }),
-		} as any;
+		} as unknown as BucketApi;
 	});
 
 	test('Passes streams to body as is', async () => {
@@ -961,7 +985,7 @@ describe('#write', () => {
 
 		driver['bucket'] = {
 			upload: vi.fn().mockResolvedValue({ data: null, error: uploadError }),
-		} as any;
+		} as unknown as BucketApi;
 
 		await expect(driver.write(sample.path.input, sample.stream)).rejects.toThrow(
 			new Error(`Error uploading file "${sample.path.input}"`, { cause: uploadError }),
@@ -974,7 +998,7 @@ describe('#delete', () => {
 		// 1. Stubbing `fullPath` shows the caller path reaches it unchanged, so the root is applied on every removal
 		driver['bucket'] = {
 			remove: vi.fn(async () => ({ data: [], error: null })),
-		} as any;
+		} as unknown as BucketApi;
 
 		driver['fullPath'] = vi.fn();
 
@@ -985,7 +1009,7 @@ describe('#delete', () => {
 	test('Throws when the client reports the removal failed instead of resolving', async () => {
 		// 1. storage-js answers a failure as `{ error }`; an object that is still there must not read as deleted
 		const cause = new Error('jwt expired');
-		driver['bucket'] = { remove: vi.fn(async () => ({ data: null, error: cause })) } as any;
+		driver['bucket'] = { remove: vi.fn(async () => ({ data: null, error: cause })) } as unknown as BucketApi;
 
 		await expect(driver.delete('a.png')).rejects.toMatchObject({
 			message: 'Error deleting file "a.png"',
@@ -1004,7 +1028,7 @@ describe('#list', () => {
 		// 2. The bucket handle is replaced inline: only `list` is needed, and an empty page ends the walk at once
 		driver['bucket'] = {
 			list: vi.fn().mockReturnValue({ data: [], error: null }),
-		} as any;
+		} as unknown as BucketApi;
 
 		// 3. Pull one item to trigger the first request; the generator is lazy until iterated. The prefix goes through
 		//    `fullPath`, which confines it under the root, so a leading slash of the sample directory is gone
@@ -1026,7 +1050,7 @@ describe('#list', () => {
 			root: 'media',
 		});
 
-		rooted['bucket'] = { list: vi.fn().mockResolvedValue({ data: [], error: null }) } as any;
+		rooted['bucket'] = { list: vi.fn().mockResolvedValue({ data: [], error: null }) } as unknown as BucketApi;
 
 		// 2. Both the empty prefix and a caller folder must be queried with their trailing slash and no search term
 		await rooted.list('')[Symbol.asyncIterator]().next();
@@ -1052,7 +1076,7 @@ describe('#list', () => {
 				],
 				error: null,
 			}),
-		} as any;
+		} as unknown as BucketApi;
 
 		driver['config'].root = sampleRoot;
 
@@ -1096,7 +1120,7 @@ describe('#list', () => {
 					],
 					error: null,
 				}),
-		} as any;
+		} as unknown as BucketApi;
 
 		driver['config'].root = sampleRoot;
 
@@ -1128,7 +1152,7 @@ describe('#list', () => {
 				})),
 				error: null,
 			}),
-		} as any;
+		} as unknown as BucketApi;
 
 		driver['config'].root = sampleRoot;
 
@@ -1147,7 +1171,7 @@ describe('#list', () => {
 		// 1. Supabase answers `report` with `Report.pdf` and `a_b` style fragments with any character in place of `_`;
 		//    only the exact-prefix file and folder belong to the prefix, the others must be neither yielded nor listed
 		driver['bucket'] = {
-			list: vi.fn(async (path, options): Promise<any> => {
+			list: vi.fn(async (path: string, options?: { search?: string }): Promise<ListAnswer> => {
 				// 1. The root is searched for the fragment and answers with exact and false matches alike
 				if (path === '' && options?.search === 'rep_rt')
 					return {
@@ -1167,7 +1191,7 @@ describe('#list', () => {
 
 				throw Error();
 			}),
-		} as any;
+		} as unknown as BucketApi;
 
 		driver['config'].root = '';
 
@@ -1201,7 +1225,7 @@ describe('#list', () => {
 		// 2. Route each listing call by the exact folder and search the driver is expected to send; any other call is
 		//    a wrong query and fails the test by throwing
 		driver['bucket'] = {
-			list: vi.fn(async (path, options): Promise<any> => {
+			list: vi.fn(async (path: string, options?: { search?: string }): Promise<ListAnswer> => {
 				// 1. The parent is queried with the last segment as the search term and answers with the folder itself
 				if (path === `${sampleRoot}/${samplePrefixBase}` && options?.search === samplePrefixLastDir)
 					return { data: [{ name: samplePrefixLastDir, id: null }], error: null };
@@ -1225,7 +1249,7 @@ describe('#list', () => {
 
 				throw Error();
 			}),
-		} as any;
+		} as unknown as BucketApi;
 
 		driver['config'].root = sampleRoot;
 
@@ -1265,7 +1289,7 @@ describe('#list', () => {
 					data: secondContents,
 					error: null,
 				}),
-		} as any;
+		} as unknown as BucketApi;
 
 		// 3. Drain the generator; every entry of both pages must come out
 		const iterator = driver.list(sample.path.input);
@@ -1284,7 +1308,7 @@ describe('#list', () => {
 		//    would let a cleanup job conclude the prefix is empty
 		const cause = new Error('Invalid JWT');
 
-		driver['bucket'] = { list: vi.fn().mockResolvedValue({ data: null, error: cause }) } as any;
+		driver['bucket'] = { list: vi.fn().mockResolvedValue({ data: null, error: cause }) } as unknown as BucketApi;
 
 		const output: string[] = [];
 
@@ -1317,7 +1341,7 @@ describe('#list', () => {
 				.fn()
 				.mockResolvedValueOnce({ data: firstContents, error: null })
 				.mockResolvedValueOnce({ data: null, error: cause }),
-		} as any;
+		} as unknown as BucketApi;
 
 		const output: string[] = [];
 
@@ -1338,7 +1362,7 @@ describe('#list', () => {
 	test('Throws when a page carries neither data nor an error', async () => {
 		// 1. An answer without data and without an error breaks the client's contract; it must not pass for an empty
 		//    prefix, and without a storage error there is no cause to attach
-		driver['bucket'] = { list: vi.fn().mockResolvedValue({ data: null, error: null }) } as any;
+		driver['bucket'] = { list: vi.fn().mockResolvedValue({ data: null, error: null }) } as unknown as BucketApi;
 
 		const error: unknown = await driver
 			.list(sample.path.input)
@@ -1542,7 +1566,7 @@ describe('#writeChunk', () => {
 		resumeFromPreviousUpload: ReturnType<typeof vi.fn>;
 	};
 
-	let captured: { source: Readable; options: any } | undefined;
+	let captured: { source: Readable; options: CapturedOptions } | undefined;
 
 	beforeEach(() => {
 		uploadUrl = `https://uploads.supabase.co/upload/resumable/${randUnique()}`;
@@ -1555,7 +1579,7 @@ describe('#writeChunk', () => {
 
 		// 1. The library is replaced by a recording stand-in, so the options the driver hands it can be asserted
 		//    without any request; `start` is driven per test through the callbacks the driver relies on
-		vi.mocked(tus.Upload).mockImplementation(((source: Readable, options: any) => {
+		vi.mocked(tus.Upload).mockImplementation(((source: Readable, options: CapturedOptions) => {
 			captured = { source, options };
 
 			return mockUpload;
@@ -1632,7 +1656,7 @@ describe('#writeChunk', () => {
 
 		// 1. A POST without `Upload-Metadata` still produces a valid upload: the content type falls back to a generic
 		//    binary type and the known size goes out as `uploadSize`
-		expect(captured!.options.metadata['contentType']).toBe('application/octet-stream');
+		expect(captured!.options.metadata?.['contentType']).toBe('application/octet-stream');
 		expect(captured!.options.uploadSize).toBe(sample.file.size);
 	});
 
@@ -1733,11 +1757,13 @@ describe('#writeChunk', () => {
 				// 1. The HEAD answer is checked first; a throw is what the library turns into `onError`
 				try {
 					await captured!.options.onAfterResponse(
-						{ getMethod: () => 'HEAD' },
-						{ getHeader: (name: string) => (name === 'Upload-Offset' ? String(serverOffset) : undefined) },
+						{ getMethod: () => 'HEAD' } as tus.HttpRequest,
+						{
+							getHeader: (name: string) => (name === 'Upload-Offset' ? String(serverOffset) : undefined),
+						} as tus.HttpResponse,
 					);
 				} catch (error) {
-					captured!.options.onError(error);
+					captured!.options.onError(error as Error);
 
 					return;
 				}
@@ -1835,7 +1861,7 @@ describe('#finishChunkedUpload', () => {
 describe('#deleteChunkedUpload', () => {
 	beforeEach(() => {
 		// 1. The object removal is watched, so a test can prove the previous version under the final name survives
-		driver['bucket'] = { remove: vi.fn().mockResolvedValue({ data: [], error: null }) } as any;
+		driver['bucket'] = { remove: vi.fn().mockResolvedValue({ data: [], error: null }) } as unknown as BucketApi;
 	});
 
 	test('Terminates the recorded TUS upload and leaves the object under the final name alone', async () => {

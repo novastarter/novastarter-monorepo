@@ -7,7 +7,7 @@ import { HitRateLimitError, ProviderCallError } from '@novastarter/errors';
 import { TimeoutError } from '@novastarter/utils';
 import nodemailer from 'nodemailer';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import defaultExport from '../index.js';
+import * as entry from '../index.js';
 import { MailDriverSes } from './driver.js';
 
 /**
@@ -189,7 +189,7 @@ describe('MailDriverSes', () => {
 			response: '0100…',
 		});
 
-		expect(defaultExport).toBe(MailDriverSes);
+		expect(entry.MailDriverSes).toBe(MailDriverSes);
 
 		// 4. `close()` releases the SDK client's agents; the SES transport holds nothing of its own
 		await driver.close();

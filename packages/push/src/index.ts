@@ -6,13 +6,30 @@
  * locations to drivers and holding the routes the application registers at start-up, and {@link sendPush}, which
  * validates a message's target and sends it through the location of its platform.
  */
-export * from './driver.js';
-export * from './errors/index.js';
-export * from './lib/collapse-id.js';
-export * from './lib/drivers/index.js';
-export * from './lib/platform-of.js';
-export * from './lib/push-manager.js';
-export * from './lib/send-push.js';
-export * from './lib/to-web-push-payload.js';
-export * from './lib/use-push.js';
-export * from './types.js';
+export type { PushDriver } from './driver.js';
+export { PushTargetGoneError, type PushTargetGoneErrorExtensions } from './errors/index.js';
+export { COLLAPSE_ID_MAX_LENGTH, toCollapseId } from './lib/collapse-id.js';
+export { PushDriverConsole, type PushDriverConsoleConfig } from './lib/drivers/index.js';
+export { platformOf } from './lib/platform-of.js';
+export { PushManager, type PushDrivers, type PushRoutes } from './lib/push-manager.js';
+export {
+	PUSH_FAILED_EVENT,
+	PUSH_GONE_EVENT,
+	PUSH_SEND_FILTER,
+	PUSH_SENT_EVENT,
+	sendPush,
+	type PushSendOptions,
+	type PushSendResult,
+} from './lib/send-push.js';
+export { toWebPushPayload } from './lib/to-web-push-payload.js';
+export { usePush } from './lib/use-push.js';
+export {
+	PUSH_PLATFORMS,
+	TOKEN_PLATFORMS,
+	type PushMessage,
+	type PushPlatform,
+	type PushResult,
+	type PushUrgency,
+	type WebPushPayload,
+	type WebPushSubscription,
+} from './types.js';

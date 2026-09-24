@@ -2,6 +2,7 @@
  * Tests of `memory/cache/lib/drivers/local`.
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import type { Lock } from '../../../kv/index.js';
 import { KvDriverLocal } from '../../../kv/index.js';
 import { CacheDriverLocal } from './local.js';
 
@@ -97,8 +98,8 @@ describe('clear', () => {
 describe('acquireLock', () => {
 	test('Acquires lock from kv store', async () => {
 		// 1. The handle is the store's own, handed through untouched
-		const mockLock = { release: vi.fn(), extend: vi.fn() };
-		vi.mocked(cache['store'].acquireLock).mockResolvedValue(mockLock as any);
+		const mockLock: Lock = { release: vi.fn(), extend: vi.fn() };
+		vi.mocked(cache['store'].acquireLock).mockResolvedValue(mockLock);
 
 		const res = await cache.acquireLock(mockKey);
 		expect(cache['store'].acquireLock).toHaveBeenCalledWith(mockKey);

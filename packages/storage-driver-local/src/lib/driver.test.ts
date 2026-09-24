@@ -17,6 +17,7 @@ import {
 	randGitShortSha as randUnique,
 	randWord,
 } from '@ngneat/falso';
+import type { Logger } from '@novastarter/logger';
 import { useLogger } from '@novastarter/logger';
 import { StorageFileNotFoundError } from '@novastarter/storage';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -858,7 +859,7 @@ describe('#writeChunk', () => {
 	test('Rejects with the file and offset when the pipeline fails', async () => {
 		// 1. The TUS server maps any rejection to a generic failure and the client resumes from its last confirmed
 		//    offset, so the error must carry a readable reason naming the file and the offset
-		vi.mocked(useLogger).mockReturnValue({ warn: vi.fn() } as any);
+		vi.mocked(useLogger).mockReturnValue({ warn: vi.fn() } as unknown as Logger);
 
 		const source = new PassThrough();
 

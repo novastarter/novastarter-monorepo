@@ -5,7 +5,7 @@
  * (`useRedis().registerLocation`), and the one client each is reached through afterwards
  * (`useRedis().location`). `createRedis` opens an independent client for code that needs its own connection.
  */
-export * from './lib/create-redis.js';
-export * from './lib/redis-manager.js';
-export * from './lib/use-redis.js';
-export * from './types.js';
+export { createRedis } from './lib/create-redis.js';
+export { RedisManager } from './lib/redis-manager.js';
+export { useRedis } from './lib/use-redis.js';
+export type { RedisConfig } from './types.js';

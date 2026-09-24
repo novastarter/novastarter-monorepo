@@ -70,7 +70,7 @@ const make = (overrides: Partial<NotificationsOptions> = {}) => {
 };
 
 beforeEach(() => {
-	vi.mocked(useEmitter).mockReturnValue(emitter as any);
+	vi.mocked(useEmitter).mockReturnValue(emitter as unknown as ReturnType<typeof useEmitter>);
 });
 
 afterEach(() => {

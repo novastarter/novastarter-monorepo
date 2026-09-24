@@ -47,14 +47,16 @@ describe('getJobId', () => {
 
 	test('Lets a unique function pick the identifying part', () => {
 		// 1. The function receives the payload; its answer becomes the identifying part of the id
-		expect(getJobId(contract, { customer: 'c1' }, { unique: (payload) => payload.customer })).toBe('billing.sync_c1');
+		expect(getJobId(contract, { customer: 'c1' }, { unique: (payload) => contract.parse(payload).customer })).toBe(
+			'billing.sync_c1',
+		);
 	});
 
 	test('Refuses an id with a colon, which BullMQ reserves for its keys', () => {
 		// 1. An id carrying a colon is refused, with the offending id and job in the message
-		expect(() => getJobId(contract, { customer: 'a:1' }, { unique: (payload) => payload.customer })).toThrow(
-			'The id "billing.sync_a:1" of job "billing.sync" must not contain ":"',
-		);
+		expect(() =>
+			getJobId(contract, { customer: 'a:1' }, { unique: (payload) => contract.parse(payload).customer }),
+		).toThrow('The id "billing.sync_a:1" of job "billing.sync" must not contain ":"');
 
 		// 2. The same refusal holds for an explicit jobId
 		expect(() => getJobId(contract, { customer: 'c1' }, { jobId: 'x:y' })).toThrow('must not contain ":"');
